@@ -60,6 +60,7 @@ CONTENT_EXPORT extern const char kDisableScrollToTextFragment[];
 CONTENT_EXPORT extern const char kDisableSoftwareCompositingFallback[];
 CONTENT_EXPORT extern const char kDisableGpuWatchdog[];
 CONTENT_EXPORT extern const char kDisableIpcFloodingProtection[];
+CONTENT_EXPORT extern const char kDisableIgnoreDuplicateNavsForTesting[];
 CONTENT_EXPORT extern const char kDisableJavaScriptHarmonyShipping[];
 CONTENT_EXPORT extern const char kDisableLowLatencyDxva[];
 extern const char kDisableHistogramCustomizer[];
@@ -138,7 +139,6 @@ CONTENT_EXPORT extern const char kHideScrollbars[];
 CONTENT_EXPORT extern const char kInProcessGPU[];
 CONTENT_EXPORT extern const char kIPCConnectionTimeout[];
 CONTENT_EXPORT extern const char kIsolateOrigins[];
-CONTENT_EXPORT extern const char kIsolationByDefault[];
 CONTENT_EXPORT extern const char kJavaScriptHarmony[];
 CONTENT_EXPORT extern const char kLaunchAsBrowser[];
 #if BUILDFLAG(LOAD_WEBUI_FROM_DISK)
@@ -176,6 +176,9 @@ CONTENT_EXPORT extern const char kRemoteDebuggingPort[];
 CONTENT_EXPORT extern const char kRemoteAllowOrigins[];
 CONTENT_EXPORT extern const char kRendererClientId[];
 extern const char kRendererCmdPrefix[];
+#if !BUILDFLAG(IS_ANDROID)
+CONTENT_EXPORT extern const char kRendererForInitialWebUI[];
+#endif  // !BUILDFLAG(IS_ANDROID)
 CONTENT_EXPORT extern const char kRendererProcess[];
 CONTENT_EXPORT extern const char kRendererProcessLaunchTimeTicks[];
 CONTENT_EXPORT extern const char kRendererProcessLimit[];
@@ -213,6 +216,7 @@ extern const char kUtilityCmdPrefix[];
 CONTENT_EXPORT extern const char kUtilityProcess[];
 CONTENT_EXPORT extern const char kUtilityStartupDialog[];
 CONTENT_EXPORT extern const char kUtilitySubType[];
+CONTENT_EXPORT extern const char kUtilityImmediateCrashForTesting[];
 CONTENT_EXPORT extern const char kV8CacheOptions[];
 CONTENT_EXPORT extern const char kDisallowV8FeatureFlagOverrides[];
 CONTENT_EXPORT extern const char kVerifyPixels[];

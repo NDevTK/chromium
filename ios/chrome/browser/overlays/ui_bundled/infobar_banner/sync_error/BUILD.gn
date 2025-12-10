@@ -33,7 +33,6 @@ source_set("unit_tests") {
     "//components/infobars/core",
     "//components/prefs",
     "//components/signin/public/base:signin_switches",
-    "//components/sync/base:features",
     "//ios/chrome/app/strings:ios_strings_grit",
     "//ios/chrome/browser/infobars/model",
     "//ios/chrome/browser/infobars/model:public",
@@ -51,10 +50,15 @@ source_set("unit_tests") {
     "//ios/chrome/browser/shared/model/prefs:pref_names",
     "//ios/chrome/browser/shared/model/profile/test",
     "//ios/chrome/common/ui/colors",
+    "//ios/chrome/test:test_support",
     "//ios/web/public/test",
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/ocmock",
     "//ui/base",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

@@ -9,32 +9,25 @@
 
 #import "ios/chrome/browser/browser_container/model/edit_menu_builder.h"
 
-// TODO(crbug.com/408229821): Reverse dependencies.
-@protocol ExplainWithGeminiDelegate;
-@protocol LinkToTextDelegate;
-@protocol PartialTranslateDelegate;
-@protocol SearchWithDelegate;
-
 // A handler for the Browser edit menu.
 // This class is in charge of customising the menu and executing the commands.
 @interface BrowserEditMenuHandler : NSObject <EditMenuBuilder>
 
 // The delegate to handle Explain With Gemini button selection.
-@property(nonatomic, weak) id<ExplainWithGeminiDelegate>
-    explainWithGeminiDelegate;
+@property(nonatomic, weak) id<EditMenuBuilder> explainWithGeminiDelegate;
 
 // The delegate to handle link to text button selection.
-@property(nonatomic, weak) id<LinkToTextDelegate> linkToTextDelegate;
+@property(nonatomic, weak) id<EditMenuBuilder> linkToTextDelegate;
 
 // The delegate to handle Partial Translate button selection.
-@property(nonatomic, weak) id<PartialTranslateDelegate>
-    partialTranslateDelegate;
+@property(nonatomic, weak) id<EditMenuBuilder> partialTranslateDelegate;
 
 // The delegate to handle Search With button selection.
-@property(nonatomic, weak) id<SearchWithDelegate> searchWithDelegate;
+@property(nonatomic, weak) id<EditMenuBuilder> searchWithDelegate;
 
-// Will be called to customize edit menus.
-- (void)buildEditMenuWithBuilder:(id<UIMenuBuilder>)builder;
+// The delegate for updating the Edit menu according to enterprise Data
+// Controls.
+@property(nonatomic, weak) id<EditMenuBuilder> dataControlsDelegate;
 
 @end
 

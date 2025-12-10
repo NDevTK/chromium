@@ -16,20 +16,13 @@
 @property(nonatomic, strong, readonly)
     TableViewModel<TableViewItem*>* tableViewModel;
 
-// Inserts sections at `sections` indexes. Does nothing if the model is not
-// loaded yet.
-- (void)insertSections:(NSIndexSet*)sections;
+// Reloads the table view. Does nothing if the model is not loaded yet.
+- (void)reload;
 
-// Deletes sections at `sections` indexes. Does nothing if the model is not
-// loaded yet.
-- (void)deleteSections:(NSIndexSet*)sections;
-
-// Reloads `sections`. Does nothing if the model is not loaded yet.
-- (void)reloadSections:(NSIndexSet*)sections;
-
-// Reloads only a specific `item`. Does nothing if the model is not loaded
-// yet.
-- (void)reloadItem:(TableViewItem*)item;
+// Shows an info popover anchored on `buttonView` depending on the signed-in
+// policy.
+- (void)showManagedInfoPopoverOnButton:(UIButton*)buttonView
+                 isForcedSigninEnabled:(BOOL)isForcedSigninEnabled;
 
 @end
 

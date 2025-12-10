@@ -7,6 +7,7 @@ import type {Macro} from '/common/action_fulfillment/macros/macro.js';
 import {MacroName} from '/common/action_fulfillment/macros/macro_names.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
+import {Messenger} from '../messenger.js';
 import {OffscreenCommandType} from '../offscreen_command_type.js';
 
 import {FocusHandler} from './focus_handler.js';
@@ -59,7 +60,7 @@ export class Dictation {
   }
 
   /** Sets up Dictation's speech recognizer and various listeners. */
-  private initialize_(): void {
+  private async initialize_(): Promise<void> {
     this.focusHandler_ = new FocusHandler();
     this.inputController_ = new InputControllerImpl(
         () => this.stopDictation_(/*notify=*/ true), this.focusHandler_);
@@ -103,10 +104,9 @@ export class Dictation {
     const contextCheckingFeature =
         chrome.accessibilityPrivate.AccessibilityFeature
             .DICTATION_CONTEXT_CHECKING;
-    chrome.accessibilityPrivate.isFeatureEnabled(
-        contextCheckingFeature, enabled => {
-          this.isContextCheckingFeatureEnabled_ = enabled;
-        });
+    this.isContextCheckingFeatureEnabled_ =
+        await chrome.accessibilityPrivate.isFeatureEnabled(
+            contextCheckingFeature);
   }
 
   /** Performs any destruction before dictation object is destroyed. */
@@ -143,15 +143,15 @@ export class Dictation {
    * Called when Dictation is toggled.
    * @param activated Whether Dictation was just activated.
    */
-  private onToggleDictation_(activated: boolean): void {
+  private async onToggleDictation_(activated: boolean): Promise<void> {
     if (activated && !this.active_) {
-      this.startDictation_();
+      await this.startDictation_();
     } else {
       this.stopDictation_(/*notify=*/ false);
     }
   }
 
-  private startDictation_(): void {
+  private async startDictation_(): Promise<void> {
     this.active_ = true;
     if (this.chromeVoxEnabled_) {
       // Silence ChromeVox in case it was speaking. It can speak over the start
@@ -164,7 +164,8 @@ export class Dictation {
         Dictation.Timeouts.NO_FOCUSED_IME_MS,
         Dictation.StopReason.NO_FOCUSED_IME);
     // TODO(b/314203187): Determine if not null assertion is acceptable.
-    this.inputController_!.connect(() => this.verifyMicrophoneNotMuted_());
+    await this.inputController_!.connect(
+        () => this.verifyMicrophoneNotMuted_());
   }
 
   /**
@@ -532,7 +533,7 @@ export class Dictation {
   }
 
   private sendToOffscreen_(command: OffscreenCommandType): void {
-    chrome.runtime.sendMessage(undefined, {command});
+    Messenger.send(command);
   }
 
   /** Disables Pumpkin for tests that use regex-based command parsing. */

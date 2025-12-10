@@ -24,15 +24,6 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 
-namespace WTF {
-
-template <>
-struct CrossThreadCopier<std::optional<blink::LocalFrameToken>>
-    : public CrossThreadCopierPassThrough<
-          std::optional<blink::LocalFrameToken>> {};
-
-}  // namespace WTF
-
 namespace blink {
 
 namespace {
@@ -83,9 +74,9 @@ void PostHandleCollectedCallStackTask(
   DCHECK(Platform::Current());
   PostCrossThreadTask(
       *Platform::Current()->GetIOTaskRunner(), FROM_HERE,
-      WTF::CrossThreadBindOnce(
+      CrossThreadBindOnce(
           &JavaScriptCallStackCollector::HandleCallStackCollected,
-          WTF::CrossThreadUnretained(collector), builder.ReleaseString(),
+          CrossThreadUnretained(collector), builder.ReleaseString(),
           frame_token));
 }
 
@@ -160,9 +151,9 @@ void JavaScriptCallStackCollector::CollectJavaScriptCallStack() {
   Thread::MainThread()
       ->Scheduler()
       ->ToMainThreadScheduler()
-      ->ForEachMainThreadIsolate(WTF::BindRepeating(
-          &JavaScriptCallStackCollector::InterruptIsolateAndCollectCallStack,
-          WTF::Unretained(this)));
+      ->ForEachMainThreadIsolate([this](v8::Isolate* isolate) {
+        InterruptIsolateAndCollectCallStack(isolate);
+      });
 }
 
 }  // namespace blink

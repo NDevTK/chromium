@@ -6,21 +6,25 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
+#include "base/containers/to_value_list.h"
 #include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "base/strings/to_string.h"
 #include "base/types/expected_macros.h"
 #include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/cleanup_bundle_cache_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_install_command_helper.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/remove_obsolete_bundle_versions_cache_command.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_cache_client.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_external_install_options.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/runtime_data/chrome_iwa_runtime_data_provider.h"
+#include "chrome/browser/web_applications/isolated_web_apps/update/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
@@ -29,6 +33,7 @@
 #include "chromeos/components/kiosk/kiosk_utils.h"
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/isolated_web_apps_policy.h"
 
 namespace web_app {
 
@@ -45,6 +50,16 @@ bool HasManagedGuestSessionInPolicy() {
         return account.type == policy::DeviceLocalAccountType::kPublicSession;
       });
   return managed_gest_session != device_local_accounts.end();
+}
+
+// Return only IWAs from `iwa_ids` which are in the IWA allowlist.
+std::vector<web_package::SignedWebBundleId> FilterAllowlistedIwas(
+    std::vector<web_package::SignedWebBundleId> iwa_ids) {
+  std::erase_if(iwa_ids, [](const auto& id) {
+    return !ChromeIwaRuntimeDataProvider::GetInstance()
+                .IsManagedInstallPermitted(id.id());
+  });
+  return iwa_ids;
 }
 
 std::vector<web_package::SignedWebBundleId> GetPolicyInstalledIwasForKiosk() {
@@ -78,6 +93,15 @@ GetPolicyInstalledIwasForManagedGuestSession(const Profile& profile) {
                         &IsolatedWebAppExternalInstallOptions::web_bundle_id);
 }
 
+template <typename T, typename E>
+void AddResultToLog(const std::string& key,
+                    const base::expected<T, E>& result,
+                    base::Value::List& operations_results) {
+  std::string value = result.has_value() ? base::ToString(result.value())
+                                         : base::ToString(result.error());
+  operations_results.Append(base::Value::Dict().Set(key, std::move(value)));
+}
+
 }  // namespace
 
 IwaBundleCacheManager::IwaBundleCacheManager(Profile& profile)
@@ -96,8 +120,8 @@ void IwaBundleCacheManager::Start() {
     RemoveCacheForIwaKioskDeletedFromPolicy();
   }
 
-  if (!IsIwaBundleCacheEnabledInCurrentSession()) {
-    // TODO(crbug.com/388728155): add debug info.
+  if (!content::AreIsolatedWebAppsEnabled(&*profile_) ||
+      !IsIwaBundleCacheEnabledInCurrentSession()) {
     return;
   }
 
@@ -131,6 +155,13 @@ void IwaBundleCacheManager::OnWebAppInstallManagerDestroyed() {
   install_manager_observation_.Reset();
 }
 
+base::Value IwaBundleCacheManager::GetDebugValue() const {
+  return base::Value(
+      base::Value::Dict()
+          .Set(kBundleCacheIsEnabled, IsIwaBundleCacheEnabledInCurrentSession())
+          .Set(kOperationsResults, base::Value(operations_results_.Clone())));
+}
+
 void IwaBundleCacheManager::MaybeRemoveManagedGuestSessionCache() {
   if (HasManagedGuestSessionInPolicy()) {
     // Managed Guest Session is still in the policy, do not clean it's cache.
@@ -145,23 +176,25 @@ void IwaBundleCacheManager::MaybeRemoveManagedGuestSessionCache() {
 }
 
 void IwaBundleCacheManager::OnMaybeRemoveManagedGuestSessionCache(
-    base::expected<CleanupBundleCacheSuccess, CleanupBundleCacheError> result) {
-  // TODO(crbug.com/388728155): add result to log.
+    CleanupBundleCacheResult result) {
+  AddResultToLog(kRemoveManagedGuestSessionCache, result, operations_results_);
 }
 
 void IwaBundleCacheManager::RemoveCacheForIwaKioskDeletedFromPolicy() {
-  std::vector<web_package::SignedWebBundleId> iwas_in_policy =
-      GetPolicyInstalledIwasForKiosk();
+  std::vector<web_package::SignedWebBundleId> iwas_to_keep_in_cache =
+      FilterAllowlistedIwas(GetPolicyInstalledIwasForKiosk());
+
   provider_->scheduler().CleanupIsolatedWebAppBundleCache(
-      /*iwas_to_keep_in_cache=*/iwas_in_policy, SessionType::kKiosk,
+      iwas_to_keep_in_cache, SessionType::kKiosk,
       base::BindOnce(
           &IwaBundleCacheManager::OnRemoveCacheForIwaKioskDeletedFromPolicy,
           weak_ptr_factory_.GetWeakPtr()));
 }
 
 void IwaBundleCacheManager::OnRemoveCacheForIwaKioskDeletedFromPolicy(
-    base::expected<CleanupBundleCacheSuccess, CleanupBundleCacheError> result) {
-  // TODO(crbug.com/388728155): add result to log.
+    CleanupBundleCacheResult result) {
+  AddResultToLog(kRemoveCacheForIwaKioskDeletedFromPolicy, result,
+                 operations_results_);
 }
 
 void IwaBundleCacheManager::CleanupManagedGuestSessionOrphanedIwas() {
@@ -169,26 +202,26 @@ void IwaBundleCacheManager::CleanupManagedGuestSessionOrphanedIwas() {
       SessionType::kManagedGuestSession) {
     return;
   }
-  std::vector<web_package::SignedWebBundleId> iwas_in_policy =
-      GetPolicyInstalledIwasForManagedGuestSession(*profile_);
+  std::vector<web_package::SignedWebBundleId> iwas_to_keep_in_cache =
+      FilterAllowlistedIwas(
+          GetPolicyInstalledIwasForManagedGuestSession(*profile_));
 
   provider_->scheduler().CleanupIsolatedWebAppBundleCache(
-      /*iwas_to_keep_in_cache=*/iwas_in_policy,
-      SessionType::kManagedGuestSession,
+      iwas_to_keep_in_cache, SessionType::kManagedGuestSession,
       base::BindOnce(
           &IwaBundleCacheManager::OnCleanupManagedGuestSessionOrphanedIwas,
           weak_ptr_factory_.GetWeakPtr()));
 }
 
 void IwaBundleCacheManager::OnCleanupManagedGuestSessionOrphanedIwas(
-    base::expected<CleanupBundleCacheSuccess, CleanupBundleCacheError> result) {
-  // TODO(crbug.com/388728155): add result to log.
+    CleanupBundleCacheResult result) {
+  AddResultToLog(kCleanupManagedGuestSessionOrphanedIwas, result,
+                 operations_results_);
 }
 
 void IwaBundleCacheManager::TriggerIwaUpdateCheck(const WebApp& iwa) {
   CHECK(iwa.isolation_data());
   provider_->iwa_update_manager().MaybeDiscoverUpdatesForApp(iwa.app_id());
-  // TODO(crbug.com/388728155): add result to log.
 }
 
 void IwaBundleCacheManager::RemoveObsoleteIwaVersionsCache(const WebApp& iwa) {
@@ -202,11 +235,7 @@ void IwaBundleCacheManager::RemoveObsoleteIwaVersionsCache(const WebApp& iwa) {
 
 void IwaBundleCacheManager::OnRemoveObsoleteIwaVersionsCache(
     RemoveObsoleteBundleVersionsResult result) {
-  if (!result.has_value()) {
-    LOG(ERROR) << "Remove obsolete IWA versions from cached failed: "
-               << RemoveObsoleteBundleVersionsErrorToString(result.error());
-  }
-  // TODO(crbug.com/388728155): add result to log.
+  AddResultToLog(kRemoveObsoleteIwaVersionCache, result, operations_results_);
 }
 
 }  // namespace web_app

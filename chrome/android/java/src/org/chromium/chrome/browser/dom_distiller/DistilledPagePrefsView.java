@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.dom_distiller;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.graphics.Typeface;
 import android.os.Build;
@@ -21,7 +23,9 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 
-import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.components.dom_distiller.core.DistilledPagePrefs;
 import org.chromium.dom_distiller.mojom.FontFamily;
@@ -36,13 +40,14 @@ import java.util.Map;
  * A view which displays preferences for distilled pages.  This allows users
  * to change the theme, font size, etc. of distilled pages.
  */
+@NullMarked
 public class DistilledPagePrefsView extends LinearLayout
         implements DistilledPagePrefs.Observer, SeekBar.OnSeekBarChangeListener {
     // XML layout for View.
     private static final int VIEW_LAYOUT = R.layout.distilled_page_prefs_view;
 
     // Buttons for color mode.
-    private final Map<Integer /* Theme */, RadioButton> mColorModeButtons;
+    private final Map<Integer/* Theme= */ , RadioButton> mColorModeButtons;
 
     private final NumberFormat mPercentageFormatter;
 
@@ -68,7 +73,7 @@ public class DistilledPagePrefsView extends LinearLayout
      */
     public DistilledPagePrefsView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        mColorModeButtons = new HashMap<Integer /* Theme */, RadioButton>();
+        mColorModeButtons = new HashMap<Integer/* Theme= */ , RadioButton>();
         mPercentageFormatter = NumberFormat.getPercentInstance(Locale.getDefault());
     }
 
@@ -94,11 +99,13 @@ public class DistilledPagePrefsView extends LinearLayout
         mFontFamilySpinner = findViewById(R.id.font_family);
     }
 
+    @Initializer
     private void initDistilledPagePrefs(DistilledPagePrefs distilledPagePrefs) {
         assert distilledPagePrefs != null;
         mDistilledPagePrefs = distilledPagePrefs;
 
-        mColorModeButtons.get(mDistilledPagePrefs.getTheme()).setChecked(true);
+        var button = mColorModeButtons.get(mDistilledPagePrefs.getTheme());
+        assumeNonNull(button).setChecked(true);
         initFontFamilySpinner();
 
         // Setting initial progress on font scale seekbar.
@@ -118,7 +125,8 @@ public class DistilledPagePrefsView extends LinearLayout
         ArrayAdapter<CharSequence> adapter =
                 new ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_item, fonts) {
                     @Override
-                    public View getView(int position, View convertView, ViewGroup parent) {
+                    public View getView(
+                            int position, @Nullable View convertView, ViewGroup parent) {
                         View view = super.getView(position, convertView, parent);
                         return overrideTypeFace(view, position);
                     }
@@ -154,7 +162,7 @@ public class DistilledPagePrefsView extends LinearLayout
                     public void onItemSelected(
                             AdapterView<?> parent, View view, int family, long id) {
                         if (FontFamily.isKnownValue(family)) {
-                            RecordUserAction.record("DomDistiller.Android.FontFamilyChanged");
+                            ReaderModeMetrics.reportReaderModePrefsFontFamilyChanged(family);
                             mDistilledPagePrefs.setFontFamily(family);
                         }
                     }
@@ -217,7 +225,8 @@ public class DistilledPagePrefsView extends LinearLayout
     @Override
     public void onChangeTheme(int theme) {
         Theme.validate(theme);
-        mColorModeButtons.get(theme).setChecked(true);
+        var button = mColorModeButtons.get(theme);
+        assumeNonNull(button).setChecked(true);
     }
 
     @Override
@@ -235,7 +244,7 @@ public class DistilledPagePrefsView extends LinearLayout
         float newValue = (progress / 20f + .5f);
         setFontScaleTextView(newValue);
         if (fromUser) {
-            RecordUserAction.record("DomDistiller.Android.FontScalingChanged");
+            ReaderModeMetrics.reportReaderModePrefsFontScalingChanged(newValue);
             mDistilledPagePrefs.setFontScaling(newValue);
         }
     }
@@ -254,8 +263,8 @@ public class DistilledPagePrefsView extends LinearLayout
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        RecordUserAction.record("DomDistiller.Android.ThemeChanged");
-                        mDistilledPagePrefs.setTheme(theme);
+                        ReaderModeMetrics.reportReaderModePrefsThemeChanged(theme);
+                        mDistilledPagePrefs.setUserPrefTheme(theme);
                     }
                 });
         return button;

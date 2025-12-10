@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.auxiliary_search;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -25,8 +24,6 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.TimeUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -36,7 +33,6 @@ import java.util.List;
 /** Unit tests for {@link AuxiliarySearchTopSiteProviderBridge} */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@Features.EnableFeatures({ChromeFeatureList.ANDROID_APP_INTEGRATION})
 public class AuxiliarySearchTopSiteProviderBridgeUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -56,7 +52,7 @@ public class AuxiliarySearchTopSiteProviderBridgeUnitTest {
         when(mProfile.isOffTheRecord()).thenReturn(false);
         AuxiliarySearchTopSiteProviderBridgeJni.setInstanceForTesting(
                 mMockAuxiliarySearchTopSiteProviderBridgeJni);
-        when(mMockAuxiliarySearchTopSiteProviderBridgeJni.init(any(), eq(mProfile)))
+        when(mMockAuxiliarySearchTopSiteProviderBridgeJni.init(eq(mProfile)))
                 .thenReturn(NATIVE_BRIDGE);
 
         mBridge = new AuxiliarySearchTopSiteProviderBridge(mProfile);

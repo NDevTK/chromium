@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -20,7 +21,7 @@
 #include "components/services/app_service/public/cpp/icon_types.h"
 #include "components/services/app_service/public/cpp/intent.h"
 #include "ui/base/accelerators/accelerator.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 class Profile;
 
@@ -136,7 +137,7 @@ class SharesheetService : public KeyedService {
                             LaunchSource source,
                             DeliveredCallback delivered_callback,
                             CloseCallback close_callback,
-                            int num_actions_to_add);
+                            std::vector<::sharesheet::ShareActionType> actions);
   SharesheetUiDelegate* GetUiDelegateForTesting(
       gfx::NativeWindow native_window);
   static void SetSelectedAppForTesting(const std::u16string& target_name);

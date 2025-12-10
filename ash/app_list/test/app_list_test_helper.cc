@@ -48,7 +48,7 @@ constexpr gfx::Size kIconImageSize(56, 56);
 // Returns true if a bubble app list should be used under the current mode.
 bool ShouldUseBubbleAppList() {
   // A bubble app list should be used only when ot is in clamshell mode.
-  return !Shell::Get()->IsInTabletMode();
+  return !display::Screen::Get()->InTabletMode();
 }
 
 }  // namespace
@@ -367,11 +367,6 @@ SearchResultPageAnchoredDialog* AppListTestHelper::GetBubbleSearchPageDialog() {
   return app_list_controller_->bubble_presenter_for_test()
       ->bubble_view_for_test()
       ->search_page_dialog_controller_->dialog();
-}
-AppListBubbleAssistantPage* AppListTestHelper::GetBubbleAssistantPage() {
-  return app_list_controller_->bubble_presenter_for_test()
-      ->bubble_view_for_test()
-      ->assistant_page_;
 }
 
 SearchModel::SearchResults* AppListTestHelper::GetSearchResults() {

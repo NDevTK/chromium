@@ -86,8 +86,7 @@ public class UmaSessionStats {
         if (connectedDevices.contains(InputDevice.SOURCE_MOUSE)) {
             UmaSessionStatsJni.get().recordPageLoadedWithMouse();
         }
-        if (EdgeToEdgeUtils.isChromeEdgeToEdgeFeatureEnabled()
-                && EdgeToEdgeUtils.isPageOptedIntoEdgeToEdge(tab)) {
+        if (EdgeToEdgeUtils.isPageOptedIntoEdgeToEdge(tab)) {
             UmaSessionStatsJni.get().recordPageLoadedWithToEdge();
         }
 
@@ -115,8 +114,8 @@ public class UmaSessionStats {
      */
     public void startNewSession(
             @ActivityType int activityType,
-            TabModelSelector tabModelSelector,
-            AndroidPermissionDelegate permissionDelegate) {
+            @Nullable TabModelSelector tabModelSelector,
+            @Nullable AndroidPermissionDelegate permissionDelegate) {
         ensureNativeInitialized();
         mTabbedSessionContainedGoogleSearch = false;
         mCurrentActivityType = activityType;
@@ -158,7 +157,7 @@ public class UmaSessionStats {
                     };
         }
 
-        UmaSessionStatsJni.get().umaResumeSession(sNativeUmaSessionStats, UmaSessionStats.this);
+        UmaSessionStatsJni.get().umaResumeSession(sNativeUmaSessionStats);
         updatePreferences();
         updateMetricsServiceState();
         DefaultBrowserInfoUmaRecorder.logDefaultBrowserStats();
@@ -186,7 +185,11 @@ public class UmaSessionStats {
                     mTabbedSessionContainedGoogleSearch);
         }
 
-        UmaSessionStatsJni.get().umaEndSession(sNativeUmaSessionStats, UmaSessionStats.this);
+        UmaSessionStatsJni.get().umaEndSession(sNativeUmaSessionStats);
+    }
+
+    public void flushSession() {
+        UmaSessionStatsJni.get().flushSession(sNativeUmaSessionStats);
     }
 
     /**
@@ -312,9 +315,11 @@ public class UmaSessionStats {
 
         void updateMetricsServiceState(boolean mayUpload);
 
-        void umaResumeSession(long nativeUmaSessionStats, UmaSessionStats caller);
+        void umaResumeSession(long nativeUmaSessionStats);
 
-        void umaEndSession(long nativeUmaSessionStats, UmaSessionStats caller);
+        void umaEndSession(long nativeUmaSessionStats);
+
+        void flushSession(long nativeUmaSessionStats);
 
         void registerExternalExperiment(int[] experimentIds, boolean overrideExistingIds);
 

@@ -49,6 +49,22 @@ void ServiceWorkerState::Reset() {
   worker_id_.reset();
   browser_state_ = BrowserState::kNotActive;
   renderer_state_ = RendererState::kNotActive;
+
+  // NOTE: `worker_starting_` is intentionally NOT reset here.
+  //
+  // `Reset()` can be called when a worker stops, including when it stops in the
+  // middle of a start attempt. In that case, `content::ServiceWorkerVersion`
+  // may try to restart the worker to fulfill the pending start request(s)
+  // (see `content::ServiceWorkerVersion::OnStoppedInternal`).
+  //
+  // `worker_starting_` must remain true to prevent the extensions layer from
+  // issuing a new start request while the content layer's automatic restart
+  // is in flight. Resetting it here can create a race condition where two
+  // `DidStartWorkerForScope` callbacks are processed concurrently, leading
+  // to a crash (see crbug.com/452178846).
+  //
+  // The flag is correctly cleared only upon success (in
+  // `NotifyObserversIfReady`) or failure (in `DidStartWorkerFail`).
 }
 
 bool ServiceWorkerState::IsStarting() const {
@@ -146,7 +162,7 @@ void ServiceWorkerState::DidStartWorkerFail(
   }
 }
 
-void ServiceWorkerState::DidStartServiceWorkerContext(
+void ServiceWorkerState::RendererDidStartServiceWorkerContext(
     const SequencedContextId& context_id,
     const WorkerId& worker_id) {
   DCHECK_NE(RendererState::kActive, renderer_state())
@@ -173,13 +189,40 @@ void ServiceWorkerState::NotifyObserversIfReady(
   }
 }
 
-void ServiceWorkerState::OnStopping(
-    int64_t version_id,
-    const content::ServiceWorkerRunningInfo& worker_info) {
+void ServiceWorkerState::RendererDidStopServiceWorkerContext(
+    const WorkerId& worker_id,
+    const GURL& scope) {
+  if (worker_id_ != worker_id) {
+    // We can see `RendererDidStopServiceWorkerContext` right after
+    // `RendererDidInitializeServiceWorkerContext` and without
+    // `RendererDidStartServiceWorkerContext`.
+    return;
+  }
+
+  if (renderer_state() != RendererState::kActive) {
+    // We can see `RendererDidStopServiceWorkerContext` before or after
+    // `OnStoppingSync`.
+    return;
+  }
+
+  HandleStop(worker_id_->version_id, scope);
+}
+
+void ServiceWorkerState::OnStoppingSync(int64_t version_id, const GURL& scope) {
   // TODO(crbug.com/40936639): Confirming this is true in order to allow for
   // synchronous notification of this status change.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  HandleStop(version_id, scope);
+}
 
+void ServiceWorkerState::OnStoppedSync(int64_t version_id, const GURL& scope) {
+  // If `OnStoppingSync` was not called for some reason, try again here.
+  if (browser_state_ != BrowserState::kNotActive) {
+    OnStoppingSync(version_id, scope);
+  }
+}
+
+void ServiceWorkerState::HandleStop(int64_t version_id, const GURL& scope) {
   // Check that the version ID of the worker that is stopping refers to an
   // extension service worker that is tracked by this class. Service workers
   // registered for subscopes via `navigation.serviceWorker.register()` rather
@@ -194,16 +237,7 @@ void ServiceWorkerState::OnStopping(
   }
 
   for (auto& observer : observers_) {
-    observer.OnWorkerStop(version_id, worker_info);
-  }
-}
-
-void ServiceWorkerState::OnStopped(
-    int64_t version_id,
-    const content::ServiceWorkerRunningInfo& worker_info) {
-  // If `OnStopping` was not called for some reason, try again here.
-  if (browser_state_ != BrowserState::kNotActive) {
-    OnStopping(version_id, worker_info);
+    observer.OnWorkerStop(version_id, scope);
   }
 }
 

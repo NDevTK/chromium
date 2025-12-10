@@ -10,7 +10,6 @@
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/post_delayed_memory_reduction_task.h"
 #include "base/metrics/field_trial_params.h"
@@ -55,7 +54,7 @@ constexpr base::TimeDelta kThrottlingDelayAfterBackgrounding =
 // etc. after the renderer has been backgrounded. This is used only if
 // background suspension is enabled.
 constexpr base::TimeDelta kDefaultDelayForBackgroundTabFreezing =
-    base::Minutes(5);
+    base::Minutes(1);
 
 // Duration of a throttled wake up.
 constexpr base::TimeDelta kThrottledWakeUpDuration = base::Milliseconds(3);
@@ -297,12 +296,6 @@ void PageSchedulerImpl::SetPageBackForwardCached(
                         "PageSchedulerImpl::SetPageBackForwardCached_Restore");
     stored_in_back_forward_cache_timestamp_ = base::TimeTicks();
   } else {
-    // When storing a page in BFCache, call this function before calling
-    // SetPageFrozen(). The policy update triggered by SetPageFrozen() depends
-    // on the state set here to keep BFCache-runnable tasks from being frozen.
-    // TODO(crbug.com/427130212): Remove this CHECK once the lifecycle state
-    // logic is refactored to make this dependency unnecessary.
-    CHECK(!is_frozen_);
     TRACE_EVENT_INSTANT("navigation",
                         "PageSchedulerImpl::SetPageBackForwardCached_Store");
     stored_in_back_forward_cache_timestamp_ =
@@ -315,6 +308,28 @@ void PageSchedulerImpl::SetPageBackForwardCached(
         base::BindRepeating(&PageSchedulerImpl::SetUpIPCTaskDetection,
                             GetWeakPtr()),
         GetTimeToDelayIPCTrackingWhileStoredInBackForwardCache());
+    // If the page is already frozen, the subsequent call to SetPageFrozen() is
+    // a no-op and won't trigger a policy update. The update must be triggered
+    // here to ensure policies are correctly updated for the BFCache state.
+    // TODO(crbug.com/406420935): This policy update is needed for BFCache
+    // eviction-triggering messages. The flag allows us to measure the
+    // performance cost of introducing the update here.
+    if (base::FeatureList::IsEnabled(features::kBFCacheWithSharedWorker) &&
+        is_frozen_) {
+      const bool has_bfcache_runnable_queue = std::ranges::any_of(
+          frame_schedulers_, [](const FrameSchedulerImpl* frame_scheduler) {
+            return std::ranges::any_of(
+                frame_scheduler->frame_task_queue_controller_
+                    ->GetAllTaskQueuesAndVoters(),
+                [](const auto& task_queue_and_voter) {
+                  return task_queue_and_voter.first->CanRunInBFCache();
+                });
+          });
+      if (has_bfcache_runnable_queue) {
+        PolicyUpdater policy_updater;
+        policy_updater.UpdatePagePolicy(this);
+      }
+    }
   }
 }
 
@@ -332,11 +347,8 @@ bool PageSchedulerImpl::IsMainFrameLocal() const {
 }
 
 bool PageSchedulerImpl::IsLoading() const {
-  if (base::FeatureList::IsEnabled(
-          features::kLoadingPhaseBufferTimeAfterFirstMeaningfulPaint)) {
-    return IsMainFrameLoading();
-  }
-  return IsWaitingForMainFrameContentfulPaint();
+  return IsWaitingForMainFrameContentfulPaint() ||
+         IsWaitingForMainFrameMeaningfulPaint();
 }
 
 bool PageSchedulerImpl::IsOrdinary() const {
@@ -362,10 +374,11 @@ void PageSchedulerImpl::RegisterFrameSchedulerImpl(
 
 std::unique_ptr<blink::FrameScheduler> PageSchedulerImpl::CreateFrameScheduler(
     FrameScheduler::Delegate* delegate,
+    const LocalFrameToken& frame_token,
     bool is_in_embedded_frame_tree,
     FrameScheduler::FrameType frame_type) {
   auto frame_scheduler = std::make_unique<FrameSchedulerImpl>(
-      this, delegate, is_in_embedded_frame_tree, frame_type);
+      this, delegate, frame_token, is_in_embedded_frame_tree, frame_type);
   RegisterFrameSchedulerImpl(frame_scheduler.get());
   return frame_scheduler;
 }
@@ -493,14 +506,6 @@ bool PageSchedulerImpl::IsWaitingForMainFrameMeaningfulPaint() const {
       frame_schedulers_, [](const FrameSchedulerImpl* fs) {
         return fs->IsWaitingForMeaningfulPaint() &&
                !fs->IsInEmbeddedFrameTree() &&
-               fs->GetFrameType() == FrameScheduler::FrameType::kMainFrame;
-      });
-}
-
-bool PageSchedulerImpl::IsMainFrameLoading() const {
-  return std::ranges::any_of(
-      frame_schedulers_, [](const FrameSchedulerImpl* fs) {
-        return fs->IsLoading() && !fs->IsInEmbeddedFrameTree() &&
                fs->GetFrameType() == FrameScheduler::FrameType::kMainFrame;
       });
 }

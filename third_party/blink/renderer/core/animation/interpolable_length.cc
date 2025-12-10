@@ -96,8 +96,6 @@ CSSValueID InterpolableLength::LengthTypeToCSSValueID(Length::Type lt) {
       return CSSValueID::kFitContent;
     case Length::Type::kStretch:
       return CSSValueID::kStretch;
-    case Length::Type::kFillAvailable:
-      return CSSValueID::kWebkitFillAvailable;
     case Length::Type::kContent:  // only valid for flex-basis.
       return CSSValueID::kContent;
     default:
@@ -118,10 +116,9 @@ Length::Type InterpolableLength::CSSValueIDToLengthType(CSSValueID id) {
     case CSSValueID::kFitContent:
     case CSSValueID::kWebkitFitContent:
       return Length::Type::kFitContent;
+    case CSSValueID::kWebkitFillAvailable:
     case CSSValueID::kStretch:
       return Length::Type::kStretch;
-    case CSSValueID::kWebkitFillAvailable:
-      return Length::Type::kFillAvailable;
     case CSSValueID::kContent:  // only valid for flex-basis.
       return Length::Type::kContent;
     default:
@@ -193,6 +190,17 @@ bool InterpolableLength::CanMergeValues(const InterpolableValue* start,
                                         const InterpolableValue* end) {
   const auto& start_length = To<InterpolableLength>(*start);
   const auto& end_length = To<InterpolableLength>(*end);
+
+  // Some properties allow multiple value types that cannot be interpolated.
+  // For example, stroke with may be <length> <percentage> or <number>. The
+  // use as a number is non-standard, but supported. Interpolation relies on
+  // being able to add fractional contributions of the start and end value,
+  // which in turn requires compatible types.
+  CSSMathType start_type(start_length.AsExpression());
+  CSSMathType end_type(end_length.AsExpression());
+  if (!(start_type + end_type).IsValid()) {
+    return false;
+  }
 
   // Implement the rules in
   // https://drafts.csswg.org/css-values-5/#interp-calc-size, but

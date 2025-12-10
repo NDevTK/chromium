@@ -13,7 +13,10 @@
 #include "chrome/common/extensions/api/windows.h"
 #include "components/sessions/core/session_id.h"
 #include "extensions/browser/extension_function.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/base/base_window.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -51,6 +54,15 @@ void WindowControllerList::NotifyWindowBoundsChanged(WindowController* window) {
   }
 }
 
+void WindowControllerList::NotifyWindowFocusChanged(WindowController* window,
+                                                    bool has_focus) {
+  if (base::Contains(windows_, window)) {
+    for (auto& observer : observers_) {
+      observer.OnWindowFocusChanged(window, has_focus);
+    }
+  }
+}
+
 void WindowControllerList::AddObserver(WindowControllerListObserver* observer) {
   observers_.AddObserver(observer);
 }
@@ -74,9 +86,6 @@ WindowController* WindowControllerList::FindWindowForFunctionByIdWithFilter(
   return nullptr;
 }
 
-#if !BUILDFLAG(IS_ANDROID)
-// TODO(crbug.com/371432155): Support on Android, specifically when
-// windows_util::CalledFromChildWindow() is available on Android.
 WindowController* WindowControllerList::CurrentWindowForFunction(
     ExtensionFunction* function) const {
   return CurrentWindowForFunctionWithFilter(function,
@@ -105,15 +114,18 @@ WindowController* WindowControllerList::CurrentWindowForFunctionWithFilter(
       return controller;
     }
 
+#if !BUILDFLAG(IS_ANDROID)
+    // TODO(crbug.com/371432155): Support on Android.
+    // windows_util::CalledFromChildWindow() checks native widgets for parents.
     if (windows_util::CalledFromChildWindow(function, controller)) {
       parent_window = controller;
     }
+#endif
 
     last_window = controller;
   }
 
   return parent_window ? parent_window : last_window;
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace extensions

@@ -4,6 +4,7 @@
 
 #include "components/autofill/core/browser/metrics/payments/bnpl_metrics.h"
 
+#include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
@@ -40,21 +41,21 @@ class BnplMetricsTest : public AutofillMetricsBaseTest,
 TEST_F(BnplMetricsTest, LogBnplPrefToggled) {
   base::HistogramTester histogram_tester;
 
-  ASSERT_TRUE(autofill_client_->GetPrefs()->GetBoolean(
+  ASSERT_TRUE(autofill_client().GetPrefs()->GetBoolean(
       autofill::prefs::kAutofillBnplEnabled));
   histogram_tester.ExpectBucketCount("Autofill.SettingsPage.BnplToggled", true,
                                      0);
   histogram_tester.ExpectBucketCount("Autofill.SettingsPage.BnplToggled", false,
                                      0);
 
-  autofill_client_->GetPrefs()->SetBoolean(
+  autofill_client().GetPrefs()->SetBoolean(
       autofill::prefs::kAutofillBnplEnabled, false);
   histogram_tester.ExpectBucketCount("Autofill.SettingsPage.BnplToggled", true,
                                      0);
   histogram_tester.ExpectBucketCount("Autofill.SettingsPage.BnplToggled", false,
                                      1);
 
-  autofill_client_->GetPrefs()->SetBoolean(
+  autofill_client().GetPrefs()->SetBoolean(
       autofill::prefs::kAutofillBnplEnabled, true);
   histogram_tester.ExpectBucketCount("Autofill.SettingsPage.BnplToggled", true,
                                      1);
@@ -92,27 +93,39 @@ TEST_P(BnplMetricsTest, LogBnplTosDialogShown) {
 }
 
 TEST_F(BnplMetricsTest,
-       LogBnplSuggestionNotShownReason_AmountExtractionFailure) {
+       LogBnplSuggestionUnavailableReason_AmountExtractionFailure) {
   base::HistogramTester histogram_tester;
 
-  LogBnplSuggestionNotShownReason(
-      BnplSuggestionNotShownReason::kAmountExtractionFailure);
+  LogBnplSuggestionUnavailableReason(
+      BnplSuggestionUnavailableReason::kAmountExtractionFailure);
 
   histogram_tester.ExpectUniqueSample(
-      "Autofill.Bnpl.SuggestionNotShownReason",
-      BnplSuggestionNotShownReason::kAmountExtractionFailure, 1);
+      "Autofill.Bnpl.SuggestionUnavailableReason",
+      BnplSuggestionUnavailableReason::kAmountExtractionFailure, 1);
 }
 
 TEST_F(BnplMetricsTest,
-       LogBnplSuggestionNotShownReason_CheckoutAmountNotSupported) {
+       LogBnplSuggestionUnavailableReason_CheckoutAmountNotSupported) {
   base::HistogramTester histogram_tester;
 
-  LogBnplSuggestionNotShownReason(
-      BnplSuggestionNotShownReason::kCheckoutAmountNotSupported);
+  LogBnplSuggestionUnavailableReason(
+      BnplSuggestionUnavailableReason::kCheckoutAmountNotSupported);
 
   histogram_tester.ExpectUniqueSample(
-      "Autofill.Bnpl.SuggestionNotShownReason",
-      BnplSuggestionNotShownReason::kCheckoutAmountNotSupported, 1);
+      "Autofill.Bnpl.SuggestionUnavailableReason",
+      BnplSuggestionUnavailableReason::kCheckoutAmountNotSupported, 1);
+}
+
+TEST_F(BnplMetricsTest,
+       BnplSuggestionUnavailableReason_AmountExtractionTimeout) {
+  base::HistogramTester histogram_tester;
+
+  LogBnplSuggestionUnavailableReason(
+      BnplSuggestionUnavailableReason::kAmountExtractionTimeout);
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.Bnpl.SuggestionUnavailableReason",
+      BnplSuggestionUnavailableReason::kAmountExtractionTimeout, 1);
 }
 
 TEST_F(BnplMetricsTest, LogSelectBnplIssuerDialogResult_Cancelled) {
@@ -276,7 +289,8 @@ INSTANTIATE_TEST_SUITE_P(,
                          BnplMetricsTest,
                          testing::Values(IssuerId::kBnplAffirm,
                                          IssuerId::kBnplZip,
-                                         IssuerId::kBnplAfterpay));
+                                         IssuerId::kBnplAfterpay,
+                                         IssuerId::kBnplKlarna));
 
 class BnplFormEventsMetricsTest : public AutofillMetricsBaseTest,
                                   public testing::Test {
@@ -295,8 +309,7 @@ class BnplFormEventsMetricsTest : public AutofillMetricsBaseTest,
                                       {.role = CREDIT_CARD_EXP_2_DIGIT_YEAR}},
                            .action = ""});
 
-    personal_data().test_payments_data_manager().AddBnplIssuer(
-        test::GetTestLinkedBnplIssuer());
+    test_paydm().AddBnplIssuer(test::GetTestLinkedBnplIssuer());
   }
 
   void TearDown() override { TearDownHelper(); }
@@ -313,9 +326,10 @@ TEST_F(BnplFormEventsMetricsTest, SuggestionsShownOnBnplEligibleMerchant) {
   autofill_manager().OnAskForValuesToFillTest(
       form(), form().fields().back().global_id());
 
-  ON_CALL(*static_cast<MockAutofillOptimizationGuide*>(
-              autofill_manager().client().GetAutofillOptimizationGuide()),
-          IsUrlEligibleForBnplIssuer)
+  ON_CALL(
+      *static_cast<MockAutofillOptimizationGuideDecider*>(
+          autofill_manager().client().GetAutofillOptimizationGuideDecider()),
+      IsUrlEligibleForBnplIssuer)
       .WillByDefault(testing::Return(true));
 
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields().size() - 1,
@@ -338,9 +352,10 @@ TEST_F(BnplFormEventsMetricsTest, BnplSuggestionsNotShownDueToUrl) {
   autofill_manager().OnAskForValuesToFillTest(
       form(), form().fields().back().global_id());
 
-  ON_CALL(*static_cast<MockAutofillOptimizationGuide*>(
-              autofill_manager().client().GetAutofillOptimizationGuide()),
-          IsUrlEligibleForBnplIssuer)
+  ON_CALL(
+      *static_cast<MockAutofillOptimizationGuideDecider*>(
+          autofill_manager().client().GetAutofillOptimizationGuideDecider()),
+      IsUrlEligibleForBnplIssuer)
       .WillByDefault(testing::Return(false));
 
   DidShowAutofillSuggestions(form(), /*field_index=*/form().fields().size() - 1,
@@ -383,6 +398,17 @@ TEST_F(BnplFormEventsMetricsTest, FormFilledOnceWithZip) {
       /*expected_count=*/1);
 }
 
+TEST_F(BnplFormEventsMetricsTest, FormFilledOnceWithKlarna) {
+  base::HistogramTester histogram_tester;
+
+  LogFormFilledWithBnplVcn(BnplIssuer::IssuerId::kBnplKlarna);
+
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.CreditCard.Bnpl",
+      /*sample=*/BnplFormEvent::kFormFilledWithKlarna,
+      /*expected_count=*/1);
+}
+
 TEST_F(BnplFormEventsMetricsTest, FormFilledOnceWithAfterpay) {
   base::HistogramTester histogram_tester;
 
@@ -413,6 +439,17 @@ TEST_F(BnplFormEventsMetricsTest, FormSubmittedOnceWithZip) {
   histogram_tester.ExpectBucketCount(
       "Autofill.FormEvents.CreditCard.Bnpl",
       /*sample=*/BnplFormEvent::kFormSubmittedWithZip,
+      /*expected_count=*/1);
+}
+
+TEST_F(BnplFormEventsMetricsTest, FormSubmittedOnceWithKlarna) {
+  base::HistogramTester histogram_tester;
+
+  LogFormSubmittedWithBnplVcn(BnplIssuer::IssuerId::kBnplKlarna);
+
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.CreditCard.Bnpl",
+      /*sample=*/BnplFormEvent::kFormSubmittedWithKlarna,
       /*expected_count=*/1);
 }
 

@@ -17,6 +17,7 @@
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -195,6 +196,10 @@ void WebTestBrowserMainRunner::Initialize() {
   // Always disable the unsandbox GPU process for DX12 Info collection to avoid
   // interference. This GPU process is launched 120 seconds after chrome starts.
   command_line.AppendSwitch(switches::kDisableGpuProcessForDX12InfoCollection);
+
+  // Disable IgnoreDuplicateNavs by default to ensure tests run with predictable
+  // navigation behavior and don't have navigations unintentionally ignored.
+  command_line.AppendSwitch(switches::kDisableIgnoreDuplicateNavsForTesting);
 
   command_line.AppendSwitch(switches::kEnableGpuBenchmarking);
   command_line.AppendSwitch(switches::kEnableLogging);

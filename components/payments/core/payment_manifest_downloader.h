@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "url/gurl.h"
@@ -139,8 +139,7 @@ class PaymentManifestDownloader {
   // Information about an ongoing download request.
   struct Download {
     enum class Type {
-      LINK_HEADER_WITH_FALLBACK_TO_RESPONSE_BODY,
-      FALLBACK_TO_RESPONSE_BODY,
+      LINK_HEADER,
       RESPONSE_BODY,
     };
 

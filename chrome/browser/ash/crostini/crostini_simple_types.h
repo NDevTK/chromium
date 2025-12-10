@@ -30,6 +30,7 @@ namespace crostini {
 // scripts in
 // https://plx.corp.google.com/home2/home/collections/c16e3c1474497b821
 // and CrostiniResultString in crostini_simple_types.cc.
+// LINT.IfChange
 enum class CrostiniResult {
   SUCCESS = 0,
   // DBUS_ERROR = 1,
@@ -121,10 +122,12 @@ enum class CrostiniResult {
   UNINSTALL_BAGUETTE_FAILED = 86,
   INSTALL_BAGUETTE_CANCELLED = 87,
   DOWNLOAD_BAGUETTE_FAILED = 88,
-  kMaxValue = DOWNLOAD_BAGUETTE_FAILED,
+  DISK_IMAGE_BAD_IMAGE = 89,
+  kMaxValue = DISK_IMAGE_BAD_IMAGE,
   // When adding a new value, check you've followed the steps in the comment at
   // the top of this enum.
 };
+// LINT.ThenChange(/tools/metrics/histograms/metadata/crostini/enums.xml,crostini_simple_types.cc)
 
 // Returns the string name of the CrostiniResult.
 const char* CrostiniResultString(const CrostiniResult res);
@@ -186,6 +189,9 @@ enum class ContainerVersion {
 struct VmInfo {
   VmState state;
   vm_tools::concierge::VmInfo info;
+  // Record if a container started signal has been received in current run of
+  // a vm. VMs without a container can also emit such as signal, e.g. Baguette.
+  bool container_started;
 };
 
 struct StreamingExportStatus {

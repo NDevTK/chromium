@@ -175,10 +175,9 @@ void MediaStreamDevicePermissionContext::NotifyPermissionSet(
     // status may have changed in the meantime.
     auto previous_content_setting = GetContentSettingStatusInternal(
         rfh, request_data.requesting_origin, request_data.embedding_origin);
-    auto new_content_setting = content_settings::ValueToContentSetting(
+    auto new_content_setting = std::get<ContentSetting>(
         request_data.resolver->ComputePermissionDecisionResult(
-            base::Value(previous_content_setting), decision,
-            request_data.prompt_options));
+            previous_content_setting, decision, request_data.prompt_options));
 
     UpdateContentSetting(request_data, new_content_setting,
                          decision == PermissionDecision::kAllowThisTime);
@@ -281,8 +280,7 @@ void MediaStreamDevicePermissionContext::OnAndroidPermissionDecided(
 }
 
 void MediaStreamDevicePermissionContext::UpdateTabContext(
-    const permissions::PermissionRequestID& id,
-    const GURL& requesting_origin,
+    const permissions::PermissionRequestData& request_data,
     bool allowed) {
   // See the comment in `NotifyPermissionSet()` for context on why this method
   // should be empty.

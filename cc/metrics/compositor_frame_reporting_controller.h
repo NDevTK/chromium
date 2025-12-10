@@ -21,6 +21,7 @@
 #include "cc/metrics/frame_sorter.h"
 #include "cc/metrics/predictor_jank_tracker.h"
 #include "cc/metrics/scroll_jank_dropped_frame_tracker.h"
+#include "cc/metrics/scroll_jank_v4_processor.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
 namespace ukm {
@@ -28,7 +29,7 @@ class UkmRecorder;
 }
 
 namespace viz {
-struct FrameTimingDetails;
+class FrameTimingDetails;
 }
 
 namespace cc {
@@ -56,7 +57,8 @@ class CC_EXPORT CompositorFrameReportingController {
 
   CompositorFrameReportingController(bool should_report_histograms,
                                      bool should_report_ukm,
-                                     int layer_tree_host_id);
+                                     int layer_tree_host_id,
+                                     bool is_trees_in_viz_client);
   virtual ~CompositorFrameReportingController();
 
   CompositorFrameReportingController(
@@ -65,7 +67,8 @@ class CC_EXPORT CompositorFrameReportingController {
       const CompositorFrameReportingController&) = delete;
 
   // Events to signal Beginning/Ending of phases.
-  virtual void WillBeginImplFrame(const viz::BeginFrameArgs& args);
+  virtual void WillBeginImplFrame(const viz::BeginFrameArgs& args,
+                                  bool will_throttle_main);
   virtual void WillBeginMainFrame(const viz::BeginFrameArgs& args);
   virtual void BeginMainFrameAborted(const viz::BeginFrameId& id,
                                      CommitEarlyOutReason reason);
@@ -80,13 +83,16 @@ class CC_EXPORT CompositorFrameReportingController {
       const viz::BeginFrameId& last_activated_frame_id);
   virtual void DidNotProduceFrame(const viz::BeginFrameId& id,
                                   FrameSkippedReason skip_reason);
-  virtual void OnFinishImplFrame(const viz::BeginFrameId& id);
+  virtual void OnFinishImplFrame(const viz::BeginFrameId& id,
+                                 bool waiting_for_main);
   virtual void DidPresentCompositorFrame(
       uint32_t frame_token,
       const viz::FrameTimingDetails& details);
   void OnStoppedRequestingBeginFrames();
 
-  void NotifyReadyToCommit(std::unique_ptr<BeginMainFrameMetrics> details);
+  // Virtual to stub out CFRC in Viz for TreesInViz.
+  virtual void NotifyReadyToCommit(
+      std::unique_ptr<BeginMainFrameMetrics> details);
 
   void InitializeUkmManager(std::unique_ptr<ukm::UkmRecorder> recorder);
   void SetSourceId(ukm::SourceId source_id);
@@ -155,6 +161,10 @@ class CC_EXPORT CompositorFrameReportingController {
     return next_activate_has_invalidation_;
   }
 
+  void set_trees_in_viz_client_for_testing(bool new_value) {
+    is_trees_in_viz_client_ = new_value;
+  }
+
  private:
   using SmoothThread = CompositorFrameReporter::SmoothThread;
   using SmoothEffectDrivingThread =
@@ -184,9 +194,8 @@ class CC_EXPORT CompositorFrameReportingController {
       bool next_reporter_from_same_frame);
   void StoreEventMetricsFromDroppedFrames(CompositorFrameReporter& reporter,
                                           uint32_t frame_token);
-  void CreateReportersForDroppedFrames(
-      const viz::BeginFrameArgs& old_args,
-      const viz::BeginFrameArgs& new_args) const;
+  void CreateReportersForDroppedFrames(const viz::BeginFrameArgs& old_args,
+                                       const viz::BeginFrameArgs& new_args);
 
   // The arg is a reference to the unique_ptr, because depending on the state
   // that reporter is in, its ownership might be pass or not.
@@ -195,6 +204,7 @@ class CC_EXPORT CompositorFrameReportingController {
 
   const bool should_report_histograms_;
   const int layer_tree_host_id_;
+  bool is_trees_in_viz_client_;
 
   viz::BeginFrameId last_submitted_frame_id_;
 
@@ -214,6 +224,7 @@ class CC_EXPORT CompositorFrameReportingController {
   std::unique_ptr<ScrollJankDroppedFrameTracker>
       scroll_jank_dropped_frame_tracker_;
   std::unique_ptr<ScrollJankUkmReporter> scroll_jank_ukm_reporter_;
+  std::unique_ptr<ScrollJankV4Processor> scroll_jank_v4_processor_;
 
   std::array<std::unique_ptr<CompositorFrameReporter>,
              PipelineStage::kNumPipelineStages>

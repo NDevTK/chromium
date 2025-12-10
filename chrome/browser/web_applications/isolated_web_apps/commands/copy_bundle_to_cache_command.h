@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_WEB_APPLICATIONS_ISOLATED_WEB_APPS_COMMANDS_COPY_BUNDLE_TO_CACHE_COMMAND_H_
 
 #include "base/types/expected.h"
-#include "base/version.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/commands/web_app_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
@@ -34,13 +33,24 @@ class CopyBundleToCacheSuccess {
   base::FilePath cached_bundle_path_;
 };
 
+// These are used in histograms, do not remove/renumber entries. If you're
+// adding to this enum with the intention that it will be logged, update the
+// `IsolatedWebAppCopyBundleToCacheError` enum listing in
+// tools/metrics/histograms/metadata/webapps/enums.xml.
 enum class CopyBundleToCacheError {
-  kSystemShutdown,
-  kAppNotInstalled,
-  kNotIwa,
-  kCannotExtractOwnedBundlePath,
-  kFailedToCreateDir,
-  kFailedToCopyFile,
+  // The system was shut down before the command could complete.
+  kSystemShutdown = 0,
+  // The app is not installed.
+  kAppNotInstalled = 1,
+  // The app is not an Isolated Web App.
+  kNotIwa = 2,
+  // The app is not an owned bundle, so its path cannot be extracted.
+  kCannotExtractOwnedBundlePath = 3,
+  // Failed to create the destination directory in the cache.
+  kFailedToCreateDir = 4,
+  // Failed to copy the bundle file to the cache.
+  kFailedToCopyFile = 5,
+  kMaxValue = kFailedToCopyFile,
 };
 
 std::string CopyBundleToCacheErrorToString(CopyBundleToCacheError error);

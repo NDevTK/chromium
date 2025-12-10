@@ -72,6 +72,12 @@ std::string GetRequestTypeName(
       return "FullscreenApi";
     case safe_browsing::mojom::ClientSideDetectionType::kPasswordProtection:
       return "PasswordProtection";
+    case safe_browsing::mojom::ClientSideDetectionType::kClipboardCopyApi:
+      return "ClipboardCopyApi";
+    case safe_browsing::mojom::ClientSideDetectionType::kCreditCardForm:
+      return "CreditCardForm";
+    case safe_browsing::mojom::ClientSideDetectionType::kImageEmbeddingMatch:
+      return "ImageEmbeddingMatch";
   }
 }
 
@@ -121,8 +127,6 @@ void PhishingClassifierDelegate::StartPhishingDetection(
     const GURL& url,
     safe_browsing::mojom::ClientSideDetectionType request_type,
     StartPhishingDetectionCallback callback) {
-  RecordEvent(SBPhishingClassifierEvent::kPhishingDetectionRequested);
-
   if (!callback_.is_null())
     std::move(callback_).Run(mojom::PhishingDetectorResult::CANCELLED,
                              std::nullopt);
@@ -131,6 +135,9 @@ void PhishingClassifierDelegate::StartPhishingDetection(
   last_url_received_from_browser_ = StripRef(url);
   callback_ = std::move(callback);
   request_type_ = request_type;
+  classifier_->SetClientSideDetectionType(request_type);
+  RecordEvent(SBPhishingClassifierEvent::kPhishingDetectionRequested);
+
   // Start classifying the current page if all conditions are met.
   // See MaybeStartClassification() for details.
   MaybeStartClassification();
@@ -145,24 +152,6 @@ void PhishingClassifierDelegate::DidCommitProvisionalLoad(
     last_main_frame_transition_ = transition;
 }
 
-void PhishingClassifierDelegate::DidFinishSameDocumentNavigation() {
-  // We do not cancel classification because the purpose of this observer is to
-  // make sure the page_text_ that will be updated through PageCaptured will not
-  // dereference the page text pointer in the classifier, which will cause the
-  // crash if not handled properly.
-  if (base::FeatureList::IsEnabled(
-          kClientSideDetectionOnlyExtractVisualFeatures)) {
-    return;
-  }
-  // TODO(bryner): We shouldn't need to cancel classification if the navigation
-  // is within the same document.  However, if we let classification continue in
-  // this case, we need to properly deal with the fact that PageCaptured will
-  // be called again for the same-document navigation.  We need to be sure not
-  // to swap out the page text while the term feature extractor is still
-  // running.
-  CancelPendingClassification(CancelClassificationReason::kNavigateWithinPage);
-}
-
 bool PhishingClassifierDelegate::is_ready() {
   return classifier_->is_ready();
 }
@@ -175,20 +164,9 @@ void PhishingClassifierDelegate::PageCaptured(
   if (preliminary_capture) {
     return;
   }
-  // Make sure there's no classification in progress.  We don't want to swap
-  // out the page text string from underneath the term feature extractor.
-  //
+
   // Note: Currently, if the url hasn't changed, we won't restart
   // classification in this case.  We may want to adjust this.
-  if (!base::FeatureList::IsEnabled(
-          kClientSideDetectionOnlyExtractVisualFeatures)) {
-    CancelPendingClassification(CancelClassificationReason::kPageRecaptured);
-    // This is only set to pass onto the classifier as part of the parameter,
-    // but
-    // for kClientSideDetectionOnlyExtractVisualFeatures enabled users, they
-    // will not use it.
-    classifier_page_text_ = std::move(page_text);
-  }
 
   last_finished_load_url_ = render_frame()->GetWebFrame()->GetDocument().Url();
 
@@ -207,24 +185,30 @@ void PhishingClassifierDelegate::CancelPendingClassification(
     is_classifying_ = false;
     base::UmaHistogramEnumeration("SBClientPhishing.CancelClassificationReason",
                                   reason);
-    base::UmaHistogramEnumeration(
-        "SBClientPhishing.CancelClassificationReason." +
-            GetRequestTypeName(request_type_),
-        reason);
+    if (request_type_.has_value()) {
+      base::UmaHistogramEnumeration(
+          "SBClientPhishing.CancelClassificationReason." +
+              GetRequestTypeName(request_type_.value()),
+          reason);
+    }
   }
   if (classifier_->is_ready()) {
     classifier_->CancelPendingClassification();
   }
-  classifier_page_text_ = nullptr;
   awaiting_retry_ = false;
+  request_type_ = std::nullopt;
 }
 
 void PhishingClassifierDelegate::ClassificationDone(
     const ClientPhishingRequest& verdict,
     PhishingClassifier::Result phishing_classifier_result) {
+  RecordEvent(SBPhishingClassifierEvent::kClassificationComplete);
   is_phishing_detection_running_ = false;
-  if (callback_.is_null())
+  if (callback_.is_null()) {
+    RecordEvent(
+        SBPhishingClassifierEvent::kPhishingClasifierCallbackEmptyOnCompletion);
     return;
+  }
 
   mojom::PhishingDetectorResult result = mojom::PhishingDetectorResult::SUCCESS;
 
@@ -259,7 +243,8 @@ void PhishingClassifierDelegate::ClassificationDone(
   if (result == mojom::PhishingDetectorResult::SUCCESS) {
     DCHECK_EQ(last_url_sent_to_classifier_.spec(), verdict.url());
   }
-
+  request_type_ = std::nullopt;
+  RecordEvent(SBPhishingClassifierEvent::kPhishingClassifierRequestResponded);
   std::move(callback_).Run(result, mojo_base::ProtoWrapper(verdict));
 }
 
@@ -269,7 +254,7 @@ void PhishingClassifierDelegate::MaybeStartClassification() {
   //  1. A Scorer has been created
   //  2. The browser has sent a StartPhishingDetection message for the
   //     current toplevel URL.
-  //  3. The page has finished loading and the page text has been extracted.
+  //  3. The page has finished loading.
   //  4. The load is a new navigation (not a session history navigation).
   //  5. The toplevel URL has not already been classified.
   //
@@ -290,7 +275,6 @@ void PhishingClassifierDelegate::MaybeStartClassification() {
           base::Seconds(kClientSideDetectionRetryLimitTime.Get()));
     } else {
       is_phishing_detection_running_ = false;
-      // Keep classifier_page_text_, in case a Scorer is set later.
       if (!callback_.is_null()) {
         std::move(callback_).Run(
             mojom::PhishingDetectorResult::CLASSIFIER_NOT_READY, std::nullopt);
@@ -304,7 +288,6 @@ void PhishingClassifierDelegate::MaybeStartClassification() {
     // last URL sent to the classifier, so that we'll properly detect
     // same-document navigations.
     last_url_sent_to_classifier_ = last_finished_load_url_;
-    classifier_page_text_ = nullptr;  // we won't need this.
     is_phishing_detection_running_ = false;
     if (!callback_.is_null())
       std::move(callback_).Run(
@@ -312,32 +295,25 @@ void PhishingClassifierDelegate::MaybeStartClassification() {
     return;
   }
 
-  // This will not be used for kClientSideDetectionOnlyExtractVisualFeatures
-  // enabled users because page text is extracted for DOM extraction. This
-  // should be removed once kClientSideDetectionOnlyExtractVisualFeatures
-  // feature is fully launched and cleaned up. At the time of
-  // classifier_page_text_ population, last_finished_load_url_ is also set, so
-  // the observer state condition is still met for classification.
-  if (!base::FeatureList::IsEnabled(
-          kClientSideDetectionOnlyExtractVisualFeatures) &&
-      !classifier_page_text_) {
-    RecordEvent(SBPhishingClassifierEvent::kPageTextNotLoaded);
-    return;
-  }
-
   GURL stripped_last_load_url(StripRef(last_finished_load_url_));
   if (last_url_received_from_browser_ != stripped_last_load_url) {
+    bool match_on_stripped_empty_path =
+        last_url_received_from_browser_.GetWithEmptyPath() ==
+        stripped_last_load_url.GetWithEmptyPath();
     base::UmaHistogramBoolean(
         "SBClientPhishing.PhishingClassifierMatchOnStrippedEmptyPath",
-        last_url_received_from_browser_.GetWithEmptyPath() ==
-            stripped_last_load_url.GetWithEmptyPath());
+        match_on_stripped_empty_path);
+    if (request_type_.has_value()) {
+      base::UmaHistogramBoolean(
+          "SBClientPhishing.PhishingClassifierMatchOnStrippedEmptyPath." +
+              GetRequestTypeName(request_type_.value()),
+          match_on_stripped_empty_path);
+    }
     RecordEvent(SBPhishingClassifierEvent::kUrlShouldNotBeClassified);
     // The browser has not yet confirmed that this URL should be classified,
     // so defer classification for now.  Note: the ref does not affect
     // any of the browser's preclassification checks, so we don't require it
     // to match.
-    // Keep classifier_page_text_, in case the browser notifies us later that
-    // we should classify the URL.
     return;
   }
 
@@ -349,10 +325,9 @@ void PhishingClassifierDelegate::MaybeStartClassification() {
   }
 
   is_classifying_ = true;
-  classifier_->BeginClassification(
-      classifier_page_text_,
-      base::BindOnce(&PhishingClassifierDelegate::ClassificationDone,
-                     base::Unretained(this)));
+  RecordEvent(SBPhishingClassifierEvent::kClassificationBegin);
+  classifier_->BeginClassification(base::BindOnce(
+      &PhishingClassifierDelegate::ClassificationDone, base::Unretained(this)));
 }
 
 void PhishingClassifierDelegate::OnRetryTimeout() {
@@ -372,7 +347,12 @@ void PhishingClassifierDelegate::OnRetryTimeout() {
 }
 
 void PhishingClassifierDelegate::RecordEvent(SBPhishingClassifierEvent event) {
-  UMA_HISTOGRAM_ENUMERATION("SBClientPhishing.Classifier.Event", event);
+  base::UmaHistogramEnumeration("SBClientPhishing.Classifier.Event", event);
+  if (request_type_.has_value()) {
+    base::UmaHistogramEnumeration("SBClientPhishing.Classifier.Event." +
+                                      GetRequestTypeName(request_type_.value()),
+                                  event);
+  }
 }
 
 void PhishingClassifierDelegate::OnDestruct() {

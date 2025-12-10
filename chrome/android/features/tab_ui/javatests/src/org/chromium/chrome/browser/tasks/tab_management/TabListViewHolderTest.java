@@ -91,8 +91,8 @@ import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.TabFavicon;
 import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.TabFaviconFetcher;
 import org.chromium.chrome.browser.tab_ui.TabThumbnailView;
 import org.chromium.chrome.browser.tab_ui.ThumbnailProvider;
-import org.chromium.chrome.browser.tasks.tab_management.TabListMediator.TabActionButtonData;
-import org.chromium.chrome.browser.tasks.tab_management.TabListMediator.TabActionButtonData.TabActionButtonType;
+import org.chromium.chrome.browser.tab_ui.ThumbnailProvider.MultiThumbnailMetadata;
+import org.chromium.chrome.browser.tasks.tab_management.TabActionButtonData.TabActionButtonType;
 import org.chromium.chrome.browser.tasks.tab_management.TabListModel.AnimationStatus;
 import org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties;
 import org.chromium.chrome.browser.tasks.tab_management.TabProperties.TabActionState;
@@ -196,7 +196,7 @@ public class TabListViewHolderTest {
                     new ThumbnailProvider() {
                         @Override
                         public void getTabThumbnailWithCallback(
-                                int tabId,
+                                MultiThumbnailMetadata metadata,
                                 Size thumbnailSize,
                                 boolean isSelected,
                                 Callback<Drawable> callback) {
@@ -209,11 +209,12 @@ public class TabListViewHolderTest {
                             callback.onResult(new BitmapDrawable(bitmap));
                         }
                     },
-                    Tab.INVALID_TAB_ID);
+                    MultiThumbnailMetadata.createMetadataWithoutUrls(
+                            Tab.INVALID_TAB_ID, false, false, null));
     private final AtomicInteger mThumbnailFetchedCount = new AtomicInteger();
 
-    private final TabListMediator.TabActionListener mMockCloseListener =
-            new TabListMediator.TabActionListener() {
+    private final TabActionListener mMockCloseListener =
+            new TabActionListener() {
                 @Override
                 public void run(View view, int tabId, @Nullable MotionEventInfo triggeringMotion) {
                     mCloseClicked.set(true);
@@ -227,8 +228,8 @@ public class TabListViewHolderTest {
     private final AtomicBoolean mCloseClicked = new AtomicBoolean();
     private final AtomicInteger mCloseTabId = new AtomicInteger();
 
-    private final TabListMediator.TabActionListener mMockSelectedListener =
-            new TabListMediator.TabActionListener() {
+    private final TabActionListener mMockSelectedListener =
+            new TabActionListener() {
                 @Override
                 public void run(View view, int tabId, @Nullable MotionEventInfo triggeringMotion) {
                     mSelectClicked.set(true);
@@ -242,8 +243,8 @@ public class TabListViewHolderTest {
     private final AtomicBoolean mSelectClicked = new AtomicBoolean();
     private final AtomicInteger mSelectTabId = new AtomicInteger();
 
-    private final TabListMediator.TabActionListener mMockCreateGroupButtonListener =
-            new TabListMediator.TabActionListener() {
+    private final TabActionListener mMockCreateGroupButtonListener =
+            new TabActionListener() {
                 @Override
                 public void run(View view, int tabId, @Nullable MotionEventInfo triggeringMotion) {
                     mCreateGroupButtonClicked.set(true);
@@ -367,8 +368,7 @@ public class TabListViewHolderTest {
         CurrencyFormatterJni.setInstanceForTesting(mCurrencyFormatterJniMock);
         doReturn(1L)
                 .when(mCurrencyFormatterJniMock)
-                .initCurrencyFormatterAndroid(
-                        any(CurrencyFormatter.class), anyString(), anyString());
+                .initCurrencyFormatterAndroid(anyString(), anyString());
         doNothing().when(mCurrencyFormatterJniMock).setMaxFractionalDigits(anyLong(), anyInt());
         OptimizationGuideBridgeFactoryJni.setInstanceForTesting(
                 mOptimizationGuideBridgeFactoryJniMock);
@@ -695,7 +695,7 @@ public class TabListViewHolderTest {
         mGridModel.set(TabProperties.IS_SELECTED, isSelected);
         ColorStateList unselectedColorStateList =
                 TabCardThemeUtil.getActionButtonTintList(
-                        sActivity, isIncognito, isSelected, /* colorId */ null);
+                        sActivity, isIncognito, isSelected, /* colorId= */ null);
 
         Assert.assertEquals(
                 unselectedColorStateList, ImageViewCompat.getImageTintList(gridActionButton));
@@ -704,7 +704,7 @@ public class TabListViewHolderTest {
         mGridModel.set(TabProperties.IS_SELECTED, isSelected);
         ColorStateList selectedColorStateList =
                 TabCardThemeUtil.getActionButtonTintList(
-                        sActivity, isIncognito, isSelected, /* colorId */ null);
+                        sActivity, isIncognito, isSelected, /* colorId= */ null);
         Assert.assertEquals(
                 selectedColorStateList, ImageViewCompat.getImageTintList(gridActionButton));
     }

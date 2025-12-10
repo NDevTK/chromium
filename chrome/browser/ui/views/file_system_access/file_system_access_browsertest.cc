@@ -10,10 +10,12 @@
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/current_thread.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_future.h"
+#include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/file_system_access/chrome_file_system_access_permission_context.h"
@@ -34,7 +36,6 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "components/network_session_configurator/common/network_switches.h"
 #include "components/permissions/permission_util.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/content/common/file_type_policies_test_util.h"
@@ -45,6 +46,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/fenced_frame_test_util.h"
+#include "content/public/test/file_system_chooser_test_helpers.h"
 #include "content/public/test/prerender_test_util.h"
 #include "content/public/test/scoped_web_ui_controller_factory_registration.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -101,11 +103,6 @@ class FileSystemAccessBrowserTest : public InProcessBrowserTest,
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Ignore cert errors so that URLs can be loaded from a site
-    // other than localhost (the EmbeddedTestServer serves a certificate that
-    // is valid for localhost).
-    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
-
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
   }
@@ -133,14 +130,8 @@ class FileSystemAccessBrowserTest : public InProcessBrowserTest,
   bool IsUsageIndicatorVisible(Browser* browser) {
     auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
     auto* icon_view =
-        browser_view->toolbar_button_provider()->GetPageActionIconView(
-            PageActionIconType::kFileSystemAccess);
-    if (IsMigrationEnabled()) {
-      page_actions::PageActionView* page_action_icon_view =
-          browser_view->toolbar_button_provider()->GetPageActionView(
-              kActionShowFileSystemAccess);
-      return page_action_icon_view && page_action_icon_view->GetVisible();
-    }
+        browser_view->toolbar_button_provider()->GetPageActionView(
+            kActionShowFileSystemAccess);
     return icon_view && icon_view->GetVisible();
   }
 
@@ -322,7 +313,14 @@ class FileSystemAccessBrowserSlowLoadTest : public FileSystemAccessBrowserTest {
       main_document_response_;
 };
 
-IN_PROC_BROWSER_TEST_P(FileSystemAccessBrowserSlowLoadTest, WaitUntilLoaded) {
+// TODO(crbug.com/435037306): Flaky on Mac.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_WaitUntilLoaded DISABLED_WaitUntilLoaded
+#else
+#define MAYBE_WaitUntilLoaded WaitUntilLoaded
+#endif
+IN_PROC_BROWSER_TEST_P(FileSystemAccessBrowserSlowLoadTest,
+                       MAYBE_WaitUntilLoaded) {
   const base::FilePath test_file = CreateTestFile("");
   const std::string file_contents = "file contents to write";
 
@@ -635,7 +633,7 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
           std::vector<base::FilePath>{test_file}));
 
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK);
+  https_server.SetCertHostnames({"a.com", "b.com", "c.com"});
   https_server.AddDefaultHandlers(GetChromeTestDataDir());
   content::SetupCrossSiteRedirector(&https_server);
   ASSERT_TRUE(https_server.Start());
@@ -685,13 +683,13 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
   // the b.com iframe since a.com is cross-origin. Also, this approach avoids
   // using BroadcastChannel which doesn't work when third-party storage
   // partitioning is enabled.
-  EXPECT_EQ(nullptr,
+  EXPECT_EQ(base::Value(),
             content::EvalJs(third_party_iframe,
                             "self.message_promise = new Promise(resolve => {\n"
                             "  self.onmessage = resolve;\n"
                             "}); null;"));
 
-  EXPECT_EQ(nullptr,
+  EXPECT_EQ(base::Value(),
             content::EvalJs(
                 third_party_web_contents,
                 "self.onmessage = (e) => {\n"
@@ -699,7 +697,7 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
                 "  iframe.contentWindow.postMessage('😀', '*', [e.ports[0]]);\n"
                 "}; null;"));
 
-  EXPECT_EQ(nullptr,
+  EXPECT_EQ(base::Value(),
             content::EvalJs(first_party_web_contents,
                             "let message_channel = new MessageChannel();\n"
                             "self.message_port = message_channel.port1;\n"
@@ -708,7 +706,7 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
                             "null;"));
 
   EXPECT_EQ(
-      nullptr,
+      base::Value(),
       content::EvalJs(third_party_iframe,
                       "(async () => {\n"
                       "  let e = await self.message_promise;\n"
@@ -718,6 +716,9 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
                       "  })})();"));
 
   // Top-level page in first window picks files and sends it to iframe.
+  browser()->tab_strip_model()->ActivateTabAt(
+      browser()->tab_strip_model()->GetIndexOfWebContents(
+          first_party_web_contents));
   EXPECT_EQ(test_file.BaseName().AsUTF8Unsafe(),
             content::EvalJs(first_party_web_contents,
                             "(async () => {"
@@ -805,7 +806,7 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
           std::vector<base::FilePath>{test_file}));
 
   net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK);
+  https_server.SetCertHostnames({"a.com", "b.com"});
   https_server.AddDefaultHandlers(GetChromeTestDataDir());
   content::SetupCrossSiteRedirector(&https_server);
   ASSERT_TRUE(https_server.Start());
@@ -850,13 +851,13 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
   // iframe since a.com is cross-origin. Also, this approach avoids using
   // BroadcastChannel which doesn't work when third-party storage partitioning
   // is enabled.
-  EXPECT_EQ(nullptr,
+  EXPECT_EQ(base::Value(),
             content::EvalJs(third_party_iframe,
                             "self.message_promise = new Promise(resolve => {\n"
                             "  self.onmessage = resolve;\n"
                             "}); null;"));
 
-  EXPECT_EQ(nullptr,
+  EXPECT_EQ(base::Value(),
             content::EvalJs(
                 third_party_web_contents,
                 "self.onmessage = (e) => {\n"
@@ -864,7 +865,7 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
                 "  iframe.contentWindow.postMessage('😀', '*', [e.ports[0]]);\n"
                 "}; null;"));
 
-  EXPECT_EQ(nullptr,
+  EXPECT_EQ(base::Value(),
             content::EvalJs(first_party_web_contents,
                             "let message_channel = new MessageChannel();\n"
                             "self.message_port = message_channel.port1;\n"
@@ -873,7 +874,7 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
                             "null;"));
 
   EXPECT_EQ(
-      nullptr,
+      base::Value(),
       content::EvalJs(third_party_iframe,
                       "(async () => {\n"
                       "  let e = await self.message_promise;\n"
@@ -883,6 +884,9 @@ IN_PROC_BROWSER_TEST_P(PersistedPermissionsFileSystemAccessBrowserTest,
                       "  })})();"));
 
   // Top-level page in first window picks files and sends it to iframe.
+  browser()->tab_strip_model()->ActivateTabAt(
+      browser()->tab_strip_model()->GetIndexOfWebContents(
+          first_party_web_contents));
   EXPECT_EQ(test_file.BaseName().AsUTF8Unsafe(),
             content::EvalJs(first_party_web_contents,
                             "(async () => {"
@@ -1233,6 +1237,11 @@ class FencedFrameFileSystemAccessBrowserTest
   net::EmbeddedTestServer https_server_{net::EmbeddedTestServer::TYPE_HTTPS};
 };
 
+INSTANTIATE_TEST_SUITE_P(,
+                         FencedFrameFileSystemAccessBrowserTest,
+                         testing::Bool(),
+                         &ParamInfoToString);
+
 IN_PROC_BROWSER_TEST_P(FencedFrameFileSystemAccessBrowserTest,
                        RequestWriteAccess) {
   std::unique_ptr<ChromeFileSystemAccessPermissionContext> permission_context =
@@ -1287,10 +1296,70 @@ IN_PROC_BROWSER_TEST_P(FencedFrameFileSystemAccessBrowserTest,
   EXPECT_EQ(future.Get<>(), content::FileSystemAccessPermissionGrant::
                                 PermissionRequestOutcome::kInvalidFrame);
 }
-INSTANTIATE_TEST_SUITE_P(,
-                         FencedFrameFileSystemAccessBrowserTest,
-                         testing::Bool(),
-                         &ParamInfoToString);
+
+// https://crbug.com/419721056
+IN_PROC_BROWSER_TEST_P(FileSystemAccessBrowserTest,
+                       ShowOpenFilePickerInBackgroundTab) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+  content::WebContents* first_tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Create a second tab
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), embedded_test_server()->GetURL("/title2.html"),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+
+  content::WebContents* second_tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_NE(first_tab, second_tab);
+
+  // Switch back to the first tab, making the second tab a background tab.
+  browser()->tab_strip_model()->ActivateTabAt(0);
+  EXPECT_EQ(first_tab, browser()->tab_strip_model()->GetActiveWebContents());
+  EXPECT_NE(second_tab, browser()->tab_strip_model()->GetActiveWebContents());
+
+  // Try to show a file picker in the background tab.
+  // This should be blocked.
+  EXPECT_EQ("AbortError",
+            content::EvalJs(second_tab,
+                            "self.showOpenFilePicker().catch(e => e.name)"));
+}
+
+// Test that opening another tab while the dialog is showing closes the dialog.
+// https://crbug.com/419721056
+IN_PROC_BROWSER_TEST_P(FileSystemAccessBrowserTest, ShowOpenFileThenHide) {
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL("/title1.html")));
+  content::WebContents* first_tab =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Open the dialog and wait until it's created.
+  content::SelectFileDialogRecorder recorder;
+  ui::SelectFileDialog::SetFactory(
+      std::make_unique<content::ObservableSelectFileDialogFactory>(
+          recorder.GetWeakPtr()));
+  ASSERT_EQ(42,
+            content::EvalJs(
+                first_tab,
+                "window.p = self.showOpenFilePicker().catch(e => e.name); 42"));
+  ASSERT_TRUE(base::test::RunUntil([&recorder]() {
+    return recorder.state != content::SelectFileDialogRecorder::kNotCreated;
+  }));
+
+  // Create a second tab.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), embedded_test_server()->GetURL("/title2.html"),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+
+  // The first tab should not be the active tab anymore.
+  ASSERT_NE(first_tab, browser()->tab_strip_model()->GetActiveWebContents());
+
+  // Check that the dialog was closed.
+  ASSERT_EQ("AbortError", content::EvalJs(first_tab, "window.p"));
+}
 
 class FileSystemAccessBrowserTestForWebUI
     : public InProcessBrowserTest,

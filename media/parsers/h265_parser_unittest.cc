@@ -42,7 +42,7 @@ class H265ParserTest : public ::testing::Test {
     ASSERT_TRUE(stream_->Initialize(file_path))
         << "Couldn't open stream file: " << file_path.MaybeAsASCII();
 
-    parser_.SetStream(stream_->data(), stream_->length());
+    parser_.SetStream(stream_->bytes());
   }
 
   bool ParseNalusUntilNut(H265NALU* target_nalu, H265NALU::Type nalu_type) {
@@ -212,7 +212,7 @@ TEST_F(H265ParserTest, VpsAlphaLayerId) {
   };
 
   H265Parser parser;
-  parser.SetStream(kStream, std::size(kStream));
+  parser.SetStream(kStream);
 
   H265NALU target_nalu;
   ASSERT_EQ(H265Parser::kOk, parser.AdvanceToNextNALU(&target_nalu));
@@ -497,7 +497,7 @@ TEST_F(H265ParserTest, AlphaChannelInfoSEIParsing) {
   };
 
   H265Parser parser;
-  parser.SetStream(kStream, std::size(kStream));
+  parser.SetStream(kStream);
 
   H265NALU target_nalu;
   ASSERT_EQ(H265Parser::kOk, parser.AdvanceToNextNALU(&target_nalu));
@@ -576,7 +576,7 @@ TEST_F(H265ParserTest, RecursiveSEIParsing) {
   };
 
   H265Parser parser;
-  parser.SetStream(kStream, std::size(kStream));
+  parser.SetStream(kStream);
 
   H265NALU target_nalu;
   ASSERT_EQ(H265Parser::kOk, parser.AdvanceToNextNALU(&target_nalu));
@@ -610,6 +610,33 @@ TEST_F(H265ParserTest, RecursiveSEIParsing) {
                        }},
         sei_msg);
   }
+}
+
+TEST_F(H265ParserTest, ValidSubLayerCount) {
+  constexpr auto kStream = std::to_array<unsigned char>(
+      {0x00, 0x21, 0x21, 0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x4e,
+       0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x11, 0x00,
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x21, 0x21, 0x21, 0x21, 0x21,
+       0x96, 0x03, 0x1c, 0x94, 0x0d, 0x24, 0xfd, 0x1f, 0x23, 0x45, 0x1b, 0x00,
+       0x00, 0x23, 0x45, 0x1b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00,
+       0x07, 0x40, 0x01, 0x40, 0x02, 0x00, 0x00, 0x00, 0x00, 0x21, 0x21, 0x21,
+       0x21, 0x21, 0x21, 0x96, 0x03, 0x1c, 0x94, 0x0d, 0x24, 0xfd, 0x1f, 0x23,
+       0x45, 0x1b, 0x00, 0x00, 0x23, 0x45, 0x00, 0x00, 0x21, 0x21, 0x21, 0x21,
+       0x21, 0x21, 0x04, 0x96, 0x03, 0x1c, 0x94, 0x0d, 0xa4, 0xfe, 0x21, 0x21,
+       0x21, 0x21, 0x21, 0x21, 0x96, 0x03, 0x1c, 0x94, 0x0d, 0x24, 0xfd, 0x1f,
+       0x23, 0x45, 0x00, 0x23, 0x45, 0x1b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07,
+       0x00, 0x00, 0x01, 0x40, 0x02, 0xff, 0xff});
+  H265Parser parser;
+  parser.SetStream(kStream);
+
+  H265NALU target_nalu;
+  ASSERT_EQ(H265Parser::kOk, parser.AdvanceToNextNALU(&target_nalu));
+  EXPECT_EQ(target_nalu.nal_unit_type, H265NALU::PREFIX_SEI_NUT);
+  ASSERT_EQ(H265Parser::kOk, parser.AdvanceToNextNALU(&target_nalu));
+  EXPECT_EQ(target_nalu.nal_unit_type, H265NALU::VPS_NUT);
+
+  int unused_vps_id;
+  EXPECT_NE(H265Parser::kOk, parser.ParseVPS(&unused_vps_id));
 }
 
 }  // namespace media

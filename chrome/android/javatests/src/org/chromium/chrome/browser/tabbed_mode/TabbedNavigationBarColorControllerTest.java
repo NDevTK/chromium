@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tabbed_mode;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
@@ -26,7 +28,6 @@ import androidx.annotation.ColorInt;
 import androidx.core.graphics.ColorUtils;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
-import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.junit.Assume;
 import org.junit.Before;
@@ -40,6 +41,7 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
@@ -60,16 +62,17 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
+import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
-import org.chromium.chrome.test.util.ChromeTabUtils;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
-import org.chromium.components.browser_ui.edge_to_edge.WindowSystemBarColorHelper;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.components.browser_ui.widget.scrim.ScrimProperties;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
+import org.chromium.ui.edge_to_edge.WindowSystemBarColorHelper;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.DeviceRestriction;
 
@@ -126,7 +129,7 @@ public class TabbedNavigationBarColorControllerTest {
     public void testToggleOverview() {
         assertEquals(
                 "Navigation bar should match the tab background before entering overview mode.",
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(),
+                mActivityTestRule.getActivityTab().getBackgroundColor(),
                 mWindow.getNavigationBarColor());
 
         LayoutTestUtils.startShowingAndWaitForLayout(
@@ -142,41 +145,39 @@ public class TabbedNavigationBarColorControllerTest {
 
         assertEquals(
                 "Navigation bar should match the tab background after exiting overview mode.",
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(),
+                mActivityTestRule.getActivityTab().getBackgroundColor(),
                 mWindow.getNavigationBarColor());
     }
 
     @Test
     @SmallTest
     @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN)
+    // TODO(crbug.com/428056054): Do not read color from system window bars on B+.
+    @DisableIf.Build(
+            sdk_is_greater_than = Build.VERSION_CODES.VANILLA_ICE_CREAM,
+            message = "crbug.com/428056054")
     public void testToggleIncognito() {
         assertEquals(
                 "Navigation bar should match the tab background on normal tabs.",
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(),
+                mActivityTestRule.getActivityTab().getBackgroundColor(),
                 mWindow.getNavigationBarColor());
 
-        ChromeTabUtils.newTabFromMenu(
-                InstrumentationRegistry.getInstrumentation(),
-                mActivityTestRule.getActivity(),
-                true,
-                true);
+        IncognitoNewTabPageStation incognitoNtp = mPage.openNewIncognitoTabOrWindowFast();
 
         assertEquals(
                 "Navigation bar should be dark_elev_3 on incognito tabs.",
                 mDarkNavigationColor,
-                mWindow.getNavigationBarColor());
+                incognitoNtp.getActivity().getWindow().getNavigationBarColor());
 
-        ChromeTabUtils.newTabFromMenu(
-                InstrumentationRegistry.getInstrumentation(),
-                mActivityTestRule.getActivity(),
-                false,
-                true);
+        if (!incognitoNtp.getActivity().isIncognitoWindow()) {
+            RegularNewTabPageStation regularNtp = incognitoNtp.openNewTabOrWindowFast();
 
-        assertEquals(
-                "Navigation bar should match the tab background after switching back to normal"
-                        + " tab.",
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(),
-                mWindow.getNavigationBarColor());
+            assertEquals(
+                    "Navigation bar should match the tab background after switching back to normal"
+                            + " tab.",
+                    mActivityTestRule.getActivityTab().getBackgroundColor(),
+                    regularNtp.getActivity().getWindow().getNavigationBarColor());
+        }
     }
 
     @Test
@@ -217,10 +218,14 @@ public class TabbedNavigationBarColorControllerTest {
     @Test
     @MediumTest
     @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN)
+    // TODO(crbug.com/428056054): Do not read color from system window bars on B+.
+    @DisableIf.Build(
+            sdk_is_greater_than = Build.VERSION_CODES.VANILLA_ICE_CREAM,
+            message = "crbug.com/428056054")
     public void testSetNavigationBarScrimFraction() {
         assertEquals(
                 "Navigation bar should match the tab background on normal tabs.",
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(),
+                mActivityTestRule.getActivityTab().getBackgroundColor(),
                 mWindow.getNavigationBarColor());
 
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
@@ -243,7 +248,7 @@ public class TabbedNavigationBarColorControllerTest {
         double regularBrightness = ColorUtils.calculateLuminance(mRegularNavigationColor);
         @ColorInt int withScrim = mWindow.getNavigationBarColor();
         assertNotEquals(
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(), withScrim);
+                mActivityTestRule.getActivityTab().getBackgroundColor(), withScrim);
         assertTrue(regularBrightness > ColorUtils.calculateLuminance(withScrim));
 
         ThreadUtils.runOnUiThreadBlocking(
@@ -251,7 +256,7 @@ public class TabbedNavigationBarColorControllerTest {
                         scrimManager.hideScrim(
                                 outerPropertyModel, /* animate= */ false, /* duration= */ 0));
         assertEquals(
-                mActivityTestRule.getActivity().getActivityTab().getBackgroundColor(),
+                mActivityTestRule.getActivityTab().getBackgroundColor(),
                 mWindow.getNavigationBarColor());
     }
 
@@ -364,7 +369,7 @@ public class TabbedNavigationBarColorControllerTest {
     }
 
     private void testNavBarColorAnimationsDisabled() {
-        assert mTabbedNavigationBarColorController != null;
+        assertThat(mTabbedNavigationBarColorController).isNotNull();
 
         // Create spies from real instances and inject the spies back.
         EdgeToEdgeSystemBarColorHelper spyEdgeToEdgeSystemBarColorHelper =
@@ -391,7 +396,7 @@ public class TabbedNavigationBarColorControllerTest {
     }
 
     private void testNavBarColorAnimations() {
-        assert mTabbedNavigationBarColorController != null;
+        assertThat(mTabbedNavigationBarColorController).isNotNull();
 
         // Create spies from real instances and inject the spies back.
         EdgeToEdgeSystemBarColorHelper spyEdgeToEdgeSystemBarColorHelper =

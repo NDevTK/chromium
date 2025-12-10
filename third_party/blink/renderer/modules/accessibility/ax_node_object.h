@@ -81,6 +81,7 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   AXObjectInclusion ShouldIncludeBasedOnSemantics(
       IgnoredReasons* = nullptr) const;
   bool ComputeIsIgnored(IgnoredReasons*) const override;
+  bool ComputeIsIgnoredAsInsideInactiveScrollMarkerTab() override;
   ax::mojom::blink::Role DetermineRoleValue() override;
   ax::mojom::blink::Role NativeRoleIgnoringAria() const override;
   void AlterSliderOrSpinButtonValue(bool increase);
@@ -231,7 +232,8 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
 
   // AX name calculation.
   String GetName(ax::mojom::blink::NameFrom&,
-                 AXObjectVector* name_objects) const override;
+                 AXObjectVector* name_objects,
+                 NameSources* name_sources) const override;
   String TextAlternative(bool recursive,
                          const AXObject* aria_label_or_description_root,
                          AXObjectSet& visited,
@@ -418,7 +420,6 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   void AddPopupChildren();
   bool HasValidHTMLTableStructureAndLayout() const;
   void AddTableChildren();
-  void AddSelectChildren();
   bool FindAllTableCellsWithRole(ax::mojom::blink::Role, AXObjectVector&) const;
   void AddValidationMessageChild();
   void AddAccessibleNodeChildren();

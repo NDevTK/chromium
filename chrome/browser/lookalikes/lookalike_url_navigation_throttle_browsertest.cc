@@ -20,6 +20,7 @@
 #include "chrome/browser/lookalikes/lookalike_url_blocking_page.h"
 #include "chrome/browser/lookalikes/lookalike_url_service.h"
 #include "chrome/browser/lookalikes/lookalike_url_service_factory.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -30,7 +31,6 @@
 #include "components/lookalikes/core/lookalike_url_util.h"
 #include "components/lookalikes/core/safety_tip_test_utils.h"
 #include "components/lookalikes/core/safety_tips_config.h"
-#include "components/network_session_configurator/common/network_switches.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/security_interstitials/content/security_interstitial_page.h"
 #include "components/security_interstitials/content/security_interstitial_tab_helper.h"
@@ -463,6 +463,10 @@ class LookalikeUrlNavigationThrottleBrowserTest : public InProcessBrowserTest {
   net::EmbeddedTestServer* https_server() const { return https_server_.get(); }
 
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   std::unique_ptr<ukm::TestAutoSetUkmRecorder> test_ukm_recorder_;
   std::unique_ptr<LookalikeTestHelper> test_helper_;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
@@ -955,16 +959,16 @@ IN_PROC_BROWSER_TEST_F(LookalikeUrlNavigationThrottleBrowserTest,
 IN_PROC_BROWSER_TEST_F(LookalikeUrlNavigationThrottleBrowserTest,
                        EditDistance_TopDomain_NoMatch) {
   // Matches google.com.tr but only differs in registry.
-  ASSERT_TRUE(IsTopDomain(GetDomainInfo("google.com.tr")));
+  ASSERT_TRUE(url_formatter::IsTopDomain(GetURL("google.com.tr")));
   TestInterstitialNotShown(browser(), GetURL("google.com.tw"));
 
   // Matches academia.edu but is a top domain itself.
-  ASSERT_TRUE(IsTopDomain(GetDomainInfo("academia.edu")));
-  ASSERT_TRUE(IsTopDomain(GetDomainInfo("academic.ru")));
+  ASSERT_TRUE(url_formatter::IsTopDomain(GetURL("academia.edu")));
+  ASSERT_TRUE(url_formatter::IsTopDomain(GetURL("academic.ru")));
   TestInterstitialNotShown(browser(), GetURL("academic.ru"));
 
   // Matches ask.com but is too short.
-  ASSERT_TRUE(IsTopDomain(GetDomainInfo("ask.com")));
+  ASSERT_TRUE(url_formatter::IsTopDomain(GetURL("ask.com")));
   TestInterstitialNotShown(browser(), GetURL("bsk.com"));
 
   test_helper()->CheckNoLookalikeUkm();
@@ -1639,9 +1643,6 @@ class LookalikeUrlNavigationThrottleSignedExchangeBrowserTest
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // HTTPS server only serves a valid cert for localhost, so this is needed
-    // to load pages from other hosts without an error.
-    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
     mock_cert_verifier_.SetUpCommandLine(command_line);
   }
 
@@ -1666,6 +1667,8 @@ class LookalikeUrlNavigationThrottleSignedExchangeBrowserTest
         &LookalikeUrlNavigationThrottleSignedExchangeBrowserTest::
             MonitorRequest,
         base::Unretained(this)));
+    https_server_.SetCertHostnames(
+        {"example.org", "*.example.org", "*.test.com", "*.site.test"});
     ASSERT_TRUE(https_server_.Start());
 
     LookalikeUrlNavigationThrottleBrowserTest::SetUpOnMainThread();

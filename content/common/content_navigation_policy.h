@@ -5,11 +5,10 @@
 #ifndef CONTENT_COMMON_CONTENT_NAVIGATION_POLICY_H_
 #define CONTENT_COMMON_CONTENT_NAVIGATION_POLICY_H_
 
-#include "base/feature_list.h"
-#include "content/common/content_export.h"
-
 #include <array>
 #include <string>
+
+#include "content/common/content_export.h"
 
 namespace content {
 
@@ -52,12 +51,13 @@ CONTENT_EXPORT bool ShouldCreateNewRenderFrameHostOnSameSiteNavigation(
     bool is_main_frame,
     bool is_local_root = true,
     bool has_committed_any_navigation = true,
-    bool must_be_replaced = false);
+    bool must_be_replaced = false,
+    bool client_overrides_level = false);
 CONTENT_EXPORT bool ShouldCreateNewHostForAllFrames();
 CONTENT_EXPORT RenderDocumentLevel GetRenderDocumentLevel();
 CONTENT_EXPORT std::string GetRenderDocumentLevelName(
     RenderDocumentLevel level);
-CONTENT_EXPORT extern const char kRenderDocumentLevelParameterName[];
+inline constexpr char kRenderDocumentLevelParameterName[] = "level";
 
 // If this is false we continue the old behaviour of doing an early call to
 // RenderFrameHostManager::CommitPending when we are replacing a crashed

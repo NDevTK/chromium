@@ -10,10 +10,13 @@
 #include "base/auto_reset.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/stack_util.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
+
+#if !DCHECK_IS_ON()
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#endif
 
 namespace blink {
 
@@ -58,7 +61,7 @@ class PLATFORM_EXPORT ScriptForbiddenScope final {
     if (extended_check && WillBeScriptForbidden()) {
       return true;
     }
-    if (!WTF::MayNotBeMainThread()) [[likely]] {
+    if (!MayNotBeMainThread()) [[likely]] {
       return g_main_thread_counter_ > 0;
     }
     return GetMutableCounter() > 0;
@@ -87,7 +90,7 @@ class PLATFORM_EXPORT ScriptForbiddenScope final {
 
  private:
   static void Enter() {
-    if (!WTF::MayNotBeMainThread()) [[likely]] {
+    if (!MayNotBeMainThread()) [[likely]] {
       ++g_main_thread_counter_;
     } else {
       ++GetMutableCounter();
@@ -95,7 +98,7 @@ class PLATFORM_EXPORT ScriptForbiddenScope final {
   }
   static void Exit() {
     DCHECK(IsScriptForbidden());
-    if (!WTF::MayNotBeMainThread()) [[likely]] {
+    if (!MayNotBeMainThread()) [[likely]] {
       --g_main_thread_counter_;
     } else {
       --GetMutableCounter();

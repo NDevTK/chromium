@@ -11,8 +11,9 @@
 #include "third_party/blink/renderer/core/frame/frame.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/performance.h"
+#include "third_party/blink/renderer/core/timing/timing_utils.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
 
 namespace blink {
@@ -22,12 +23,13 @@ PerformanceEventTiming* PerformanceEventTiming::Create(
     const AtomicString& event_type,
     EventTimingReportingInfo reporting_info,
     bool cancelable,
-    Node* target,
-    DOMWindow* source) {
+    EventTarget* target,
+    DOMWindow* source,
+    uint32_t navigation_id) {
   CHECK(source);
   return MakeGarbageCollected<PerformanceEventTiming>(
       event_type, performance_entry_names::kEvent, std::move(reporting_info),
-      cancelable, target, source);
+      cancelable, target, source, navigation_id);
 }
 
 // static
@@ -37,7 +39,7 @@ PerformanceEventTiming* PerformanceEventTiming::CreateFirstInputTiming(
       MakeGarbageCollected<PerformanceEventTiming>(
           entry->name(), performance_entry_names::kFirstInput,
           *entry->GetEventTimingReportingInfo(), entry->cancelable(),
-          entry->target(), entry->source());
+          entry->target(), entry->source(), entry->navigationId());
   first_input->SetDuration(entry->duration_);
   if (entry->HasKnownInteractionID()) {
     first_input->SetInteractionIdAndOffset(entry->interactionId(),
@@ -46,24 +48,49 @@ PerformanceEventTiming* PerformanceEventTiming::CreateFirstInputTiming(
   return first_input;
 }
 
+// static
+String PerformanceEventTiming::FallbackReasonToString(FallbackReason reason) {
+  switch (reason) {
+    case FallbackReason::kNone:
+      return "None";
+    case FallbackReason::kUnexpectedFrameSource:
+      return "UnexpectedFrameSource";
+    case FallbackReason::kVisibilityChange:
+      return "VisibilityChange";
+    case FallbackReason::kModalDialog:
+      return "ModalDialog";
+    case FallbackReason::kSwapPromiseBroken:
+      return "SwapPromiseBroken";
+    case FallbackReason::kMacOSArtificialEvent:
+      return "MacOSArtificialEvent";
+    case FallbackReason::kDoesNotNeedNextPaint:
+      return "DoesNotNeedNextPaint";
+    default:
+      return "None";
+  }
+}
+
 PerformanceEventTiming::PerformanceEventTiming(
     const AtomicString& event_type,
     const AtomicString& entry_type,
     EventTimingReportingInfo reporting_info,
     bool cancelable,
-    Node* target,
-    DOMWindow* source)
+    EventTarget* target,
+    DOMWindow* source,
+    uint32_t navigation_id)
     : PerformanceEntry(
+          /*duration=*/0.0,
           event_type,
-          DOMWindowPerformance::performance(*source->ToLocalDOMWindow())
+          GlobalPerformance::performance(*source->ToLocalDOMWindow())
               ->MonotonicTimeToDOMHighResTimeStamp(
                   reporting_info.creation_time),
-          0.0,
-          source),
+          source,
+          navigation_id),
       entry_type_(entry_type),
       cancelable_(cancelable),
-      target_(target),
-      reporting_info_(reporting_info) {}
+      reporting_info_(reporting_info) {
+  SetTarget(target);
+}
 
 PerformanceEventTiming::~PerformanceEventTiming() = default;
 
@@ -76,7 +103,7 @@ PerformanceEntryType PerformanceEventTiming::EntryTypeEnum() const {
 DOMHighResTimeStamp PerformanceEventTiming::processingStart() const {
   if (!processing_start_) {
     processing_start_ =
-        DOMWindowPerformance::performance(*source()->ToLocalDOMWindow())
+        GlobalPerformance::performance(*source()->ToLocalDOMWindow())
             ->MonotonicTimeToDOMHighResTimeStamp(
                 reporting_info_.processing_start_time);
   }
@@ -86,7 +113,7 @@ DOMHighResTimeStamp PerformanceEventTiming::processingStart() const {
 DOMHighResTimeStamp PerformanceEventTiming::processingEnd() const {
   if (!processing_end_) {
     processing_end_ =
-        DOMWindowPerformance::performance(*source()->ToLocalDOMWindow())
+        GlobalPerformance::performance(*source()->ToLocalDOMWindow())
             ->MonotonicTimeToDOMHighResTimeStamp(
                 reporting_info_.processing_end_time);
   }
@@ -97,8 +124,9 @@ Node* PerformanceEventTiming::target() const {
   return Performance::CanExposeNode(target_) ? target_ : nullptr;
 }
 
-void PerformanceEventTiming::SetTarget(Node* target) {
-  target_ = target;
+void PerformanceEventTiming::SetTarget(EventTarget* target) {
+  target_selector_ = EventTargetToString(target);
+  target_ = target ? target->ToNode() : nullptr;
 }
 
 uint64_t PerformanceEventTiming::interactionId() const {
@@ -111,6 +139,10 @@ uint64_t PerformanceEventTiming::interactionId() const {
 
 void PerformanceEventTiming::SetInteractionId(uint64_t interaction_id) {
   interaction_id_ = interaction_id;
+}
+
+const AtomicString& PerformanceEventTiming::targetSelector() const {
+  return target_selector_;
 }
 
 bool PerformanceEventTiming::HasKnownInteractionID() const {
@@ -134,10 +166,13 @@ base::TimeTicks PerformanceEventTiming::GetEndTime() const {
   return reporting_info_.presentation_time;
 }
 
-void PerformanceEventTiming::UpdateFallbackTime(base::TimeTicks fallback_time) {
+void PerformanceEventTiming::UpdateFallbackTime(base::TimeTicks fallback_time,
+                                                FallbackReason reason) {
   if (reporting_info_.fallback_time.is_null() ||
       fallback_time < reporting_info_.fallback_time) {
     reporting_info_.fallback_time = fallback_time;
+
+    reporting_info_.fallback_reason = reason;
   }
 }
 
@@ -164,6 +199,9 @@ void PerformanceEventTiming::BuildJSONValue(V8ObjectBuilder& builder) const {
   builder.AddNumber("processingStart", processingStart());
   builder.AddNumber("processingEnd", processingEnd());
   builder.AddBoolean("cancelable", cancelable_);
+  if (RuntimeEnabledFeatures::EventTimingTargetSelectorEnabled()) {
+    builder.AddString("targetSelector", targetSelector());
+  }
 }
 
 void PerformanceEventTiming::Trace(Visitor* visitor) const {

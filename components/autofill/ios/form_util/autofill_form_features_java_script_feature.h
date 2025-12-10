@@ -25,6 +25,11 @@ class AutofillFormFeaturesJavaScriptFeature : public web::JavaScriptFeature {
   // Enables/disables the AutofillAcrossIframes feature in `frame`.
   void SetAutofillAcrossIframes(web::WebFrame* frame, bool enabled);
 
+  // Enables/disables whether field labels must not exclusively contain em
+  // dashes, minuses, fullwidth hyphens and other special characters in `frame`.
+  void SetAutofillDisallowMoreHyphenLikeLabels(web::WebFrame* frame,
+                                               bool enabled);
+
   // Enables/disables whether field labels must not exclusively contain slashes
   // and dots and other special characters in `frame`.
   void SetAutofillDisallowSlashDotLabels(web::WebFrame* frame, bool enabled);
@@ -32,6 +37,10 @@ class AutofillFormFeaturesJavaScriptFeature : public web::JavaScriptFeature {
   // Enables/disables the throttling of child frame extraction for
   // AutofillAcrossIframes in `frame`.
   void SetAutofillAcrossIframesThrottling(web::WebFrame* frame, bool enabled);
+
+  // Enables/disables whether checkboxes and radio buttons are ignored during
+  // form extraction.
+  void SetAutofillIgnoreCheckableElements(web::WebFrame* frame, bool enabled);
 
   // Enables/disables the renderer side behaviours in `frame` needed for
   // Autofill features to work in an isolated content world.

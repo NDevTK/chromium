@@ -52,6 +52,7 @@
 #include "net/quic/quic_connectivity_monitor.h"
 #include "net/quic/quic_context.h"
 #include "net/quic/quic_crypto_client_config_handle.h"
+#include "net/quic/quic_endpoint.h"
 #include "net/quic/quic_proxy_datagram_client_socket.h"
 #include "net/quic/quic_session_alias_key.h"
 #include "net/quic/quic_session_attempt.h"
@@ -68,10 +69,6 @@
 #include "net/third_party/quiche/src/quiche/quic/core/quic_server_id.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_versions.h"
 #include "url/scheme_host_port.h"
-
-namespace base {
-class Value;
-}  // namespace base
 
 namespace quic {
 class QuicAlarmFactory;
@@ -96,6 +93,7 @@ class QuicChromiumConnectionHelper;
 class QuicCryptoClientStreamFactory;
 class QuicServerInfo;
 class QuicSessionPool;
+class QuicSessionAttemptManager;
 class QuicContext;
 class SCTAuditingDelegate;
 class SocketPerformanceWatcherFactory;
@@ -300,21 +298,6 @@ class NET_EXPORT_PRIVATE QuicSessionRequest {
   CompletionOnceCallback create_session_callback_;
 };
 
-// Represents a single QUIC endpoint and the information necessary to attempt
-// a QUIC session.
-struct NET_EXPORT_PRIVATE QuicEndpoint {
-  QuicEndpoint(quic::ParsedQuicVersion quic_version,
-               IPEndPoint ip_endpoint,
-               ConnectionEndpointMetadata metadata);
-  ~QuicEndpoint();
-
-  quic::ParsedQuicVersion quic_version = quic::ParsedQuicVersion::Unsupported();
-  IPEndPoint ip_endpoint;
-  ConnectionEndpointMetadata metadata;
-
-  base::Value::Dict ToValue() const;
-};
-
 // Manages a pool of QuicChromiumClientSessions.
 class NET_EXPORT_PRIVATE QuicSessionPool
     : public NetworkChangeNotifier::IPAddressObserver,
@@ -487,7 +470,8 @@ class NET_EXPORT_PRIVATE QuicSessionPool
 
   // Until the servers support roaming, close all connections when the local
   // IP address changes.
-  void OnIPAddressChanged() override;
+  void OnIPAddressChanged(
+      NetworkChangeNotifier::IPAddressChangeType change_type) override;
 
   // NetworkChangeNotifier::NetworkObserver methods:
   void OnNetworkConnected(handles::NetworkHandle network) override;
@@ -554,6 +538,10 @@ class NET_EXPORT_PRIVATE QuicSessionPool
     return host_resolver_->IsHappyEyeballsV3Enabled();
   }
 
+  QuicSessionAttemptManager* session_attempt_manager() {
+    return session_attempt_manager_.get();
+  }
+
   struct QuicCryptoClientConfigKey;
 
  private:
@@ -563,6 +551,7 @@ class NET_EXPORT_PRIVATE QuicSessionPool
   class QuicCryptoClientConfigOwner;
   class CryptoClientConfigHandle;
   friend class QuicSessionAttempt;
+  friend class QuicSessionAttemptManager;
   friend class MockQuicSessionPool;
   friend class test::QuicSessionPoolPeer;
 
@@ -933,6 +922,8 @@ class NET_EXPORT_PRIVATE QuicSessionPool
   quic::DeterministicConnectionIdGenerator connection_id_generator_{
       quic::kQuicDefaultConnectionIdLength};
 
+  std::unique_ptr<QuicSessionAttemptManager> session_attempt_manager_;
+
   std::optional<base::TimeDelta> time_delay_for_waiting_job_for_testing_;
 
   base::WeakPtrFactory<QuicSessionPool> weak_factory_{this};
@@ -942,7 +933,8 @@ class NET_EXPORT_PRIVATE QuicSessionPool
 // consumers are using it currently. When the last reference is freed, the
 // QuicCryptoClientConfigHandle informs the owning QuicSessionPool, moves it
 // into an MRU cache.
-class QuicSessionPool::QuicCryptoClientConfigOwner {
+class QuicSessionPool::QuicCryptoClientConfigOwner
+    : public base::MemoryPressureListener {
  public:
   QuicCryptoClientConfigOwner(
       std::unique_ptr<quic::ProofVerifier> proof_verifier,
@@ -953,7 +945,7 @@ class QuicSessionPool::QuicCryptoClientConfigOwner {
   QuicCryptoClientConfigOwner& operator=(const QuicCryptoClientConfigOwner&) =
       delete;
 
-  ~QuicCryptoClientConfigOwner();
+  ~QuicCryptoClientConfigOwner() override;
 
   quic::QuicCryptoClientConfig* config() { return &config_; }
 
@@ -962,7 +954,7 @@ class QuicSessionPool::QuicCryptoClientConfigOwner {
   QuicSessionPool* quic_session_pool() { return quic_session_pool_; }
 
   void OnMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
+      base::MemoryPressureLevel memory_pressure_level) override;
 
  private:
   friend class CryptoClientConfigHandle;
@@ -982,19 +974,18 @@ class QuicSessionPool::QuicCryptoClientConfigOwner {
   int num_refs_ = 0;
   quic::QuicCryptoClientConfig config_;
   raw_ptr<base::Clock> clock_;
-  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  std::unique_ptr<base::AsyncMemoryPressureListenerRegistration>
+      memory_pressure_listener_registration_;
   const raw_ptr<QuicSessionPool> quic_session_pool_;
 };
 
-// Key for QuicCryptoClienConfigOwners within a session pool.k
+// Key for QuicCryptoClienConfigOwners within a session pool.
 struct NET_EXPORT_PRIVATE QuicSessionPool::QuicCryptoClientConfigKey {
   QuicCryptoClientConfigKey() = default;
   explicit QuicCryptoClientConfigKey(const QuicSessionKey& session_key)
       : network_anonymization_key(session_key.network_anonymization_key()),
         proxy_chain(session_key.proxy_chain()),
         session_usage(session_key.session_usage()) {}
-  explicit QuicCryptoClientConfigKey(const NetworkAnonymizationKey& nak)
-      : network_anonymization_key(nak) {}
 
   bool operator==(const QuicCryptoClientConfigKey& other) const;
   bool operator<(const QuicCryptoClientConfigKey& other) const;

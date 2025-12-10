@@ -86,17 +86,12 @@ class CC_PAINT_EXPORT PaintImageBuilder {
     paint_image_.gainmap_info_ = gainmap_info;
     return std::move(*this);
   }
-  PaintImageBuilder&& set_hdr_metadata(
-      std::optional<gfx::HDRMetadata> hdr_metadata) {
+  PaintImageBuilder&& set_hdr_metadata(gfx::HDRMetadata hdr_metadata) {
     paint_image_.hdr_metadata_ = hdr_metadata;
     return std::move(*this);
   }
   PaintImageBuilder&& set_reinterpret_as_srgb(bool reinterpret_as_srgb) {
     paint_image_.reinterpret_as_srgb_ = reinterpret_as_srgb;
-    return std::move(*this);
-  }
-  PaintImageBuilder&& set_target_hdr_headroom(float target_hdr_headroom) {
-    paint_image_.target_hdr_headroom_ = target_hdr_headroom;
     return std::move(*this);
   }
   PaintImageBuilder&& set_completion_state(PaintImage::CompletionState state) {

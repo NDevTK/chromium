@@ -4,6 +4,8 @@
 
 package org.chromium.components.content_capture;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.os.Build;
 import android.view.View;
@@ -19,6 +21,7 @@ import org.jni_zero.NativeMethods;
 import org.chromium.base.Log;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.components.content_capture.ContentCaptureMetadataProto.ContentCaptureMetadata;
 import org.chromium.content_public.browser.RenderCoordinates;
 import org.chromium.content_public.browser.WebContents;
 
@@ -194,6 +197,21 @@ public class OnscreenContentProvider {
     }
 
     @CalledByNative
+    private void didUpdateSensitivityScore(String url, float sensitivityScore) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+
+        ContentCaptureMetadata metadata =
+                ContentCaptureMetadata.newBuilder().setSensitivityScore(sensitivityScore).build();
+        assumeNonNull(PlatformContentCaptureController.getInstance()).shareData(url, metadata);
+
+        if (ContentCaptureFeatures.isDumpForTestingEnabled()) {
+            Log.i(TAG, "Updated sensitivity score: %f", sensitivityScore);
+        }
+    }
+
+    @CalledByNative
     private int getOffsetY(WebContents webContents) {
         return RenderCoordinates.fromWebContents(webContents).getContentOffsetYPixInt();
     }
@@ -244,7 +262,7 @@ public class OnscreenContentProvider {
     @NativeMethods
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public interface Natives {
-        long init(OnscreenContentProvider caller, @Nullable WebContents webContents);
+        long init(OnscreenContentProvider self, @Nullable WebContents webContents);
 
         void onWebContentsChanged(
                 long nativeOnscreenContentProviderAndroid, @Nullable WebContents webContents);

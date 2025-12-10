@@ -14,16 +14,11 @@
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "chrome/common/buildflags.h"
 #include "components/metrics/metrics_service_accessor.h"
-#include "components/signin/public/base/signin_buildflags.h"
 #include "components/variations/synthetic_trials.h"
 #include "chrome/browser/supervised_user/metrics_service_accessor_delegate.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
 #include "chrome/browser/glic/host/glic_synthetic_trial_manager.h"
-#endif
-
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-#include "chrome/browser/signin/bound_session_credentials/bound_session_cookie_refresh_service_impl.h"
 #endif
 
 class BrowserProcessImpl;
@@ -39,22 +34,8 @@ namespace {
 class CrashesDOMHandler;
 }
 
-#if BUILDFLAG(IS_ANDROID)
-namespace autofill {
-class AutofillClientProvider;
-}
-#endif  // BUILDFLAG(IS_ANDROID)
-
 #if BUILDFLAG(IS_CHROMEOS)
 class ChromeCameraAppUIDelegate;
-
-namespace app_list::federated {
-class FederatedMetricsManager;
-}  // namespace app_list::federated
-
-namespace ash::input_method {
-class AutocorrectManager;
-}  // namespace ash::input_method
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace browser_sync {
@@ -156,13 +137,7 @@ class ChromeMetricsServiceAccessor : public metrics::MetricsServiceAccessor {
   static void SetMetricsAndCrashReportingForTesting(const bool* value);
 
  private:
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  friend class BoundSessionCookieRefreshServiceImpl;
-#endif
   friend class ::CrashesDOMHandler;
-#if BUILDFLAG(IS_ANDROID)
-  friend class autofill::AutofillClientProvider;
-#endif  // BUILDFLAG(IS_ANDROID)
   friend class ChromeBrowserFieldTrials;
   // For ClangPGO.
   friend class ChromeBrowserMainExtraPartsMetrics;
@@ -221,11 +196,6 @@ class ChromeMetricsServiceAccessor : public metrics::MetricsServiceAccessor {
 
 #if BUILDFLAG(IS_CHROMEOS)
   friend class ChromeCameraAppUIDelegate;
-
-  // The following classes are friended because they check UMA consent status
-  // for the purpose of federated metrics collection.
-  friend class app_list::federated::FederatedMetricsManager;
-  friend class ash::input_method::AutocorrectManager;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Testing related friends.

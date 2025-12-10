@@ -7,11 +7,8 @@
 #import "base/apple/foundation_util.h"
 #import "base/test/ios/wait_util.h"
 #import "base/test/metrics/histogram_tester.h"
-#import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
 #import "base/test/test_timeouts.h"
-#import "ios/chrome/browser/credential_provider/model/features.h"
-#import "ios/chrome/browser/settings/ui_bundled/password/password_manager_ui_features.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_settings/password_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_settings/password_settings_consumer.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -40,18 +37,12 @@ constexpr char kTurnOnCredentialProviderExtensionPromptOutcomeHistogram[] =
 // Helper method that returns the expected title for the managed and unmanaged
 // "offer to save passwords" table view items.
 NSString* GetExpectedSavePasswordsItemTitle() {
-  return l10n_util::GetNSString(IOSPasskeysM2Enabled()
-                                    ? IDS_IOS_OFFER_TO_SAVE_PASSWORDS_PASSKEYS
-                                    : IDS_IOS_OFFER_TO_SAVE_PASSWORDS);
+  return l10n_util::GetNSString(IDS_IOS_OFFER_TO_SAVE_PASSWORDS_PASSKEYS);
 }
 
 // Helper method that returns the expected title for the passwords in other apps
 // table view item.
 NSString* GetExpectedPasswordsInOtherAppsItemTitle() {
-  if (!IOSPasskeysM2Enabled()) {
-    return l10n_util::GetNSString(IDS_IOS_SETTINGS_PASSWORDS_IN_OTHER_APPS);
-  }
-
   if (@available(iOS 18.0, *)) {
     return l10n_util::GetNSString(
         IDS_IOS_SETTINGS_PASSWORDS_PASSKEYS_IN_OTHER_APPS_IOS18);
@@ -104,6 +95,29 @@ class PasswordSettingsViewControllerTest : public PlatformTest {
   base::HistogramTester histogram_tester_;
 };
 
+TEST_F(PasswordSettingsViewControllerTest, OrdersSectionsCorrectly) {
+  // Ensure all sections are visible.
+  [controller() setCanBulkMove:YES localPasswordsCount:2];
+  [controller() setSavingPasswordsEnabled:YES managedByPolicy:NO];
+  [controller() setSavingPasskeysEnabled:YES];
+  [controller() setCanChangeGPMPin:YES];
+  [controller() setOnDeviceEncryptionState:
+                    PasswordSettingsOnDeviceEncryptionStateOptedIn];
+  [controller() setCanExportCredentials:YES];
+  [controller() setCanDeleteAllCredentials:YES];
+
+  // Verify the order.
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierSavePasswordsSwitch), 0);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierBulkMovePasswordsToAccount), 1);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierPasswordsInOtherApps), 2);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierAutomaticPasskeyUpgradesSwitch),
+            3);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierGooglePasswordManagerPin), 4);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierOnDeviceEncryption), 5);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierExportPasswordsButton), 6);
+  EXPECT_EQ(GetSectionIndex(SectionIdentifierDeleteCredentialsButton), 7);
+}
+
 TEST_F(PasswordSettingsViewControllerTest, DisplaysOfferToSavePasswords) {
   TableViewSwitchItem* savePasswordsItem = static_cast<TableViewSwitchItem*>(
       GetTableViewItem(SectionIdentifierSavePasswordsSwitch, /*item=*/0));
@@ -143,56 +157,26 @@ TEST_F(PasswordSettingsViewControllerTest,
 
 TEST_F(PasswordSettingsViewControllerTest,
        DisplaysPasswordInOtherAppsDisabled) {
-  {
-    // Enable the Passkeys M2 feature and re-create the controller so that the
-    // enabled flag is picked up.
-    base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
-    CreateController();
+  [controller() setPasswordsInOtherAppsEnabled:NO];
 
-    [controller() setPasswordsInOtherAppsEnabled:NO];
+  TableViewMultiDetailTextItem* passwords_in_other_apps_item =
+      static_cast<TableViewMultiDetailTextItem*>(
+          GetTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/0));
+  EXPECT_NSEQ(passwords_in_other_apps_item.text,
+              GetExpectedPasswordsInOtherAppsItemTitle());
+  if (@available(iOS 18, *)) {
+    EXPECT_NSEQ(
+        passwords_in_other_apps_item.leadingDetailText,
+        l10n_util::GetNSString(
+            IDS_IOS_PASSWORD_SETTINGS_PASSWORDS_IN_OTHER_APPS_DESCRIPTION));
+    EXPECT_FALSE(passwords_in_other_apps_item.trailingDetailText);
+    EXPECT_EQ(passwords_in_other_apps_item.accessoryType,
+              UITableViewCellAccessoryNone);
 
-    TableViewMultiDetailTextItem* passwords_in_other_apps_item =
-        static_cast<TableViewMultiDetailTextItem*>(GetTableViewItem(
-            SectionIdentifierPasswordsInOtherApps, /*item=*/0));
-    EXPECT_NSEQ(passwords_in_other_apps_item.text,
-                GetExpectedPasswordsInOtherAppsItemTitle());
-    if (@available(iOS 18, *)) {
-      EXPECT_NSEQ(
-          passwords_in_other_apps_item.leadingDetailText,
-          l10n_util::GetNSString(
-              IDS_IOS_PASSWORD_SETTINGS_PASSWORDS_IN_OTHER_APPS_DESCRIPTION));
-      EXPECT_FALSE(passwords_in_other_apps_item.trailingDetailText);
-      EXPECT_EQ(passwords_in_other_apps_item.accessoryType,
-                UITableViewCellAccessoryNone);
-
-      // Check that the "Turn on AutoFill…" button is in the table view.
-      EXPECT_TRUE(
-          HasTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/1));
-    } else {
-      EXPECT_FALSE(passwords_in_other_apps_item.leadingDetailText);
-      EXPECT_NSEQ(passwords_in_other_apps_item.trailingDetailText,
-                  l10n_util::GetNSString(IDS_IOS_SETTING_OFF));
-      EXPECT_EQ(passwords_in_other_apps_item.accessoryType,
-                UITableViewCellAccessoryDisclosureIndicator);
-
-      // Check that the "Turn on AutoFill…" button isn't in the table view.
-      EXPECT_FALSE(
-          HasTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/1));
-    }
-  }
-  {
-    // Disable the Passkeys M2 feature and re-create the controller so that the
-    // disabled flag is picked up.
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(kIOSPasskeysM2);
-    CreateController();
-    [controller() setPasswordsInOtherAppsEnabled:NO];
-
-    TableViewMultiDetailTextItem* passwords_in_other_apps_item =
-        static_cast<TableViewMultiDetailTextItem*>(GetTableViewItem(
-            SectionIdentifierPasswordsInOtherApps, /*item=*/0));
-    EXPECT_NSEQ(passwords_in_other_apps_item.text,
-                GetExpectedPasswordsInOtherAppsItemTitle());
+    // Check that the "Turn on AutoFill…" button is in the table view.
+    EXPECT_TRUE(
+        HasTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/1));
+  } else {
     EXPECT_FALSE(passwords_in_other_apps_item.leadingDetailText);
     EXPECT_NSEQ(passwords_in_other_apps_item.trailingDetailText,
                 l10n_util::GetNSString(IDS_IOS_SETTING_OFF));
@@ -206,60 +190,29 @@ TEST_F(PasswordSettingsViewControllerTest,
 }
 
 TEST_F(PasswordSettingsViewControllerTest, DisplaysPasswordInOtherAppsEnabled) {
-  {
-    // Enable the Passkeys M2 feature and re-create the controller so that the
-    // enabled flag is picked up.
-    base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
-    CreateController();
+  [controller() setPasswordsInOtherAppsEnabled:YES];
 
-    [controller() setPasswordsInOtherAppsEnabled:YES];
-
-    TableViewMultiDetailTextItem* passwords_in_other_apps_item =
-        static_cast<TableViewMultiDetailTextItem*>(GetTableViewItem(
-            SectionIdentifierPasswordsInOtherApps, /*item=*/0));
-    EXPECT_NSEQ(passwords_in_other_apps_item.text,
-                GetExpectedPasswordsInOtherAppsItemTitle());
-    EXPECT_NSEQ(passwords_in_other_apps_item.trailingDetailText,
-                l10n_util::GetNSString(IDS_IOS_SETTING_ON));
-    EXPECT_EQ(passwords_in_other_apps_item.accessoryType,
-              UITableViewCellAccessoryDisclosureIndicator);
-    if (@available(iOS 18, *)) {
-      EXPECT_NSEQ(
-          passwords_in_other_apps_item.leadingDetailText,
-          l10n_util::GetNSString(
-              IDS_IOS_PASSWORD_SETTINGS_PASSWORDS_IN_OTHER_APPS_DESCRIPTION));
-    } else {
-      EXPECT_FALSE(passwords_in_other_apps_item.leadingDetailText);
-    }
-
-    // Check that the "Turn on AutoFill…" button isn't in the table view.
-    EXPECT_FALSE(
-        HasTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/1));
-  }
-  {
-    // Disable the Passkeys M2 feature and re-create the controller so that the
-    // disabled flag is picked up.
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(kIOSPasskeysM2);
-    CreateController();
-
-    [controller() setPasswordsInOtherAppsEnabled:YES];
-
-    TableViewMultiDetailTextItem* passwords_in_other_apps_item =
-        static_cast<TableViewMultiDetailTextItem*>(GetTableViewItem(
-            SectionIdentifierPasswordsInOtherApps, /*item=*/0));
-    EXPECT_NSEQ(passwords_in_other_apps_item.text,
-                GetExpectedPasswordsInOtherAppsItemTitle());
-    EXPECT_NSEQ(passwords_in_other_apps_item.trailingDetailText,
-                l10n_util::GetNSString(IDS_IOS_SETTING_ON));
-    EXPECT_EQ(passwords_in_other_apps_item.accessoryType,
-              UITableViewCellAccessoryDisclosureIndicator);
+  TableViewMultiDetailTextItem* passwords_in_other_apps_item =
+      static_cast<TableViewMultiDetailTextItem*>(
+          GetTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/0));
+  EXPECT_NSEQ(passwords_in_other_apps_item.text,
+              GetExpectedPasswordsInOtherAppsItemTitle());
+  EXPECT_NSEQ(passwords_in_other_apps_item.trailingDetailText,
+              l10n_util::GetNSString(IDS_IOS_SETTING_ON));
+  EXPECT_EQ(passwords_in_other_apps_item.accessoryType,
+            UITableViewCellAccessoryDisclosureIndicator);
+  if (@available(iOS 18, *)) {
+    EXPECT_NSEQ(
+        passwords_in_other_apps_item.leadingDetailText,
+        l10n_util::GetNSString(
+            IDS_IOS_PASSWORD_SETTINGS_PASSWORDS_IN_OTHER_APPS_DESCRIPTION));
+  } else {
     EXPECT_FALSE(passwords_in_other_apps_item.leadingDetailText);
-
-    // Check that the "Turn on AutoFill…" button isn't in the table view.
-    EXPECT_FALSE(
-        HasTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/1));
   }
+
+  // Check that the "Turn on AutoFill…" button isn't in the table view.
+  EXPECT_FALSE(
+      HasTableViewItem(SectionIdentifierPasswordsInOtherApps, /*item=*/1));
 }
 
 // Tests that the right histogram is logged when tapping the "Turn on AutoFill…"
@@ -267,11 +220,6 @@ TEST_F(PasswordSettingsViewControllerTest, DisplaysPasswordInOtherAppsEnabled) {
 TEST_F(PasswordSettingsViewControllerTest, TurnOnAutoFillButtonMetric) {
   // The "Turn on AutoFill…" button is only available on iOS 18+.
   if (@available(iOS 18.0, *)) {
-    // Enable the Passkeys M2 feature and re-create the controller so that the
-    // enabled flag is picked up.
-    base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
-    CreateController();
-
     [controller() setPasswordsInOtherAppsEnabled:NO];
 
     // Make sure bucket counts are all initially zero.
@@ -297,13 +245,7 @@ TEST_F(PasswordSettingsViewControllerTest, TurnOnAutoFillButtonMetric) {
 }
 
 TEST_F(PasswordSettingsViewControllerTest,
-       DisplaysAutomaticPasskeyUpgradesSwitchWithFeatureEnabled) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      kCredentialProviderAutomaticPasskeyUpgrade);
-
-  // Re-create the controller so that the enabled flag is picked up.
-  CreateController();
+       DisplaysAutomaticPasskeyUpgradesSwitch) {
   [controller() setSavingPasswordsEnabled:YES managedByPolicy:NO];
   [controller() setSavingPasskeysEnabled:YES];
 
@@ -406,7 +348,8 @@ TEST_F(PasswordSettingsViewControllerTest,
 
 TEST_F(PasswordSettingsViewControllerTest,
        ExportButtonDisabledWhenUserNotEligible) {
-  [controller() setCanExportPasswords:NO];
+  [controller() setCanExportCredentials:NO];
+
   EXPECT_TRUE(GetTableViewItem(SectionIdentifierExportPasswordsButton,
                                /*item=*/0)
                   .accessibilityTraits &
@@ -415,7 +358,8 @@ TEST_F(PasswordSettingsViewControllerTest,
 
 TEST_F(PasswordSettingsViewControllerTest,
        ExportButtonEnabledWhenUserEligible) {
-  [controller() setCanExportPasswords:YES];
+  [controller() setCanExportCredentials:YES];
+
   EXPECT_FALSE(GetTableViewItem(SectionIdentifierExportPasswordsButton,
                                 /*item=*/0)
                    .accessibilityTraits &
@@ -424,8 +368,6 @@ TEST_F(PasswordSettingsViewControllerTest,
 
 TEST_F(PasswordSettingsViewControllerTest,
        DeleteAllDataDisabledWhenUserNotEligible) {
-  // Re-create the controller so that the enabled flag is picked up.
-  CreateController();
   [controller() setCanDeleteAllCredentials:NO];
   EXPECT_TRUE(GetTableViewItem(SectionIdentifierDeleteCredentialsButton,
                                /*item=*/0)
@@ -435,8 +377,6 @@ TEST_F(PasswordSettingsViewControllerTest,
 
 TEST_F(PasswordSettingsViewControllerTest,
        DeleteAllDataButtonEnabledWhenUserEligible) {
-  // Re-create the controller so that the enabled flag is picked up.
-  CreateController();
   [controller() setCanDeleteAllCredentials:YES];
   EXPECT_FALSE(GetTableViewItem(SectionIdentifierDeleteCredentialsButton,
                                 /*item=*/0)

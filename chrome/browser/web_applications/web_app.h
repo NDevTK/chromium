@@ -7,24 +7,25 @@
 
 #include <stdint.h>
 
+#include <deque>
 #include <iosfwd>
+#include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
+#include "base/check.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/web_applications/generated_icon_fix_util.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolation_data.h"
+#include "chrome/browser/web_applications/model/app_installed_by.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-forward.h"
 #include "chrome/browser/web_applications/proto/web_app.pb.h"
+#include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
 #include "chrome/browser/web_applications/scope_extension_info.h"
 #include "chrome/browser/web_applications/user_display_mode.h"
@@ -41,8 +42,7 @@
 #include "components/webapps/common/web_app_id.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
-#include "third_party/blink/public/mojom/manifest/capture_links.mojom-shared.h"
-#include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
+#include "third_party/blink/public/common/safe_url_pattern.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
@@ -55,7 +55,13 @@ enum class WebappInstallSource;
 }
 
 namespace web_app {
-class TabbedModeScopeMatcher;
+class UrlPatternWithRegexMatcher;
+class WebAppScope;
+
+class InstalledByPassKey {
+  friend std::unique_ptr<WebApp> ParseWebAppProto(const proto::WebApp& proto);
+  InstalledByPassKey() = default;
+};
 
 class WebApp {
  public:
@@ -123,6 +129,10 @@ class WebApp {
 
   const std::vector<DisplayMode>& display_mode_override() const {
     return display_mode_override_;
+  }
+
+  const std::vector<blink::SafeUrlPattern>& borderless_url_patterns() const {
+    return borderless_url_patterns_;
   }
 
   syncer::StringOrdinal user_page_ordinal() const {
@@ -242,6 +252,8 @@ class WebApp {
     return validated_scope_extensions_;
   }
 
+  WebAppScope GetScope() const;
+
   RunOnOsLoginMode run_on_os_login_mode() const {
     return run_on_os_login_mode_;
   }
@@ -268,8 +280,6 @@ class WebApp {
       const {
     return shortcuts_menu_item_infos_;
   }
-
-  blink::mojom::CaptureLinks capture_links() const { return capture_links_; }
 
   const GURL& manifest_url() const { return manifest_url_; }
 
@@ -338,13 +348,13 @@ class WebApp {
     return management_to_external_config_map_;
   }
 
-  const std::optional<blink::Manifest::TabStrip> tab_strip() const {
+  const std::optional<blink::Manifest::TabStrip>& tab_strip() const {
     return tab_strip_;
   }
 
   // Returns the list of patterns to match URLs against for tabbed mode home
   // tab navigations.
-  const std::vector<TabbedModeScopeMatcher>& GetTabbedModeHomeScope() const;
+  const std::vector<UrlPatternWithRegexMatcher>& GetTabbedModeHomeScope() const;
 
   // Only used on Mac.
   bool always_show_toolbar_in_fullscreen() const {
@@ -390,6 +400,26 @@ class WebApp {
     return related_applications_;
   }
 
+  const std::optional<proto::PendingUpdateInfo>& pending_update_info() const {
+    return pending_update_info_;
+  }
+
+  // Contains the metadata for trusted icons for the web app.
+  const std::vector<apps::IconInfo>& trusted_icons() const {
+    return trusted_icons_;
+  }
+
+  // Represents which icon sizes have been successfully stored on the disk from
+  // |trusted_icons| for the given |purpose|. `Monochrome` is not available
+  // here.
+  const SortedSizesPx& stored_trusted_icon_sizes(IconPurpose purpose) const;
+
+  // A list of up to ten most recent and unique page URLs that attempted to
+  // install this app via the Web Install API.
+  const std::deque<web_app::AppInstalledBy>& installed_by() const {
+    return installed_by_;
+  }
+
   // A Web App can be installed from multiple sources simultaneously. Installs
   // add a source to the app. Uninstalls remove a source from the app.
   void AddSource(WebAppManagement::Type source);
@@ -411,6 +441,7 @@ class WebApp {
   bool IsKioskInstalledApp() const;
   bool CanUserUninstallWebApp() const;
   bool WasInstalledByUser() const;
+  bool WasInstalledByTrustedSources() const;
   // Returns the highest priority source. AppService assumes that every app has
   // just one install source.
   WebAppManagement::Type GetHighestPrioritySource() const;
@@ -430,6 +461,8 @@ class WebApp {
   // Sets the UserDisplayMode for the current platform (CrOS or default).
   void SetUserDisplayMode(mojom::UserDisplayMode user_display_mode);
   void SetDisplayModeOverride(std::vector<DisplayMode> display_mode_override);
+  void SetBorderlessUrlPatterns(
+      std::vector<blink::SafeUrlPattern> borderless_url_patterns);
   void SetWebAppChromeOsData(std::optional<WebAppChromeOsData> chromeos_data);
   void SetInstallState(proto::InstallState install_state);
   void SetIsFromSyncAndPendingInstallation(
@@ -464,7 +497,6 @@ class WebApp {
   void SetManifestUpdateTime(const base::Time& time);
   void SetRunOnOsLoginMode(RunOnOsLoginMode mode);
   void SetSyncProto(sync_pb::WebAppSpecifics sync_proto);
-  void SetCaptureLinks(blink::mojom::CaptureLinks capture_links);
   void SetManifestUrl(const GURL& manifest_url);
   void SetManifestId(const webapps::ManifestId& manifest_id);
   void SetWindowControlsOverlayEnabled(bool enabled);
@@ -491,6 +523,9 @@ class WebApp {
   void SetDiyAppIconsMaskedOnMac(bool diy_app_icons_masked_on_mac);
   void SetRelatedApplications(
       std::vector<blink::Manifest::RelatedApplication> related_applications);
+  void SetPendingUpdateInfo(
+      std::optional<proto::PendingUpdateInfo> pending_update_info);
+  void SetTrustedIcons(std::vector<apps::IconInfo> trusted_icons);
 
   void AddPlaceholderInfoToManagementExternalConfigMap(
       WebAppManagement::Type source_type,
@@ -524,6 +559,14 @@ class WebApp {
   void SetGeneratedIconFix(
       std::optional<proto::GeneratedIconFix> generated_icon_fix);
 
+  void SetStoredTrustedIconSizes(IconPurpose purpose, SortedSizesPx sizes);
+
+  void SetInstalledBy(InstalledByPassKey,
+                      std::deque<AppInstalledBy> installed_by);
+
+  // CHECK-fails if GURL in |AppInstalledBy| is invalid.
+  void AddInstalledByInfo(AppInstalledBy installed_by_data);
+
   // For logging and debug purposes.
   bool operator==(const WebApp&) const;
   // Used by the WebAppTest suite to cover only platform agnostic fields to
@@ -554,6 +597,7 @@ class WebApp {
   std::optional<SkColor> dark_mode_background_color_;
   DisplayMode display_mode_ = DisplayMode::kUndefined;
   std::vector<DisplayMode> display_mode_override_;
+  std::vector<blink::SafeUrlPattern> borderless_url_patterns_;
   std::optional<WebAppChromeOsData> chromeos_data_;
   proto::InstallState install_state_ =
       proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION;
@@ -585,8 +629,6 @@ class WebApp {
   base::Time manifest_update_time_;
   RunOnOsLoginMode run_on_os_login_mode_ = RunOnOsLoginMode::kNotRun;
   sync_pb::WebAppSpecifics sync_proto_;
-  blink::mojom::CaptureLinks capture_links_ =
-      blink::mojom::CaptureLinks::kUndefined;
   ClientData client_data_;
   // This can be empty.
   GURL manifest_url_;
@@ -638,15 +680,30 @@ class WebApp {
 
   std::vector<blink::Manifest::RelatedApplication> related_applications_;
 
+  std::optional<proto::PendingUpdateInfo> pending_update_info_;
+
+  // Metadata required for trusted icons stored in web_app.h
+  std::vector<apps::IconInfo> trusted_icons_;
+
+  // Cache information about stored trusted icon bitmaps on disk to make reading
+  // using the WebAppIconManager less intensive by not having to resort to file
+  // enumeration.
+  SortedSizesPx stored_trusted_icon_sizes_any_;
+  SortedSizesPx stored_trusted_icon_sizes_maskable_;
+
+  std::deque<AppInstalledBy> installed_by_;
+
   // New fields must be added to:
   //  - |operator==|
   //  - AsDebugValue()
-  //  - WebAppDatabase::CreateWebApp()
-  //  - WebAppDatabase::CreateWebAppProto()
+  //  - WebAppDatabaseSerialization::ParseWebAppProto()
+  //  - WebAppDatabaseSerialization::WebAppToProto()
   //  - CreateRandomWebApp()
   //  - web_app.proto
   // If parsed from manifest, also add to:
   //  - GetManifestDataChanges() inside manifest_update_utils.h
+  //  - ManifestSilentUpdateCommand::CompareWebApps() inside
+  //    manifest_silent_update_command.cc.
   //  - SetWebAppManifestFields()
   // If the field relates to the app icons, add revert logic for it in:
   // - ManifestUpdateCheckCommand::RevertIdentityChangesIfNeeded()
@@ -668,9 +725,8 @@ class WebApp {
     // considered within home tab scope.
     //
     // An empty list means there is no home tab scope to match against (i.e.
-    // nothing matches), whereas an uninitialized list means it has not yet been
-    // needed.
-    std::optional<std::vector<TabbedModeScopeMatcher>> home_tab_scope;
+    // nothing matches), while a null list means it has not yet been needed.
+    std::optional<std::vector<UrlPatternWithRegexMatcher>> home_tab_scope;
   };
   mutable CachedDerivedData cached_derived_data_;
 };
@@ -682,22 +738,10 @@ std::ostream& operator<<(
     std::ostream& out,
     const WebApp::ExternalManagementConfig& management_config);
 
-namespace proto::os_state {
-
-bool operator==(const WebAppOsIntegration& os_integration_state1,
-                const WebAppOsIntegration& os_integration_state2);
-
-}  // namespace proto::os_state
-
 std::vector<std::string> GetSerializedAllowedOrigins(
     const network::ParsedPermissionsPolicyDeclaration
         permissions_policy_declaration);
 
 }  // namespace web_app
-
-namespace sync_pb {
-bool operator==(const WebAppSpecifics& sync_proto1,
-                const WebAppSpecifics& sync_proto2);
-}  // namespace sync_pb
 
 #endif  // CHROME_BROWSER_WEB_APPLICATIONS_WEB_APP_H_

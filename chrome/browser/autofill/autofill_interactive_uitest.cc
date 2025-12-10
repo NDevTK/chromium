@@ -10,7 +10,6 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -65,6 +64,7 @@
 #include "components/autofill/core/browser/foundations/test_autofill_manager_waiter.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_constants.h"
+#include "components/autofill/core/common/autofill_debug_features.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
@@ -105,10 +105,12 @@
 #if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(ENABLE_EXTENSIONS)
 // Includes for ChromeVox accessibility tests.
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
+#include "chrome/browser/ash/accessibility/accessibility_test_utils.h"
 #include "chrome/browser/ash/accessibility/chromevox_test_utils.h"
 #include "chrome/browser/ash/accessibility/speech_monitor.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "extensions/browser/browsertest_util.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/base/test/ui_controls.h"
 #endif  // BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -216,10 +218,9 @@ std::vector<FieldValue> GetFieldValues(
         )",
       control_elements->c_str());
   content::EvalJsResult r = content::EvalJs(execution_target, script);
-  DCHECK(r.value.is_list()) << r.error;
   std::vector<FieldValue> fields;
 
-  for (const base::Value& field : r.value.GetList()) {
+  for (const base::Value& field : r.ExtractList()) {
     const auto& field_dict = field.GetDict();
     fields.push_back({.id = *field_dict.FindString("id"),
                       .value = *field_dict.FindString("value")});
@@ -381,7 +382,7 @@ class ValueWaiter {
                                           waiterId_, timeout.InMilliseconds());
     content::EvalJsResult r =
         content::EvalJs(execution_target_, kFunction + call);
-    return !r.value.is_none() ? std::make_optional(r.ExtractString())
+    return r != base::Value() ? std::make_optional(r.ExtractString())
                               : std::nullopt;
   }
 
@@ -883,7 +884,7 @@ class AutofillInteractiveTestWithHistogramTester
  public:
   AutofillInteractiveTestWithHistogramTester() {
     feature_list_.InitWithFeatureState(
-        features::test::kAutofillServerCommunication, true);
+        features::debug::kAutofillServerCommunication, true);
   }
 
   void SetUp() override {
@@ -1169,7 +1170,14 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, Click) {
 
 // Makes sure that clicking outside the focused field doesn't activate
 // the popup.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, DontAutofillForOutsideClick) {
+// TODO(crbug.com/430163188): Re-enable this test
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_DontAutofillForOutsideClick DISABLED_DontAutofillForOutsideClick
+#else
+#define MAYBE_DontAutofillForOutsideClick DontAutofillForOutsideClick
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
+                       MAYBE_DontAutofillForOutsideClick) {
   static const char kDisabledButton[] =
       R"(<button disabled id='disabled-button'>Cant click this</button>)";
   CreateTestProfile();
@@ -1658,7 +1666,13 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, DynamicFormFill) {
 }
 
 // Test that form filling works after reloading the current page.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillAfterReload) {
+// Disable on Linux due to flakiness: crbug.com/446401455.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_AutofillAfterReload DISABLED_AutofillAfterReload
+#else
+#define MAYBE_AutofillAfterReload AutofillAfterReload
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_AutofillAfterReload) {
   CreateTestProfile();
   SetTestUrlResponse(kTestShippingFormString);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetTestUrl()));
@@ -3100,13 +3114,18 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTestDynamicForm,
   // need to explicitly wait for the pending votes. Since voting is scheduled on
   // submission, we first need to wait for the submission (otherwise, there are
   // no pending to vote for).
-  //
   // Additionally, we wait for a navigation because that's when the key metrics
-  // are emitted.
+  // are emitted. When the RFH changes on same site navigation, the metrics are
+  // emitted during RFH destruction, so we wait for it as well.
+  auto* main_frame = GetWebContents()->GetPrimaryMainFrame();
+  std::optional<content::RenderFrameDeletedObserver> rfh_deleted_observer;
+  if (main_frame->ShouldChangeRenderFrameHostOnSameSiteNavigation()) {
+    rfh_deleted_observer.emplace(main_frame);
+  }
   content::LoadStopObserver load_stop_observer(GetWebContents());
   BrowserAutofillManager& autofill_manager = *GetBrowserAutofillManager();
   TestAutofillManagerSingleEventWaiter submission_waiter(
-      autofill_manager, &AutofillManager::Observer::OnFormSubmitted);
+      autofill_manager, &AutofillManager::Observer::OnAfterFormSubmitted);
   ASSERT_TRUE(content::ExecJs(GetWebContents(),
                               "document.getElementById('testform').submit();"));
   ASSERT_TRUE(std::move(submission_waiter).Wait());
@@ -3114,6 +3133,9 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTestDynamicForm,
                            ->GetVotesUploader())
                   .FlushPendingVotes());
   load_stop_observer.Wait();
+  if (rfh_deleted_observer) {
+    rfh_deleted_observer->WaitUntilDeleted();
+  }
 
   // Short hand for ExpectBucketCount:
   auto expect_count = [&](std::string_view name,
@@ -3193,9 +3215,20 @@ IN_PROC_BROWSER_TEST_P(AutofillInteractiveTestShadowDom,
 // ChromeVox is only available on ChromeOS.
 #if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(ENABLE_EXTENSIONS)
 
-class AutofillInteractiveTestChromeVox : public AutofillInteractiveTestBase {
+class AutofillInteractiveTestChromeVox
+    : public AutofillInteractiveTestBase,
+      public ::testing::WithParamInterface<ash::ManifestVersion> {
  public:
-  AutofillInteractiveTestChromeVox() = default;
+  AutofillInteractiveTestChromeVox() {
+    std::vector<base::test::FeatureRef> enabled_features, disabled_features;
+    if (GetParam() == ash::ManifestVersion::kTwo) {
+      disabled_features.push_back(
+          ::features::kAccessibilityManifestV3ChromeVox);
+    } else if (GetParam() == ash::ManifestVersion::kThree) {
+      enabled_features.push_back(::features::kAccessibilityManifestV3ChromeVox);
+    }
+    scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
+  }
   ~AutofillInteractiveTestChromeVox() override = default;
 
   void SetUpOnMainThread() override {
@@ -3218,8 +3251,15 @@ class AutofillInteractiveTestChromeVox : public AutofillInteractiveTestBase {
   }
   ash::test::SpeechMonitor* sm() { return chromevox_test_utils()->sm(); }
 
+ private:
   std::unique_ptr<ash::ChromeVoxTestUtils> chromevox_test_utils_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
+
+INSTANTIATE_TEST_SUITE_P(ManifestVersion,
+                         AutofillInteractiveTestChromeVox,
+                         ::testing::Values(ash::ManifestVersion::kTwo,
+                                           ash::ManifestVersion::kThree));
 
 // Ensure that autofill suggestions are properly read out via ChromeVox.
 // This is a regressions test for crbug.com/1208913.
@@ -3231,7 +3271,7 @@ class AutofillInteractiveTestChromeVox : public AutofillInteractiveTestBase {
 #define MAYBE_TestNotificationOfAutofillDropdown \
   TestNotificationOfAutofillDropdown
 #endif
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTestChromeVox,
+IN_PROC_BROWSER_TEST_P(AutofillInteractiveTestChromeVox,
                        MAYBE_TestNotificationOfAutofillDropdown) {
   CreateTestProfile();
   SetTestUrlResponse(kTestShippingFormString);

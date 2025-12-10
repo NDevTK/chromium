@@ -46,27 +46,21 @@ class TabStripSceneLayer : public SceneLayer {
                     jint reorder_background_padding_long,
                     jint reorder_background_corner_radius);
 
-  void SetContentTree(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
-      const base::android::JavaParamRef<jobject>& jcontent_tree);
+  void SetContentTree(JNIEnv* env,
+                      const base::android::JavaRef<jobject>& jcontent_tree);
 
   void BeginBuildingFrame(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
       jboolean visible,
-      const base::android::JavaParamRef<jobject>& jresource_manager,
-      const base::android::JavaParamRef<jobject>& jlayer_title_cache);
+      const base::android::JavaRef<jobject>& jresource_manager,
+      const base::android::JavaRef<jobject>& jlayer_title_cache);
 
-  void FinishBuildingFrame(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& jobj);
+  void FinishBuildingFrame(JNIEnv* env);
 
   void UpdateOffsetTag(JNIEnv* env,
-                       const base::android::JavaParamRef<jobject>& jobj,
-                       const base::android::JavaParamRef<jobject>& joffset_tag);
+                       const base::android::JavaRef<jobject>& joffset_tag);
 
   void UpdateTabStripLayer(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& jobj,
                            jint width,
                            jint height,
                            jfloat y_offset,
@@ -78,7 +72,6 @@ class TabStripSceneLayer : public SceneLayer {
                            jfloat top_padding);
 
   void UpdateNewTabButton(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& jobj,
                           jint resource_id,
                           jint bg_resource_id,
                           jfloat x,
@@ -93,40 +86,33 @@ class TabStripSceneLayer : public SceneLayer {
                           jint keyboard_focus_ring_resource_id,
                           jint keyboard_focus_ring_color);
 
-  void UpdateModelSelectorButton(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
-      jint resource_id,
-      jint bg_resource_id,
-      jfloat x,
-      jfloat y,
-      jboolean visible,
-      jboolean should_apply_hover_highlight,
-      jint tint,
-      jint background_tint,
-      jfloat button_alpha,
-      jboolean is_keyboard_focused,
-      jint keyboard_focus_ring_resource_id,
-      jint keyboard_focus_ring_color);
+  void UpdateModelSelectorButton(JNIEnv* env,
+                                 jint resource_id,
+                                 jint bg_resource_id,
+                                 jfloat x,
+                                 jfloat y,
+                                 jboolean visible,
+                                 jboolean should_apply_hover_highlight,
+                                 jint tint,
+                                 jint background_tint,
+                                 jfloat button_alpha,
+                                 jboolean is_keyboard_focused,
+                                 jint keyboard_focus_ring_resource_id,
+                                 jint keyboard_focus_ring_color);
 
-  void UpdateTabStripLeftFade(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
-      jint resource_id,
-      jfloat opacity,
-      jint leftFadeColor,
-      jfloat left_padding);
+  void UpdateTabStripLeftFade(JNIEnv* env,
+                              jint resource_id,
+                              jfloat opacity,
+                              jint leftFadeColor,
+                              jfloat left_padding);
 
-  void UpdateTabStripRightFade(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
-      jint resource_id,
-      jfloat opacity,
-      jint rightFadeColor,
-      jfloat right_padding);
+  void UpdateTabStripRightFade(JNIEnv* env,
+                               jint resource_id,
+                               jfloat opacity,
+                               jint rightFadeColor,
+                               jfloat right_padding);
 
   void PutStripTabLayer(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& jobj,
                         jint id,
                         jint close_resource_id,
                         jint close_hover_bg_resource_id,
@@ -143,6 +129,11 @@ class TabStripSceneLayer : public SceneLayer {
                         jboolean foreground,
                         jboolean shouldShowTabOutline,
                         jboolean close_pressed,
+                        jboolean should_hide_favicon,
+                        jboolean should_show_media_indicator,
+                        jint media_indicator_resource_id,
+                        jint media_indicator_tint,
+                        jfloat media_indicator_width,
                         jfloat toolbar_width,
                         jfloat x,
                         jfloat y,
@@ -154,6 +145,7 @@ class TabStripSceneLayer : public SceneLayer {
                         jfloat top_margin,
                         jfloat close_button_padding,
                         jfloat close_button_alpha,
+                        jfloat width_to_hide_tab_title,
                         jboolean is_start_divider_visible,
                         jboolean is_end_divider_visible,
                         jboolean is_loading,
@@ -164,16 +156,16 @@ class TabStripSceneLayer : public SceneLayer {
                         jint keyboard_focus_ring_color,
                         jint keyboard_focus_ring_offset,
                         jint stroke_width,
-                        jfloat folio_foot_length);
+                        jfloat folio_foot_length,
+                        jboolean is_pinned);
 
   void PutGroupIndicatorLayer(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jobj,
       jboolean incognito,
       jboolean foreground,
       jboolean collapsed,
       jboolean show_bubble,
-      const base::android::JavaParamRef<jobject>& jgroup_token,
+      const base::android::JavaRef<jobject>& jgroup_token,
       jint tint,
       jint reorder_background_tint,
       jint bubble_tint,
@@ -226,6 +218,7 @@ class TabStripSceneLayer : public SceneLayer {
   scoped_refptr<cc::slim::Layer> tab_ui_parent_layer_;
   scoped_refptr<cc::slim::Layer> foreground_layer_;
   scoped_refptr<cc::slim::Layer> foreground_tabs_;
+  scoped_refptr<cc::slim::Layer> pinned_tabs_layer_;
   scoped_refptr<cc::slim::Layer> foreground_group_titles_;
   scoped_refptr<cc::slim::UIResourceLayer> new_tab_button_;
   scoped_refptr<cc::slim::UIResourceLayer> new_tab_button_background_;

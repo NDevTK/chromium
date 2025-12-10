@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/check.h"
-#include "base/notreached.h"
 #include "base/values.h"
 #include "build/buildflag.h"
 #include "printing/buildflags/buildflags.h"
@@ -17,14 +16,10 @@
 #include "printing/print_dialog_linux_interface.h"
 #include "printing/print_job_constants.h"
 #include "printing/units.h"
+#include "ui/linux/linux_ui.h"
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING_NO_OOP_BASIC_PRINT_DIALOG)
 #include "printing/printing_features.h"
-#endif
-
-// Avoid using LinuxUi on Fuchsia.
-#if BUILDFLAG(IS_LINUX)
-#include "ui/linux/linux_ui.h"
 #endif
 
 namespace printing {
@@ -43,21 +38,16 @@ PrintingContextLinux::PrintingContextLinux(
     : PrintingContext(delegate, out_of_process_behavior),
       print_dialog_(nullptr) {}
 
-PrintingContextLinux::~PrintingContextLinux() {
-  ReleaseContext();
-
-  if (print_dialog_)
-    print_dialog_.ExtractAsDangling()->ReleaseDialog();
-}
+PrintingContextLinux::~PrintingContextLinux() = default;
 
 void PrintingContextLinux::AskUserForSettings(int max_pages,
                                               bool has_selection,
                                               bool is_scripted,
                                               PrintSettingsCallback callback) {
   if (!print_dialog_) {
-    // Can only get here if the renderer is sending bad messages.
-    // http://crbug.com/341777
-    NOTREACHED();
+    // Can only get here if the renderer is sending bad messages. Ignore.
+    // https://crbug.com/41088489
+    return;
   }
 
   print_dialog_->ShowDialog(delegate_->GetParentView(), has_selection,
@@ -69,26 +59,25 @@ mojom::ResultCode PrintingContextLinux::UseDefaultSettings() {
 
   ResetSettings();
 
-#if BUILDFLAG(IS_LINUX)
-  if (!ui::LinuxUi::instance())
+  if (!ui::LinuxUi::instance()) {
     return mojom::ResultCode::kSuccess;
+  }
 
-  if (!print_dialog_)
+  if (!print_dialog_) {
     print_dialog_ = ui::LinuxUi::instance()->CreatePrintDialog(this);
+  }
 
   if (print_dialog_) {
     print_dialog_->UseDefaultSettings();
   }
-#endif
 
   return mojom::ResultCode::kSuccess;
 }
 
 gfx::Size PrintingContextLinux::GetPdfPaperSizeDeviceUnits() {
-#if BUILDFLAG(IS_LINUX)
-  if (ui::LinuxUi::instance())
+  if (ui::LinuxUi::instance()) {
     return ui::LinuxUi::instance()->GetPdfPaperSize(this);
-#endif
+  }
 
   return gfx::Size();
 }
@@ -98,20 +87,20 @@ mojom::ResultCode PrintingContextLinux::UpdatePrinterSettings(
   DCHECK(!printer_settings.show_system_dialog);
   DCHECK(!in_print_job_);
 
-#if BUILDFLAG(IS_LINUX)
-  if (!ui::LinuxUi::instance())
+  if (!ui::LinuxUi::instance()) {
     return mojom::ResultCode::kSuccess;
+  }
 
-  if (!print_dialog_)
+  if (!print_dialog_) {
     print_dialog_ = ui::LinuxUi::instance()->CreatePrintDialog(this);
+  }
 
   if (print_dialog_) {
-    // PrintDialogGtk::UpdateSettings() calls InitWithSettings() so settings_ will
-    // remain non-null after this line.
+    // PrintDialogGtk::UpdateSettings() calls InitWithSettings() so settings_
+    // will remain non-null after this line.
     print_dialog_->UpdateSettings(std::move(settings_));
     DCHECK(settings_);
   }
-#endif
 
   return mojom::ResultCode::kSuccess;
 }
@@ -157,8 +146,9 @@ mojom::ResultCode PrintingContextLinux::PrintDocument(
     const MetafilePlayer& metafile,
     const PrintSettings& settings,
     uint32_t num_pages) {
-  if (abort_printing_)
+  if (abort_printing_) {
     return mojom::ResultCode::kCanceled;
+  }
   DCHECK(in_print_job_);
   if (!print_dialog_) {
     return mojom::ResultCode::kFailed;
@@ -170,8 +160,9 @@ mojom::ResultCode PrintingContextLinux::PrintDocument(
 }
 
 mojom::ResultCode PrintingContextLinux::DocumentDone() {
-  if (abort_printing_)
+  if (abort_printing_) {
     return mojom::ResultCode::kCanceled;
+  }
   DCHECK(in_print_job_);
 
   ResetSettings();

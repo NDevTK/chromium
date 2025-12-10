@@ -79,7 +79,6 @@ import org.chromium.components.tab_group_sync.SavedTabGroupTab;
 import org.chromium.components.tab_group_sync.SyncedGroupTestHelper;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.components.tab_group_sync.TabGroupUiActionHandler;
-import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -106,7 +105,6 @@ public class TabGroupRowMediatorUnitTest {
     @Mock private ServiceStatus mServiceStatus;
     @Mock private PaneManager mPaneManager;
     @Mock private TabGroupUiActionHandler mTabGroupUiActionHandler;
-    @Mock private ModalDialogManager mModalDialogManager;
     @Mock private ActionConfirmationManager mActionConfirmationManager;
     @Mock private FaviconResolver mFaviconResolver;
     @Mock private Supplier<@GroupWindowState Integer> mFetchGroupState;
@@ -171,7 +169,6 @@ public class TabGroupRowMediatorUnitTest {
             when(tab.getTabGroupId()).thenReturn(GROUP_ID1);
             tabList.add(tab);
         }
-        when(mTabGroupModelFilter.getRootIdFromTabGroupId(GROUP_ID1)).thenReturn(mRootId);
         when(mTabGroupModelFilter.getTabsInGroup(GROUP_ID1)).thenReturn(tabList);
 
         TabGroupRowMediator mediator =

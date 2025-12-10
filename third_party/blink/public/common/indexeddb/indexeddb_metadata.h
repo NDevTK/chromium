@@ -16,7 +16,7 @@
 namespace blink {
 
 struct BLINK_COMMON_EXPORT IndexedDBIndexMetadata {
-  static const int64_t kInvalidId = -1;
+  inline static const int64_t kInvalidId = -1;
 
   IndexedDBIndexMetadata();
   IndexedDBIndexMetadata(const std::u16string& name,
@@ -32,24 +32,20 @@ struct BLINK_COMMON_EXPORT IndexedDBIndexMetadata {
   bool operator==(const IndexedDBIndexMetadata& other) const;
 
   std::u16string name;
-  int64_t id;
+  int64_t id = kInvalidId;
   blink::IndexedDBKeyPath key_path;
-  bool unique;
-  bool multi_entry;
+  bool unique = false;
+  bool multi_entry = false;
 };
 
 struct BLINK_COMMON_EXPORT IndexedDBObjectStoreMetadata {
-  static const int64_t kInvalidId = -1;
-  // TODO(crbug.com/40253999): Move this to LevelDB-specific code if it is only
-  // relevant there.
-  static const int64_t kMinimumIndexId = 30;
+  inline static const int64_t kInvalidId = -1;
 
   IndexedDBObjectStoreMetadata();
   IndexedDBObjectStoreMetadata(const std::u16string& name,
                                int64_t id,
                                const blink::IndexedDBKeyPath& key_path,
-                               bool auto_increment,
-                               int64_t max_index_id);
+                               bool auto_increment);
   IndexedDBObjectStoreMetadata(const IndexedDBObjectStoreMetadata& other);
   IndexedDBObjectStoreMetadata(IndexedDBObjectStoreMetadata&& other);
   ~IndexedDBObjectStoreMetadata();
@@ -59,10 +55,10 @@ struct BLINK_COMMON_EXPORT IndexedDBObjectStoreMetadata {
   bool operator==(const IndexedDBObjectStoreMetadata& other) const;
 
   std::u16string name;
-  int64_t id;
+  int64_t id = kInvalidId;
   blink::IndexedDBKeyPath key_path;
-  bool auto_increment;
-  int64_t max_index_id;
+  bool auto_increment = false;
+  int64_t max_index_id = 0;
 
   std::map<int64_t, IndexedDBIndexMetadata> indexes;
 };
@@ -90,6 +86,7 @@ struct BLINK_COMMON_EXPORT IndexedDBDatabaseMetadata {
   std::map<int64_t, IndexedDBObjectStoreMetadata> object_stores;
 
   bool was_cold_open = true;
+  bool is_sqlite = false;
 };
 
 }  // namespace blink

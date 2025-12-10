@@ -21,9 +21,9 @@
 #include "content/common/agent_scheduling_group.mojom.h"
 #include "content/common/renderer.mojom.h"
 #include "content/public/browser/render_process_host.h"
-#include "ipc/ipc_channel_mojo.h"
+#include "ipc/constants.mojom.h"
+#include "ipc/ipc_channel_factory.h"
 #include "ipc/ipc_channel_proxy.h"
-#include "ipc/ipc_message.h"
 #include "third_party/blink/public/mojom/shared_storage/shared_storage_worklet_service.mojom.h"
 #include "third_party/blink/public/mojom/worker/worklet_global_scope_creation_params.mojom.h"
 
@@ -31,7 +31,7 @@ namespace content {
 
 namespace {
 
-using ::IPC::ChannelMojo;
+using ::IPC::ChannelFactory;
 using ::IPC::ChannelProxy;
 using ::IPC::Listener;
 using ::mojo::AssociatedReceiver;
@@ -145,7 +145,7 @@ int32_t AgentSchedulingGroupHost::GetNextID() {
 }
 
 AgentSchedulingGroupHost::AgentSchedulingGroupHost(RenderProcessHost& process)
-    : process_(process.GetSafeRef()), receiver_(this) {
+    : process_(process), receiver_(this) {
   process_->AddObserver(this);
 
   // The RenderProcessHost's channel and other mojo interfaces are bound by the
@@ -206,25 +206,10 @@ void AgentSchedulingGroupHost::RenderProcessHostDestroyed(
   SetState(LifecycleState::kRenderProcessHostDestroyed);
 }
 
-bool AgentSchedulingGroupHost::OnMessageReceived(const IPC::Message& message) {
-  if (message.routing_id() == MSG_ROUTING_CONTROL) {
-    bad_message::ReceivedBadMessage(&*process_,
-                                    bad_message::ASGH_RECEIVED_CONTROL_MESSAGE);
-    return false;
-  }
-
-  auto* listener = GetListener(message.routing_id());
-  if (!listener)
-    return false;
-
-  return listener->OnMessageReceived(message);
-}
-
-void AgentSchedulingGroupHost::OnBadMessageReceived(
-    const IPC::Message& message) {
+void AgentSchedulingGroupHost::OnBadMessageReceived() {
   // If a bad message is received, it should be treated the same as a bad
   // message on the renderer-wide channel (i.e., kill the renderer).
-  return process_->OnBadMessageReceived(message);
+  return process_->OnBadMessageReceived();
 }
 
 void AgentSchedulingGroupHost::OnAssociatedInterfaceRequest(
@@ -236,20 +221,6 @@ void AgentSchedulingGroupHost::OnAssociatedInterfaceRequest(
   bad_message::ReceivedBadMessage(
       &*process_, bad_message::ASGH_ASSOCIATED_INTERFACE_REQUEST);
 }
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-void AgentSchedulingGroupHost::AddFilter(BrowserMessageFilter* filter) {
-  DCHECK(filter);
-  // When MBI mode is disabled, we forward these kinds of requests straight to
-  // the underlying `RenderProcessHost`.
-  if (GetMBIMode() == features::MBIMode::kLegacy) {
-    process_->AddFilter(filter);
-    return;
-  }
-
-  channel_->AddFilter(filter->GetFilter());
-}
-#endif
 
 RenderProcessHost* AgentSchedulingGroupHost::GetProcess() {
   // `process_` can still be accessed here even if `state_` has been set to
@@ -287,26 +258,6 @@ ChannelProxy* AgentSchedulingGroupHost::GetChannel() {
 
   DCHECK(channel_);
   return channel_.get();
-}
-
-bool AgentSchedulingGroupHost::Send(IPC::Message* message) {
-  DCHECK_EQ(state_, LifecycleState::kBound);
-
-  std::unique_ptr<IPC::Message> msg(message);
-
-  if (GetMBIMode() == features::MBIMode::kLegacy)
-    return process_->Send(msg.release());
-
-  // This DCHECK is too idealistic for now - messages that are handled by
-  // filters are sent as control messages since they are intercepted before
-  // routing. It is put here as documentation for now, since this code would not
-  // be reached until we activate
-  // `features::MBIMode::kEnabledPerRenderProcessHost` or
-  // `features::MBIMode::kEnabledPerSiteInstance`.
-  DCHECK_NE(message->routing_id(), MSG_ROUTING_CONTROL);
-
-  DCHECK(channel_);
-  return channel_->Send(msg.release());
 }
 
 void AgentSchedulingGroupHost::AddRoute(int32_t routing_id,
@@ -433,7 +384,7 @@ void AgentSchedulingGroupHost::SetUpIPC() {
     process_->GetRendererInterface()->CreateAgentSchedulingGroup(
         bootstrap.InitWithNewPipeAndPassReceiver());
 
-    auto channel_factory = ChannelMojo::CreateServerFactory(
+    auto channel_factory = ChannelFactory::CreateServerFactory(
         bootstrap.PassPipe(), /*ipc_task_runner=*/io_task_runner,
         /*proxy_task_runner=*/
         base::SingleThreadTaskRunner::GetCurrentDefault());
@@ -502,7 +453,7 @@ std::ostream& operator<<(std::ostream& os,
 }
 
 Listener* AgentSchedulingGroupHost::GetListener(int32_t routing_id) {
-  DCHECK_NE(routing_id, MSG_ROUTING_CONTROL);
+  DCHECK_NE(routing_id, IPC::mojom::kRoutingIdControl);
 
   return listener_map_.Lookup(routing_id);
 }

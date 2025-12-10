@@ -16,24 +16,6 @@
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 
-namespace WTF {
-
-template <>
-struct CrossThreadCopier<blink::ScriptDecoder::Result> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = blink::ScriptDecoder::Result;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-template <>
-struct CrossThreadCopier<mojo::ScopedDataPipeConsumerHandle> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = mojo::ScopedDataPipeConsumerHandle;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-}  // namespace WTF
-
 namespace blink {
 
 namespace {

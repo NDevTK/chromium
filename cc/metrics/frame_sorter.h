@@ -16,7 +16,6 @@
 #include "base/containers/circular_deque.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/ring_buffer.h"
-#include "base/functional/callback.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "cc/cc_export.h"
@@ -57,16 +56,16 @@ class CC_EXPORT FrameSorter {
   FrameSorter();
   void AddObserver(FrameSorterObserver* frame_sorter_observer);
   void RemoveObserver(FrameSorterObserver* frame_sorter_observer);
-  ~FrameSorter();
+  virtual ~FrameSorter();
 
   FrameSorter(const FrameSorter&) = delete;
   FrameSorter& operator=(const FrameSorter&) = delete;
 
   // The frames must be added in the correct order.
-  void AddNewFrame(const viz::BeginFrameArgs& args);
+  virtual void AddNewFrame(const viz::BeginFrameArgs& args);
 
   // Called on all frames, including those before FirstContentfulPaint.
-  void AddFrameInfoToBuffer(const FrameInfo& frame_info);
+  virtual void AddFrameInfoToBuffer(const FrameInfo& frame_info);
 
   // The results can be added in any order. However, the frame must have been
   // added by an earlier call to |AddNewFrame()|.
@@ -94,7 +93,7 @@ class CC_EXPORT FrameSorter {
 
   void OnFirstContentfulPaintReceived();
 
-  bool first_contentful_paint_received() {
+  bool first_contentful_paint_received() const {
     return first_contentful_paint_received_;
   }
 

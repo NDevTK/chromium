@@ -23,10 +23,26 @@
 @protocol MTLDevice;
 
 namespace gl {
+class GLFenceEGL;
 class ScopedEGLSurfaceIOSurface;
 }  // namespace gl
 
 namespace gpu {
+class WebNNTensorRepresentation;
+
+// Representation of a IOSurfaceImageBacking as a tensor.
+class WebNNIOSurfaceTensorRepresentation : public WebNNTensorRepresentation {
+ public:
+  WebNNIOSurfaceTensorRepresentation(SharedImageManager* manager,
+                                     SharedImageBacking* backing,
+                                     MemoryTypeTracker* tracker);
+  ~WebNNIOSurfaceTensorRepresentation() override;
+
+ private:
+  IOSurfaceRef GetIOSurface() const override;
+  bool BeginAccess() override;
+  void EndAccess() override;
+};
 
 // The state associated with an EGL texture representation of an IOSurface.
 // This is used by the representations GLTextureIRepresentation and
@@ -118,7 +134,6 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
  public:
   IOSurfaceImageBacking(
       gfx::ScopedIOSurface io_surface,
-      gfx::GenericSharedMemoryId io_surface_id,
       const Mailbox& mailbox,
       viz::SharedImageFormat format,
       const gfx::Size& size,
@@ -142,14 +157,6 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
 
   bool InitializePixels(base::span<const uint8_t> pixel_data);
 
-  void AddWGPUDeviceWithPendingCommands(wgpu::Device device)
-      EXCLUSIVE_LOCKS_REQUIRED(lock_);
-
-  void AddEGLDisplayWithPendingCommands(gl::GLDisplayEGL* display)
-      EXCLUSIVE_LOCKS_REQUIRED(lock_);
-  void ClearEGLDisplaysWithPendingCommands(gl::GLDisplayEGL* display_to_keep)
-      EXCLUSIVE_LOCKS_REQUIRED(lock_);
-
   // Wait for commands to be scheduled on every WGPUDevice or EGLDisplay that's
   // pending a flush except those using the same MTLDevice as `waiting_device`.
   // This is needed in two cases: 1) handing off the IOSurface to CoreAnimation
@@ -159,6 +166,11 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
   void WaitForCommandsToBeScheduled(id<MTLDevice> waiting_device = nil)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
+  IOSurfaceRef GetIOSurface();
+
+  bool BeginAccessWebNN();
+  void EndAccessWebNN();
+
  private:
   class GLTextureIRepresentation;
   class DawnRepresentation;
@@ -166,6 +178,27 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
   class SkiaGaneshRepresentation;
   class SkiaGraphiteMetalRepresentation;
   class OverlayRepresentation;
+
+  class DawnBufferCopyRepresentation final : public DawnBufferRepresentation {
+   public:
+    DawnBufferCopyRepresentation(
+        SharedImageManager* manager,
+        SharedImageBacking* backing,
+        MemoryTypeTracker* tracker,
+        const wgpu::Device& device,
+        std::unique_ptr<DawnImageRepresentation> dawn_image_representation);
+
+    ~DawnBufferCopyRepresentation() override;
+
+    wgpu::Buffer BeginAccess(wgpu::BufferUsage usage) override;
+
+    void EndAccess() override;
+
+   private:
+    wgpu::Device device_;
+    std::unique_ptr<DawnImageRepresentation> dawn_image_representation_;
+    wgpu::Buffer buffer_;
+  };
 
   // SharedImageBacking:
   base::trace_event::MemoryAllocatorDump* OnMemoryDump(
@@ -203,6 +236,15 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
   bool IsPurgeable() const override;
   void Update(std::unique_ptr<gfx::GpuFence> in_fence) override;
   gfx::GpuMemoryBufferHandle GetGpuMemoryBufferHandle() override;
+  std::unique_ptr<WebNNTensorRepresentation> ProduceWebNNTensor(
+      SharedImageManager* manager,
+      MemoryTypeTracker* tracker) override;
+  std::unique_ptr<DawnBufferRepresentation> ProduceDawnBuffer(
+      SharedImageManager* manager,
+      MemoryTypeTracker* tracker,
+      const wgpu::Device& device,
+      wgpu::BackendType backend_type,
+      scoped_refptr<SharedContextState> context_state) override;
 
   // IOSurfaceBackingEGLState::Client:
   bool IOSurfaceBackingEGLStateBeginAccess(IOSurfaceBackingEGLState* egl_state,
@@ -226,8 +268,10 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
                                   uint64_t signal_value,
                                   bool readonly)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
-  template <typename Fn>
-  void ProcessSharedEventsForBeginAccess(bool readonly, const Fn& fn)
+  void ProcessSharedEventsForBeginAccess(
+      bool readonly,
+      base::FunctionRef<void(id<MTLSharedEvent> shared_event,
+                             uint64_t signaled_value)> process_fn)
       EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Guarded by ScopedIOSurfaceLock instead of |lock_| for memory access.
@@ -235,7 +279,6 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
 
   const gfx::Size io_surface_size_;
   const uint32_t io_surface_format_;
-  const gfx::GenericSharedMemoryId io_surface_id_;
 
   // DawnSharedTextureCache that keeps an internal cache of per-device
   // SharedTextureData that vends WebGPU textures for the underlying IOSurface.
@@ -248,7 +291,7 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
   base::flat_map<WGPUTexture, int> wgpu_texture_ongoing_accesses_
       GUARDED_BY(lock_);
 
-  // Tracks the devices to invoke waitUntilScheduled.
+  // Tracks devices with pending commands scheduled futures.
   // TODO(dawn:2453): The below comparator should be implemented in
   // wgpu::Device itself.
   struct WGPUDeviceCompare {
@@ -256,8 +299,8 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
       return lhs.Get() < rhs.Get();
     }
   };
-  base::flat_set<wgpu::Device, WGPUDeviceCompare> wgpu_devices_pending_flush_
-      GUARDED_BY(lock_);
+  base::flat_map<wgpu::Device, wgpu::Future, WGPUDeviceCompare>
+      wgpu_commands_scheduled_futures_ GUARDED_BY(lock_);
 
   // Returns the number of ongoing accesses that were already present on this
   // texture prior to beginning this access.
@@ -297,9 +340,9 @@ class GPU_GLES2_EXPORT IOSurfaceImageBacking
   scoped_refptr<IOSurfaceBackingEGLState> egl_state_for_skia_gl_context_
       GUARDED_BY(lock_);
 
-  // Tracks the displays to invoke eglWaitUntilWorkScheduledANGLE().
-  base::flat_set<gl::GLDisplayEGL*> egl_displays_pending_flush_
-      GUARDED_BY(lock_);
+  // Tracks displays with pending commands scheduled fences.
+  base::flat_map<EGLDisplay, std::unique_ptr<gl::GLFenceEGL>>
+      egl_commands_scheduled_fences_ GUARDED_BY(lock_);
 
   using ScopedSharedEvent = base::apple::scoped_nsprotocol<id<MTLSharedEvent>>;
   struct SharedEventCompare {

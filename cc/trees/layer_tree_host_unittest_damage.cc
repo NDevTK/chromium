@@ -50,7 +50,7 @@ class LayerTreeHostDamageTestSetNeedsRedraw
   }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* impl,
-                                   LayerTreeHostImpl::FrameData* frame_data,
+                                   FrameData* frame_data,
                                    DrawResult draw_result) override {
     EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
@@ -112,7 +112,7 @@ class LayerTreeHostDamageTestSetViewportRectAndScale
   }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* impl,
-                                   LayerTreeHostImpl::FrameData* frame_data,
+                                   FrameData* frame_data,
                                    DrawResult draw_result) override {
     EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
@@ -169,7 +169,7 @@ class LayerTreeHostDamageTestNoDamageDoesNotSwap
   }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
-                                   LayerTreeHostImpl::FrameData* frame_data,
+                                   FrameData* frame_data,
                                    DrawResult draw_result) override {
     EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
@@ -254,7 +254,7 @@ class LayerTreeHostDamageTestForcedFullDamage : public LayerTreeHostDamageTest {
   }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
-                                   LayerTreeHostImpl::FrameData* frame_data,
+                                   FrameData* frame_data,
                                    DrawResult draw_result) override {
     EXPECT_EQ(DrawResult::kSuccess, draw_result);
 
@@ -386,7 +386,7 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
   }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
-                                   LayerTreeHostImpl::FrameData* frame_data,
+                                   FrameData* frame_data,
                                    DrawResult draw_result) override {
     EXPECT_EQ(DrawResult::kSuccess, draw_result);
     RenderSurfaceImpl* root_surface =
@@ -432,7 +432,8 @@ class LayerTreeHostDamageTestScrollbarDoesDamage
         break;
       case 2:
         scroll_layer->ScrollBy(gfx::Vector2dF(10.f, 10.f));
-        host_impl->SetNeedsRedraw();
+        host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                  /*skip_if_inside_draw=*/false);
         break;
       case 3:
         // We will resize the content layer, on the main thread.
@@ -472,7 +473,7 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
   }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
-                                   LayerTreeHostImpl::FrameData* frame_data,
+                                   FrameData* frame_data,
                                    DrawResult draw_result) override {
     EXPECT_EQ(DrawResult::kSuccess, draw_result);
     RenderSurfaceImpl* root_surface =
@@ -512,7 +513,8 @@ class LayerTreeHostDamageTestScrollbarCommitDoesNoDamage
         // Scroll on the thread.  This should damage the scrollbar for the
         // next draw on the thread.
         scroll_layer->ScrollBy(gfx::Vector2dF(10.f, 10.f));
-        host_impl->SetNeedsRedraw();
+        host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                  /*skip_if_inside_draw=*/false);
         break;
       case 2:
         // Forcibly send the scroll to the main thread.

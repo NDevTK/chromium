@@ -11,6 +11,7 @@
 #include "base/barrier_closure.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
+#include "base/functional/callback_helpers.h"
 #include "base/i18n/case_conversion.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros_local.h"
@@ -34,6 +35,7 @@
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
 #include "components/page_content_annotations/core/page_content_annotations_switches.h"
 #include "components/page_content_annotations/core/page_content_annotations_validator.h"
+#include "components/passage_embeddings/passage_embeddings_types.h"
 #include "components/search/search.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -43,6 +45,7 @@
 #include "third_party/omnibox_proto/types.pb.h"
 
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+#include "components/page_content_annotations/core/on_device_category_classifier.h"
 #include "components/page_content_annotations/core/page_content_annotations_model_manager.h"
 #endif
 
@@ -184,6 +187,8 @@ PageContentAnnotationsService::PageContentAnnotationsService(
     const base::FilePath& database_dir,
     OptimizationGuideLogger* optimization_guide_logger,
     optimization_guide::OptimizationGuideDecider* optimization_guide_decider,
+    passage_embeddings::EmbedderMetadataProvider* embedder_metadata_provider,
+    passage_embeddings::Embedder* embedder,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
     : min_page_category_score_to_persist_(
           features::GetMinimumPageCategoryScoreToPersist()),
@@ -215,6 +220,14 @@ PageContentAnnotationsService::PageContentAnnotationsService(
     model_manager_->RequestAndNotifyWhenModelAvailable(
         AnnotationType::kContentVisibility, base::DoNothing());
     annotation_types_to_execute_.push_back(AnnotationType::kContentVisibility);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kOnDeviceCategoryClassifier) &&
+      embedder_metadata_provider && embedder) {
+    on_device_category_classifier_ =
+        std::make_unique<OnDeviceCategoryClassifier>(
+            optimization_guide_model_provider, embedder_metadata_provider,
+            embedder);
   }
 #endif
 
@@ -507,7 +520,7 @@ void PageContentAnnotationsService::OnPageContentAnnotated(
 
   MaybeRecordVisibilityUKM(visit, content_annotations);
   NotifyPageContentAnnotatedObservers(
-      AnnotationType::kContentVisibility, visit.url,
+      AnnotationType::kContentVisibility, visit,
       PageContentAnnotationsResult::CreateContentVisibilityScoreResult(
           content_annotations->visibility_score));
 
@@ -638,8 +651,8 @@ void PageContentAnnotationsService::QueryURL(
     const HistoryVisit& visit,
     PersistAnnotationsCallback callback,
     PageContentAnnotationsType annotation_type) {
-  history_service_->QueryURL(
-      visit.url, /*want_visits=*/true,
+  history_service_->QueryURLAndVisits(
+      visit.url, history::VisitQuery404sPolicy::kExclude404s,
       base::BindOnce(&PageContentAnnotationsService::OnURLQueried,
                      weak_ptr_factory_.GetWeakPtr(), visit, std::move(callback),
                      annotation_type),
@@ -650,7 +663,7 @@ void PageContentAnnotationsService::OnURLQueried(
     const HistoryVisit& visit,
     PersistAnnotationsCallback callback,
     PageContentAnnotationsType annotation_type,
-    history::QueryURLResult url_result) {
+    history::QueryURLAndVisitsResult url_result) {
   if (!url_result.success || url_result.visits.empty()) {
     LogPageContentAnnotationsStorageStatus(
         PageContentAnnotationsStorageStatus::kNoVisitsForUrl, annotation_type);
@@ -696,12 +709,17 @@ void PageContentAnnotationsService::OnURLsModified(
 
 void PageContentAnnotationsService::OnURLVisitedWithNavigationId(
     history::HistoryService* history_service,
-    const history::URLRow& url_row,
-    const history::VisitRow& visit_row,
-    std::optional<int64_t> local_navigation_id) {
+    const history::VisitedURLInfo& visited_url_info) {
   DCHECK_EQ(history_service, history_service_);
 
+  const history::URLRow& url_row = visited_url_info.url_row;
+  const history::VisitRow& visit_row = visited_url_info.visit_row;
   if (!url_row.url().SchemeIsHTTPOrHTTPS()) {
+    return;
+  }
+
+  if (visited_url_info.response_code_category ==
+      history::VisitResponseCodeCategory::k404) {
     return;
   }
 
@@ -710,8 +728,8 @@ void PageContentAnnotationsService::OnURLVisitedWithNavigationId(
   history_visit.nav_entry_timestamp = visit_row.visit_time;
   history_visit.text_to_annotate = base::UTF16ToUTF8(url_row.title());
   history_visit.url = url_row.url();
-  if (local_navigation_id) {
-    history_visit.navigation_id = local_navigation_id.value();
+  if (visited_url_info.local_navigation_id) {
+    history_visit.navigation_id = visited_url_info.local_navigation_id.value();
   }
 
   if (template_url_service_) {
@@ -875,14 +893,14 @@ void PageContentAnnotationsService::PersistSalientImageMetadata(
 
 void PageContentAnnotationsService::NotifyPageContentAnnotatedObservers(
     AnnotationType annotation_type,
-    const GURL& url,
+    const HistoryVisit& visit,
     const PageContentAnnotationsResult& page_content_annotations_result) {
   if (page_content_annotations_observers_.find(annotation_type) ==
       page_content_annotations_observers_.end()) {
     return;
   }
   for (auto& observer : page_content_annotations_observers_[annotation_type]) {
-    observer.OnPageContentAnnotated(url, page_content_annotations_result);
+    observer.OnPageContentAnnotated(visit, page_content_annotations_result);
   }
 }
 
@@ -917,6 +935,21 @@ void PageContentAnnotationsService::OnOptimizationGuideResponseReceived(
     default:
       NOTREACHED();
   }
+}
+
+void PageContentAnnotationsService::ClassifyCategoriesForText(
+    const std::string& text,
+    base::OnceCallback<void(std::vector<Category>)> callback) {
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+  if (!on_device_category_classifier_) {
+    std::move(callback).Run({});
+    return;
+  }
+
+  on_device_category_classifier_->ClassifyText(text, std::move(callback));
+#else
+  std::move(callback).Run({});
+#endif
 }
 
 HistoryVisit::HistoryVisit() = default;

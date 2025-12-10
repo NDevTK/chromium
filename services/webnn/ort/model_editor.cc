@@ -7,9 +7,9 @@
 #include <ranges>
 
 #include "base/types/fixed_array.h"
+#include "services/webnn/ort/external_weights_manager.h"
 #include "services/webnn/ort/ort_data_type.h"
 #include "services/webnn/ort/ort_status.h"
-#include "services/webnn/ort/ort_tensor.h"
 #include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace webnn::ort {
@@ -18,14 +18,44 @@ namespace {
 
 // Domains
 constexpr char kOrtDefaultDomain[] = "";
+// Domain "com.microsoft" is required by EPContext op for exporting the compiled
+// model.
+// https://onnxruntime.ai/docs/execution-providers/EP-Context-Design.html#epcontext-op-schema
 constexpr char kMSDomain[] = "com.microsoft";
+// Domain "com.ms.internal.nhwc" provides alternative implementations of
+// operators that are compatible with NHWC layout. This domain is required for
+// certain operators when using WebGPU EP. See:
+// https://github.com/microsoft/onnxruntime/blob/main/js/web/docs/webgpu-operators.md
+constexpr char kMSInternalNhwcDomain[] = "com.ms.internal.nhwc";
+// Domain "com.microsoft.nchwc" provides a layout optimization for default CPU
+// EP, it's required when the optimization level is set to "ENABLE_ALL".
+// https://onnxruntime.ai/docs/performance/model-optimizations/graph-optimizations.html#layout-optimizations
+// TODO(crbug.com/442483649): Remove this domain once the ORT issue is fixed.
+// https://github.com/microsoft/onnxruntime/issues/25914
+constexpr char kMSNchwcDomain[] = "com.microsoft.nchwc";
+// Domain "com.microsoft.dml" is required by DirectML EP for certain fused
+// operators when the optimization level is set to "ENABLE_ALL", such as
+// DmlFusedConv. See more details at
+// https://github.com/microsoft/onnxruntime/blob/main/docs/OperatorKernels.md#dmlexecutionprovider
+// TODO(crbug.com/442483649): Remove this domain once the ORT issue is fixed.
+// https://github.com/microsoft/onnxruntime/issues/25914
+constexpr char kMSDmlDomain[] = "com.microsoft.dml";
 
 // Opset versions
 constexpr int32_t kOrtOpsetVersion = 21;
-
-// EPContext op is used for exporting the compiled model.
-// https://onnxruntime.ai/docs/execution-providers/EP-Context-Design.html#onnxruntime-ep-context-cache-feature-design
+// The op set version for domain "com.microsoft".
+// https://github.com/microsoft/onnxruntime/blob/main/docs/ContribOperators.md#version-26
 constexpr int32_t kEPContextOpsetVersion = 1;
+// Domain "com.ms.internal.nhwc" provides operator implementations that are
+// functionally equivalent to the standard ai.onnx domain but optimized for NHWC
+// layout. So we should use the same opset version as the default domain.
+constexpr int32_t kMSInternalNhwcDomainOpsetVersion = kOrtOpsetVersion;
+// The op set version for domain "com.microsoft.nchwc".
+// https://github.com/microsoft/onnxruntime/blob/main/docs/OperatorKernels.md#operators-implemented-by-cpuexecutionprovider
+constexpr int32_t kMSNchwcDomainOpsetVersion = 1;
+// The op set version for domain "com.microsoft.dml".
+// https://github.com/microsoft/onnxruntime/blob/main/docs/OperatorKernels.md#dmlexecutionprovider
+constexpr int32_t kMSDmlDomainOpsetVersion = 1;
 
 // The minimum size (in bytes) to add the initializer as external data. An
 // initializer less than 128 bytes might be used for shape inferencing which
@@ -71,17 +101,11 @@ ScopedOrtValueInfo CreateOrtValueInfo(base::cstring_view name,
 
 }  // namespace
 
-ModelEditor::ModelInfo::ModelInfo() = default;
+ModelEditor::ModelInfo::ModelInfo()
+    : external_weights_manager(std::make_unique<ExternalWeightsManager>()) {}
 ModelEditor::ModelInfo::~ModelInfo() = default;
 
 ModelEditor::ModelEditor() : model_info_(std::make_unique<ModelInfo>()) {
-  const OrtApi* ort_api = GetOrtApi();
-  // Create a CPU memory info, the constants will always be created in
-  // CPU memory.
-  CHECK_STATUS(ort_api->CreateCpuMemoryInfo(
-      OrtDeviceAllocator, OrtMemTypeDefault,
-      ScopedOrtMemoryInfo::Receiver(memory_info_).get()));
-
   const OrtModelEditorApi* ort_model_editor_api = GetOrtModelEditorApi();
   CHECK_STATUS(ort_model_editor_api->CreateGraph(
       ScopedOrtGraph::Receiver(graph_).get()));
@@ -133,9 +157,6 @@ void ModelEditor::AddInitializer(base::cstring_view name,
                                  base::span<const uint8_t> data) {
   CHECK(!has_built_);
 
-  // TODO(crbug.com/423673304): After enabling OV EP, we need to add a
-  // workaround here since in-memory external data support for OV is still
-  // on-going.
   bool use_external_data = data.size() >= kMinExternalDataSize;
   if (use_external_data) {
     AddInitializerAsExternalData(name, data_type, shape,
@@ -171,8 +192,9 @@ void ModelEditor::AddInitializerAsRawData(base::cstring_view name,
 
   // SAFETY: `mutable_data` was created to hold a tensor of `shape` and
   // `data_type`.
-  UNSAFE_BUFFERS(base::span(static_cast<uint8_t*>(mutable_data),
-                            CalculateOrtTensorSizeInBytes(shape, data_type)))
+  size_t tensor_size = 0;
+  CHECK_STATUS(ort_api->GetTensorSizeInBytes(initializer.get(), &tensor_size));
+  UNSAFE_BUFFERS(base::span(static_cast<uint8_t*>(mutable_data), tensor_size))
       .copy_from(data);
 
   const OrtModelEditorApi* ort_model_editor_api = GetOrtModelEditorApi();
@@ -187,20 +209,9 @@ void ModelEditor::AddInitializerAsExternalData(
     ONNXTensorElementDataType data_type,
     base::span<const int64_t> shape,
     base::HeapArray<uint8_t> data) {
-  CHECK_EQ(data.size(), CalculateOrtTensorSizeInBytes(shape, data_type));
-
-  // The data will not be copied into the graph, so it must be stored outside.
-  model_info_->external_data.push_back(std::move(data));
-
-  const OrtApi* ort_api = GetOrtApi();
-  ScopedOrtValue initializer;
-  // TODO(crbug.com/411465403): Use `CreateTensorWithDataAndDeleterAsOrtValue()`
-  // to let ORT take the ownership of the tensor and free it when no longer in
-  // use.
-  CHECK_STATUS(ort_api->CreateTensorWithDataAsOrtValue(
-      memory_info_.get(), model_info_->external_data.back().data(),
-      model_info_->external_data.back().size(), shape.data(), shape.size(),
-      data_type, ScopedOrtValue::Receiver(initializer).get()));
+  ScopedOrtValue initializer =
+      model_info_->external_weights_manager->CreateInitializer(
+          std::move(data), shape, data_type);
 
   const OrtModelEditorApi* ort_model_editor_api = GetOrtModelEditorApi();
   // Graph will own the initializer.
@@ -297,9 +308,13 @@ std::unique_ptr<ModelEditor::ModelInfo> ModelEditor::BuildAndTakeModelInfo() {
   CHECK_STATUS(ort_model_editor_api->SetGraphOutputs(
       graph_.get(), graph_outputs.data(), graph_outputs.size()));
 
-  std::array<const char*, 2> domains = {kOrtDefaultDomain, kMSDomain};
-  std::array<int32_t, 2> opset_versions = {kOrtOpsetVersion,
-                                           kEPContextOpsetVersion};
+  std::array<const char*, 5> domains = {kOrtDefaultDomain, kMSDomain,
+                                        kMSInternalNhwcDomain, kMSNchwcDomain,
+                                        kMSDmlDomain};
+  std::array<int32_t, 5> opset_versions = {
+      kOrtOpsetVersion, kEPContextOpsetVersion,
+      kMSInternalNhwcDomainOpsetVersion, kMSNchwcDomainOpsetVersion,
+      kMSDmlDomainOpsetVersion};
   CHECK_STATUS(ort_model_editor_api->CreateModel(
       domains.data(), opset_versions.data(), domains.size(),
       ScopedOrtModel::Receiver(model_info_->model).get()));

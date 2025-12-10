@@ -14,8 +14,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
+#include "components/services/storage/public/mojom/cache_storage_control.mojom.h"
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/loader/response_head_update_params.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
@@ -29,7 +31,9 @@
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/browser/storage_partition_impl.h"
+#include "content/common/features.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/test/fake_network_url_loader_factory.h"
@@ -509,7 +513,7 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
         ServiceWorkerVersion::FetchHandlerType::kNotSkippable);
     version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
     PolicyContainerPolicies policies;
-    policies.ip_address_space = network::mojom::IPAddressSpace::kPrivate;
+    policies.ip_address_space = network::mojom::IPAddressSpace::kLocal;
     version_->SetPolicyContainerHost(
         base::MakeRefCounted<PolicyContainerHost>(std::move(policies)));
     registration_->SetActiveVersion(version_);
@@ -755,7 +759,7 @@ class ServiceWorkerMainResourceLoaderTest : public testing::Test {
         expected_info.was_fetched_via_service_worker;
     network::mojom::IPAddressSpace expected_client_address_space =
         expected_info.was_fetched_via_service_worker
-            ? network::mojom::IPAddressSpace::kPrivate
+            ? network::mojom::IPAddressSpace::kLocal
             : network::mojom::IPAddressSpace::kUnknown;
     if (expected_info.service_worker_router_info) {
       if (expected_info.service_worker_router_info->actual_source_type ==
@@ -1379,6 +1383,38 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, Lifetime) {
   // |loader_| is deleted here. LSan test will alert if it leaks.
 }
 
+TEST_F(ServiceWorkerMainResourceLoaderTest, Lifetime_RaceNetworkRequest) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {features::
+           kServiceWorkerStaticRouterRaceNetworkRequestPerformanceImprovement,
+       features::kServiceWorkerStaticRouterRaceRequestFix2},
+      {});
+
+  SetupStaticRoutingRules(
+      network::mojom::ServiceWorkerRouterSourceType::kRaceNetworkAndFetchEvent);
+  service_worker_->DeferResponse();
+  SetupNetworkResponse();
+
+  StartRequest(CreateRequest());
+  base::WeakPtr<ServiceWorkerMainResourceLoader> loader = loader_->AsWeakPtr();
+  ASSERT_TRUE(loader);
+
+  // The network request wins, but the fetch event is still in flight.
+  client_.RunUntilComplete();
+  EXPECT_TRUE(loader);
+
+  // Even after calling DetachedFromRequest(), |loader_| should be alive until
+  // the fetch event completes.
+  loader_.release()->DetachedFromRequest();
+  EXPECT_TRUE(loader);
+
+  // Finish the fetch event. This should trigger the deletion of |loader_|.
+  service_worker_->FinishRespondWith();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(loader);
+}
+
 TEST_F(ServiceWorkerMainResourceLoaderTest, ConnectionErrorDuringFetchEvent) {
   service_worker_->DeferResponse();
   StartRequest(CreateRequest());
@@ -1751,8 +1787,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest, StaticRoutingCache) {
   EXPECT_FALSE(info->load_timing.receive_headers_start.is_null());
   EXPECT_FALSE(info->load_timing.receive_headers_end.is_null());
   EXPECT_FALSE(info->load_timing.service_worker_cache_lookup_start.is_null());
-  EXPECT_EQ(info->client_address_space,
-            network::mojom::IPAddressSpace::kPrivate);
+  EXPECT_EQ(info->client_address_space, network::mojom::IPAddressSpace::kLocal);
   EXPECT_TRUE(info->was_fetched_via_service_worker);
   auto expected_info = CreateResponseInfoFromServiceWorker();
   expected_info->service_worker_response_source =
@@ -1957,8 +1992,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest,
   EXPECT_FALSE(info->load_timing.receive_headers_start.is_null());
   EXPECT_FALSE(info->load_timing.receive_headers_end.is_null());
   EXPECT_FALSE(info->load_timing.service_worker_cache_lookup_start.is_null());
-  EXPECT_EQ(info->client_address_space,
-            network::mojom::IPAddressSpace::kPrivate);
+  EXPECT_EQ(info->client_address_space, network::mojom::IPAddressSpace::kLocal);
   EXPECT_TRUE(info->was_fetched_via_service_worker);
   auto expected_info = CreateResponseInfoFromServiceWorker();
   expected_info->service_worker_response_source =
@@ -2017,8 +2051,7 @@ TEST_F(ServiceWorkerMainResourceLoaderTest,
   EXPECT_FALSE(info->load_timing.receive_headers_start.is_null());
   EXPECT_FALSE(info->load_timing.receive_headers_end.is_null());
   EXPECT_FALSE(info->load_timing.service_worker_cache_lookup_start.is_null());
-  EXPECT_EQ(info->client_address_space,
-            network::mojom::IPAddressSpace::kPrivate);
+  EXPECT_EQ(info->client_address_space, network::mojom::IPAddressSpace::kLocal);
   EXPECT_TRUE(info->was_fetched_via_service_worker);
   auto expected_info = CreateResponseInfoFromServiceWorker();
   expected_info->service_worker_response_source =

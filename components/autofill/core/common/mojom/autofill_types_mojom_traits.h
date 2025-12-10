@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_COMMON_MOJOM_AUTOFILL_TYPES_MOJOM_TRAITS_H_
 #define COMPONENTS_AUTOFILL_CORE_COMMON_MOJOM_AUTOFILL_TYPES_MOJOM_TRAITS_H_
 
-#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -80,6 +79,15 @@ struct StructTraits<autofill::mojom::FieldRendererIdDataView,
 };
 
 template <>
+struct StructTraits<autofill::mojom::FillIdDataView, autofill::FillId> {
+  static const base::UnguessableToken& id(const autofill::FillId& r) {
+    return r.value();
+  }
+
+  static bool Read(autofill::mojom::FillIdDataView data, autofill::FillId* out);
+};
+
+template <>
 struct StructTraits<autofill::mojom::SelectOptionDataView,
                     autofill::SelectOption> {
   static const std::u16string& value(const autofill::SelectOption& r) {
@@ -92,79 +100,6 @@ struct StructTraits<autofill::mojom::SelectOptionDataView,
 
   static bool Read(autofill::mojom::SelectOptionDataView data,
                    autofill::SelectOption* out);
-};
-
-template <>
-struct UnionTraits<autofill::mojom::SectionValueDataView,
-                   autofill::Section::SectionValue> {
-  static autofill::mojom::SectionValueDataView::Tag GetTag(
-      const autofill::Section::SectionValue& r);
-
-  static bool default_section(const autofill::Section::SectionValue& r) {
-    DCHECK(std::holds_alternative<autofill::Section::Default>(r));
-    return true;
-  }
-
-  static const autofill::Section::Autocomplete& autocomplete(
-      const autofill::Section::SectionValue& r) {
-    return std::get<autofill::Section::Autocomplete>(r);
-  }
-
-  static const autofill::Section::FieldIdentifier& field_identifier(
-      const autofill::Section::SectionValue& r) {
-    return std::get<autofill::Section::FieldIdentifier>(r);
-  }
-
-  static bool Read(autofill::mojom::SectionValueDataView data,
-                   autofill::Section::SectionValue* out);
-};
-
-template <>
-struct StructTraits<autofill::mojom::SectionAutocompleteDataView,
-                    autofill::Section::Autocomplete> {
-  static const std::string& section(const autofill::Section::Autocomplete& r) {
-    return r.section;
-  }
-
-  static autofill::mojom::HtmlFieldMode html_field_mode(
-      const autofill::Section::Autocomplete& r) {
-    return r.mode;
-  }
-
-  static bool Read(autofill::mojom::SectionAutocompleteDataView data,
-                   autofill::Section::Autocomplete* out);
-};
-
-template <>
-struct StructTraits<autofill::mojom::SectionFieldIdentifierDataView,
-                    autofill::Section::FieldIdentifier> {
-  static const std::string& field_name(
-      const autofill::Section::FieldIdentifier& r) {
-    return r.field_name;
-  }
-
-  static size_t local_frame_id(const autofill::Section::FieldIdentifier& r) {
-    return r.local_frame_id;
-  }
-
-  static autofill::FieldRendererId field_renderer_id(
-      const autofill::Section::FieldIdentifier& r) {
-    return r.field_renderer_id;
-  }
-
-  static bool Read(autofill::mojom::SectionFieldIdentifierDataView data,
-                   autofill::Section::FieldIdentifier* out);
-};
-
-template <>
-struct StructTraits<autofill::mojom::SectionDataView, autofill::Section> {
-  static const autofill::Section::SectionValue& value(
-      const autofill::Section& r) {
-    return r.value_;
-  }
-
-  static bool Read(autofill::mojom::SectionDataView data,
-                   autofill::Section* out);
 };
 
 template <>
@@ -261,6 +196,10 @@ struct StructTraits<autofill::mojom::FormFieldDataDataView,
     return r.aria_description();
   }
 
+  static const std::u16string& nonce(const autofill::FormFieldData& r) {
+    return r.nonce();
+  }
+
   static autofill::FieldRendererId renderer_id(
       const autofill::FormFieldData& r) {
     return r.renderer_id();
@@ -289,10 +228,6 @@ struct StructTraits<autofill::mojom::FormFieldDataDataView,
 
   static bool is_autofilled(const autofill::FormFieldData& r) {
     return r.is_autofilled();
-  }
-
-  static const autofill::Section& section(const autofill::FormFieldData& r) {
-    return r.section();
   }
 
   static autofill::FormFieldData::CheckStatus check_status(
@@ -491,6 +426,11 @@ struct StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
     return r.heuristic_type;
   }
 
+  static const std::string& pwm_ml_type(
+      const autofill::FormFieldDataPredictions& r) {
+    return r.pwm_ml_type;
+  }
+
   static const std::optional<std::string>& server_type(
       const autofill::FormFieldDataPredictions& r) {
     return r.server_type;
@@ -506,9 +446,9 @@ struct StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
     return r.overall_type;
   }
 
-  static const std::string& autofill_ai_type(
+  static const std::string& attribute_types(
       const autofill::FormFieldDataPredictions& r) {
-    return r.autofill_ai_type;
+    return r.attribute_types;
   }
 
   static const std::string& format_string(
@@ -568,6 +508,11 @@ struct StructTraits<autofill::mojom::FormDataPredictionsDataView,
   static const std::string& alternative_signature(
       const autofill::FormDataPredictions& r) {
     return r.alternative_signature;
+  }
+
+  static const std::string& structural_form_signature(
+      const autofill::FormDataPredictions& r) {
+    return r.structural_form_signature;
   }
 
   static const std::vector<autofill::FormFieldDataPredictions>& fields(

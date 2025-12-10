@@ -13,6 +13,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/navigation_predictor/search_engine_preconnector.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_selections.h"
 #include "chrome/browser/ui/browser.h"
@@ -43,7 +44,6 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_names.h"
@@ -191,15 +191,8 @@ class ProfileKeyedServiceBrowserTest : public InProcessBrowserTest {
 #if BUILDFLAG(IS_WIN)
           switches::kEnableBoundSessionCredentials,
 #endif  // BUILDFLAG(IS_WIN)
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-          features::kEnableCertManagementUIV2Write,
-#endif
           network::features::kBrowsingTopics,
-          blink::features::kBuiltInAIAPI,
           extensions_features::kForceWebRequestProxyForTest,
-          net::features::kTopLevelTpcdOriginTrial,
-          net::features::kTpcdTrialSettings,
-          net::features::kTopLevelTpcdTrialSettings,
           network::features::kReduceAcceptLanguage,
           features::kMainNodeAnnotations,
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
@@ -213,6 +206,10 @@ class ProfileKeyedServiceBrowserTest : public InProcessBrowserTest {
   }
 
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   base::test::ScopedFeatureList feature_list_;
 };
 
@@ -248,7 +245,7 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceBrowserTest,
   ASSERT_TRUE(system_profile->IsSystemProfile());
 
   // clang-format off
-  std::set<std::string> exepcted_created_services_names = {
+  std::set<std::string> expected_created_services_names = {
     // in components:
     // There is no control over the creation based on the Profile types in
     // components/. These services are not created for the System Profile by
@@ -260,9 +257,12 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceBrowserTest,
     "LocalPresentationManager",
     "OmniboxInputWatcher",
     "OmniboxSuggestionsWatcher",
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+    "PasswordManagerBlocklist",
+#endif
     "PasswordManagerInternalsService",
     "PasswordRequirementsServiceFactory",
-    "PolicyBlocklist",
     "PolicyClipboardRestriction",
 #if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
     "ReportingEventRouter",
@@ -272,17 +272,22 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceBrowserTest,
 
     // in chrome: using `BrowserContextKeyedServiceShutdownNotifierFactory`:
     // which does not yet have an implementation using `ProfileSelections`.
+#if BUILDFLAG(IS_CHROMEOS)
     "GalleryWatchManager",
     "MediaFileSystemRegistry",
+#endif
     "NotificationDisplayService",
     "PermissionsUpdaterShutdownFactory",
     "PluginInfoHostImpl",
     "TurnSyncOnHelperShutdownNotifier",
+
+    // This service is needed to handle navigations in the Profile Picker.
+    "ChromePolicyBlocklistService",
   };
   // clang-format on
 
   TestKeyedProfileServicesActives(system_profile,
-                                  exepcted_created_services_names,
+                                  expected_created_services_names,
                                   /*force_create_services=*/true);
 }
 
@@ -306,7 +311,10 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceBrowserTest,
     "HasEnrolledInstrumentQuery",
     "OmniboxInputWatcher",
     "OmniboxSuggestionsWatcher",
-    "PolicyBlocklist",
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+    "PasswordManagerBlocklist",
+#endif
     "PolicyClipboardRestriction",
 #if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
     "ReportingEventRouter",
@@ -315,8 +323,10 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceBrowserTest,
 
     // in chrome: using `BrowserContextKeyedServiceShutdownNotifierFactory`:
     // which does not yet have an implementation using `ProfileSelections`.
+#if BUILDFLAG(IS_CHROMEOS)
     "GalleryWatchManager",
     "MediaFileSystemRegistry",
+#endif
     "NotificationDisplayService",
     "PermissionsUpdaterShutdownFactory",
     "PluginInfoHostImpl",
@@ -326,6 +336,9 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceBrowserTest,
     // Picker.
     "feature_engagement::Tracker",
     "UserEducationService",
+
+    // This service is needed to handle navigations in the Profile Picker.
+    "ChromePolicyBlocklistService",
   };
   // clang-format on
 
@@ -374,6 +387,7 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "BluetoothLowEnergyConnectionManager",
     "BluetoothLowEnergyNotifySessionManager",
     "BluetoothSocketEventDispatcher",
+    "BrowserManagerService",
     "BrowsingDataLifetimeManager",
     "BrowsingDataRemover",
     "CookieSettings",
@@ -387,6 +401,7 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
 #if BUILDFLAG(IS_CHROMEOS)
     "ComponentExtensionContentSettingsAllowlist",
 #endif
+    "DeveloperToolsPolicyChecker",
     "EnterpriseReportingPrivateEventRouter",
     "ExtensionNavigationRegistry",
     "ExtensionSystem",
@@ -423,6 +438,7 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "PrivacySandboxSettings",
     "ProcessManager",
     "ProfileNetworkContextService",
+    "ReadAnythingServiceFactory",
     "RealtimeReportingClient",
     "ReduceAcceptLanguage",
     "RendererUpdater",
@@ -450,6 +466,9 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
 #endif  // BUILDFLAG(IS_WIN)
     "UsbDeviceManager",
     "UsbDeviceResourceManager",
+#if !BUILDFLAG(IS_ANDROID)
+    "WaapUIMetricsService",
+#endif  // !BUILDFLAG(IS_ANDROID)
     "sct_reporting::Factory",
 
     "BtmBrowserSigninDetector",
@@ -477,14 +496,12 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "OfflineItemModelManager",
 #endif
     "OmniboxInputWatcher",
-    "OpenerHeuristicService",
     "PermissionManagerFactory",
     "PrivacySandboxService",
     "SafeBrowsingNavigationObserverManager",
     "StatefulSSLHostStateDelegate",
     "StorageAccessAPIService",
     "SubresourceFilterProfileContext",
-    "TpcdTrialService",
     "VerdictCacheManager",
     "WebRequestProxyingURLLoaderFactory",
     "captive_portal::CaptivePortalService",
@@ -545,6 +562,7 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "ActivityLog",
     "ActivityLogPrivateAPI",
     "AdvancedProtectionStatusManager",
+    "AimEligibilityService",
     "AlarmManager",
     "AnnouncementNotificationService",
     "AppLifetimeMonitor",
@@ -573,7 +591,6 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "AutofillPrivateEventRouter",
     "AutofillStrikeDatabase",
     "BackgroundContentsService",
-    "BackgroundFetchService",
     "BackgroundSyncService",
     "Blocklist",
     "BluetoothAPI",
@@ -593,6 +610,9 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "BookmarkUndoService",
     "BookmarksAPI",
     "BrailleDisplayPrivateAPI",
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+    "BrowserBoundKeyDeleterService",
+#endif
     "BrowsingTopicsService",
     "ChildAccountService",
     "ChromeSigninClient",
@@ -620,9 +640,10 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
 #endif
     "DeveloperPrivateAPI",
     "DeviceInfoSyncService",
+#if !BUILDFLAG(IS_CHROMEOS)
     "DownloadCoreService",
+#endif
     "EventRouter",
-    "EnterpriseManagementService",
     "ExtensionActionDispatcher",
     "ExtensionActionManager",
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
@@ -637,6 +658,7 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "ExtensionInstallEventRouter",
 #endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
     "ExtensionManagement",
+    "ExtensionNavigationRegistry",
     "ExtensionPrefValueMap",
     "ExtensionPrefs",
     "ExtensionRegistrar",
@@ -669,7 +691,6 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "HeavyAdService",
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     "HidConnectionResourceManager",
-    "ExtensionNavigationRegistry",
 #endif
     "HidDeviceManager",
     "HistoryAPI",
@@ -702,7 +723,9 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     "ManifestV2ExperimentManager",
 #endif
+#if BUILDFLAG(IS_CHROMEOS)
     "MediaGalleriesAPI",
+#endif
     "MediaRouter",
     "MediaRouterUIService",
     "MenuManager",
@@ -722,7 +745,6 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "OneTimePermissionsTrackerKeyedService",
     "OperationManager",
     "OptimizationGuideKeyedService",
-    "OriginTrialService",
 #if !BUILDFLAG(IS_CHROMEOS)
     // TODO(crbug.com/374351946): Investigate if this is necessary on CrOS.
     "PageContentAnnotationsService",
@@ -754,6 +776,9 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "ProcessMap",
     "ProcessesAPI",
     "ProfileNetworkContextService",
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    "ProtocolHandlersManager",
+#endif // BUILDFLAG(ENABLE_EXTENSIONS)
     "ProtocolHandlerRegistry",
     "RealtimeReportingClient",
     "RegionalCapabilitiesService",
@@ -812,8 +837,6 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "TemplateURLServiceFactory",
     "ThemeService",
     "ToolbarActionsModel",
-    "TopLevelTrialService",
-    "TpcdTrialService",
     "TrackingProtectionSettings",
     "TranslateRanker",
     "TriggeredProfileResetter",
@@ -871,8 +894,6 @@ IN_PROC_BROWSER_TEST_F(ProfileKeyedServiceGuestBrowserTest,
     "DeviceSyncClient",
     "DriveIntegrationService",
     "EasyUnlockService",
-    "ExternalLogoutDoneEventHandler",
-    "ExternalLogoutRequestEventHandler",
     "InputImeAPI",
     "InputMethodAPI",
     "KcerFactoryAsh",

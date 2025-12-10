@@ -25,19 +25,17 @@ class BufferContent;
 // since TFLite is currently only configured to use CPU delegates.
 class TensorImplTflite final : public WebNNTensorImpl {
  public:
-  static base::expected<std::unique_ptr<WebNNTensorImpl>, mojom::ErrorPtr>
-  Create(mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-         WebNNContextImpl* context,
-         mojom::TensorInfoPtr tensor_info);
+  static base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr> Create(
+      mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+      base::WeakPtr<WebNNContextImpl> context,
+      mojom::TensorInfoPtr tensor_info);
 
   TensorImplTflite(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-      WebNNContextImpl* context,
+      base::WeakPtr<WebNNContextImpl> context,
       mojom::TensorInfoPtr tensor_info,
       scoped_refptr<QueueableResourceState<BufferContent>> buffer_state,
       base::PassKey<TensorImplTflite>);
-
-  ~TensorImplTflite() override;
 
   TensorImplTflite(const TensorImplTflite&) = delete;
   TensorImplTflite& operator=(const TensorImplTflite&) = delete;
@@ -46,13 +44,16 @@ class TensorImplTflite final : public WebNNTensorImpl {
       const;
 
  private:
+  ~TensorImplTflite() override;
+
   void ReadTensorImpl(ReadTensorCallback callback) override;
   void WriteTensorImpl(mojo_base::BigBuffer src_buffer) override;
-
-  SEQUENCE_CHECKER(sequence_checker_);
+  bool ImportTensorImpl(ScopedAccessPtr access) override;
+  void ExportTensorImpl(ScopedAccessPtr access,
+                        ExportTensorCallback callback) override;
 
   scoped_refptr<QueueableResourceState<BufferContent>> buffer_state_
-      GUARDED_BY_CONTEXT(sequence_checker_);
+      GUARDED_BY_CONTEXT(gpu_sequence_checker_);
 };
 
 }  // namespace tflite

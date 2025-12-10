@@ -7,14 +7,12 @@
 #include <utility>
 
 #include "base/feature_list.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/synchronization/waitable_event.h"
 #include "gpu/command_buffer/client/webgpu_interface.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "third_party/blink/public/common/privacy_budget/identifiability_metric_builder.h"
-#include "third_party/blink/public/common/privacy_budget/identifiability_study_settings.h"
-#include "third_party/blink/public/common/privacy_budget/identifiable_token_builder.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/gpu/gpu.mojom-blink.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
@@ -39,12 +37,12 @@
 #include "third_party/blink/renderer/modules/webgpu/wgsl_language_features.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/dawn_control_client_holder.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/webgpu_callback.h"
+#include "third_party/blink/renderer/platform/graphics/gpu/webgpu_cpp.h"
 #include "third_party/blink/renderer/platform/graphics/web_graphics_context_3d_provider_util.h"
 #include "third_party/blink/renderer/platform/heap/cross_thread_handle.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
@@ -136,21 +134,17 @@ WebGPUExecutionContextToken GetExecutionContextToken(
 }  // anonymous namespace
 
 // static
-const char GPU::kSupplementName[] = "GPU";
-
-// static
 GPU* GPU::gpu(NavigatorBase& navigator) {
-  GPU* gpu = Supplement<NavigatorBase>::From<GPU>(navigator);
+  GPU* gpu = navigator.GetGPU();
   if (!gpu) {
     gpu = MakeGarbageCollected<GPU>(navigator);
-    ProvideTo(navigator, gpu);
+    navigator.SetGPU(gpu);
   }
   return gpu;
 }
 
 GPU::GPU(NavigatorBase& navigator)
-    : Supplement<NavigatorBase>(navigator),
-      ExecutionContextLifecycleObserver(navigator.GetExecutionContext()),
+    : ExecutionContextLifecycleObserver(navigator.GetExecutionContext()),
       wgsl_language_features_(MakeGarbageCollected<WGSLLanguageFeatures>(
           GatherWGSLLanguageFeatures())),
       mappable_buffer_handles_(
@@ -164,7 +158,6 @@ WGSLLanguageFeatures* GPU::wgslLanguageFeatures() const {
 
 void GPU::Trace(Visitor* visitor) const {
   ScriptWrappable::Trace(visitor);
-  Supplement<NavigatorBase>::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
   visitor->Trace(mappable_buffers_);
   visitor->Trace(wgsl_language_features_);
@@ -205,6 +198,14 @@ void GPU::OnRequestAdapterCallback(
     wgpu::Adapter adapter,
     wgpu::StringView error_message) {
   GPUAdapter* gpu_adapter = nullptr;
+
+  // wgpu::RequestAdapterStatus is part of the stable API, so is safe to log to
+  // histograms. The macro + `to_underlying` converts the enum to an int to
+  // calculate the max range.
+  UMA_HISTOGRAM_ENUMERATION(
+      "GPU.RequestAdapterStatus.WebGPU", status,
+      base::to_underlying(wgpu::RequestAdapterStatus::Error) + 1);
+
   switch (status) {
     case wgpu::RequestAdapterStatus::Success:
       gpu_adapter = MakeGarbageCollected<GPUAdapter>(
@@ -226,40 +227,7 @@ void GPU::OnRequestAdapterCallback(
         StringFromASCIIAndUTF8(error_message));
     execution_context->AddConsoleMessage(console_message);
   }
-  RecordAdapterForIdentifiability(script_state, options, gpu_adapter);
   resolver->Resolve(gpu_adapter);
-}
-
-void GPU::RecordAdapterForIdentifiability(
-    ScriptState* script_state,
-    const GPURequestAdapterOptions* options,
-    GPUAdapter* adapter) const {
-  constexpr IdentifiableSurface::Type type =
-      IdentifiableSurface::Type::kGPU_RequestAdapter;
-  if (!IdentifiabilityStudySettings::Get()->ShouldSampleType(type))
-    return;
-  ExecutionContext* context = GetExecutionContext();
-  if (!context)
-    return;
-
-  IdentifiableTokenBuilder input_builder;
-  if (options && options->hasPowerPreference()) {
-    input_builder.AddToken(IdentifiabilityBenignStringToken(
-        options->powerPreference().AsString()));
-  }
-  const auto surface =
-      IdentifiableSurface::FromTypeAndToken(type, input_builder.GetToken());
-
-  IdentifiableTokenBuilder output_builder;
-  if (adapter) {
-    for (const auto& feature : adapter->features()->FeatureNameSet()) {
-      output_builder.AddToken(IdentifiabilityBenignStringToken(feature));
-    }
-  }
-
-  IdentifiabilityMetricBuilder(context->UkmSourceID())
-      .Add(surface, output_builder.GetToken())
-      .Record(context->UkmRecorder());
 }
 
 std::unique_ptr<WebGraphicsContext3DProvider> CheckContextProvider(
@@ -307,7 +275,7 @@ void GPU::RequestAdapterImpl(
   }
 
   if (!dawn_control_client_ || dawn_control_client_->IsContextLost()) {
-    dawn_control_client_initialized_callbacks_.push_back(WTF::BindOnce(
+    dawn_control_client_initialized_callbacks_.push_back(BindOnce(
         [](GPU* gpu, ScriptState* script_state,
            const GPURequestAdapterOptions* options,
            ScriptPromiseResolver<IDLNullable<GPUAdapter>>* resolver) {
@@ -365,7 +333,7 @@ void GPU::RequestAdapterImpl(
                     execution_context->GetTaskRunner(TaskType::kWebGPU));
               }
 
-              WTF::Vector<base::OnceCallback<void()>> callbacks =
+              Vector<base::OnceCallback<void()>> callbacks =
                   std::move(gpu->dawn_control_client_initialized_callbacks_);
               for (auto& callback : callbacks) {
                 std::move(callback).Run();
@@ -406,8 +374,8 @@ void GPU::RequestAdapterImpl(
   wgpu::RequestAdapterOptions dawn_options =
       AsDawnType(options, execution_context);
   auto* callback = MakeWGPUOnceCallback(resolver->WrapCallbackInScriptScope(
-      WTF::BindOnce(&GPU::OnRequestAdapterCallback, WrapPersistent(this),
-                    WrapPersistent(script_state), WrapPersistent(options))));
+      BindOnce(&GPU::OnRequestAdapterCallback, WrapPersistent(this),
+               WrapPersistent(script_state), WrapPersistent(options))));
 
   if (dawn_options.featureLevel == wgpu::FeatureLevel::Compatibility) {
     UseCounter::Count(execution_context,
@@ -451,7 +419,9 @@ V8GPUTextureFormat GPU::getPreferredCanvasFormat() {
 }
 
 wgpu::TextureFormat GPU::GetPreferredCanvasFormat() {
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
+  // Interop of vulkan and GL has mesa driver bugs for BGRA format
+  // See anglebug.com/40644739
   return wgpu::TextureFormat::RGBA8Unorm;
 #else
   return wgpu::TextureFormat::BGRA8Unorm;

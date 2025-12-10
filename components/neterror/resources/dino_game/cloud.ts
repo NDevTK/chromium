@@ -5,8 +5,9 @@
 import {assert} from 'chrome://resources/js/assert.js';
 
 import {IS_HIDPI} from './constants.js';
+import type {ImageSpriteProvider} from './image_sprite_provider.js';
 import type {SpritePosition} from './sprite_position.js';
-import {getRandomNum, getRunnerImageSprite} from './utils.js';
+import {getRandomNum} from './utils.js';
 
 export class Cloud {
   gap: number;
@@ -15,6 +16,7 @@ export class Cloud {
   private yPos: number = 0;
   private canvasCtx: CanvasRenderingContext2D;
   private spritePos: SpritePosition;
+  private imageSpriteProvider: ImageSpriteProvider;
 
   /**
    * Cloud background item.
@@ -22,12 +24,13 @@ export class Cloud {
    */
   constructor(
       canvas: HTMLCanvasElement, spritePos: SpritePosition,
-      containerWidth: number) {
+      containerWidth: number, imageSpriteProvider: ImageSpriteProvider) {
     const canvasContext = canvas.getContext('2d');
     assert(canvasContext);
     this.canvasCtx = canvasContext;
     this.xPos = containerWidth;
     this.spritePos = spritePos;
+    this.imageSpriteProvider = imageSpriteProvider;
     this.gap = getRandomNum(Config.MIN_CLOUD_GAP, Config.MAX_CLOUD_GAP);
 
     this.init();
@@ -45,8 +48,7 @@ export class Cloud {
    * Draw the cloud.
    */
   draw() {
-    const runnerImageSprite = getRunnerImageSprite();
-    assert(runnerImageSprite);
+    const runnerImageSprite = this.imageSpriteProvider.getRunnerImageSprite();
 
     this.canvasCtx.save();
     let sourceWidth = Config.WIDTH;

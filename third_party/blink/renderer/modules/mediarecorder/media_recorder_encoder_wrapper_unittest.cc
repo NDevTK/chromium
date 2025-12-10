@@ -17,7 +17,6 @@
 
 using ::testing::_;
 using ::testing::InSequence;
-using ::testing::Invoke;
 using ::testing::Return;
 using ::testing::WithArg;
 using ::testing::WithArgs;
@@ -135,9 +134,8 @@ class MediaRecorderEncoderWrapperTest
     CreateEncoder();
     return std::make_unique<MockVideoEncoderWrapper>(
         &mock_encoder_,
-        base::BindOnce(
-            &MediaRecorderEncoderWrapperTest::MockVideoEncoderWrapperDtor,
-            base::Unretained(this)));
+        BindOnce(&MediaRecorderEncoderWrapperTest::MockVideoEncoderWrapperDtor,
+                 Unretained(this)));
   }
 
   void CreateEncoderWrapper(bool is_screencast) {
@@ -145,14 +143,14 @@ class MediaRecorderEncoderWrapperTest
         scheduler::GetSingleThreadTaskRunnerForTesting(), profile_,
         kDefaultBitrate, is_screencast,
         /*is_hardware_encoder=*/false,
-        WTF::CrossThreadBindRepeating(
+        CrossThreadBindRepeating(
             &MediaRecorderEncoderWrapperTest::CreateMockVideoEncoder,
-            WTF::CrossThreadUnretained(this)),
-        WTF::CrossThreadBindRepeating(
+            CrossThreadUnretained(this)),
+        CrossThreadBindRepeating(
             &MediaRecorderEncoderWrapperTest::OnEncodedVideo,
-            WTF::CrossThreadUnretained(this)),
-        WTF::CrossThreadBindOnce(&MediaRecorderEncoderWrapperTest::OnError,
-                                 WTF::CrossThreadUnretained(this)));
+            CrossThreadUnretained(this)),
+        CrossThreadBindOnce(&MediaRecorderEncoderWrapperTest::OnError,
+                            CrossThreadUnretained(this)));
     EXPECT_EQ(is_screencast,
               encoder_wrapper_->IsScreenContentEncodingForTesting());
     auto metrics_provider =

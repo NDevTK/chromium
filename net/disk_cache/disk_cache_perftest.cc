@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include "net/disk_cache/disk_cache.h"
 
 #include <array>
@@ -21,6 +20,7 @@
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_timeouts.h"
@@ -36,6 +36,7 @@
 #include "net/disk_cache/backend_cleanup_tracker.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
 #include "net/disk_cache/blockfile/block_files.h"
+#include "net/disk_cache/buildflags.h"
 #include "net/disk_cache/disk_cache_test_base.h"
 #include "net/disk_cache/disk_cache_test_util.h"
 #include "net/disk_cache/simple/simple_backend_impl.h"
@@ -150,6 +151,8 @@ class DiskCachePerfTest : public DiskCacheTestWithCache {
   // Complete perf tests.
   void CacheBackendPerformance(const std::string& story);
 
+  void MaybeLoadInMemoryIndex();
+
   const size_t kFdLimitForCacheTests = 8192;
 
   std::vector<TestEntry> entries_;
@@ -210,8 +213,10 @@ void WriteHandler::CreateNextEntry() {
                           test_entry.data_len);
   disk_cache::EntryResult result =
       cache_->CreateEntry(test_entry.key, net::HIGHEST, callback);
-  if (result.net_error() != net::ERR_IO_PENDING)
-    callback.Run(std::move(result));
+  if (result.net_error() != net::ERR_IO_PENDING) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), std::move(result)));
+  }
 }
 
 void WriteHandler::CreateCallback(int data_len,
@@ -492,28 +497,39 @@ void DiskCachePerfTest::CacheBackendPerformance(const std::string& story) {
   LOG(ERROR) << "Using cache at:" << cache_path_.MaybeAsASCII();
   SetMaxSize(500 * 1024 * 1024);
   InitCache();
+  MaybeLoadInMemoryIndex();
   EXPECT_TRUE(TimeWrites(story));
 
-  disk_cache::FlushCacheThreadForTesting();
+  FlushQueueForTest();
   base::RunLoop().RunUntilIdle();
 
   ResetAndEvictSystemDiskCache();
+  MaybeLoadInMemoryIndex();
   EXPECT_TRUE(TimeReads(WhatToRead::HEADERS_ONLY,
                         kMetricCacheHeadersReadTimeColdMs, story));
   EXPECT_TRUE(TimeReads(WhatToRead::HEADERS_ONLY,
                         kMetricCacheHeadersReadTimeWarmMs, story));
 
-  disk_cache::FlushCacheThreadForTesting();
+  FlushQueueForTest();
   base::RunLoop().RunUntilIdle();
 
   ResetAndEvictSystemDiskCache();
+  MaybeLoadInMemoryIndex();
   EXPECT_TRUE(TimeReads(WhatToRead::HEADERS_AND_BODY,
                         kMetricCacheEntriesReadTimeColdMs, story));
   EXPECT_TRUE(TimeReads(WhatToRead::HEADERS_AND_BODY,
                         kMetricCacheEntriesReadTimeWarmMs, story));
 
-  disk_cache::FlushCacheThreadForTesting();
+  FlushQueueForTest();
   base::RunLoop().RunUntilIdle();
+}
+
+void DiskCachePerfTest::MaybeLoadInMemoryIndex() {
+#if BUILDFLAG(ENABLE_DISK_CACHE_SQL_BACKEND)
+  if (backend_to_test() == BackendToTest::kSql) {
+    LoadInMemoryIndex();
+  }
+#endif  // ENABLE_DISK_CACHE_SQL_BACKEND
 }
 
 #if BUILDFLAG(IS_FUCHSIA)
@@ -537,6 +553,13 @@ TEST_F(DiskCachePerfTest, MAYBE_SimpleCacheBackendPerformance) {
   SetBackendToTest(BackendToTest::kSimple);
   CacheBackendPerformance("simple_cache");
 }
+
+#if BUILDFLAG(ENABLE_DISK_CACHE_SQL_BACKEND)
+TEST_F(DiskCachePerfTest, SqlCacheBackendPerformance) {
+  SetBackendToTest(BackendToTest::kSql);
+  CacheBackendPerformance("sql_cache");
+}
+#endif  // ENABLE_DISK_CACHE_SQL_BACKEND
 
 // Creating and deleting "entries" on a block-file is something quite frequent
 // (after all, almost everything is stored on block files). The operation is

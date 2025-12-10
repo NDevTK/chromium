@@ -68,7 +68,7 @@ class AudioBufferPoolImpl
     // Copy the data over.
     const std::vector<uint8_t*>& dest_data = buffer->channel_data();
     for (int ch = 0; ch < audio_bus.channels(); ++ch) {
-      const float* src_channel = audio_bus.channel(ch);
+      const float* src_channel = audio_bus.channel_span(ch).data();
       UNSAFE_TODO(memcpy(dest_data[ch], src_channel,
                          sizeof(float) * audio_bus.frames()));
     }
@@ -121,7 +121,7 @@ class AudioBufferPoolImpl
   media::AudioParameters params_;
 
   static constexpr int kInlineCapacity = 4;
-  WTF::Deque<scoped_refptr<media::AudioBuffer>, kInlineCapacity> buffers_;
+  Deque<scoped_refptr<media::AudioBuffer>, kInlineCapacity> buffers_;
 };
 
 MediaStreamAudioTrackUnderlyingSource::MediaStreamAudioTrackUnderlyingSource(

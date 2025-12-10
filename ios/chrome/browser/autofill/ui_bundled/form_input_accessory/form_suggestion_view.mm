@@ -20,6 +20,8 @@
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
 #import "ios/chrome/browser/shared/ui/util/rtl_geometry.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
+#import "ios/chrome/common/ui/colors/semantic_color_names.h"
+#import "ios/chrome/common/ui/elements/form_input_accessory_view.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 
 using autofill::FillingProduct;
@@ -52,6 +54,12 @@ constexpr CGFloat kScrollHintDuration = 0.5;
 // Leading horizontal offset.
 constexpr CGFloat kLeadingOffset = 16;
 
+// Top and bottom padding when using liquid glass.
+constexpr CGFloat kLiquidGlassVerticalPadding = 10;
+
+// Width of the suggestion separator when using liquid glass.
+constexpr CGFloat kLiquidGlassSeparatorWidth = 1.0;
+
 // Logs the right histogram when a suggestion from the keyboard accessory is
 // selected. `suggestion_type` is the type of the selected suggestion and
 // `index` is the position of the selected position among the available
@@ -73,10 +81,12 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
     case FillingProduct::kDataList:
       filling_product_bucket = FillingProductToString(filling_product);
       break;
+    case FillingProduct::kPasskey:
     case FillingProduct::kCompose:
     case FillingProduct::kAutofillAi:
     case FillingProduct::kMerchantPromoCode:
     case FillingProduct::kIdentityCredential:
+    case FillingProduct::kOneTimePassword:
       // These cases are currently not available on iOS.
       NOTREACHED();
   }
@@ -88,8 +98,7 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
 
 }  // namespace
 
-@interface FormSuggestionView () <FormSuggestionLabelDelegate,
-                                  UIScrollViewDelegate>
+@interface FormSuggestionView () <FormSuggestionLabelDelegate>
 
 // The FormSuggestions that are displayed by this view.
 @property(nonatomic) NSArray<FormSuggestion*>* suggestions;
@@ -172,27 +181,6 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
                    }];
 }
 
-- (void)lockTrailingView {
-  if (!self.superview || !self.trailingView) {
-    return;
-  }
-  LayoutOffset layoutOffset = CGRectGetLeadingLayoutOffsetInBoundingRect(
-      self.trailingView.frame, {CGPointZero, self.contentSize});
-  // Because of the way the scroll view is transformed for RTL, the insets don't
-  // need to be directed.
-  UIEdgeInsets lockedContentInsets = UIEdgeInsetsMake(0, -layoutOffset, 0, 0);
-  __weak __typeof(self) weakSelf = self;
-  [UIView animateWithDuration:0.2
-      animations:^{
-        weakSelf.contentInset = lockedContentInsets;
-      }
-      completion:^(BOOL finished) {
-        if (!IsKeyboardAccessoryUpgradeEnabled()) {
-          weakSelf.delegate = weakSelf;
-        }
-      }];
-}
-
 #pragma mark - UIView
 
 - (void)willMoveToSuperview:(UIView*)newSuperview {
@@ -206,13 +194,13 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
 #pragma mark - FormSuggestionLabelDelegate
 
 - (void)didTapFormSuggestionLabel:(FormSuggestionLabel*)formSuggestionLabel {
-  NSUInteger index =
-      [self.stackView.arrangedSubviews indexOfObject:formSuggestionLabel];
-  DCHECK(index != NSNotFound);
-  FormSuggestion* suggestion = [self.suggestions objectAtIndex:index];
+  NSUInteger index = formSuggestionLabel.suggestionIndex;
+  FormSuggestion* suggestion = formSuggestionLabel.suggestion;
   LogSelectedSuggestionIndexMetric(suggestion.type, index);
-  base::RecordAction(
-      base::UserMetricsAction("KeyboardAccessory_SuggestionAccepted"));
+  base::RecordAction(base::UserMetricsAction(
+      suggestion.type == SuggestionType::kBackupPasswordEntry
+          ? "KeyboardAccessory_SuggestionAccepted_BackupPassword"
+          : "KeyboardAccessory_SuggestionAccepted"));
   [self.formSuggestionViewDelegate formSuggestionView:self
                                   didAcceptSuggestion:suggestion
                                               atIndex:index];
@@ -231,14 +219,18 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
   stackView.axis = UILayoutConstraintAxisHorizontal;
   stackView.layoutMarginsRelativeArrangement = YES;
   stackView.layoutMargins = [self adjustedLayoutMargins];
-  stackView.spacing = IsKeyboardAccessoryUpgradeEnabled()
-                          ? kSpacing
-                          : kSuggestionHorizontalMargin;
+  stackView.spacing = kSpacing;
   stackView.translatesAutoresizingMaskIntoConstraints = NO;
   [self addSubview:stackView];
-  AddSameConstraints(stackView, self);
+  if (IsLiquidGlassEffectEnabled()) {
+    AddSameConstraintsToSides(
+        stackView, self,
+        LayoutSides::kTop | LayoutSides::kLeading | LayoutSides::kTrailing);
+  } else {
+    AddSameConstraints(stackView, self);
+  }
   [stackView.heightAnchor constraintEqualToAnchor:self.heightAnchor].active =
-      true;
+      YES;
 
   // Rotate the UIScrollView and its UIStackView subview 180 degrees so that the
   // first suggestion actually shows up first.
@@ -252,15 +244,59 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
   self.accessibilityIdentifier = kFormSuggestionsViewAccessibilityIdentifier;
 }
 
+// Creates a tiny vertical separator.
+- (UIView*)createSeparatorView {
+  UIView* wrapperContainer = [[UIView alloc] init];
+  wrapperContainer.translatesAutoresizingMaskIntoConstraints = NO;
+  UIView* separator = [[UIView alloc] init];
+  separator.backgroundColor = [UIColor colorNamed:kSeparatorColor];
+  separator.translatesAutoresizingMaskIntoConstraints = NO;
+  [wrapperContainer addSubview:separator];
+  [NSLayoutConstraint activateConstraints:@[
+    [separator.widthAnchor
+        constraintEqualToConstant:kLiquidGlassSeparatorWidth],
+    [separator.bottomAnchor
+        constraintEqualToAnchor:wrapperContainer.bottomAnchor
+                       constant:-kLiquidGlassVerticalPadding],
+    [separator.topAnchor constraintEqualToAnchor:wrapperContainer.topAnchor
+                                        constant:kLiquidGlassVerticalPadding],
+  ]];
+  return wrapperContainer;
+}
+
+// Adds a FormSuggestionLabel to this FormSuggestionView's stack view.
+- (void)addFormSuggestionLabel:(FormSuggestionLabel*)label
+                       atIndex:(NSUInteger)idx {
+  if (IsLiquidGlassEffectEnabled()) {
+    if (idx > 0) {
+      [self.stackView addArrangedSubview:[self createSeparatorView]];
+    }
+
+    // This constraint is added to ensure that the keyboard accessory's
+    // suggestion label maintains its height when a hardware keyboard is
+    // connected and the keyboard accessory is located at the bottom of the
+    // screen. Without this constraint, the label's height is reduced and looks
+    // squeezed.
+    [label.heightAnchor
+        constraintEqualToConstant:kLargeKeyboardAccessoryHeight -
+                                  (2 * kSuggestionVerticalMargin)]
+        .active = YES;
+  }
+
+  [self.stackView addArrangedSubview:label];
+}
+
+// Creates a FormSuggestionLabel for each suggestion and adds them to this
+// FormSuggestionView's stack view, along with the trailing view, if any.
 - (void)createAndInsertArrangedSubviews {
   auto setupBlock = ^(FormSuggestion* suggestion, NSUInteger idx, BOOL* stop) {
-    UIView* label = [[FormSuggestionLabel alloc]
+    FormSuggestionLabel* label = [[FormSuggestionLabel alloc]
            initWithSuggestion:suggestion
                         index:idx
-               numSuggestions:[self.suggestions count]
+          numberOfSuggestions:[self.suggestions count]
         accessoryTrailingView:self.accessoryTrailingView
                      delegate:self];
-    [self.stackView addArrangedSubview:label];
+    [self addFormSuggestionLabel:label atIndex:idx];
     if (idx == 0 &&
         suggestion.featureForIPH != SuggestionFeatureForIPH::kUnknown) {
       // Track the first element.
@@ -277,8 +313,7 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
 // Performs the scroll hint. This is triggered when the keyboard accessory
 // initially receives suggestions.
 - (void)scrollHint:(void (^)(BOOL finished))completion {
-  if (!IsKeyboardAccessoryUpgradeEnabled() ||
-      !self.stackView.arrangedSubviews.count) {
+  if (!self.stackView.arrangedSubviews.count) {
     if (completion) {
       completion(NO);
     }
@@ -287,8 +322,22 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
 
   // Check if the view is in the current hierarchy before performing layouts.
   if (self.stackView.window) {
+    // Because [self.stackView addArrangedSubview:] is called from
+    // createAndInsertArrangedSubviews just before this function is called, it
+    // is possible that a temporary condition (like a zero-height constraint
+    // resolving) may cause the UIStackView to internally decide to remove an
+    // arranged subview from its arrangedSubviews array. Because we use fast
+    // enumeration (for(... in ...)) of self.stackView.arrangedSubviews below,
+    // we have to make a snapshot of the subviews to avoid issues. The
+    // documentation mentions that: "You cannot mutate a collection during fast
+    // enumeration, even if the collection is mutable. If you attempt to add or
+    // remove a collected object from within the loop, you’ll generate a runtime
+    // exception." See:
+    // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ProgrammingWithObjectiveC/FoundationTypesandCollections/FoundationTypesandCollections.html#//apple_ref/doc/uid/TP40011210-CH7-SW30
+    NSArray<UIView*>* subviewsSnapshot = [self.stackView.arrangedSubviews copy];
+
     // Make sure all subview layouts are done before computing frame offsets.
-    for (UIView* view in self.stackView.arrangedSubviews) {
+    for (UIView* view in subviewsSnapshot) {
       [view layoutIfNeeded];
     }
   }
@@ -323,9 +372,7 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
   return UIEdgeInsetsMake(
       kSuggestionVerticalMargin,
       kSuggestionHorizontalMargin + (_isCompact ? 0.0 : kLeadingOffset),
-      kSuggestionVerticalMargin,
-      IsKeyboardAccessoryUpgradeEnabled() ? kSuggestionEndHorizontalMargin
-                                          : kSuggestionHorizontalMargin);
+      kSuggestionVerticalMargin, kSuggestionEndHorizontalMargin);
 }
 
 #pragma mark - Setters
@@ -338,20 +385,6 @@ void LogSelectedSuggestionIndexMetric(SuggestionType suggestion_type,
   _trailingView = subview;
   if (_stackView) {
     [_stackView addArrangedSubview:_trailingView];
-  }
-}
-
-#pragma mark - UIScrollViewDelegate
-
-- (void)scrollViewDidScroll:(UIScrollView*)scrollView {
-  DCHECK(!IsKeyboardAccessoryUpgradeEnabled());
-
-  CGFloat offset = self.contentOffset.x;
-  CGFloat inset = self.contentInset.left;  // Inset is negative when locked.
-  CGFloat diff = offset + inset;
-  if (diff < -55) {
-    [self.formSuggestionViewDelegate
-        formSuggestionViewShouldResetFromPull:self];
   }
 }
 

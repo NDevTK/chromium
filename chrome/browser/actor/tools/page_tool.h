@@ -9,7 +9,9 @@
 
 #include "base/memory/safe_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "chrome/browser/actor/tools/tool.h"
+#include "chrome/browser/actor/tools/tool_callbacks.h"
 #include "chrome/browser/actor/tools/tool_request.h"
 #include "chrome/common/actor.mojom-forward.h"
 #include "chrome/common/chrome_render_frame.mojom.h"
@@ -24,7 +26,6 @@ class RenderFrameHost;
 
 namespace actor {
 
-class AggregatedJournal;
 class PageToolRequest;
 class RenderFrameChangeObserver;
 
@@ -34,30 +35,40 @@ class RenderFrameChangeObserver;
 class PageTool : public Tool {
  public:
   PageTool(TaskId task_id,
-           AggregatedJournal& journal,
+           ToolDelegate& tool_delegate,
            const PageToolRequest& params);
   ~PageTool() override;
 
   // actor::Tool
-  void Validate(ValidateCallback callback) override;
+  void Validate(ToolCallback callback) override;
   mojom::ActionResultPtr TimeOfUseValidation(
       const optimization_guide::proto::AnnotatedPageContent* last_observation)
       override;
-  void Invoke(InvokeCallback callback) override;
+  void Invoke(ToolCallback callback) override;
   std::string DebugString() const override;
   GURL JournalURL() const override;
   std::string JournalEvent() const override;
-  std::unique_ptr<ObservationDelayController> GetObservationDelayer()
-      const override;
+  std::unique_ptr<ObservationDelayController> GetObservationDelayer(
+      ObservationDelayController::PageStabilityConfig page_stability_config)
+      override;
+  void UpdateTaskBeforeInvoke(ActorTask& task,
+                              ToolCallback callback) const override;
+  tabs::TabHandle GetTargetTab() const override;
 
  private:
+  // Callback for navigation.
+  void OnRenderFrameHostChanged();
+
+  // Callback when the renderer process is gone.
+  void OnRenderFrameGone();
+
   void FinishInvoke(mojom::ActionResultPtr result);
 
-  void PostFinishInvoke(mojom::ActionResultCode result_code);
+  void OnTimeout();
 
   content::RenderFrameHost* GetFrame() const;
 
-  InvokeCallback invoke_callback_;
+  ToolCallback invoke_callback_;
   std::unique_ptr<PageToolRequest> request_;
 
   std::unique_ptr<RenderFrameChangeObserver> frame_change_observer_;
@@ -72,7 +83,9 @@ class PageTool : public Tool {
 
   // Set during TimeOfUseValidation. Contains the hit test result against
   // observed page content.
-  std::optional<optimization_guide::TargetNodeInfo> observed_target_node_info_;
+  mojom::ObservedToolTargetPtr observed_target_;
+
+  base::OneShotTimer timeout_timer_;
 
   base::WeakPtrFactory<PageTool> weak_ptr_factory_{this};
 };

@@ -5,9 +5,11 @@
 #include "components/visited_url_ranking/internal/url_grouping/group_suggestions_tracker.h"
 
 #include "base/hash/hash.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/segmentation_platform/public/input_context.h"
+#include "components/visited_url_ranking/public/features.h"
 #include "components/visited_url_ranking/public/url_grouping/group_suggestions.h"
 #include "components/visited_url_ranking/public/url_grouping/group_suggestions_delegate.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -123,6 +125,7 @@ class GroupSuggestionsTrackerTest : public testing::Test {
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   std::unique_ptr<GroupSuggestionsTracker> tracker_;
+  base::test::ScopedFeatureList feature_list_;
 };
 
 TEST_F(GroupSuggestionsTrackerTest, ShouldShowSuggestion_EmptySuggestion) {
@@ -529,6 +532,87 @@ TEST_F(GroupSuggestionsTrackerTest, InvalidateCache) {
   tracker_->InvalidateCache();
 
   // 4. Verify cache is empty.
+  cached_data = tracker_->GetCachedSuggestions();
+  EXPECT_FALSE(cached_data.has_value());
+}
+
+TEST_F(GroupSuggestionsTrackerTest, AddShownSuggestion_UpdatesCache) {
+  GroupSuggestions suggestions_to_cache;
+  UrlGroupingSuggestionId::Generator id_generator;
+  suggestions_to_cache.suggestions.emplace_back();
+  suggestions_to_cache.suggestions.back().tab_ids = {1, 2};
+  suggestions_to_cache.suggestions.back().suggestion_id =
+      id_generator.GenerateNextId();
+  suggestions_to_cache.suggestions.emplace_back();
+  suggestions_to_cache.suggestions.back().tab_ids = {3, 4};
+  suggestions_to_cache.suggestions.back().suggestion_id =
+      id_generator.GenerateNextId();
+  suggestions_to_cache.suggestions.emplace_back();
+  suggestions_to_cache.suggestions.back().tab_ids = {5, 6};
+  suggestions_to_cache.suggestions.back().suggestion_id =
+      id_generator.GenerateNextId();
+
+  auto inputs = CreateTestInputs(
+      {{1, "https://hosta.com/p1"}, {2, "https://hostb.com/p2"}});
+  tracker_->CacheSuggestions(suggestions_to_cache.DeepCopy(), inputs);
+
+  std::optional<CachedSuggestionsAndInputs> cached_data =
+      tracker_->GetCachedSuggestions();
+  ASSERT_TRUE(cached_data.has_value());
+  ASSERT_EQ(cached_data->first.suggestions.size(), 3u);
+
+  GroupSuggestion shown_suggestion =
+      suggestions_to_cache.suggestions[0].DeepCopy();
+  AddShownSuggestion(shown_suggestion, inputs, UserResponse::kAccepted);
+
+  cached_data = tracker_->GetCachedSuggestions();
+  ASSERT_TRUE(cached_data.has_value());
+  ASSERT_EQ(cached_data->first.suggestions.size(), 2u);
+  for (const auto& s : cached_data->first.suggestions) {
+    EXPECT_NE(s.suggestion_id, shown_suggestion.suggestion_id);
+  }
+
+  shown_suggestion = suggestions_to_cache.suggestions[1].DeepCopy();
+  AddShownSuggestion(shown_suggestion, inputs, UserResponse::kAccepted);
+  cached_data = tracker_->GetCachedSuggestions();
+  ASSERT_TRUE(cached_data.has_value());
+  ASSERT_EQ(cached_data->first.suggestions.size(), 1u);
+
+  shown_suggestion = suggestions_to_cache.suggestions[2].DeepCopy();
+  AddShownSuggestion(shown_suggestion, inputs, UserResponse::kAccepted);
+  cached_data = tracker_->GetCachedSuggestions();
+  EXPECT_FALSE(cached_data.has_value());
+}
+
+TEST_F(GroupSuggestionsTrackerTest, CachedSuggestionsExpire) {
+  feature_list_.InitAndEnableFeatureWithParameters(
+      features::kGroupSuggestionService,
+      {{"group_suggestion_cache_ttl_secs", "900"}});
+
+  // 1. Cache some suggestions.
+  GroupSuggestions suggestions_to_cache;
+  suggestions_to_cache.suggestions.emplace_back();
+  suggestions_to_cache.suggestions.back().tab_ids = {1, 2};
+  suggestions_to_cache.suggestions.back().suggestion_reason =
+      GroupSuggestion::SuggestionReason::kRecentlyOpened;
+  auto inputs = CreateTestInputs(
+      {{1, "https://hosta.com/p1"}, {2, "https://hostb.com/p2"}});
+  tracker_->CacheSuggestions(suggestions_to_cache.DeepCopy(), inputs);
+
+  // 2. Verify cache is populated.
+  std::optional<CachedSuggestionsAndInputs> cached_data =
+      tracker_->GetCachedSuggestions();
+  ASSERT_TRUE(cached_data.has_value());
+
+  // 3. Fast forward time just before TTL.
+  task_environment_.FastForwardBy(base::Minutes(14));
+  cached_data = tracker_->GetCachedSuggestions();
+  ASSERT_TRUE(cached_data.has_value());
+
+  // 4. Fast forward time past the TTL.
+  task_environment_.FastForwardBy(base::Minutes(2));
+
+  // 5. Verify cache is now empty.
   cached_data = tracker_->GetCachedSuggestions();
   EXPECT_FALSE(cached_data.has_value());
 }

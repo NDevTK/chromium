@@ -6,6 +6,7 @@
 
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
+#import "ios/chrome/common/ui/button_stack/button_stack_configuration.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/promo_style/utils.h"
 #import "ios/chrome/common/ui/util/button_util.h"
@@ -33,11 +34,9 @@ const CGFloat kPauseButtonRightPadding = 12;
 const CGFloat kPauseButtonBottomPadding = 14;
 // The size of the onboarding symbols.
 const CGFloat kLensOverlayOnboaridingSymbolSize = 22;
-// The value that makes the Lottie animation loop indefinitely.
-const CGFloat kLottieInfiniteLoopFlag = -1;
 // The height of the invariant items of the dialog
 // (e.g. bottom action buttons, the padding).
-const CGFloat kDialogFixedItemsHeight = 160;
+const CGFloat kDialogFixedItemsHeight = 180;
 // The width of the dialog in regular display size.
 const CGFloat kDialogWidthInRegularDisplaySize = 540;
 
@@ -60,7 +59,6 @@ const CGFloat kDialogWidthInRegularDisplaySize = 540;
 @dynamic delegate;
 
 - (void)viewDidLoad {
-  self.layoutBehindNavigationBar = YES;
   self.shouldHideBanner = YES;
   self.headerImageType = PromoStyleImageType::kNone;
 
@@ -71,9 +69,9 @@ const CGFloat kDialogWidthInRegularDisplaySize = 540;
   _contentStack = [self createContentStack];
   [self.specificContentView addSubview:_contentStack];
 
-  self.primaryActionString = l10n_util::GetNSString(
+  self.configuration.primaryActionString = l10n_util::GetNSString(
       IDS_IOS_LENS_OVERLAY_CONSENT_ACCEPT_TERMS_BUTTON_TITLE);
-  self.secondaryActionString = l10n_util::GetNSString(
+  self.configuration.secondaryActionString = l10n_util::GetNSString(
       IDS_IOS_LENS_OVERLAY_CONSENT_DENY_TERMS_BUTTON_TITLE);
 
   [super viewDidLoad];
@@ -96,12 +94,27 @@ const CGFloat kDialogWidthInRegularDisplaySize = 540;
 
 - (CGSize)preferredContentSize {
   [_contentStack layoutIfNeeded];
-  CGFloat presentedContentHeight = _contentStack.frame.size.height;
 
-  // Only regular width is relevant, as the bottom sheet prresentation is
+  CGFloat totalHeight = 0.0;
+  for (UIView* subview in _contentStack.arrangedSubviews) {
+    if ([subview isKindOfClass:[UILabel class]]) {
+      // For `UILabel`s approximate the height that will be used to render the
+      // text based on the label's font.
+      totalHeight += [self heightForLabel:(UILabel*)subview
+                       inConstrainedWidth:kDialogWidthInRegularDisplaySize];
+    } else {
+      totalHeight += subview.frame.size.height;
+    }
+  }
+
+  // Factor in the stack spacing.
+  totalHeight +=
+      _contentStack.spacing * (_contentStack.arrangedSubviews.count - 1);
+
+  // Only regular width is relevant, as the bottom sheet presentation is
   // edge-attached in compact width.
   return CGSizeMake(kDialogWidthInRegularDisplaySize,
-                    presentedContentHeight + kDialogFixedItemsHeight);
+                    totalHeight + kDialogFixedItemsHeight);
 }
 
 #pragma mark - Private
@@ -181,24 +194,13 @@ const CGFloat kDialogWidthInRegularDisplaySize = 540;
 
 - (UIAction*)textView:(UITextView*)textView
     primaryActionForTextItem:(UITextItem*)textItem
-               defaultAction:(UIAction*)defaultAction API_AVAILABLE(ios(17.0)) {
+               defaultAction:(UIAction*)defaultAction {
   if (textItem.contentType == UITextItemContentTypeLink) {
     [self.delegate didPressLearnMore];
   }
 
   return nil;
 }
-
-#if __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (BOOL)textView:(UITextView*)textView
-    shouldInteractWithURL:(NSURL*)URL
-                  inRange:(NSRange)characterRange
-              interaction:(UITextItemInteraction)interaction {
-  [self.delegate didPressLearnMore];
-  // Prevent the system from executing the default URL open action.
-  return NO;
-}
-#endif
 
 - (void)textViewDidChangeSelection:(UITextView*)textView {
   // Make the textView not selectable while allowing interactions with the
@@ -300,8 +302,22 @@ const CGFloat kDialogWidthInRegularDisplaySize = 540;
   LottieAnimationConfiguration* config =
       [[LottieAnimationConfiguration alloc] init];
   config.animationName = animationAssetName;
-  config.loopAnimationCount = kLottieInfiniteLoopFlag;
+  config.shouldLoop = YES;
   return ios::provider::GenerateLottieAnimation(config);
+}
+
+// Approximates the height needed to display the text of a label in a given
+// width.
+- (CGFloat)heightForLabel:(UILabel*)label inConstrainedWidth:(CGFloat)width {
+  CGSize constraintRect = CGSizeMake(width, CGFLOAT_MAX);
+  NSDictionary* attributes = @{NSFontAttributeName : label.font};
+  CGRect boundingBox =
+      [label.text boundingRectWithSize:constraintRect
+                               options:NSStringDrawingUsesLineFragmentOrigin
+                            attributes:attributes
+                               context:nil];
+
+  return ceil(boundingBox.size.height);
 }
 
 @end

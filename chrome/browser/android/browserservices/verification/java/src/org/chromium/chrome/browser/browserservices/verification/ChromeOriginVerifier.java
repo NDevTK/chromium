@@ -117,16 +117,24 @@ public class ChromeOriginVerifier extends OriginVerifier {
             mListeners.get(origin).add(listener);
         }
 
-        // Website to app Digital Asset Link verification can be skipped for a specific URL by
-        // passing a command line flag to ease development.
-        String disableDalUrl =
+        // Website to app Digital Asset Link verification can be skipped for specific
+        // semicolon-delimited URLs by passing a command line flag to ease development.
+        String disableDalUrls =
                 CommandLine.getInstance()
                         .getSwitchValue(ChromeSwitches.DISABLE_DIGITAL_ASSET_LINK_VERIFICATION);
-        if (!TextUtils.isEmpty(disableDalUrl) && origin.equals(Origin.create(disableDalUrl))) {
-            Log.i(TAG, "Verification skipped for %s due to command line flag.", origin);
-            PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, new VerifiedCallback(origin, true, null));
-            return;
+
+        if (disableDalUrls != null) {
+            for (String disableDalUrl : disableDalUrls.split(";")) {
+                if (!TextUtils.isEmpty(disableDalUrl)
+                        && origin.equals(Origin.create(disableDalUrl))) {
+                    Log.i(TAG, "Verification skipped for %s due to command line flag.", origin);
+                    PostTask.runOrPostTask(
+                            TaskTraits.UI_DEFAULT, new VerifiedCallback(origin, true, null));
+                    return;
+                }
+            }
         }
+
         validate(origin);
     }
 
@@ -257,9 +265,7 @@ public class ChromeOriginVerifier extends OriginVerifier {
 
     @Override
     public void initNativeOriginVerifier(BrowserContextHandle browserContextHandle) {
-        setNativeOriginVerifier(
-                ChromeOriginVerifierJni.get()
-                        .init(ChromeOriginVerifier.this, browserContextHandle));
+        setNativeOriginVerifier(ChromeOriginVerifierJni.get().init(this, browserContextHandle));
     }
 
     @Override
@@ -281,6 +287,6 @@ public class ChromeOriginVerifier extends OriginVerifier {
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     @NativeMethods
     public interface Natives {
-        long init(ChromeOriginVerifier caller, BrowserContextHandle browserContextHandle);
+        long init(ChromeOriginVerifier self, BrowserContextHandle browserContextHandle);
     }
 }

@@ -12,6 +12,23 @@ namespace contextual_cueing {
 
 BASE_DECLARE_FEATURE(kContextualCueing);
 BASE_DECLARE_FEATURE(kGlicZeroStateSuggestions);
+BASE_DECLARE_FEATURE(kZeroStateSuggestionsUseLegion);
+
+// Whether contextual cueing is enabled.
+//
+// It is expected for downstream to use this function rather than calling
+// `base::FeatureList::IsEnabled` directly. Note that this function explicitly
+// ignores country/locale if the feature is overridden by Finch or command-line
+// override.
+bool IsContextualCueingEnabled();
+
+// Whether zero state suggestions are enabled.
+//
+// It is expected for downstream to use this function rather than calling
+// `base::FeatureList::IsEnabled` directly. Note that this function explicitly
+// ignores country/locale if the feature is overridden by Finch or command-line
+// override.
+bool IsZeroStateSuggestionsEnabled();
 
 // The amount of time to wait when a nudge is dismissed following the
 // exponential back off rule. The amount of the time to back off each time can
@@ -50,6 +67,9 @@ extern const base::FeatureParam<base::TimeDelta> kPdfPageCountCaptureDelay;
 // count of words client signal.
 extern const base::FeatureParam<bool> kEnablePageContentExtraction;
 
+// Whether or not to use static or dynamic cue texts based on the page.
+extern const base::FeatureParam<bool> kUseDynamicCues;
+
 // Whether to enable extraction of inner text for zero state suggestions.
 extern const base::FeatureParam<bool> kExtractInnerTextForZeroStateSuggestions;
 
@@ -66,6 +86,15 @@ extern const base::FeatureParam<base::TimeDelta>
 // Always return empty suggestions for same document navigations.
 extern const base::FeatureParam<bool> kReturnEmptyForSameDocumentNavigation;
 
+// Whether to allow contextual zero state suggestions for search results pages.
+extern const base::FeatureParam<bool>
+    kAllowContextualSuggestionsForSearchResultsPages;
+
+// How many pages can be pinned and still trigger a zero state suggestion.
+extern const base::FeatureParam<int> kMaxPinnedPagesForTriggeringSuggestions;
+
+// Timeout before giving up on getting context from a page.
+extern const base::FeatureParam<base::TimeDelta> kZSSPageContextTimeout;
 }  // namespace contextual_cueing
 
 #endif  // CHROME_BROWSER_CONTEXTUAL_CUEING_CONTEXTUAL_CUEING_FEATURES_H_

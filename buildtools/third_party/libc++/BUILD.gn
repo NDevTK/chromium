@@ -3,11 +3,10 @@
 # found in the LICENSE file.
 
 import("//build/config/c++/c++.gni")
-import("//build/config/clang/clang.gni")
-import("//build/config/compiler/compiler.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/toolchain/toolchain.gni")
 import("//buildtools/third_party/libc++/libcxx_headers.gni")
+import("//buildtools/third_party/libc++/modules.gni")
 
 if (is_mac) {
   import("//build/config/mac/mac_sdk.gni")
@@ -16,6 +15,13 @@ if (is_mac) {
 # Used by libc++ and libc++abi.
 # See //build/config/c++:runtime_library for the config used by users of libc++.
 config("config") {
+  configs = [
+    ":extra_flags",
+    ":stdver",
+  ]
+}
+
+config("extra_flags") {
   cflags = [
     "-fstrict-aliasing",
     "-Wundef",
@@ -26,25 +32,23 @@ config("config") {
       # in its implementation.
       "-Wno-macro-redefined",
     ]
-
-    # We want to use a uniform C++ version across all of chromium, but upstream
-    # libc++ requires at least C++20 so we have to make an exception here. No
-    # other target should override the default -std= flag.
-    if (use_cxx23) {
-      cflags_cc = [ "-std:c++23" ]
-    } else {
-      cflags_cc = [ "-std:c++20" ]
-    }
   } else {
     cflags += [ "-fPIC" ]
-    if (use_cxx23) {
-      cflags_cc = [ "-std=c++23" ]
-    } else {
-      cflags_cc = [ "-std=c++20" ]
-    }
   }
-
   defines = [ "_LIBCPP_BUILDING_LIBRARY" ]
+}
+
+config("stdver") {
+  if (is_win) {
+    cflags_cc = [
+      # We want to use a uniform C++ version across all of chromium, but
+      # upstream libc++ requires C++23 so we have to make an exception here.
+      # No other target should override the default -std= flag.
+      "-std:c++23preview",
+    ]
+  } else {
+    cflags_cc = [ "-std=c++23" ]
+  }
 }
 
 # Explicitly set version macros to Windows 7 to prevent libc++ from adding a
@@ -58,231 +62,39 @@ config("winver") {
   ]
 }
 
-configs_to_add = [
-  ":config",
-  "//build/config/compiler:no_chromium_code",
-]
+config("builtin_modulemap") {
+  cflags_cc = [ clang_arg_prefix + "-fbuiltin-module-map" ]
+}
 
-configs_to_remove = [
-  "//build/config/compiler:chromium_code",
-  "//build/config/coverage:default_coverage",
-]
+modulemap_config("libcxx_modulemap") {
+  source =
+      "${root_build_dir}/gen/third_party/libc++/src/include/module.modulemap"
+}
 
-if (use_libcxx_modules) {
-  template("modulemap") {
-    source_set(target_name) {
-      forward_variables_from(invoker,
-                             [
-                               "deps",
-                               "public_deps",
-                             ])
-      use_libcxx_modules = false
-      sources = [ invoker.modulemap ]
-      configs -= configs_to_remove
-      configs += configs_to_add
-    }
-  }
-
-  if (is_mac) {
-    template("DarwinBasic_modules") {
-      modulemap(target_name) {
-        forward_variables_from(invoker, [ "public_deps" ])
-        modulemap = "$mac_sdk_path/usr/include/DarwinBasic.modulemap"
-      }
-    }
-
-    DarwinBasic_modules("sys_types") {
-    }
-
-    template("DarwinFoundation_modules") {
-      modulemap(target_name) {
-        forward_variables_from(invoker, [ "public_deps" ])
-        modulemap = "$mac_sdk_path/usr/include/DarwinFoundation.modulemap"
-      }
-    }
-
-    DarwinFoundation_modules("DarwinFoundation") {
-    }
-
-    DarwinFoundation_modules("_sys_select") {
-      public_deps = [ ":DarwinFoundation" ]
-    }
-
-    template("c_standard_library_modules") {
-      modulemap(target_name) {
-        forward_variables_from(invoker, [ "public_deps" ])
-        modulemap = "$mac_sdk_path/usr/include/c_standard_library.modulemap"
-      }
-    }
-
-    c_standard_library_modules("__wctype") {
-      public_deps = [ ":_ctype" ]
-    }
-
-    c_standard_library_modules("_assert") {
-    }
-
-    c_standard_library_modules("_ctype") {
-    }
-
-    c_standard_library_modules("_errno") {
-    }
-
-    c_standard_library_modules("_inttypes") {
-      public_deps = [ ":_stdint" ]
-    }
-
-    c_standard_library_modules("_limits") {
-    }
-
-    c_standard_library_modules("_locale") {
-    }
-
-    c_standard_library_modules("_setjmp") {
-    }
-
-    c_standard_library_modules("_signal") {
-      public_deps = [ ":DarwinFoundation" ]
-    }
-
-    c_standard_library_modules("_stdint") {
-    }
-
-    c_standard_library_modules("_stdio") {
-    }
-
-    c_standard_library_modules("_stdlib") {
-      public_deps = [
-        ":_signal",
-        ":_stdint",
-      ]
-    }
-
-    c_standard_library_modules("_string") {
-    }
-
-    c_standard_library_modules("_time") {
-    }
-
-    c_standard_library_modules("_wchar") {
-      public_deps = [
-        ":__wctype",
-        ":_stdio",
-        ":_time",
-      ]
-    }
-
-    c_standard_library_modules("_wctype") {
-      public_deps = [ ":__wctype" ]
-    }
-  }
-
-  template("sysroot_modules") {
-    modulemap(target_name) {
-      forward_variables_from(invoker, [ "public_deps" ])
-      modulemap = SYSROOT_MODULEMAP
-      deps = [
-        ":copy_custom_headers",
-        ":copy_libcxx_headers",
-      ]
-    }
-  }
-
-  if (is_linux || is_chromeos) {
-    sysroot_modules("sysroot_features") {
-    }
-
-    sysroot_modules("sysroot_bits") {
-      public_deps = [
-        ":sysroot_features",
-        ":sysroot_time",
-      ]
-    }
-
-    sysroot_modules("sysroot_time") {
-      public_deps = [ ":sysroot_features" ]
-    }
-
-    sysroot_modules("sysroot_types") {
-      public_deps = [
-        ":sysroot_bits",
-        ":sysroot_features",
-        ":sysroot_time",
-      ]
-    }
-  }
-
-  template("builtin_modules") {
-    # This is a template to build clang builtin's module file.
-    modulemap(target_name) {
-      forward_variables_from(invoker, [ "public_deps" ])
-      modulemap = "${clang_base_path}/lib/clang/${clang_version}/include/module.modulemap"
-    }
-  }
-
-  builtin_modules("_Builtin_float") {
-  }
-
-  builtin_modules("_Builtin_intrinsics") {
-    if (is_linux) {
-      public_deps = [
-        ":_Builtin_limits",
-        ":_Builtin_stddef",
-      ]
-    }
-    if (is_mac) {
-      public_deps = [ ":_Builtin_stdint" ]
-    }
-  }
-
-  builtin_modules("_Builtin_inttypes") {
-  }
-
-  builtin_modules("_Builtin_limits") {
-  }
-
-  builtin_modules("_Builtin_stdalign") {
-  }
-
-  builtin_modules("_Builtin_stdarg") {
-  }
-
-  builtin_modules("_Builtin_stdatomic") {
-  }
-
-  builtin_modules("_Builtin_stdbool") {
-  }
-
-  builtin_modules("_Builtin_stddef") {
-  }
-
-  builtin_modules("_Builtin_stdint") {
-    if (is_mac) {
-      public_deps = [
-        ":_Builtin_stdarg",
-        ":_Builtin_stddef",
-      ]
-    }
-  }
-
-  builtin_modules("_Builtin_unwind") {
-    if (is_linux || is_mac) {
-      public_deps = [ ":_Builtin_stdint" ]
-    }
-  }
-
-  if (is_mac) {
-    builtin_modules("ptrauth") {
-    }
-  }
-
-  # We need to have libc++ headers, __assertion_handler and __config_site in the
-  # same directory for clang modules build.
+if (current_toolchain == default_toolchain) {
+  # The Clang modules build requires libc++ headers, __assertion_handler, and
+  # __config_site to be in the same directory.
+  #
+  # To avoid redundant work, the copy targets are declared only in the default
+  # toolchain. This prevents unnecessary copies in multi-toolchain builds and
+  # allows Siso to use its precomputed tree for the default toolchain's `gen`
+  # directory.
+  #
+  # Note: there are setups where clang_modules is enabled for some, but not all,
+  # toolchains (see https://crrev.com/c/6849070). So, this copy must happen
+  # unconditionally.
   copy("copy_libcxx_headers") {
     sources = libcxx_headers
     outputs = [ "{{source_gen_dir}}/{{source_file_part}}" ]
+
+    # Rely on `:libcxx_headers` instead: it abstract away the default toolchain
+    # optimization and the internal copy.
+    visibility = [ ":libcxx_headers" ]
   }
 
+  # Note: there are setups where clang_modules is enabled for some, but not all,
+  # toolchains (see https://crrev.com/c/6849070). So, this copy must happen
+  # unconditionally.
   copy("copy_custom_headers") {
     sources = [
       "__assertion_handler",
@@ -291,23 +103,221 @@ if (use_libcxx_modules) {
     outputs = [
       "${root_gen_dir}/third_party/libc++/src/include/{{source_file_part}}",
     ]
+
+    # Rely on `:custom_headers` instead: it abstract away the default toolchain
+    # optimization and the internal copy.
+    visibility = [ ":custom_headers" ]
+  }
+}
+
+# TODO(https://crbug.com/440260716): This intermediate target can be removed
+# once Cronet's gn2bp supports copy targets with multiple outputs.
+group("libcxx_headers") {
+  if (use_clang_modules) {
+    deps = [ ":copy_libcxx_headers($default_toolchain)" ]
+  }
+}
+
+# TODO(https://crbug.com/440260716): This intermediate target can be removed
+# once Cronet's gn2bp supports copy targets with multiple outputs.
+group("custom_headers") {
+  if (use_clang_modules) {
+    deps = [ ":copy_custom_headers($default_toolchain)" ]
+  }
+}
+
+if (use_clang_modules && use_xcode_symlinks && !use_autogenerated_modules) {
+  # sysroot_modulemaps can be inside the build directory. This no-op action
+  # declares the modulemap files as outputs to satisfy GN's dependency
+  # tracking when other targets use them as inputs.
+  action("copy_sysroot_modulemaps") {
+    script = "//build/noop.py"
+    outputs = sysroot_modulemaps
+  }
+}
+
+if (use_autogenerated_modules && use_clang_modules) {
+  group("all_modules") {
+    # If this doesn't exist, you'll need to run build/modules/modularize.py for that platform.
+    public_deps = [ "//build/modules/${module_platform}:all_modules" ]
   }
 
-  template("libcxx_modules") {
-    # This is a template to build libc++'s module file.
-    modulemap(target_name) {
-      forward_variables_from(invoker, [ "public_deps" ])
-      modulemap =
-          "${root_gen_dir}/third_party/libc++/src/include/module.modulemap"
-      deps = [
-        ":copy_custom_headers",
-        ":copy_libcxx_headers",
+  config("all_modulemap_configs") {
+    configs = [ "//build/modules/${module_platform}:all_modulemap_configs" ]
+  }
+} else if (use_clang_modules) {
+  if (is_apple) {
+    DarwinBasic_module("MachO") {
+      public_deps = [
+        ":_Builtin_stdbool",
+        ":_Builtin_stdint",
+        ":_DarwinFoundation3",
+        ":std_string_h",
       ]
+    }
+
+    DarwinFoundation1_module("_DarwinFoundation1") {
+      public_deps = [ ":_AvailabilityInternal" ]
+    }
+    DarwinFoundation1_module("_AvailabilityInternal") {
+    }
+    DarwinFoundation2_module("_DarwinFoundation2") {
+      public_deps = [
+        ":_Builtin_stdarg",
+        ":_Builtin_stddef",
+        ":_DarwinFoundation1",
+      ]
+    }
+    DarwinFoundation2_module("alloca") {
+      public_deps = [ ":_DarwinFoundation2" ]
+    }
+    DarwinFoundation3_module("_DarwinFoundation3") {
+      public_deps = [
+        ":_Builtin_stdint",
+        ":_DarwinFoundation2",
+        ":std_ctype_h",
+      ]
+    }
+    DarwinFoundation3_module("xlocale") {
+      public_deps = [
+        ":_DarwinFoundation1",
+        ":_DarwinFoundation2",
+      ]
+    }
+
+    group("all_sysroot") {
+      public_deps = [
+        ":MachO",
+        ":_AvailabilityInternal",
+        ":_DarwinFoundation1",
+        ":_DarwinFoundation2",
+        ":_DarwinFoundation3",
+        ":alloca",
+        ":xlocale",
+      ]
+    }
+
+    group("sysroot_ctype") {
+      public_deps = [ ":_DarwinFoundation2" ]
+    }
+    group("sysroot_errno") {
+      public_deps = [ ":_DarwinFoundation1" ]
+    }
+    group("sysroot_fenv") {
+      public_deps = [ ":_DarwinFoundation1" ]
+    }
+    group("sysroot_inttypes") {
+      public_deps = [ ":_DarwinFoundation3" ]
+    }
+    group("sysroot_limits") {
+      public_deps = [ ":_DarwinFoundation1" ]
+    }
+    group("sysroot_locale") {
+    }
+    group("sysroot_math") {
+    }
+    group("sysroot_pthread") {
+    }
+    group("sysroot_stdatomic") {
+      public_deps = []
+    }
+    group("sysroot_stdint") {
+      public_deps = [ ":_DarwinFoundation2" ]
+    }
+    group("sysroot_stdlib") {
+      public_deps = [ ":_DarwinFoundation3" ]
+    }
+    group("sysroot_string") {
+      public_deps = [ ":_DarwinFoundation2" ]
+    }
+    group("sysroot_uchar") {
+      public_deps = []
+    }
+    group("sysroot_wchar") {
+      public_deps = [ ":_DarwinFoundation3" ]
+    }
+    group("sysroot_wctype") {
+      public_deps = [ ":_DarwinFoundation3" ]
     }
   }
 
-  libcxx_modules("std") {
+  builtin_module("_Builtin_float") {
+  }
+
+  builtin_module("_Builtin_intrinsics") {
     public_deps = [
+      ":std_core",
+      ":sysroot_stdlib",
+    ]
+    if (current_cpu == "arm" || current_cpu == "arm64") {
+      # <arm_acle.h> includes <stdint.h> which requires _Builtin_stdint module.
+      public_deps += [ ":_Builtin_stdint" ]
+    }
+  }
+
+  builtin_module("_Builtin_inttypes") {
+    public_deps = [ ":sysroot_inttypes" ]
+  }
+
+  builtin_module("_Builtin_limits") {
+    public_deps = [
+      ":std_float_h",
+      ":sysroot_limits",
+    ]
+  }
+
+  builtin_module("_Builtin_stdalign") {
+  }
+
+  builtin_module("_Builtin_stdarg") {
+  }
+
+  builtin_module("_Builtin_stdatomic") {
+    public_deps = [
+      ":_Builtin_stddef",
+      ":_Builtin_stdint",
+      ":sysroot_stdatomic",
+    ]
+  }
+
+  builtin_module("_Builtin_stdbool") {
+  }
+
+  builtin_module("_Builtin_stddef") {
+  }
+
+  builtin_module("_Builtin_stdint") {
+    public_deps = [ ":sysroot_stdint" ]
+  }
+
+  builtin_module("_Builtin_unwind") {
+    public_deps = [ ":_Builtin_stdint" ]
+  }
+
+  builtin_module("ptrauth") {
+  }
+
+  group("all_builtins") {
+    public_deps = [
+      "//buildtools/third_party/libc++:_Builtin_float",
+      "//buildtools/third_party/libc++:_Builtin_intrinsics",
+      "//buildtools/third_party/libc++:_Builtin_inttypes",
+      "//buildtools/third_party/libc++:_Builtin_limits",
+      "//buildtools/third_party/libc++:_Builtin_stdalign",
+      "//buildtools/third_party/libc++:_Builtin_stdarg",
+      "//buildtools/third_party/libc++:_Builtin_stdatomic",
+      "//buildtools/third_party/libc++:_Builtin_stdbool",
+      "//buildtools/third_party/libc++:_Builtin_stddef",
+      "//buildtools/third_party/libc++:_Builtin_stdint",
+      "//buildtools/third_party/libc++:_Builtin_unwind",
+      "//buildtools/third_party/libc++:ptrauth",
+    ]
+  }
+
+  libcxx_module("std") {
+    public_deps = [
+      ":_Builtin_limits",
+      ":_Builtin_stdalign",
       ":std_core",
       ":std_ctype_h",
       ":std_errno_h",
@@ -319,64 +329,148 @@ if (use_libcxx_modules) {
       ":std_string_h",
       ":std_uchar_h",
       ":std_wctype_h",
+      ":sysroot_locale",
+      ":sysroot_pthread",
+    ]
+    if (is_apple) {
+      public_deps += [
+        # __locale_dir/support/apple.h includes __locale_dir/support/bsd_like.h,
+        #  which includes xlocale.h.
+        ":xlocale",
+      ]
+    }
+  }
+
+  textual_module("std_config") {
+  }
+
+  libcxx_module("std_core") {
+    public_deps = [
+      ":_Builtin_stddef",
+      ":_Builtin_stdint",
+      ":std_config",
     ]
   }
 
-  libcxx_modules("std_config") {
+  libcxx_module("std_ctype_h") {
+    public_deps = [
+      ":std_config",
+      ":sysroot_ctype",
+    ]
   }
 
-  libcxx_modules("std_core") {
+  libcxx_module("std_errno_h") {
+    public_deps = [
+      ":std_config",
+      ":sysroot_errno",
+    ]
   }
 
-  libcxx_modules("std_ctype_h") {
+  libcxx_module("std_fenv_h") {
+    public_deps = [
+      ":std_config",
+      ":sysroot_fenv",
+    ]
   }
 
-  libcxx_modules("std_errno_h") {
+  libcxx_module("std_float_h") {
+    public_deps = [
+      ":_Builtin_float",
+      ":std_config",
+    ]
   }
 
-  libcxx_modules("std_fenv_h") {
+  libcxx_module("std_inttypes_h") {
+    public_deps = [
+      ":_Builtin_inttypes",
+      ":std_config",
+    ]
   }
 
-  libcxx_modules("std_float_h") {
+  libcxx_module("std_math_h") {
+    public_deps = [
+      ":std_core",
+      ":sysroot_math",
+      ":sysroot_stdlib",
+    ]
   }
 
-  libcxx_modules("std_inttypes_h") {
+  libcxx_module("std_private_mbstate_t") {
+    public_deps = [
+      ":std_config",
+      ":sysroot_wchar",
+    ]
   }
 
-  libcxx_modules("std_math_h") {
-    if (is_linux || is_mac) {
-      public_deps = [ ":std_core" ]
+  libcxx_module("std_stdatomic_h") {
+    public_deps = [
+      ":_Builtin_stdatomic",
+      ":std_config",
+      ":sysroot_stdint",
+    ]
+  }
+
+  libcxx_module("std_string_h") {
+    public_deps = [
+      ":std_config",
+      ":sysroot_string",
+    ]
+  }
+
+  libcxx_module("std_uchar_h") {
+    public_deps = [
+      ":std_private_mbstate_t",
+      ":sysroot_uchar",
+    ]
+  }
+
+  libcxx_module("std_wctype_h") {
+    public_deps = [
+      ":std_config",
+      ":sysroot_wctype",
+    ]
+  }
+
+  group("all_std") {
+    # There are more modules than this, but since the others are purely
+    # textual, they don't need to be compiled to a pcm.
+    public_deps = [
+      ":std",
+      ":std_core",
+      ":std_ctype_h",
+      ":std_errno_h",
+      ":std_fenv_h",
+      ":std_float_h",
+      ":std_inttypes_h",
+      ":std_math_h",
+      ":std_private_mbstate_t",
+      ":std_stdatomic_h",
+      ":std_string_h",
+      ":std_uchar_h",
+      ":std_wctype_h",
+    ]
+  }
+
+  config("sysroot_modulemaps") {
+    cflags_cc = []
+    foreach(modulemap, sysroot_modulemaps) {
+      cflags_cc +=
+          [ "-fmodule-map-file=" + rebase_path(modulemap, root_build_dir) ]
     }
   }
 
-  libcxx_modules("std_private_mbstate_t") {
+  group("all_modules") {
+    public_deps = [
+      ":all_builtins",
+      ":all_std",
+      ":all_sysroot",
+    ]
+    public_configs = [ "//build/config/compiler:libcxx_module" ]
   }
-
-  libcxx_modules("std_stdatomic_h") {
-  }
-
-  libcxx_modules("std_stdbool_h") {
-  }
-
-  libcxx_modules("std_stddef_h") {
-  }
-
-  libcxx_modules("std_string_h") {
-  }
-
-  libcxx_modules("std_uchar_h") {
-    if (is_linux || is_mac) {
-      public_deps = [ ":std_private_mbstate_t" ]
-    }
-  }
-
-  libcxx_modules("std_wchar_h") {
-  }
-
-  libcxx_modules("std_wctype_h") {
-    if (is_mac) {
-      public_deps = [ ":std_ctype_h" ]
-    }
+} else {
+  # This is a no-op target for when use_clang_modules = false. It is
+  # still referenced in BUILDCONFIG.gn.
+  group("all_modules") {
   }
 }
 
@@ -386,7 +480,7 @@ target(libcxx_target_type, "libc++") {
   # need to explicitly depend on libc++.
   visibility = [
     "//build/config:common_deps",
-    "//third_party/catapult/devil:devil",
+    "//third_party/catapult/devil",
   ]
   if (is_linux) {
     # This target packages libc++.so, so must have an explicit dependency on
@@ -514,9 +608,13 @@ target(libcxx_target_type, "libc++") {
                "//build/config/compiler:rtti",
              ]
 
-  deps = [ "//third_party/llvm-libc:llvm-libc-shared" ]
+  deps = [
+    ":custom_headers",
+    ":libcxx_headers",
+    "//third_party/llvm-libc:llvm-libc-shared",
+  ]
 
-  if (use_libcxx_modules) {
+  if (use_clang_modules) {
     # TODO(https://github.com/llvm/llvm-project/issues/127012): We don't enable
     # Clang modules for libc++ as libc++'s iostream.cpp has ODR issue
     # (https://crbug.com/40440396#comment81). Also we don't take care about the
@@ -525,12 +623,8 @@ target(libcxx_target_type, "libc++") {
     # This removes deps to libc++'s modules from libc++'s build as libc++
     # doesn't support modules build itself.
     use_libcxx_modules = false
-
-    deps += [
-      ":copy_custom_headers",
-      ":copy_libcxx_headers",
-    ]
   }
+
   if ((is_android || is_apple) && libcxx_is_shared) {
     # Use libc++_chrome to avoid conflicting with system libc++
     output_name = "libc++_chrome"
@@ -579,4 +673,8 @@ target(libcxx_target_type, "libc++") {
       deps += [ "//buildtools/third_party/libc++abi" ]
     }
   }
+
+  # Disabling -Wexit-time-destructors, as libc++ uses `static string` objects
+  # for locale code.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

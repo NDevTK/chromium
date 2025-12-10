@@ -26,6 +26,7 @@
 #include "ui/accessibility/ax_selection.h"
 #include "ui/accessibility/ax_serializable_tree.h"
 #include "ui/accessibility/ax_text_utils.h"
+#include "ui/accessibility/ax_tree_id.h"
 #include "ui/accessibility/ax_tree_observer.h"
 #include "ui/accessibility/ax_tree_update_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -436,7 +437,7 @@ void ReadAnythingAppModel::SetTreeInfoUrlInformation(
   tree_info.is_docs = url.SchemeIsHTTPOrHTTPS() &&
                       (url.DomainIs("docs.google.com") ||
                        url.DomainIs("docs.sandbox.google.com")) &&
-                      url.path().starts_with("/document") &&
+                      url.GetPath().starts_with("/document") &&
                       !url.ExtractFileName().empty();
 
   tree_info.is_url_information_set = true;
@@ -478,13 +479,16 @@ void ReadAnythingAppModel::ClearPendingUpdates() {
 void ReadAnythingAppModel::UnserializePendingUpdates(
     const ui::AXTreeID& tree_id) {
   if (!pending_updates_.contains(tree_id)) {
+    VLOG(1) << "Returning early in UnserializePendingUpdates because it "
+               "doesn't contain tree id "
+            << tree_id;
     return;
   }
   // TODO(crbug.com/40802192): Ensure there are no crashes/unexpected behavior
   // if an accessibility event is received on the same tree after
   // unserialization has begun.
   std::vector<Updates> updates = pending_updates_.extract(tree_id).mapped();
-  for (Updates update : updates) {
+  for (const Updates& update : updates) {
     // Unserialize the updates in batches in the groupings in which they were
     // received by AccessibilityEventReceived.
     DCHECK(update.empty() || tree_id == active_tree_id_);
@@ -492,9 +496,12 @@ void ReadAnythingAppModel::UnserializePendingUpdates(
   }
 }
 
-void ReadAnythingAppModel::UnserializeUpdates(Updates& updates,
+void ReadAnythingAppModel::UnserializeUpdates(const Updates& updates,
                                               const ui::AXTreeID& tree_id) {
+  VLOG(1) << "Unserializing updates for " << tree_id;
   if (updates.empty()) {
+    VLOG(1) << "Unable to unserialize updates for " << tree_id
+            << " because the updates are empty";
     return;
   }
 
@@ -518,7 +525,15 @@ void ReadAnythingAppModel::UnserializeUpdates(Updates& updates,
     // unserialize because the data is bad.
     DUMP_WILL_BE_CHECK(tree->root() || update.root_id != ui::kInvalidAXNodeID);
     if (!tree->root() && update.root_id == ui::kInvalidAXNodeID) {
+      VLOG(1) << "Skipping unserialize because the tree has no root and the "
+                 "update has an invalid root";
       return;
+    }
+    if (update.tree_data.tree_id == ui::AXTreeIDUnknown()) {
+      VLOG(1) << "unserializing an update with an unknown tree ID";
+    } else {
+      VLOG(1) << "Unserializing an update with a known tree ID: "
+              << update.tree_data.tree_id;
     }
     tree->Unserialize(update);
   }
@@ -535,6 +550,7 @@ void ReadAnythingAppModel::AccessibilityEventReceived(
     std::vector<ui::AXEvent>& events,
     bool speech_playing) {
   DCHECK_NE(tree_id, ui::AXTreeIDUnknown());
+  VLOG(1) << "AccessibilityEventReceived for " << tree_id;
   // Create a new tree if an event is received for a tree that is not yet in
   // the tree list.
   if (!ContainsTree(tree_id)) {
@@ -566,7 +582,15 @@ void ReadAnythingAppModel::AccessibilityEventReceived(
       // If read aloud is searching for a child tree to distill and this tree id
       // matches one of the possible child ids, set the active tree to this tree
       // so that it can be distilled.
+      VLOG(1) << "Using child to set active tree id to " << tree_id;
       SetActiveTreeId(tree_id);
+
+      // Ensure that requires_distillation_ is set to true whenever there's a
+      // match for a child id. Otherwise, depending on how accessibility events
+      // for the child tree are received, the content won't be distilled
+      // because ReadAnythingAppController doesn't receive a signal that
+      // distillation should be attempted again.
+      requires_distillation_ = true;
     }
   }
 
@@ -583,14 +607,18 @@ void ReadAnythingAppModel::AccessibilityEventReceived(
         CHECK(features::IsDataCollectionModeForScreen2xEnabled());
         timer_since_tree_changed_for_data_collection_.Reset();
       }
+      VLOG(1) << "Returning early in AccessibilityEventReceived because "
+                 "distillation is in progress";
       return;
     }
     // We need to unserialize old updates before we can unserialize the new
     // ones.
+    VLOG(1) << "AccessibilityEventReceived- tree ID is the active tree";
     UnserializePendingUpdates(tree_id);
     UnserializeUpdates(updates, tree_id);
     ProcessNonGeneratedEvents(events);
   } else {
+    VLOG(1) << "AccessibilityEventReceived- tree ID is not the active tree";
     UnserializeUpdates(updates, tree_id);
   }
 
@@ -608,6 +636,7 @@ void ReadAnythingAppModel::OnAXTreeDestroyed(const ui::AXTreeID& tree_id) {
   // browser learns that an `AXTree` was destroyed. This could be from any tab,
   // not just the active one; therefore many `tree_id`s will not be found in
   // `tree_infos_`.
+  VLOG(1) << "OnAXTreeDestroyed for " << tree_id;
   const auto it = tree_infos_.find(tree_id);
   if (it == tree_infos_.end()) {
     return;
@@ -800,6 +829,9 @@ void ReadAnythingAppModel::ProcessNonGeneratedEvents(
   // generated. The consumer should not process the same event here and for
   // generated events.
   for (auto& event : events) {
+#if BUILDFLAG(IS_MAC)
+    VLOG(2) << "Non-generated event type: " << event.event_type;
+#endif
     switch (event.event_type) {
       case ax::mojom::Event::kLoadComplete:
         requires_distillation_ = true;
@@ -879,11 +911,26 @@ void ReadAnythingAppModel::ProcessNonGeneratedEvents(
       case ax::mojom::Event::kTreeChanged:
           break;
       case ax::mojom::Event::kValueChanged:
+#if BUILDFLAG(IS_MAC)
+        // VLOG to assess if this is a reliable location to detect text field
+        // changes on Mac to avoid introducing unnecessary redraws.
+        if (ui::AXNode* node = GetAXNode(event.id);
+            node && ui::IsTextField(node->GetRole())) {
+          VLOG(1) << "kValueChanged on a text field";
+        }
+#endif
         // After the user finishes typing something we wait for a timer and
         // redraw to capture the input.
         if (event.event_from == ax::mojom::EventFrom::kUser &&
             event.event_intents.size() > 0) {
           reset_draw_timer_ = true;
+#if BUILDFLAG(IS_MAC)
+          VLOG(1) << "kValueChanged on a user event triggering redraw timer";
+#endif
+        } else {
+#if BUILDFLAG(IS_MAC)
+          VLOG(1) << "kValueChanged without a redraw timer trigger";
+#endif
         }
         break;
       case ax::mojom::Event::kAriaAttributeChangedDeprecated:
@@ -916,6 +963,9 @@ void ReadAnythingAppModel::ProcessGeneratedEvents(
   // Note that this list of events may overlap with non-generated events in the
   // It's up to the consumer to pick but its generally good to prefer generated.
   for (const auto& event : event_generator) {
+#if BUILDFLAG(IS_MAC)
+    VLOG(2) << "Generated event type: " << event.event_params->event;
+#endif
     switch (event.event_params->event) {
       case ui::AXEventGenerator::Event::DOCUMENT_SELECTION_CHANGED:
         requires_post_process_selection_ = true;
@@ -983,6 +1033,7 @@ void ReadAnythingAppModel::ProcessGeneratedEvents(
       case ui::AXEventGenerator::Event::CHECKED_STATE_DESCRIPTION_CHANGED:
       case ui::AXEventGenerator::Event::CHILDREN_CHANGED:
       case ui::AXEventGenerator::Event::CONTROLS_CHANGED:
+      case ui::AXEventGenerator::Event::DEFAULT_ACTION_VERB_CHANGED:
       case ui::AXEventGenerator::Event::DETAILS_CHANGED:
       case ui::AXEventGenerator::Event::DESCRIBED_BY_CHANGED:
       case ui::AXEventGenerator::Event::DESCRIPTION_CHANGED:
@@ -1129,14 +1180,27 @@ void ReadAnythingAppModel::AllowChildTreeForActiveTree(bool use_child_tree) {
 
   ui::AXSerializableTree* active_tree = GetTreeFromId(active_tree_id_);
   if (!active_tree) {
+    VLOG(1) << "Not allowing child tree for active tree because active tree is "
+               "null";
     return;
   }
   std::set<ui::AXTreeID> child_ids = active_tree->GetAllChildTreeIds();
   if (!child_ids.size()) {
+    VLOG(1) << "Not allowing child tree for active tree because active tree "
+               "has no child trees";
     return;
   }
+
+  VLOG(1) << "Allow child tree for active tree";
 
   // Store all the possible child tree ids that could be used as the active
   // tree if they have distillable content.
   child_tree_ids_.insert(child_ids.begin(), child_ids.end());
+}
+
+bool ReadAnythingAppModel::SelectionNodesContainedInDistilledContent() const {
+  std::vector<ui::AXNodeID> sorted_content_ids = content_node_ids_;
+  std::sort(sorted_content_ids.begin(), sorted_content_ids.end());
+  return std::includes(sorted_content_ids.begin(), sorted_content_ids.end(),
+                       selection_node_ids_.begin(), selection_node_ids_.end());
 }

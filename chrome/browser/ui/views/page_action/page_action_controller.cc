@@ -23,13 +23,16 @@ namespace page_actions {
 using PassKey = base::PassKey<PageActionController>;
 
 ScopedPageActionActivity::ScopedPageActionActivity(
-    PageActionController* controller,
+    PageActionController& controller,
     actions::ActionId action_id)
-    : controller_(controller), action_id_(action_id) {}
+    : controller_(&controller), action_id_(action_id) {
+  RegisterWillDestroyControllerCallback();
+}
 
 ScopedPageActionActivity::ScopedPageActionActivity(
     ScopedPageActionActivity&& other) noexcept
     : controller_(other.controller_), action_id_(other.action_id_) {
+  RegisterWillDestroyControllerCallback();
   other.controller_ = nullptr;
 }
 
@@ -41,6 +44,7 @@ ScopedPageActionActivity& ScopedPageActionActivity::operator=(
 
   action_id_ = other.action_id_;
   controller_ = other.controller_;
+  RegisterWillDestroyControllerCallback();
   other.controller_ = nullptr;
   return *this;
 }
@@ -48,6 +52,18 @@ ScopedPageActionActivity& ScopedPageActionActivity::operator=(
 ScopedPageActionActivity::~ScopedPageActionActivity() {
   if (controller_) {
     controller_->DecrementActivityCounter(action_id_);
+  }
+}
+
+void ScopedPageActionActivity::RegisterWillDestroyControllerCallback() {
+  if (controller_) {
+    on_will_destroy_controller_subscription_ =
+        controller_->RegisterOnWillDestroyCallback(base::BindOnce(
+            [](ScopedPageActionActivity* activity,
+               PageActionController& controller) {
+              activity->controller_ = nullptr;
+            },
+            base::Unretained(this)));
   }
 }
 
@@ -63,7 +79,9 @@ PageActionControllerImpl::PageActionControllerImpl(
   }
 }
 
-PageActionControllerImpl::~PageActionControllerImpl() = default;
+PageActionControllerImpl::~PageActionControllerImpl() {
+  on_will_destroy_callback_list_.Notify(*this);
+}
 
 void PageActionControllerImpl::Initialize(
     tabs::TabInterface& tab_interface,
@@ -85,7 +103,8 @@ void PageActionControllerImpl::Initialize(
   for (actions::ActionId id : action_ids) {
     const PageActionProperties& properties =
         properties_provider.GetProperties(id);
-    Register(id, tab_interface.IsActivated(), properties.is_ephemeral);
+    Register(id, tab_interface.IsActivated(), properties.is_ephemeral,
+             properties.exempt_from_omnibox_suppression);
 
     // It's safe to use base::Unretained here since the recorded is owned by
     // this object.
@@ -106,12 +125,16 @@ void PageActionControllerImpl::Initialize(
   }
 }
 
-void PageActionControllerImpl::Register(actions::ActionId action_id,
-                                        bool is_tab_active,
-                                        bool is_ephemeral) {
+void PageActionControllerImpl::Register(
+    actions::ActionId action_id,
+    bool is_tab_active,
+    bool is_ephemeral,
+    bool is_exempt_from_omnibox_suppression) {
   std::unique_ptr<PageActionModelInterface> model =
       CreateModel(action_id, is_ephemeral);
   model->SetTabActive(PassKey(), is_tab_active);
+  model->SetExemptFromOmniboxSuppression(PassKey(),
+                                         is_exempt_from_omnibox_suppression);
   page_actions_.emplace(action_id, std::move(model));
   // Initialize counter to 0
   activity_counters_[action_id] = 0;
@@ -148,7 +171,7 @@ ScopedPageActionActivity PageActionControllerImpl::AddActivity(
   auto& counter = activity_counters_[action_id];
   ++counter;
   FindPageActionModel(action_id).SetActionActive(PassKey(), true);
-  return ScopedPageActionActivity(this, action_id);
+  return ScopedPageActionActivity(*this, action_id);
 }
 
 void PageActionControllerImpl::DecrementActivityCounter(
@@ -209,12 +232,21 @@ void PageActionControllerImpl::ClearOverrideAccessibleName(
 void PageActionControllerImpl::OverrideImage(
     actions::ActionId action_id,
     const ui::ImageModel& override_image) {
-  FindPageActionModel(action_id).SetOverrideImage(PassKey(), override_image);
+  OverrideImage(action_id, override_image, PageActionColorSource::kForeground);
+}
+
+void PageActionControllerImpl::OverrideImage(
+    actions::ActionId action_id,
+    const ui::ImageModel& override_image,
+    PageActionColorSource color_source) {
+  FindPageActionModel(action_id).SetOverrideImage(PassKey(), override_image,
+                                                  color_source);
 }
 
 void PageActionControllerImpl::ClearOverrideImage(actions::ActionId action_id) {
-  FindPageActionModel(action_id).SetOverrideImage(
-      PassKey(), /*override_image=*/std::nullopt);
+  auto& model = FindPageActionModel(action_id);
+  model.SetOverrideImage(PassKey(), /*override_image=*/std::nullopt,
+                         model.GetColorSource());
 }
 
 void PageActionControllerImpl::OverrideTooltip(
@@ -251,7 +283,7 @@ PageActionControllerImpl::CreateActionItemSubscription(
 void PageActionControllerImpl::SetShouldHidePageActions(
     bool should_hide_page_actions) {
   for (auto& [id, model] : page_actions_) {
-    model->SetShouldHidePageAction(PassKey(), should_hide_page_actions);
+    model->SetIsSuppressedByOmnibox(PassKey(), should_hide_page_actions);
   }
 }
 
@@ -347,6 +379,12 @@ int PageActionControllerImpl::GetVisibleEphemeralPageActionsCount() const {
     }
   }
   return visible_ephemeral_page_actions_count;
+}
+
+base::CallbackListSubscription
+PageActionControllerImpl::RegisterOnWillDestroyCallback(
+    base::OnceCallback<void(PageActionController&)> callback) {
+  return on_will_destroy_callback_list_.Add(std::move(callback));
 }
 
 void PageActionControllerImpl::RegisterIsChipShowingChangedCallback(

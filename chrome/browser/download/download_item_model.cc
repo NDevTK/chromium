@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/byte_count.h"
 #include "base/functional/bind.h"
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/rtl.h"
@@ -22,7 +23,6 @@
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/download/bubble/download_bubble_prefs.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/download/download_core_service.h"
@@ -94,8 +94,6 @@ using DangerUiPattern = DownloadUIModel::DangerUiPattern;
 using download::DownloadItem;
 using InsecureDownloadStatus = download::DownloadItem::InsecureDownloadStatus;
 using safe_browsing::DownloadFileType;
-using ReportThreatDetailsResult =
-    safe_browsing::PingManager::ReportThreatDetailsResult;
 using TailoredVerdict = safe_browsing::ClientDownloadResponse::TailoredVerdict;
 using TailoredWarningType = DownloadUIModel::TailoredWarningType;
 
@@ -116,9 +114,9 @@ class DownloadItemModelData : public base::SupportsUserData::Data {
   // object if not found. Always returns a non-NULL pointer, unless OOM.
   static DownloadItemModelData* GetOrCreate(DownloadItem* download);
 
-  // Whether the download should be displayed in the download shelf. True by
-  // default.
-  bool should_show_in_shelf_ = true;
+  // Whether the download should be displayed in the download UI on desktop
+  // platforms. True by default.
+  bool should_show_in_ui_ = true;
 
   // Whether the UI has been notified about this download.
   bool was_ui_notified_ = false;
@@ -170,7 +168,7 @@ DownloadItemModelData* DownloadItemModelData::GetOrCreate(
       static_cast<DownloadItemModelData*>(download->GetUserData(kKey));
   if (data == nullptr) {
     data = new DownloadItemModelData();
-    data->should_show_in_shelf_ = !download->IsTransient();
+    data->should_show_in_ui_ = !download->IsTransient();
     download->SetUserData(kKey, base::WrapUnique(data));
   }
   return data;
@@ -248,7 +246,7 @@ std::u16string DownloadItemModel::GetTabProgressStatusText() const {
   } else {
     size = download_->GetReceivedBytes();
   }
-  std::u16string received_size = ui::FormatBytes(size);
+  std::u16string received_size = ui::FormatBytes(base::ByteCount(size));
   std::u16string amount = received_size;
 
   // Adjust both strings for the locale direction since we don't yet know which
@@ -256,7 +254,7 @@ std::u16string DownloadItemModel::GetTabProgressStatusText() const {
   base::i18n::AdjustStringForLocaleDirection(&amount);
 
   if (total) {
-    std::u16string total_text = ui::FormatBytes(total);
+    std::u16string total_text = ui::FormatBytes(base::ByteCount(total));
     base::i18n::AdjustStringForLocaleDirection(&total_text);
 
     base::i18n::AdjustStringForLocaleDirection(&received_size);
@@ -266,7 +264,7 @@ std::u16string DownloadItemModel::GetTabProgressStatusText() const {
     amount.assign(received_size);
   }
   int64_t current_speed = download_->CurrentSpeed();
-  std::u16string speed_text = ui::FormatSpeed(current_speed);
+  std::u16string speed_text = ui::FormatSpeed(base::ByteCount(current_speed));
   base::i18n::AdjustStringForLocaleDirection(&speed_text);
 
   base::TimeDelta remaining;
@@ -363,6 +361,7 @@ bool DownloadItemModel::IsMalicious() const {
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING:
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING:
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_SCAN_FAILED:
+    case download::DOWNLOAD_DANGER_TYPE_FORCE_SAVE_TO_GDRIVE:
       return false;
   }
   NOTREACHED();
@@ -372,58 +371,9 @@ bool DownloadItemModel::IsInsecure() const {
   return download_->IsInsecure();
 }
 
-bool DownloadItemModel::ShouldRemoveFromShelfWhenComplete() const {
-  switch (download_->GetState()) {
-    case DownloadItem::IN_PROGRESS:
-      // If the download is dangerous or malicious, we should display a warning
-      // on the shelf until the user accepts the download.
-      if (IsDangerous())
-        return false;
-
-      // If the download is a trusted extension, temporary, or will be opened
-      // automatically, then it should be removed from the shelf on completion.
-      // TODO(crbug.com/40129365): The logic for deciding opening behavior
-      // should
-      //                          be in a central location.
-      return (download_crx_util::IsTrustedExtensionDownload(profile(),
-                                                            *download_) ||
-              download_->IsTemporary() || download_->GetOpenWhenComplete() ||
-              download_->ShouldOpenFileBasedOnExtension());
-
-    case DownloadItem::COMPLETE:
-      // If the download completed, then rely on GetAutoOpened() to check for
-      // opening behavior. This should accurately reflect whether the download
-      // was successfully opened.  Extensions, for example, may fail to open.
-      return download_->GetAutoOpened() || download_->IsTemporary();
-
-    case DownloadItem::CANCELLED:
-    case DownloadItem::INTERRUPTED:
-      // Interrupted or cancelled downloads should remain on the shelf.
-      return false;
-
-    case DownloadItem::MAX_DOWNLOAD_STATE:
-      NOTREACHED();
-  }
-
-  NOTREACHED();
-}
-
 bool DownloadItemModel::ShouldShowDownloadStartedAnimation() const {
   return !download_->IsSavePackageDownload() &&
          !download_crx_util::IsTrustedExtensionDownload(profile(), *download_);
-}
-
-bool DownloadItemModel::ShouldShowInShelf() const {
-  const DownloadItemModelData* data = DownloadItemModelData::Get(download_);
-  if (data)
-    return data->should_show_in_shelf_;
-
-  return !download_->IsTransient();
-}
-
-void DownloadItemModel::SetShouldShowInShelf(bool should_show) {
-  DownloadItemModelData* data = DownloadItemModelData::GetOrCreate(download_);
-  data->should_show_in_shelf_ = should_show;
 }
 
 bool DownloadItemModel::ShouldNotifyUI() const {
@@ -431,13 +381,13 @@ bool DownloadItemModel::ShouldNotifyUI() const {
     return false;
 
   // The browser is only interested in new active downloads. History downloads
-  // that are completed or interrupted are not displayed on the shelf. The
+  // that are completed or interrupted are not displayed in the UI. The
   // downloads page independently listens for new downloads when it is active.
   // Note that the UI will be notified of downloads even if they are not meant
-  // to be displayed on the shelf (i.e. ShouldShowInShelf() returns false). This
-  // is because: *  The shelf isn't the only UI. E.g. on Android, the UI is the
-  // system
-  //    DownloadManager.
+  // to be displayed in the desktop downloads UI (i.e. ShouldShowInUi() returns
+  // false). This is because:
+  // *  The desktop UI (download bubble) isn't the only UI. E.g. on Android,
+  //    there is a separate download UI implemented in Java.
   // *  There are other UI activities that need to be performed. E.g. if the
   //    download was initiated from a new tab, then that tab should be closed.
   return download_->GetDownloadCreationType() !=
@@ -500,9 +450,8 @@ bool DownloadItemModel::ShouldPreferOpeningInBrowser() {
     base::FilePath path = GetTargetFilePath();
     std::string mime_type = GetMimeType();
     DetermineAndSetShouldPreferOpeningInBrowser(
-        path,
-        DownloadTargetDeterminer::DetermineIfHandledSafelyHelperSynchronous(
-            download_, path, mime_type));
+        path, DownloadTargetDeterminer::DetermineIfHandledSafelyHelper(
+                  download_, path, mime_type));
   }
 #endif  // !BUILDFLAG(IS_ANDROID)
   return data->should_prefer_opening_in_browser_.value_or(false);
@@ -1011,6 +960,7 @@ DangerUiPattern DownloadItemModel::GetDangerUiPattern() const {
     case download::DOWNLOAD_DANGER_TYPE_ASYNC_LOCAL_PASSWORD_SCANNING:
     case download::DOWNLOAD_DANGER_TYPE_DEEP_SCANNED_FAILED:
       return DangerUiPattern::kSuspicious;
+    case download::DOWNLOAD_DANGER_TYPE_FORCE_SAVE_TO_GDRIVE:
     case download::DOWNLOAD_DANGER_TYPE_SENSITIVE_CONTENT_WARNING:
     case download::DOWNLOAD_DANGER_TYPE_SENSITIVE_CONTENT_BLOCK:
     case download::DOWNLOAD_DANGER_TYPE_BLOCKED_PASSWORD_PROTECTED:
@@ -1030,6 +980,19 @@ DangerUiPattern DownloadItemModel::GetDangerUiPattern() const {
   }
 
   return DangerUiPattern::kNormal;
+}
+
+bool DownloadItemModel::ShouldShowInUi() const {
+  const DownloadItemModelData* data = DownloadItemModelData::Get(download_);
+  if (data) {
+    return data->should_show_in_ui_;
+  }
+  return !download_->IsTransient();
+}
+
+void DownloadItemModel::SetShouldShowInUi(bool should_show) {
+  DownloadItemModelData* data = DownloadItemModelData::GetOrCreate(download_);
+  data->should_show_in_ui_ = should_show;
 }
 
 bool DownloadItemModel::ShouldShowInBubble() const {
@@ -1099,6 +1062,7 @@ bool DownloadItemModel::IsEphemeralWarning() const {
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_SCANNING:
     case download::DOWNLOAD_DANGER_TYPE_PROMPT_FOR_LOCAL_PASSWORD_SCANNING:
       return true;
+    case download::DOWNLOAD_DANGER_TYPE_FORCE_SAVE_TO_GDRIVE:
     case download::DOWNLOAD_DANGER_TYPE_DEEP_SCANNED_OPENED_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case download::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:

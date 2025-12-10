@@ -33,13 +33,13 @@
 #include "chrome/grit/downloads_resources_map.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/download/public/common/download_features.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/feature_engagement/public/feature_list.h"
 #include "components/google/core/common/google_util.h"
 #include "components/history/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/profile_metrics/browser_profile_type.h"
-#include "components/safe_browsing/core/common/features.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/url_data_source.h"
@@ -106,6 +106,7 @@ content::WebUIDataSource* CreateAndAddDownloadsUIHTMLSource(Profile* profile) {
        IDS_BLOCK_REASON_SENSITIVE_CONTENT_WARNING},
       {"sensitiveContentBlockedDesc",
        IDS_SENSITIVE_CONTENT_BLOCKED_DESCRIPTION},
+      {"forcedSaveToGdriveDesc", IDS_FORCED_SAVE_TO_GDRIVE_DESCRIPTION},
       {"blockedTooLargeDesc", IDS_BLOCKED_TOO_LARGE_DESCRIPTION},
       {"blockedPasswordProtectedDesc",
        IDS_BLOCKED_PASSWORD_PROTECTED_DESCRIPTION},
@@ -191,13 +192,15 @@ content::WebUIDataSource* CreateAndAddDownloadsUIHTMLSource(Profile* profile) {
       {"dangerSettingsDesc", IDS_BLOCK_DOWNLOAD_REASON_POTENTIALLY_UNWANTED},
       {"insecureDownloadDesc", IDS_BLOCK_DOWNLOAD_REASON_INSECURE},
 
-      {"referrerLine", IDS_DOWNLOADS_PAGE_REFERRER_LINE},
+      // Format string for showing the "source" of the downloaded file as the
+      // initiator origin of the download request.
+      {"initiatorLine", IDS_DOWNLOADS_PAGE_INITIATOR_LINE},
   };
   source->AddLocalizedStrings(kStrings);
 
-  source->AddBoolean(
-      "showReferrerUrl",
-      base::FeatureList::IsEnabled(safe_browsing::kDownloadsPageReferrerUrl));
+  source->AddBoolean("showInitiatorOrigin",
+                     base::FeatureList::IsEnabled(
+                         download::features::kDisplayInitiatorOrigin));
   source->AddLocalizedString(
       "dangerUncommonDesc",
       requests_ap_verdicts

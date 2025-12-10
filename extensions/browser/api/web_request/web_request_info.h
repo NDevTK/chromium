@@ -20,13 +20,17 @@
 #include "extensions/browser/api/declarative_net_request/request_action.h"
 #include "extensions/browser/api/web_request/web_request_resource_type.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
-#include "ipc/ipc_message.h"
+#include "extensions/buildflags/buildflags.h"
+#include "ipc/constants.mojom.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
+#include "net/ssl/ssl_info.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -60,7 +64,7 @@ struct WebRequestInfoInitParams {
   uint64_t id = 0;
   GURL url;
   int render_process_id = -1;
-  int frame_routing_id = MSG_ROUTING_NONE;
+  int frame_routing_id = IPC::mojom::kRoutingIdNone;
   std::string method;
   bool is_navigation_request = false;
   std::optional<url::Origin> initiator;
@@ -96,6 +100,8 @@ struct WebRequestInfo {
   void AddResponseInfoFromResourceResponse(
       const network::mojom::URLResponseHead& response);
 
+  void AddSslInfo(const std::optional<net::SSLInfo>& ssl_info);
+
   // Erases all actions in `dnr_actions` that are associated with the given
   // `extension_id`.
   void EraseDNRActionsForExtension(const ExtensionId& extension_id);
@@ -128,8 +134,8 @@ struct WebRequestInfo {
   const int render_process_id;
 
   // The frame routing ID of the frame which initiated this request, or
-  // MSG_ROUTING_NONE if the request was not initiated by a frame.
-  const int frame_routing_id = MSG_ROUTING_NONE;
+  // IPC::mojom::kRoutingIdNone if the request was not initiated by a frame.
+  const int frame_routing_id = IPC::mojom::kRoutingIdNone;
 
   // The HTTP method used for the request, if applicable.
   const std::string method;
@@ -206,6 +212,9 @@ struct WebRequestInfo {
   // TODO(karandeepb, mcnee): For subresources, having "parent" in the name is
   // misleading. This should be renamed to indicate that this is the initiator.
   const content::GlobalRenderFrameHostId parent_routing_id;
+
+  // For SecurityInfo object.
+  std::optional<net::SSLInfo> ssl_info;
 };
 
 }  // namespace extensions

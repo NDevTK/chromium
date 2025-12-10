@@ -296,7 +296,7 @@ class HashTrieNode : public GarbageCollected<HashTrieNode<Data>> {
   // Add or remove the given key/value pair from the given hash.
   static void UpdateHash(const AtomicString& key, Data* value, unsigned& hash) {
     if (value) {
-      hash ^= WTF::HashInts(key.Hash(), value->Hash());
+      hash ^= HashInts(key.Hash(), value->Hash());
     }
   }
 
@@ -399,9 +399,6 @@ class CORE_EXPORT StyleVariables {
   }
 
   bool operator==(const StyleVariables& other) const;
-  bool operator!=(const StyleVariables& other) const {
-    return !(*this == other);
-  }
 
   std::optional<CSSVariableData*> GetData(const AtomicString& name) const {
     return data_root_->Get(name);
@@ -414,6 +411,8 @@ class CORE_EXPORT StyleVariables {
 
   bool IsEmpty() const;
   void CollectNames(HashSet<AtomicString>&) const;
+
+  unsigned GetHash() const { return HashInts(data_hash_, values_hash_); }
 
  private:
   // mutable so that operator== can deduplicate them.

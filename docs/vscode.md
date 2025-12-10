@@ -127,8 +127,8 @@ Note: All the extension settings mentioned below are already set in
     Syntax highlighting for .proto files.
 *   [**Mojom IDL support**](https://marketplace.visualstudio.com/items?itemName=Google.vscode-mojom) -
     Syntax highlighting and a [language server][lang-server] for .mojom files.
-*   [**GN**](https://marketplace.visualstudio.com/items?itemName=msedge-dev.gnls) -
-    Code IntelliSense for the GN build system.
+*   [**GN**](https://marketplace.visualstudio.com/items?itemName=google.gn) -
+    [Language server][lang-server] for the GN build system.
 *   [**Rewrap**](https://marketplace.visualstudio.com/items?itemName=stkb.rewrap) -
     Wrap lines at 80 characters with `Alt+Q`.
 *   [**Remote**](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) -
@@ -190,6 +190,8 @@ $ echo "ryu1kn.annotator wmaurer.change-case" \
     This is very useful for editing `*.star` starlark files. If you want "Go to
     definition" to work in our `infra/config` directory, see the
     [//tools/vscode/bazel_lsp/README.md][lsp_patches_readme]
+*   [**Gerrit**](https://marketplace.visualstudio.com/items?itemName=SanderRonde.vscode--gerrit) -
+    Interact with [Chromium's Gerrit instance](https://chromium-review.googlesource.com/) for code review. Note: Chromium's Gerrit cannot provide the Stream Events permission.
 
 [lsp_patches_readme]: ../tools/vscode/bazel_lsp/README.md
 

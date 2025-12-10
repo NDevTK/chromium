@@ -5,6 +5,7 @@
 package org.chromium.ui.base;
 
 import static android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC;
+import static android.view.InputDevice.KEYBOARD_TYPE_NONE;
 import static android.view.InputDevice.SOURCE_MOUSE;
 import static android.view.InputDevice.SOURCE_TOUCHPAD;
 
@@ -39,6 +40,9 @@ public class DeviceInput implements InputDeviceListener {
     /** See {@link #setSupportsAlphabeticKeyboardForTesting(boolean)}. */
     private static @Nullable Boolean sSupportsAlphabeticKeyboardForTesting;
 
+    /** See {@link #setSupportsKeyboardForTesting(boolean)}. */
+    private static @Nullable Boolean sSupportsKeyboardForTesting;
+
     /** See {@link #setSupportsPrevisionPointerForTesting(boolean)}. */
     private static @Nullable Boolean sSupportsPrecisionPointerForTesting;
 
@@ -66,7 +70,7 @@ public class DeviceInput implements InputDeviceListener {
     }
 
     /** Returns a lazily instantiated singleton instance. */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public static DeviceInput getInstance() {
         ThreadUtils.assertOnUiThread();
         return LazyInit.sInstance;
@@ -86,6 +90,21 @@ public class DeviceInput implements InputDeviceListener {
         return getInstance().supportsAlphabeticKeyboardImpl();
     }
 
+    /** Modifies the output of {@link #supportsKeyboard()} for testing. */
+    public static void setSupportsKeyboardForTesting(Boolean supportsKeyboard) {
+        sSupportsKeyboardForTesting = supportsKeyboard;
+        // Register a callback to reset this value after every test method completes.
+        ResettersForTesting.register(() -> sSupportsKeyboardForTesting = null);
+    }
+
+    /**
+     * @return Whether any currently connected {@link InputDevice} supports a keyboard.
+     */
+    public static boolean supportsKeyboard() {
+        ThreadUtils.assertOnUiThread();
+        return getInstance().supportsKeyboardImpl();
+    }
+
     /** Implementation of {@link #supportsAlphabeticKeyboard()}. */
     public boolean supportsAlphabeticKeyboardImpl() {
         ThreadUtils.assertOnUiThread();
@@ -94,6 +113,21 @@ public class DeviceInput implements InputDeviceListener {
         }
         for (int i = 0; i < mDeviceSnapshotsById.size(); i++) {
             if (mDeviceSnapshotsById.valueAt(i).supportsAlphabeticKeyboard) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Implementation of {@link #supportsKeyboard()}. */
+    public boolean supportsKeyboardImpl() {
+        ThreadUtils.assertOnUiThread();
+        if (sSupportsKeyboardForTesting != null) {
+            return sSupportsKeyboardForTesting;
+        }
+
+        for (int i = 0; i < mDeviceSnapshotsById.size(); i++) {
+            if (mDeviceSnapshotsById.valueAt(i).supportsKeyboard) {
                 return true;
             }
         }
@@ -190,6 +224,9 @@ public class DeviceInput implements InputDeviceListener {
         /** Whether the associated {@link InputDevice} supports an alphabetic keyboard. */
         public final boolean supportsAlphabeticKeyboard;
 
+        /** Whether the associated {@link InputDevice} supports a keyboard. */
+        public final boolean supportsKeyboard;
+
         /**
          * Whether the associated {@link InputDevice} supports precision pointing. Note that this
          * includes not only mice, but also any mice-like pointing devices (e.g. stylus, touchpad,
@@ -207,12 +244,14 @@ public class DeviceInput implements InputDeviceListener {
         private DeviceSnapshot(
                 boolean supportsAlphabeticKeyboard,
                 boolean supportsPrecisionPointer,
+                boolean supportsKeyboard,
                 InputDevice.MotionRange touchpadXAxisMotionRange,
                 InputDevice.MotionRange touchpadYAxisMotionRange) {
             this.supportsAlphabeticKeyboard = supportsAlphabeticKeyboard;
             this.supportsPrecisionPointer = supportsPrecisionPointer;
             this.touchpadXAxisMotionRange = touchpadXAxisMotionRange;
             this.touchpadYAxisMotionRange = touchpadYAxisMotionRange;
+            this.supportsKeyboard = supportsKeyboard;
         }
 
         /**
@@ -226,6 +265,8 @@ public class DeviceInput implements InputDeviceListener {
                     // SOURCE_MOUSE applies to pointer devices, including mouse and touchpad
                     /* supportsPrecisionPointer= */ isPhysical
                             && device.supportsSource(SOURCE_MOUSE),
+                    /* supportsKeyboard= */ isPhysical
+                            && device.getKeyboardType() != KEYBOARD_TYPE_NONE,
                     device.getMotionRange(MotionEvent.AXIS_X, SOURCE_TOUCHPAD),
                     device.getMotionRange(MotionEvent.AXIS_Y, SOURCE_TOUCHPAD));
         }

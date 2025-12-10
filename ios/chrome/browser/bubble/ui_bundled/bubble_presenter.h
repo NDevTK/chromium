@@ -12,6 +12,7 @@
 @protocol BubblePresenterDelegate;
 @class BubbleViewControllerPresenter;
 @class FeedMetricsRecorder;
+class FullscreenController;
 class HostContentSettingsMap;
 @class LayoutGuideCenter;
 class OverlayPresenter;
@@ -40,6 +41,8 @@ class DeviceSwitcherResultDispatcher;
                 engagementTracker:
                     (raw_ptr<feature_engagement::Tracker>)engagementTracker
                      webStateList:(raw_ptr<WebStateList>)webStateList
+             fullscreenController:
+                 (raw_ptr<FullscreenController>)fullscreenController
     overlayPresenterForWebContent:
         (raw_ptr<OverlayPresenter>)webContentOverlayPresenter
                     infobarBanner:(raw_ptr<OverlayPresenter>)bannerPresenter
@@ -67,15 +70,6 @@ class DeviceSwitcherResultDispatcher;
 // menu's entrypoint. The eligibility can depend on the UI hierarchy at the
 // moment, the configuration and the display history of the bubble, etc.
 - (void)presentHomeCustomizationTipBubble;
-
-// Optionally presents a relevant Follow help bubble while browsing a site.
-// The eligibility can depend on the UI hierarchy at the moment, the
-// configuration and the display history of the bubble, etc.
-- (void)presentFollowWhileBrowsingTipBubbleAndLogWithRecorder:
-            (FeedMetricsRecorder*)recorder
-                                             popupMenuHandler:
-                                                 (id<PopupMenuCommands>)
-                                                     popupMenuHandler;
 
 // Optionally presents a help bubble to let the user know that they can change
 // the default mode (Desktop/Mobile) of the websites. The eligibility can depend
@@ -152,6 +146,9 @@ class DeviceSwitcherResultDispatcher;
 // Omnibox. The eligibility is based off if the BWG Promo was shown and
 // dismissed.
 - (void)presentPageActionMenuBubble;
+
+// Optionally presents a bubble associated with the reader mode options.
+- (void)presentReaderModeOptionsBubble;
 
 // Delegate method to be invoked when the user has performed a swipe on the
 // toolbar to switch tabs. Remove `toolbarSwipeGestureIPH` if visible.

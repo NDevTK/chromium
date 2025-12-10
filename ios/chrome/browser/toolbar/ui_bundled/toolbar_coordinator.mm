@@ -10,14 +10,13 @@
 #import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/location_bar/ui_bundled/location_bar_coordinator.h"
-#import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_util.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_position/omnibox_position_browser_agent.h"
+#import "ios/chrome/browser/omnibox/ui/omnibox_drs_view_controller.h"
 #import "ios/chrome/browser/orchestrator/ui_bundled/omnibox_focus_orchestrator.h"
 #import "ios/chrome/browser/orchestrator/ui_bundled/omnibox_focus_orchestrator_parity.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presentation_context.h"
-#import "ios/chrome/browser/prerender/model/prerender_service.h"
-#import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
+#import "ios/chrome/browser/prerender/model/prerender_browser_agent.h"
 #import "ios/chrome/browser/segmentation_platform/model/segmentation_platform_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
@@ -31,10 +30,12 @@
 #import "ios/chrome/browser/shared/public/commands/text_zoom_commands.h"
 #import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/public/prototypes/diamond/utils.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/adaptive_toolbar_view_controller.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/primary_toolbar_coordinator.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/primary_toolbar_view_controller_delegate.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/public/omnibox_position_util.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_constants.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_omnibox_consumer.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_type.h"
@@ -44,13 +45,20 @@
 #import "ios/chrome/browser/toolbar/ui_bundled/toolbar_mediator.h"
 #import "ios/chrome/common/ui/util/ui_util.h"
 #import "ios/components/webui/web_ui_url_constants.h"
+#import "ios/web/public/web_state.h"
+
+namespace {
+
+/// The padding necessary for the edit state compact bottom omnibox.
+constexpr CGFloat kLocationBarCompactBottomPadding = 10.0;
+
+}  // namespace
 
 @interface ToolbarCoordinator () <GuidedTourCommands,
+                                  LocationBarCoordinatorHeightDelegate,
                                   PrimaryToolbarViewControllerDelegate,
                                   ToolbarCommands,
-                                  ToolbarMediatorDelegate> {
-  raw_ptr<PrerenderService> _prerenderService;
-}
+                                  ToolbarMediatorDelegate>
 
 /// Whether this coordinator has been started.
 @property(nonatomic, assign) BOOL started;
@@ -69,6 +77,11 @@
 @property(nonatomic, strong) OmniboxFocusOrchestrator* orchestrator;
 /// Whether the omnibox is currently focused.
 @property(nonatomic, assign) BOOL locationBarFocused;
+/// The height of the location bar in edit state.
+@property(nonatomic, assign) CGFloat locationBarEditStateHeight;
+/// Dynamic response system view controller is an omnibox presenter. Only
+/// defined  when kOmniboxDRSPrototype is set.
+@property(nonatomic, strong) OmniboxDRSViewController* drsViewController;
 
 @end
 
@@ -132,6 +145,13 @@
                      forProtocol:@protocol(GuidedTourCommands)];
   }
 
+  if (base::FeatureList::IsEnabled(kOmniboxDRSPrototype)) {
+    self.drsViewController = [[OmniboxDRSViewController alloc] init];
+    self.drsViewController.proxiedPresenterDelegate =
+        self.popupPresenterDelegate;
+    self.popupPresenterDelegate = self.drsViewController;
+  }
+
   segmentation_platform::DeviceSwitcherResultDispatcher* deviceSwitcherResult =
       nullptr;
   if (!browser->GetProfile()->IsOffTheRecord()) {
@@ -148,6 +168,7 @@
   self.locationBarCoordinator =
       [[LocationBarCoordinator alloc] initWithBrowser:browser];
   self.locationBarCoordinator.delegate = self.omniboxFocusDelegate;
+  self.locationBarCoordinator.heightDelegate = self;
   self.locationBarCoordinator.popupPresenterDelegate =
       self.popupPresenterDelegate;
   [self.locationBarCoordinator start];
@@ -162,18 +183,13 @@
       self.toolbarHeightDelegate;
   [self.secondaryToolbarCoordinator start];
 
-  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdate)) {
+  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdateV2)) {
     self.orchestrator = [[OmniboxFocusOrchestratorParity alloc] init];
   } else {
     self.orchestrator = [[OmniboxFocusOrchestrator alloc] init];
   }
 
-  self.orchestrator.toolbarAnimatee =
-      self.primaryToolbarCoordinator.toolbarAnimatee;
-  self.orchestrator.locationBarAnimatee =
-      [self.locationBarCoordinator locationBarAnimatee];
-  self.orchestrator.editViewAnimatee =
-      [self.locationBarCoordinator editViewAnimatee];
+  [self updateOrchestratorAnimatee];
 
   if (IsBottomOmniboxAvailable()) {
     [self.toolbarMediator setInitialOmniboxPosition];
@@ -188,7 +204,7 @@
   }
 
   [self updateToolbarsLayout];
-  _prerenderService = PrerenderServiceFactory::GetForProfile(self.profile);
+  [self updateLocationBarHeightWithAnimation:NO focusStateDidChange:NO];
 
   [super start];
   self.started = YES;
@@ -199,7 +215,6 @@
     return;
   }
   [super stop];
-  _prerenderService = nullptr;
   self.orchestrator.editViewAnimatee = nil;
   self.orchestrator.locationBarAnimatee = nil;
   self.orchestrator = nil;
@@ -222,7 +237,6 @@
   self.toolbarMediator = nil;
 
   [self.browser->GetCommandDispatcher() stopDispatchingToTarget:self];
-  _prerenderService = nullptr;
   self.started = NO;
 }
 
@@ -277,27 +291,27 @@
       self.browser->GetCommandDispatcher(), TextZoomCommands);
   [textZoomCommandsHandler showTextZoomUIIfActive];
 
-  // There are times when the NTP can be hidden but before the visibleURL
-  // changes.  This can leave the BVC in a blank state where only the bottom
-  // toolbar is visible. Instead, if possible, use the NewTabPageTabHelper
-  // IsActive() value rather than checking -IsVisibleURLNewTabPage.
-  NewTabPageTabHelper* NTPHelper = NewTabPageTabHelper::FromWebState(webState);
-  BOOL isNTP = NTPHelper && NTPHelper->IsActive();
+  BOOL isNTP = IsVisibleURLNewTabPage(webState);
   BOOL isOffTheRecord = self.isOffTheRecord;
-  BOOL canShowTabStrip = IsRegularXRegularSizeClass(self.traitEnvironment);
+  BOOL canShowTabStrip = CanShowTabStrip(self.traitEnvironment);
 
   // Hide the toolbar when displaying content suggestions without the tab
   // strip, without the focused omnibox, only when in split toolbar mode.
-  BOOL hideToolbar = isNTP && !isOffTheRecord &&
-                     ![self isOmniboxFirstResponder] &&
-                     ![self showingOmniboxPopup] && !canShowTabStrip &&
+  BOOL hideToolbar = isNTP && !isOffTheRecord && ![self inEditState] &&
+                     !canShowTabStrip &&
                      IsSplitToolbarMode(self.traitEnvironment);
 
   self.primaryToolbarViewController.view.hidden = hideToolbar;
 }
 
 - (BOOL)isLoadingPrerenderer {
-  return _prerenderService && _prerenderService->IsLoadingPrerender();
+  if (!_started) {
+    return NO;
+  }
+
+  PrerenderBrowserAgent* prerenderBrowserAgent =
+      PrerenderBrowserAgent::FromBrowser(self.browser);
+  return prerenderBrowserAgent && prerenderBrowserAgent->IsInsertingPrerender();
 }
 
 #pragma mark Omnibox and LocationBar
@@ -320,25 +334,48 @@
   [self.toolbarMediator locationBarFocusChangedTo:focused];
 
   // Disable toolbar animations when focusing the omnibox on secondary toolbar.
-  // TODO(crbug.com/40275116): Add animation in OmniboxFocusOrchestrator if
-  // needed.
+  ToolbarType editStatePosition;
+  if (omnibox::ShouldFocusedOmniboxFollowSteadyStatePosition()) {
+    editStatePosition = _steadyStateOmniboxPosition;
+  } else if (omnibox::ForceBottomOmniboxInEditState()) {
+    if (IsCompactHeight(self.traitEnvironment.traitCollection)) {
+      editStatePosition = ToolbarType::kPrimary;
+    } else {
+      editStatePosition = ToolbarType::kSecondary;
+    }
+  } else {
+    editStatePosition = ToolbarType::kPrimary;
+  }
+
   BOOL animateTransition = _enableAnimationsForOmniboxFocus &&
-                           _steadyStateOmniboxPosition == ToolbarType::kPrimary;
+                           (editStatePosition == _steadyStateOmniboxPosition);
 
   __weak __typeof(self) weakSelf = self;
-  BOOL toolbarExpanded =
-      focused && !IsRegularXRegularSizeClass(self.traitEnvironment);
-  [self.orchestrator
-      transitionToStateOmniboxFocused:focused
-                      toolbarExpanded:toolbarExpanded
-                              trigger:[self omniboxFocusTrigger]
-                             animated:animateTransition
-                           completion:^{
-                             [weakSelf focusTransitionDidComplete:focused
-                                                       completion:completion];
-                           }];
+  BOOL toolbarExpanded = focused && !CanShowTabStrip(self.traitEnvironment);
+  if (base::FeatureList::IsEnabled(kOmniboxDRSPrototype) && focused) {
+    [self.baseViewController presentViewController:self.drsViewController
+                                          animated:YES
+                                        completion:nil];
 
+    return;
+
+  } else {
+    [self.orchestrator
+        transitionToStateOmniboxFocused:focused
+                        toolbarExpanded:toolbarExpanded
+                                trigger:[self omniboxFocusTrigger]
+                               animated:animateTransition
+                             completion:^{
+                               [weakSelf focusTransitionDidComplete:focused
+                                                         completion:completion];
+                             }];
+  }
+
+  [self.primaryToolbarCoordinator.viewController setLocationBarFocused:focused];
+  [self.secondaryToolbarCoordinator.viewController
+      setLocationBarFocused:focused];
   self.locationBarFocused = focused;
+  [self updateLocationBarHeightWithAnimation:YES focusStateDidChange:YES];
 }
 
 - (BOOL)isOmniboxFirstResponder {
@@ -349,9 +386,26 @@
   return [self.locationBarCoordinator showingOmniboxPopup];
 }
 
+- (BOOL)inEditState {
+  return [self isOmniboxFirstResponder] || [self showingOmniboxPopup];
+}
+
+- (void)setBottomOmniboxOffsetForPopup:(CGFloat)bottomOffset {
+  [self.toolbarMediator setBottomOmniboxOffsetForPopup:bottomOffset];
+}
+
+- (ToolbarType)omniboxPosition {
+  return _omniboxPosition;
+}
+
 #pragma mark ToolbarHeightProviding
 
 - (CGFloat)collapsedPrimaryToolbarHeight {
+  if (IsDiamondPrototypeEnabled() &&
+      _omniboxPosition == ToolbarType::kPrimary) {
+    return kDiamondCollapsedToolbarHeight;
+  }
+
   if (_omniboxPosition == ToolbarType::kSecondary) {
     // TODO(crbug.com/40279063): Find out why primary toolbar height cannot be
     // zero. This is a temporary fix for the pdf bug.
@@ -363,10 +417,17 @@
 }
 
 - (CGFloat)expandedPrimaryToolbarHeight {
+  if (IsDiamondPrototypeEnabled() &&
+      _omniboxPosition == ToolbarType::kPrimary) {
+    return kDiamondToolbarHeight;
+  }
+
   CGFloat height =
       self.primaryToolbarViewController.view.intrinsicContentSize.height;
-  if (!IsSplitToolbarMode(self.traitEnvironment)) {
-    // When the adaptive toolbar is unsplit, add a margin.
+  if (!IsSplitToolbarMode(self.traitEnvironment) ||
+      CanShowTabStrip(self.traitEnvironment)) {
+    // When the adaptive toolbar is unsplit or the tab strip is visible, add a
+    // margin.
     height += kTopToolbarUnsplitMargin;
   }
   return height;
@@ -381,16 +442,29 @@
 }
 
 - (CGFloat)expandedSecondaryToolbarHeight {
-  if (!IsSplitToolbarMode(self.traitEnvironment)) {
+  BOOL presentInEditState =
+      self.locationBarFocused && omnibox::ForceBottomOmniboxInEditState();
+  BOOL showsSecondaryToolbarHeight =
+      IsSplitToolbarMode(self.traitEnvironment) || presentInEditState;
+  if (!showsSecondaryToolbarHeight) {
     return 0.0;
   }
   CGFloat height =
       self.secondaryToolbarViewController.view.intrinsicContentSize.height;
+  if (IsDiamondPrototypeEnabled()) {
+    height = 0;
+  }
   if (_omniboxPosition == ToolbarType::kSecondary) {
     height += ToolbarExpandedHeight(
         self.traitEnvironment.traitCollection.preferredContentSizeCategory);
   }
   return height;
+}
+
+- (CGFloat)locationBarCompactDisplayHeight {
+  return self.locationBarCoordinator.locationBarViewController.view.frame.size
+             .height +
+         kLocationBarCompactBottomPadding;
 }
 
 #pragma mark - FakeboxFocuser
@@ -424,7 +498,8 @@
       self.browser->GetWebStateList()->GetActiveWebState();
   if (webState && IsVisibleURLNewTabPage(webState)) {
     self.primaryToolbarViewController.view.hidden =
-        IsSplitToolbarMode(self.traitEnvironment);
+        IsSplitToolbarMode(self.traitEnvironment) &&
+        !CanShowTabStrip(self.traitEnvironment);
   }
 }
 
@@ -446,6 +521,12 @@
 
 - (void)didNavigateToNTPOnActiveWebState {
   [self.toolbarMediator didNavigateToNTPOnActiveWebState];
+}
+
+#pragma mark - OmniboxStateProvider
+
+- (BOOL)isOmniboxFocused {
+  return [self.locationBarCoordinator isOmniboxFocused];
 }
 
 #pragma mark - PopupMenuUIUpdating
@@ -500,6 +581,21 @@
   // Do nothing.
 }
 
+- (ToolbarCancelButtonStyle)styleForCancelButtonInToolbar {
+  BOOL userPreferenceBottom =
+      _toolbarMediator.preferredOmniboxPosition == ToolbarType::kSecondary;
+  BOOL followSteadyState =
+      omnibox::ShouldFocusedOmniboxFollowSteadyStatePosition();
+  BOOL forcedBottomInEditState = omnibox::ForceBottomOmniboxInEditState();
+  BOOL inTheBottomInEditState =
+      (followSteadyState && userPreferenceBottom) || forcedBottomInEditState;
+  if (inTheBottomInEditState) {
+    return ToolbarCancelButtonStyle::kXCircle;
+  }
+
+  return ToolbarCancelButtonStyle::kCancelLabel;
+}
+
 #pragma mark - SideSwipeToolbarInteracting
 
 - (BOOL)isInsideToolbar:(CGPoint)point {
@@ -528,9 +624,13 @@
   [adaptiveToolbarCoordinator updateToolbarForSideSwipeSnapshot:webState];
   [self updateLocationBarForSideSwipeSnapshot:webState];
 
+  UIView* toolbarView = adaptiveToolbarCoordinator.viewController.view;
+  // The toolbar must be in the view hierarchy to be snapshotted.
+  if (!toolbarView.window) {
+    return nil;
+  }
   UIImage* toolbarSnapshot = CaptureViewWithOption(
-      adaptiveToolbarCoordinator.viewController.view,
-      [[UIScreen mainScreen] scale], kClientSideRendering);
+      toolbarView, [[UIScreen mainScreen] scale], kClientSideRendering);
 
   [adaptiveToolbarCoordinator resetToolbarAfterSideSwipeSnapshot];
   [self resetLocationBarAfterSideSwipeSnapshot];
@@ -579,6 +679,46 @@
   }
 }
 
+#pragma mark - LocationBarCoordinatorHeightDelegate
+
+- (void)locationBarCoordinator:(LocationBarCoordinator*)coordinator
+      didChangeEditStateHeight:(CGFloat)height {
+  if (height == self.locationBarEditStateHeight) {
+    return;
+  }
+  self.locationBarEditStateHeight = height;
+  [self updateLocationBarHeightWithAnimation:NO focusStateDidChange:NO];
+}
+
+- (void)updateLocationBarHeightWithAnimation:(BOOL)animated
+                         focusStateDidChange:(BOOL)focusStateDidChange {
+  if (!IsMultilineBrowserOmniboxEnabled()) {
+    // Location bar height is constant when multiline is not enabled. The height
+    // is management in primary and secondary toolbar view controllers.
+    return;
+  }
+  // Steady state height by default.
+  CGFloat height =
+      LocationBarHeight(self.primaryToolbarViewController.traitCollection
+                            .preferredContentSizeCategory);
+
+  // Apply the edit state height only when the location bar is focused and we
+  // are not in a transition to focused state.
+  if (self.locationBarFocused && !focusStateDidChange) {
+    height = self.locationBarEditStateHeight;
+  }
+
+  [self.primaryToolbarCoordinator setLocationBarHeight:height];
+  [self.secondaryToolbarCoordinator setLocationBarHeight:height];
+
+  BOOL layoutChange = [self inEditState] || focusStateDidChange;
+  if (layoutChange) {
+    [self.toolbarHeightDelegate toolbarsHeightChanged];
+    [self.toolbarHeightDelegate
+        layoutToolbarHeightChangeWithAnimation:animated];
+  }
+}
+
 #pragma mark - ToolbarCommands
 
 - (void)triggerToolbarSlideInAnimation {
@@ -599,16 +739,27 @@
 
 - (void)transitionOmniboxToToolbarType:(ToolbarType)toolbarType {
   _omniboxPosition = toolbarType;
+
+  [self updateOrchestratorAnimatee];
+
   OmniboxPositionBrowserAgent* positionBrowserAgent =
       OmniboxPositionBrowserAgent::FromBrowser(self.browser);
   switch (toolbarType) {
-    case ToolbarType::kPrimary:
-      [self.primaryToolbarCoordinator
-          setLocationBarViewController:self.locationBarCoordinator
-                                           .locationBarViewController];
-      [self.secondaryToolbarCoordinator setLocationBarViewController:nil];
+    case ToolbarType::kPrimary: {
+      if (IsDiamondPrototypeEnabled()) {
+        [self.secondaryToolbarCoordinator
+            setLocationBarViewController:self.locationBarCoordinator
+                                             .locationBarViewController];
+        [self.primaryToolbarCoordinator setLocationBarViewController:nil];
+      } else {
+        [self.primaryToolbarCoordinator
+            setLocationBarViewController:self.locationBarCoordinator
+                                             .locationBarViewController];
+        [self.secondaryToolbarCoordinator setLocationBarViewController:nil];
+      }
       positionBrowserAgent->SetIsCurrentLayoutBottomOmnibox(false);
       break;
+    }
     case ToolbarType::kSecondary:
       [self.secondaryToolbarCoordinator
           setLocationBarViewController:self.locationBarCoordinator
@@ -617,11 +768,46 @@
       positionBrowserAgent->SetIsCurrentLayoutBottomOmnibox(true);
       break;
   }
+  if (IsDiamondPrototypeEnabled()) {
+    [self.toolbarHeightDelegate diamondToolbarTypeChanged:toolbarType];
+    self.secondaryToolbarCoordinator.usedAsPrimaryToolbar =
+        toolbarType == ToolbarType::kPrimary;
+  }
   [self.toolbarHeightDelegate toolbarsHeightChanged];
 }
 
 - (void)transitionSteadyStateOmniboxToToolbarType:(ToolbarType)toolbarType {
   _steadyStateOmniboxPosition = toolbarType;
+}
+
+- (CGFloat)keyboardAttachedBottomOmniboxHeight {
+  CGFloat attachedHeight = self.locationBarCoordinator.locationBarViewController
+                               .view.frame.size.height +
+                           2 * kBottomAdaptiveLocationBarTopMargin;
+
+  if (!self.locationBarFocused) {
+    return 0;
+  }
+
+  if (IsMultilineBrowserOmniboxEnabled()) {
+    return self.locationBarEditStateHeight +
+           LocationBarVerticalMargins(
+               self.locationBarCoordinator.locationBarViewController
+                   .traitCollection.preferredContentSizeCategory);
+  }
+
+  BOOL forceEditState = omnibox::ForceBottomOmniboxInEditState();
+  if (forceEditState) {
+    return attachedHeight;
+  }
+
+  BOOL followSteadyState =
+      omnibox::ShouldFocusedOmniboxFollowSteadyStatePosition();
+  if (_omniboxPosition == ToolbarType::kSecondary && followSteadyState) {
+    return attachedHeight;
+  }
+
+  return 0;
 }
 
 #pragma mark - Private
@@ -642,13 +828,11 @@
 - (void)updateToolbarsLayout {
   [self.toolbarMediator
       toolbarTraitCollectionChangedTo:self.traitEnvironment.traitCollection];
-  BOOL omniboxFocused =
-      self.isOmniboxFirstResponder || self.showingOmniboxPopup;
+  BOOL omniboxFocused = [self inEditState];
   [self.orchestrator
       transitionToStateOmniboxFocused:omniboxFocused
                       toolbarExpanded:omniboxFocused &&
-                                      !IsRegularXRegularSizeClass(
-                                          self.traitEnvironment)
+                                      !CanShowTabStrip(self.traitEnvironment)
                               trigger:[self omniboxFocusTrigger]
                              animated:NO
                            completion:nil];
@@ -658,15 +842,13 @@
 /// an incognito browser, the NTP is displayed, and whether the fakebox was
 /// pinned if it was selected.
 - (OmniboxFocusTrigger)omniboxFocusTrigger {
-  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdate)) {
+  if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdateV2)) {
     web::WebState* webState =
         self.browser->GetWebStateList()->GetActiveWebState();
     if (!webState) {
       return OmniboxFocusTrigger::kOther;
     }
-    NewTabPageTabHelper* NTPHelper =
-        NewTabPageTabHelper::FromWebState(webState);
-    if (!NTPHelper || !NTPHelper->IsActive()) {
+    if (!IsVisibleURLNewTabPage(webState)) {
       return OmniboxFocusTrigger::kOther;
     }
 
@@ -690,9 +872,7 @@
     if (!webState) {
       return OmniboxFocusTrigger::kOther;
     }
-    NewTabPageTabHelper* NTPHelper =
-        NewTabPageTabHelper::FromWebState(webState);
-    if (!NTPHelper || !NTPHelper->IsActive()) {
+    if (!IsVisibleURLNewTabPage(webState)) {
       return OmniboxFocusTrigger::kOther;
     }
     return _fakeboxPinned ? OmniboxFocusTrigger::kPinnedFakebox
@@ -706,6 +886,83 @@
     completion();
     completion = nil;
   }
+}
+
+- (void)updateOrchestratorAnimatee {
+  id<ToolbarAnimatee> updatedToolbarAnimatee =
+      _omniboxPosition == ToolbarType::kPrimary
+          ? self.primaryToolbarCoordinator.toolbarAnimatee
+          : self.secondaryToolbarCoordinator.toolbarAnimatee;
+  BOOL willChangeToolbarAnimatee =
+      updatedToolbarAnimatee != self.orchestrator.toolbarAnimatee;
+
+  // If a change occurs, clear any previous animation effects to prevent the
+  // toolbar from remaining expanded
+  if (willChangeToolbarAnimatee) {
+    [self.orchestrator
+        transitionToStateOmniboxFocused:NO
+                        toolbarExpanded:NO
+                                trigger:OmniboxFocusTrigger::kOther
+                               animated:NO
+                             completion:nil];
+  }
+
+  self.orchestrator.toolbarAnimatee = updatedToolbarAnimatee;
+  self.orchestrator.locationBarAnimatee =
+      [self.locationBarCoordinator locationBarAnimatee];
+  self.orchestrator.editViewAnimatee =
+      [self.locationBarCoordinator editViewAnimatee];
+}
+
+- (void)setEntrypointViewHidden:(BOOL)hidden {
+  AdaptiveToolbarCoordinator* adaptiveToolbarCoordinator =
+      [self coordinatorWithToolbarType:_omniboxPosition];
+  adaptiveToolbarCoordinator.viewController.locationBarContainer.hidden =
+      hidden;
+}
+
+- (UIView*)entrypointViewVisualCopy {
+  if (_omniboxPosition == ToolbarType::kSecondary || [self isNTP]) {
+    return nil;
+  }
+
+  AdaptiveToolbarCoordinator* adaptiveToolbarCoordinator =
+      [self coordinatorWithToolbarType:_omniboxPosition];
+  UIView* locationBarContainer =
+      adaptiveToolbarCoordinator.viewController.locationBarContainer;
+
+  UIView* entrypointCopy = [[UIView alloc] init];
+  entrypointCopy.frame =
+      [locationBarContainer convertRect:locationBarContainer.bounds toView:nil];
+  entrypointCopy.layer.cornerRadius = locationBarContainer.layer.cornerRadius;
+  entrypointCopy.backgroundColor = locationBarContainer.backgroundColor;
+  UIView* locationBarSteadyViewVisualCopy =
+      self.locationBarCoordinator.locationBarSteadyViewVisualCopy;
+  [entrypointCopy addSubview:locationBarSteadyViewVisualCopy];
+  locationBarSteadyViewVisualCopy.translatesAutoresizingMaskIntoConstraints =
+      NO;
+
+  [NSLayoutConstraint activateConstraints:@[
+    [locationBarSteadyViewVisualCopy.centerXAnchor
+        constraintEqualToAnchor:entrypointCopy.centerXAnchor],
+    [locationBarSteadyViewVisualCopy.centerYAnchor
+        constraintEqualToAnchor:entrypointCopy.centerYAnchor],
+    [locationBarSteadyViewVisualCopy.widthAnchor
+        constraintEqualToAnchor:entrypointCopy.widthAnchor],
+    [locationBarSteadyViewVisualCopy.heightAnchor
+        constraintEqualToAnchor:entrypointCopy.heightAnchor],
+  ]];
+
+  return entrypointCopy;
+}
+
+- (BOOL)isNTP {
+  web::WebState* webState =
+      self.browser->GetWebStateList()->GetActiveWebState();
+  if (!webState) {
+    return NO;
+  }
+  return IsVisibleURLNewTabPage(webState);
 }
 
 @end

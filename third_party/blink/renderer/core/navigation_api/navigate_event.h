@@ -21,7 +21,6 @@
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cancellable_task.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
@@ -31,7 +30,7 @@ class AbortSignal;
 class NavigationDestination;
 class NavigateEventInit;
 class NavigationInterceptOptions;
-class NavigationReloadOptions;
+class NavigationNavigateOptions;
 class ExceptionState;
 class FormData;
 class V8NavigationInterceptHandler;
@@ -78,7 +77,9 @@ class NavigateEvent final : public Event,
   // the navigation or set the appropritate state for a deferred commit.
   void MaybeCommitImmediately(ScriptState*);
 
-  void Redirect(const String& url, NavigationReloadOptions*, ExceptionState&);
+  void Redirect(const String& url, NavigationNavigateOptions*, ExceptionState&);
+  void AddHandlerDuringPrecommit(V8NavigationInterceptHandler*,
+                                 ExceptionState&);
 
   void React(ScriptState* script_state);
 
@@ -89,7 +90,7 @@ class NavigateEvent final : public Event,
   }
   void FinalizeNavigationActionPromisesList();
 
-  void Abort(ScriptState*, ScriptValue error, CancelNavigationReason);
+  void Abort(ScriptState*, ScriptValue error);
 
   // FocusedElementChangeObserver implementation:
   void DidChangeFocus() final;
@@ -108,7 +109,7 @@ class NavigateEvent final : public Event,
 
   class FulfillReaction;
   class RejectReaction;
-  void ReactDone(ScriptValue, bool did_fulfill);
+  void ReactDone(ScriptState*, ScriptValue, bool did_fulfill);
 
   void DelayedLoadStartTimerFired();
 

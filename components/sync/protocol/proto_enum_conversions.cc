@@ -19,6 +19,15 @@ namespace syncer {
   case enum_parent::enum_value:            \
     return #enum_value
 
+const char* ProtoEnumToString(sync_pb::AiThreadSpecifics::ThreadType type) {
+  ASSERT_ENUM_BOUNDS(sync_pb::AiThreadSpecifics, ThreadType, UNKNOWN, AI_MODE);
+  switch (type) {
+    ENUM_CASE(sync_pb::AiThreadSpecifics, UNKNOWN);
+    ENUM_CASE(sync_pb::AiThreadSpecifics, AI_MODE);
+  }
+  NOTREACHED();
+}
+
 const char* ProtoEnumToString(
     sync_pb::AppListSpecifics::AppListItemType item_type) {
   ASSERT_ENUM_BOUNDS(sync_pb::AppListSpecifics, AppListItemType, TYPE_APP,
@@ -633,6 +642,20 @@ const char* ProtoEnumToString(
 }
 
 const char* ProtoEnumToString(
+    sync_pb::WalletMaskedCreditCard::CardCreationSource card_creation_source) {
+  ASSERT_ENUM_BOUNDS(sync_pb::WalletMaskedCreditCard, CardCreationSource,
+                     CREATION_SOURCE_UNSPECIFIED,
+                     CREATION_SOURCE_NON_CHROME_PAYMENTS);
+  switch (card_creation_source) {
+    ENUM_CASE(sync_pb::WalletMaskedCreditCard, CREATION_SOURCE_UNSPECIFIED);
+    ENUM_CASE(sync_pb::WalletMaskedCreditCard, CREATION_SOURCE_CHROME_PAYMENTS);
+    ENUM_CASE(sync_pb::WalletMaskedCreditCard,
+              CREATION_SOURCE_NON_CHROME_PAYMENTS);
+  }
+  NOTREACHED();
+}
+
+const char* ProtoEnumToString(
     sync_pb::WalletMaskedCreditCard::VirtualCardEnrollmentState
         virtual_card_enrollment_state) {
   ASSERT_ENUM_BOUNDS(sync_pb::WalletMaskedCreditCard,
@@ -1058,6 +1081,17 @@ const char* ProtoEnumToString(
     ENUM_CASE(sync_pb::ThemeSpecifics, SYSTEM);
     ENUM_CASE(sync_pb::ThemeSpecifics, LIGHT);
     ENUM_CASE(sync_pb::ThemeSpecifics, DARK);
+  }
+}
+
+const char* ProtoEnumToString(sync_pb::SharedUrlContext::Source source) {
+  ASSERT_ENUM_BOUNDS(sync_pb::SharedUrlContext, Source, SOURCE_UNSPECIFIED,
+                     CANONICAL_URL);
+  switch (source) {
+    ENUM_CASE(sync_pb::SharedUrlContext, SOURCE_UNSPECIFIED);
+    ENUM_CASE(sync_pb::SharedUrlContext, OMNIBOX);
+    ENUM_CASE(sync_pb::SharedUrlContext, FROM_SYNC);
+    ENUM_CASE(sync_pb::SharedUrlContext, CANONICAL_URL);
   }
 }
 

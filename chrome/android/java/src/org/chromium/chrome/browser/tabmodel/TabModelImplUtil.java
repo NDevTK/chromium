@@ -4,20 +4,24 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import org.chromium.base.ObserverList;
+import org.chromium.base.supplier.NullableObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.NextTabPolicy.NextTabPolicySupplier;
 
 import java.util.List;
+import java.util.Set;
 
 /**
- * Common utility class for {@link TabModelImpl} and {@link TabCollectionTabModelImpl}. Allows
- * extracting common logic out of the two models.
+ * Utility class for {@link TabCollectionTabModelImpl}. Permits easier testing of some static
+ * helpers.
  */
 @NullMarked
-public class TabModelImplUtil {
+class TabModelImplUtil {
     /**
      * Returns the next tab to select after closing the given tabs.
      *
@@ -30,10 +34,10 @@ public class TabModelImplUtil {
      * @param tabCloseType The type of tab closure.
      * @return The next tab to select after closing the given tabs or null if no tab could be found.
      */
-    static @Nullable Tab getNextTabIfClosed(
+    /* package */ static @Nullable Tab getNextTabIfClosed(
             TabModel model,
             TabModelDelegate modelDelegate,
-            ObservableSupplier<@Nullable Tab> currentTabSupplier,
+            NullableObservableSupplier<Tab> currentTabSupplier,
             NextTabPolicySupplier nextTabPolicySupplier,
             List<Tab> closingTabs,
             boolean uponExit,
@@ -112,29 +116,87 @@ public class TabModelImplUtil {
     /**
      * Returns the tab that is closest to the given index, if any.
      *
-     * @param model The {@link TabModel} to act on.
+     * @param tabIterable The iterable to act on.
      * @param closingIndex The index of the tab that is closing.
+     * @param closingTabs The list of tabs that are closing. This is used to avoid returning a tab
+     *     that is closing.
      * @return The closest tab or null if no tab could be found.
      */
-    private static @Nullable Tab findNearbyNotClosingTab(
-            TabModel model, int closingIndex, List<Tab> closingTabs) {
-        if (closingIndex > 0) {
-            // Search for the first tab before the closing tab.
-            for (int i = closingIndex - 1; i >= 0; i--) {
-                Tab tab = model.getTabAtChecked(i);
-                if (!tab.isClosing() && !closingTabs.contains(tab)) {
-                    return tab;
-                }
+    /* package */ static @Nullable Tab findNearbyNotClosingTab(
+            Iterable<Tab> tabIterable, int closingIndex, List<Tab> closingTabs) {
+        Tab nearestTab = null;
+        int i = -1;
+        for (Tab tab : tabIterable) {
+            i++;
+            if (i == closingIndex) {
+                continue;
+            } else if (i > closingIndex && nearestTab != null) {
+                return nearestTab;
             }
-        }
-        // If this is the first tab or all tabs before the closing tab are closed then search the
-        // other direction.
-        for (int i = closingIndex + 1; i < model.getCount(); i++) {
-            Tab tab = model.getTabAtChecked(i);
             if (!tab.isClosing() && !closingTabs.contains(tab)) {
-                return tab;
+                nearestTab = tab;
             }
         }
-        return null;
+        return nearestTab;
+    }
+
+    /**
+     * Sets the multi-selected state for a collection of tabs in a single batch operation.
+     *
+     * @param tabIds A Set of tab IDs to either add to or remove from the multi-selection.
+     * @param isSelected If true, the tab IDs will be added; if false, they will be removed.
+     * @param multiSelectedTabs The Set of selected tab IDs to modify.
+     * @param observers The observer list to notify of the change.
+     */
+    /* package */ static void setTabsMultiSelected(
+            Set<Integer> tabIds,
+            boolean isSelected,
+            Set<Integer> multiSelectedTabs,
+            ObserverList<TabModelObserver> observers) {
+        if (!ChromeFeatureList.sAndroidTabHighlighting.isEnabled()) return;
+        if (isSelected) {
+            multiSelectedTabs.addAll(tabIds);
+        } else {
+            multiSelectedTabs.removeAll(tabIds);
+        }
+        for (TabModelObserver obs : observers) {
+            obs.onTabsSelectionChanged();
+        }
+    }
+
+    /**
+     * Clears the entire multi-selection set.
+     *
+     * @param notifyObservers If true, observers will be notified of the change.
+     * @param multiSelectedTabs The Set of selected tab IDs to clear.
+     * @param observers The observer list to notify of the change.
+     */
+    /* package */ static void clearMultiSelection(
+            boolean notifyObservers,
+            Set<Integer> multiSelectedTabs,
+            ObserverList<TabModelObserver> observers) {
+        if (!ChromeFeatureList.sAndroidTabHighlighting.isEnabled()) return;
+        if (multiSelectedTabs.isEmpty()) return;
+        multiSelectedTabs.clear();
+        if (notifyObservers) {
+            for (TabModelObserver obs : observers) {
+                obs.onTabsSelectionChanged();
+            }
+        }
+    }
+
+    /**
+     * Checks if a tab is part of the current selection. A tab is considered selected if it is
+     * either the currently active tab or has been explicitly added to the multi-selection group.
+     *
+     * @param tabId The ID of the tab to check.
+     * @param multiSelectedTabs The Set containing the IDs of multi-selected tabs.
+     * @param model The TabModel, used to get the currently active tab.
+     * @return true if the tab is selected, false otherwise.
+     */
+    /* package */  static boolean isTabMultiSelected(
+            int tabId, Set<Integer> multiSelectedTabs, TabModel model) {
+        if (!ChromeFeatureList.sAndroidTabHighlighting.isEnabled()) return false;
+        return multiSelectedTabs.contains(tabId) || tabId == TabModelUtils.getCurrentTabId(model);
     }
 }

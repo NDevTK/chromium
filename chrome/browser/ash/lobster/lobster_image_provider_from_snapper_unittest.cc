@@ -9,7 +9,6 @@
 #include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/protobuf_matchers.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/ash/lobster/lobster_test_utils.h"
@@ -36,14 +35,7 @@ class LobsterImageProviderFromSnapperTest : public testing::Test {
 
   ~LobsterImageProviderFromSnapperTest() override = default;
 
-  void SetUp() override {
-    feature_list_.InitWithFeatures(
-        /*enabled_features=*/{ash::features::kLobsterUseRewrittenQuery},
-        /*disabled_features=*/{ash::features::kLobsterI18n});
-  }
-
  private:
-  base::test::ScopedFeatureList feature_list_;
   base::test::TaskEnvironment task_environment_;
   data_decoder::test::InProcessDataDecoder in_process_data_decoder_;
 };
@@ -62,9 +54,9 @@ TEST_F(LobsterImageProviderFromSnapperTest,
               /*query=*/"a lovely cake", /*seed=*/std::nullopt, /*size=*/
               gfx::Size(kPreviewImageDimensionSize, kPreviewImageDimensionSize),
               /*num_outputs=*/2, /*use_query_rewriter=*/true,
-              /*use_i18n=*/false)),
+              /*use_i18n=*/true)),
           testing::_, testing::_))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](const manta::proto::Request& request,
              net::NetworkTrafficAnnotationTag traffic_annotation,
              manta::MantaProtoResponseCallback done_callback) {
@@ -77,7 +69,7 @@ TEST_F(LobsterImageProviderFromSnapperTest,
                                    kPreviewImageDimensionSize)),
                      {.status_code = manta::MantaStatusCode::kOk,
                       .message = ""});
-          }));
+          });
 
   base::test::TestFuture<const ash::LobsterResult&> future;
 
@@ -120,9 +112,9 @@ TEST_F(LobsterImageProviderFromSnapperTest,
                /*seed=*/kFakeBaseGenerationSeed, /*size=*/
                gfx::Size(kFullImageDimensionSize, kFullImageDimensionSize),
                /*num_outputs=*/1, /*use_query_rewriter=*/true,
-               /*use_i18n=*/false)),
+               /*use_i18n=*/true)),
            testing::_, testing::_))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](const manta::proto::Request& request,
              net::NetworkTrafficAnnotationTag traffic_annotation,
              manta::MantaProtoResponseCallback done_callback) {
@@ -134,7 +126,7 @@ TEST_F(LobsterImageProviderFromSnapperTest,
                                    kFullImageDimensionSize)),
                      {.status_code = manta::MantaStatusCode::kOk,
                       .message = ""});
-          }));
+          });
 
   base::test::TestFuture<const ash::LobsterResult&> future;
 
@@ -168,9 +160,9 @@ TEST_F(
               /*query=*/"a sweet candy", /*seed=*/std::nullopt, /*size=*/
               gfx::Size(kPreviewImageDimensionSize, kPreviewImageDimensionSize),
               /*num_outputs=*/2, /*use_query_rewriter=*/true,
-              /*use_i18n=*/false)),
+              /*use_i18n=*/true)),
           testing::_, testing::_))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](const manta::proto::Request& request,
              net::NetworkTrafficAnnotationTag traffic_annotation,
              manta::MantaProtoResponseCallback done_callback) {
@@ -178,7 +170,7 @@ TEST_F(
                 .Run(std::make_unique<manta::proto::Response>(),
                      {.status_code = manta::MantaStatusCode::kGenericError,
                       .message = "generic error"});
-          }));
+          });
 
   base::test::TestFuture<const ash::LobsterResult&> future;
 

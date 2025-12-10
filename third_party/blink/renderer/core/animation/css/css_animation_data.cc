@@ -18,12 +18,16 @@ CSSAnimationData::CSSAnimationData() : CSSTimingData(InitialDuration()) {
   range_start_list_.push_back(InitialRangeStart());
   range_end_list_.push_back(InitialRangeEnd());
   composition_list_.push_back(InitialComposition());
-  trigger_behavior_list_.push_back(InitialTriggerBehavior());
-  trigger_timeline_list_.push_back(InitialTriggerTimeline());
-  trigger_range_start_list_.push_back(InitialTriggerRangeStart());
-  trigger_range_end_list_.push_back(InitialTriggerRangeEnd());
-  trigger_exit_range_start_list_.push_back(InitialTriggerExitRangeStart());
-  trigger_exit_range_end_list_.push_back(InitialTriggerExitRangeEnd());
+  timeline_trigger_name_list_.push_back(InitialTimelineTriggerName());
+  timeline_trigger_source_list_.push_back(InitialTimelineTriggerSource());
+  timeline_trigger_range_start_list_.push_back(
+      InitialTimelineTriggerRangeStart());
+  timeline_trigger_range_end_list_.push_back(InitialTimelineTriggerRangeEnd());
+  timeline_trigger_exit_range_start_list_.push_back(
+      InitialTimelineTriggerExitRangeStart());
+  timeline_trigger_exit_range_end_list_.push_back(
+      InitialTimelineTriggerExitRangeEnd());
+  trigger_attachments_list_.push_back(InitialTriggerAttachments());
 }
 
 CSSAnimationData::CSSAnimationData(const CSSAnimationData& other) = default;
@@ -33,7 +37,7 @@ std::optional<double> CSSAnimationData::InitialDuration() {
 }
 
 const AtomicString& CSSAnimationData::InitialName() {
-  DEFINE_STATIC_LOCAL(const AtomicString, name, ("none"));
+  DEFINE_STATIC_LOCAL(const AtomicString, name, (""));
   return name;
 }
 
@@ -42,10 +46,10 @@ const StyleTimeline& CSSAnimationData::InitialTimeline() {
   return timeline;
 }
 
-const StyleTimeline& CSSAnimationData::InitialTriggerTimeline() {
-  DEFINE_STATIC_LOCAL(const StyleTimeline, trigger_timeline,
+const StyleTimeline& CSSAnimationData::InitialTimelineTriggerSource() {
+  DEFINE_STATIC_LOCAL(const StyleTimeline, timeline_trigger_source,
                       (CSSValueID::kAuto));
-  return trigger_timeline;
+  return timeline_trigger_source;
 }
 
 bool CSSAnimationData::AnimationsMatchForStyleRecalc(
@@ -76,9 +80,18 @@ const StyleTimeline& CSSAnimationData::GetTimeline(size_t index) const {
   return GetRepeated(timeline_list_, index);
 }
 
-const StyleTimeline& CSSAnimationData::GetTriggerTimeline(size_t index) const {
+const StyleTimeline& CSSAnimationData::GetTimelineTriggerSource(
+    size_t index) const {
+  DCHECK_LT(index, timeline_trigger_source_list_.size());
+  return GetRepeated(timeline_trigger_source_list_, index);
+}
+
+const Member<const StyleTriggerAttachmentVector>
+CSSAnimationData::GetTriggerAttachments(size_t index) const {
   DCHECK_LT(index, name_list_.size());
-  return GetRepeated(trigger_timeline_list_, index);
+  return (index < trigger_attachments_list_.size())
+             ? trigger_attachments_list_.at(index)
+             : nullptr;
 }
 
 }  // namespace blink

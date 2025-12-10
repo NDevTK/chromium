@@ -21,13 +21,13 @@
 #include "chrome/browser/ash/app_restore/app_restore_arc_task_handler.h"
 #include "chrome/browser/ash/app_restore/app_restore_arc_task_handler_factory.h"
 #include "chrome/browser/ash/apps/apk_web_app_service.h"
+#include "chrome/browser/ash/apps/webapk/webapk_manager.h"
 #include "chrome/browser/ash/arc/accessibility/arc_accessibility_helper_bridge.h"
 #include "chrome/browser/ash/arc/adbd/arc_adbd_monitor_bridge.h"
 #include "chrome/browser/ash/arc/arc_util.h"
 #include "chrome/browser/ash/arc/auth/arc_auth_service.h"
 #include "chrome/browser/ash/arc/bluetooth/arc_bluetooth_bridge.h"
 #include "chrome/browser/ash/arc/boot_phase_monitor/arc_boot_phase_monitor_bridge.h"
-#include "chrome/browser/ash/arc/dlc_installer/arc_dlc_notification_manager_factory_impl.h"
 #include "chrome/browser/ash/arc/enterprise/arc_enterprise_reporting_service.h"
 #include "chrome/browser/ash/arc/enterprise/cert_store/cert_store_service_factory.h"
 #include "chrome/browser/ash/arc/error_notification/arc_error_notification_bridge.h"
@@ -72,10 +72,10 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/common/channel_info.h"
+#include "chrome/browser/web_applications/web_app_utils.h"
 #include "chromeos/ash/components/browser_context_helper/annotated_account_id.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "chromeos/ash/components/memory/swap_configuration.h"
-#include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/experiences/arc/app/arc_app_launch_notifier.h"
 #include "chromeos/ash/experiences/arc/appfuse/arc_appfuse_bridge.h"
 #include "chromeos/ash/experiences/arc/arc_features.h"
@@ -86,7 +86,6 @@
 #include "chromeos/ash/experiences/arc/compat_mode/arc_resize_lock_manager.h"
 #include "chromeos/ash/experiences/arc/crash_collector/arc_crash_collector_bridge.h"
 #include "chromeos/ash/experiences/arc/disk_space/arc_disk_space_bridge.h"
-#include "chromeos/ash/experiences/arc/dlc_installer/arc_dlc_install_hardware_checker.h"
 #include "chromeos/ash/experiences/arc/dlc_installer/arc_dlc_installer.h"
 #include "chromeos/ash/experiences/arc/ime/arc_ime_service.h"
 #include "chromeos/ash/experiences/arc/intent_helper/arc_icon_cache_delegate.h"
@@ -127,7 +126,6 @@
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
 #else
 #include "ash/constants/ash_switches.h"
-#include "base/files/file_path.h"
 #endif
 
 namespace arc {
@@ -148,7 +146,8 @@ ArcSessionRunner* g_arc_session_runner_for_testing = nullptr;
 std::unique_ptr<ArcSessionManager> CreateArcSessionManager(
     ArcBridgeService* arc_bridge_service,
     version_info::Channel channel,
-    ash::SchedulerConfigurationManagerBase* scheduler_configuration_manager) {
+    ash::SchedulerConfigurationManagerBase* scheduler_configuration_manager,
+    ArcDlcInstaller* arc_dlc_installer) {
   auto delegate = std::make_unique<AdbSideloadingAvailabilityDelegateImpl>();
   std::unique_ptr<ArcSessionRunner> runner(
       std::exchange(g_arc_session_runner_for_testing, nullptr));
@@ -157,38 +156,22 @@ std::unique_ptr<ArcSessionManager> CreateArcSessionManager(
         base::BindRepeating(ArcSession::Create, arc_bridge_service, channel,
                             scheduler_configuration_manager, delegate.get()));
   }
-  return std::make_unique<ArcSessionManager>(std::move(runner),
-                                             std::move(delegate));
+  return std::make_unique<ArcSessionManager>(
+      std::move(runner), std::move(delegate), arc_dlc_installer);
 }
-
-#if !BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
-void CheckArcvmDlcImageStatus() {
-  base::FilePath arc_vm_dlc_image_path(
-      "/opt/google/vms/android/system.raw.img");
-  // Check if the ARCVM DLC image exists before calling
-  // GetArcStatusForProfile(). This blocks the main thread but is necessary to
-  // ensure arc availability is consistent, especially during Ash Chrome
-  // restarts. The check only occurs when the arcvm_dlc USE flag is enabled,
-  // which is currently specific to the Reven board.
-  bool is_arcvm_dlc_image_available = base::PathExists(arc_vm_dlc_image_path);
-  arc::SetArcvmDlcImageStatus(is_arcvm_dlc_image_available);
-}
-#endif  //! BUILDFLAG(USE_ARC_PROTECTED_MEDIA)
 
 }  // namespace
 
 ArcServiceLauncher::ArcServiceLauncher(
     ash::SchedulerConfigurationManagerBase* scheduler_configuration_manager)
     : arc_service_manager_(std::make_unique<ArcServiceManager>()),
+      scheduler_configuration_manager_(scheduler_configuration_manager),
+      arc_dlc_installer_(std::make_unique<ArcDlcInstaller>()),
       arc_session_manager_(
           CreateArcSessionManager(arc_service_manager_->arc_bridge_service(),
-                                  chrome::GetChannel(),
-                                  scheduler_configuration_manager)),
-      scheduler_configuration_manager_(scheduler_configuration_manager),
-      arc_dlc_installer_(std::make_unique<ArcDlcInstaller>(
-          std::make_unique<ArcDlcNotificationManagerFactoryImpl>(),
-          std::make_unique<ArcDlcInstallHardwareChecker>(),
-          ash::CrosSettings::Get())) {
+                                  ash::GetChannel(),
+                                  scheduler_configuration_manager,
+                                  arc_dlc_installer_.get())) {
   DCHECK(g_arc_service_launcher == nullptr);
   g_arc_service_launcher = this;
 
@@ -223,13 +206,7 @@ void ArcServiceLauncher::Initialize() {
                      weak_factory_.GetWeakPtr()),
       kTpmOwnershipCheckDelay);
 #else
-  if (arc::IsArcVmDlcEnabled() &&
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ash::switches::kLoginUser)) {
-    CheckArcvmDlcImageStatus();
-  }
-
-  if (!arc::IsArcVmDlcEnabled()) {
+  if (!arc::IsArcVmDlcRequired()) {
     arc_session_manager_->ExpandPropertyFilesAndReadSalt();
     return;
   }
@@ -290,25 +267,6 @@ void ArcServiceLauncher::OnPrimaryUserProfilePrepared(Profile* profile) {
 
   // Record metrics for ARC status based on device affiliation
   RecordArcStatusBasedOnDeviceAffiliationUMA(profile);
-
-  const AccountId* account_id = ash::AnnotatedAccountId::Get(profile);
-
-  // Profile set up for the test is no properly initialized, so AccountId is not
-  // annotated. If the user is a guest, OTR profile is passed, which does not
-  // have annotated account id. The OnPrimaryUserSessionStarted function must
-  // run before the profile check below. On boards with the arcvm_dlc flag
-  // (e.g., reven board), the ARCVM image installs from DLC at runtime. Before
-  // this completes, the arc_session_manager profile is nullptr, causing the
-  // profile check to fail. Moving OnPrimaryUserSessionStarted earlier ensures
-  // the notification manager can send notifications before ARCVM image
-  // installation is complete. This logic will be removed once the profile
-  // dependency for ARC DLC install notifications is eliminated.
-  // TODO(b/406349559): Remove dependency on profile for ARC DLC install
-  // notifications.
-  // TODO(b/418815526): Create a browser test for ARCVM_DLC notification.
-  if (account_id) {
-    arc_dlc_installer_->OnPrimaryUserSessionStarted(*account_id);
-  }
 
   if (arc_session_manager_->profile() != profile) {
     // Profile is not matched, so the given |profile| is not allowed to use
@@ -436,6 +394,10 @@ void ArcServiceLauncher::OnPrimaryUserProfilePrepared(Profile* profile) {
     ArcObbMounterBridge::GetForBrowserContext(profile);
   }
 
+  if (web_app::AreWebAppsEnabled(profile)) {
+    web_apk_manager_ = std::make_unique<apps::WebApkManager>(profile);
+  }
+
   arc_session_manager_->Initialize();
   arc_play_store_enabled_preference_handler_ =
       std::make_unique<ArcPlayStoreEnabledPreferenceHandler>(
@@ -451,9 +413,9 @@ void ArcServiceLauncher::Shutdown() {
 
   arc_play_store_enabled_preference_handler_.reset();
   arc_session_manager_->Shutdown();
+  web_apk_manager_.reset();
   arc_net_url_opener_.reset();
   arc_icon_cache_delegate_provider_.reset();
-  arc_dlc_installer_.reset();
 }
 
 void ArcServiceLauncher::ResetForTesting() {
@@ -462,19 +424,14 @@ void ArcServiceLauncher::ResetForTesting() {
   Shutdown();
   arc_session_manager_.reset();
 
+  arc_dlc_installer_ = std::make_unique<ArcDlcInstaller>();
+
   // No recreation of arc_service_manager. Pointers to its ArcBridgeService
   // may be referred from existing KeyedService, so destoying it would cause
   // unexpected behavior, specifically on test teardown.
   arc_session_manager_ = CreateArcSessionManager(
-      arc_service_manager_->arc_bridge_service(), chrome::GetChannel(),
-      scheduler_configuration_manager_);
-
-  // Recreate arc_dlc_installer_ after shutdown because browser_test will run
-  // ResetForTesting and then do the OnPrimaryUserProfilePrepared.
-  arc_dlc_installer_ = std::make_unique<ArcDlcInstaller>(
-      std::make_unique<ArcDlcNotificationManagerFactoryImpl>(),
-      std::make_unique<ArcDlcInstallHardwareChecker>(),
-      ash::CrosSettings::Get());
+      arc_service_manager_->arc_bridge_service(), ash::GetChannel(),
+      scheduler_configuration_manager_, arc_dlc_installer_.get());
 }
 
 #if BUILDFLAG(USE_ARC_PROTECTED_MEDIA)

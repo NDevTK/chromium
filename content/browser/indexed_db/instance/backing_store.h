@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/types/expected.h"
@@ -24,6 +25,7 @@ class WaitableEvent;
 
 namespace content::indexed_db {
 
+struct IndexedDBDataLossInfo;
 struct IndexedDBValue;
 
 // NB: This interface is a WIP and is expected to experience heavy churn in the
@@ -53,7 +55,7 @@ class BackingStore {
     // ignore them.
     // SQLite: a row id. LevelDB: a version.
     int64_t number;
-    // SQLite: unused. LevelDB: the *encoded* primary key bytes.
+    // SQLite and LevelDB: the *encoded* primary key bytes.
     std::string data;
   };
 
@@ -67,7 +69,11 @@ class BackingStore {
     virtual ~Database() = default;
 
     // Memory-cached metadata for this database.
-    virtual const blink::IndexedDBDatabaseMetadata& GetMetadata() = 0;
+    virtual const blink::IndexedDBDatabaseMetadata& GetMetadata() const = 0;
+
+    // Returns info relating to any lost/corrupted data when this database was
+    // opened.
+    virtual const IndexedDBDataLossInfo& GetDataLossInfo() const = 0;
 
     // Generates the lock ID key for the given object store. Not called on
     // SQLite backing stores.
@@ -96,10 +102,21 @@ class BackingStore {
    public:
     virtual ~Transaction() = default;
 
-    // For now, refer to comments in level_db::BackingStore::Transaction for
-    // documentation.
-    virtual void Begin(std::vector<PartitionedLock> locks) = 0;
-    virtual Status CommitPhaseOne(BlobWriteCallback callback) = 0;
+    virtual Status Begin(std::vector<PartitionedLock> locks) = 0;
+    // CommitPhaseOne determines what blobs (if any) need to be written to disk
+    // and updates the primary blob journal, and kicks off the async writing
+    // of the blob files. In case of crash/rollback, the journal indicates what
+    // files should be cleaned up.
+    // The blob write callback will be called eventually on success or failure,
+    // or immediately if phase one is complete due to lack of any blobs to
+    // write.
+    virtual Status CommitPhaseOne(
+        BlobWriteCallback blob_write_callback,
+        SerializeFsaCallback serialize_fsa_handle) = 0;
+    // CommitPhaseTwo is called once the blob files (if any) have been written
+    // to disk, and commits the actual transaction to the backing store,
+    // including blob journal updates, then deletes any blob files deleted
+    // by the transaction and not referenced by running scripts.
     virtual Status CommitPhaseTwo() = 0;
     virtual void Rollback() = 0;
 
@@ -196,7 +213,12 @@ class BackingStore {
         int64_t index_id,
         const blink::IndexedDBKeyRange& key_range,
         blink::mojom::IDBCursorDirection) = 0;
-    virtual blink::mojom::IDBValuePtr BuildMojoValue(IndexedDBValue value) = 0;
+    // Builds a complete value to be passed to the renderer by creating external
+    // objects for `value`. `deserialize_handle` can be used to help create FSA
+    // handle external objects out of their serialized representations.
+    virtual blink::mojom::IDBValuePtr BuildMojoValue(
+        IndexedDBValue value,
+        DeserializeFsaCallback deserialize_handle) = 0;
   };
 
   // Another interface to be implemented by a backend implementation.
@@ -217,24 +239,40 @@ class BackingStore {
     virtual StatusOr<bool> Continue(const blink::IndexedDBKey& key,
                                     const blink::IndexedDBKey& primary_key) = 0;
     virtual StatusOr<bool> Advance(uint32_t count) = 0;
-    // Clone may return a nullptr if cloning fails for any reason.
-    virtual std::unique_ptr<Cursor> Clone() const = 0;
+
+    // Saves the current position of the cursor.
+    virtual void SavePosition() = 0;
+    // Attempts to reset the cursor to the last saved position. The cursor
+    // instance is no longer usable if the returned `Status` is not `ok()`. A
+    // status of type `kInvalidArgument` indicates that the position was not
+    // saved prior to this call.
+    virtual Status TryResetToLastSavedPosition() = 0;
   };
 
   virtual ~BackingStore() = default;
 
-  // Get tasks to be run after a BackingStore no longer has any connections.
+  // The BucketContext deletes itself and the BackingStore when it has no
+  // database or blob connections active (after a short timeout). This method
+  // should return true if there are no connections and no blobs. Note that the
+  // LevelDB store just returns true because the BucketContext implements the
+  // logic for it. SQLite blobs are managed by the store itself, so this method
+  // is necessary.
+  // TODO(crbug.com/419203257): consider revisiting this logic since there's
+  // very little memory to be reclaimed by deleting the SQLite BackingStore.
+  virtual bool CanOpportunisticallyClose() const = 0;
+
   virtual void TearDown(base::WaitableEvent* signal_on_destruction) = 0;
   virtual void InvalidateBlobReferences() = 0;
+  // Get tasks to be run after a BackingStore no longer has any connections.
   virtual void StartPreCloseTasks(base::OnceClosure on_done) = 0;
   virtual void StopPreCloseTasks() = 0;
   // Gets the total size of blobs and the database for in-memory backing
   // stores.
   virtual int64_t GetInMemorySize() const = 0;
-  // Returns a list of names of existing databases, regardless of whether
-  // they're currently open.
-  [[nodiscard]] virtual StatusOr<std::vector<std::u16string>>
-  GetDatabaseNames() = 0;
+  // Returns true iff a database with the given name exists, whether or not it's
+  // currently open.
+  [[nodiscard]] virtual StatusOr<bool> DatabaseExists(
+      std::u16string_view name) = 0;
   // Returns a list of names of existing databases and their version numbers
   // (i.e. `IndexedDBDatabaseMetadata::version`), regardless of whether they're
   // currently open.

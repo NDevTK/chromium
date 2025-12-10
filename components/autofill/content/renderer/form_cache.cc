@@ -24,8 +24,6 @@
 
 namespace autofill {
 
-using form_util::ExtractOption;
-
 namespace {
 
 // Determines whether the form is interesting enough to be sent to the browser
@@ -33,8 +31,8 @@ namespace {
 // (1) At least one form field is not-checkable. (See crbug.com/1489075.)
 // (2) At least one field has a non-empty autocomplete attribute.
 // (3) There is at least one iframe.
-// TODO(crbug.com/40283901): Should an element that IsCheckableElement() also be
-// IsAutofillableInputElement()?
+// TODO(crbug.com/40283901): Remove check for radio buttons and checkboxes when
+// we they're not extracted anymore.
 bool IsFormInteresting(const FormData& form) {
   auto is_checkable = [](FormControlType type) {
     return type == FormControlType::kInputCheckbox ||
@@ -113,7 +111,8 @@ FormCache::UpdateFormCacheResult FormCache::UpdateFormCache(
       FormRendererId form_id = form.renderer_id();
       auto it = old_extracted_forms.find(form_id);
       if (it == old_extracted_forms.end() || !it->second ||
-          !FormData::DeepEqual(std::move(*it->second), form)) {
+          !FormData::IdenticalAndEquivalentDomElements(
+              *it->second, form, {FormFieldData::Exclusion::kValue})) {
         r.updated_forms.push_back(form);
       }
       r.removed_forms.erase(form_id);

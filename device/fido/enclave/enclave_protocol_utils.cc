@@ -2,16 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "device/fido/enclave/enclave_protocol_utils.h"
 
 #include <array>
 #include <variant>
 
+#include "base/compiler_specific.h"
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -31,16 +28,18 @@
 #include "crypto/random.h"
 #include "device/fido/attestation_statement.h"
 #include "device/fido/authenticator_data.h"
+#include "device/fido/authenticator_make_credential_response.h"
 #include "device/fido/enclave/constants.h"
 #include "device/fido/enclave/types.h"
-#include "device/fido/fido_constants.h"
 #include "device/fido/fido_parsing_utils.h"
-#include "device/fido/fido_transport_protocol.h"
 #include "device/fido/json_request.h"
 #include "device/fido/p256_public_key.h"
+#include "device/fido/public/features.h"
+#include "device/fido/public/fido_constants.h"
+#include "device/fido/public/fido_transport_protocol.h"
+#include "device/fido/public/public_key_credential_descriptor.h"
+#include "device/fido/public/public_key_credential_user_entity.h"
 #include "device/fido/public_key.h"
-#include "device/fido/public_key_credential_descriptor.h"
-#include "device/fido/public_key_credential_user_entity.h"
 
 namespace device::enclave {
 
@@ -58,6 +57,7 @@ const size_t kCredentialIdSize = 16;
 // JSON keys for request fields used for both GetAssertion and MakeCredential.
 const char kRequestDataKey[] = "request";
 const char kRequestClientDataJSONKey[] = "client_data_json";
+const char kRequestClientDataJSONHashKey[] = "client_data_json_hash";
 const char kRequestClaimedPINKey[] = "claimed_pin";
 
 // JSON keys for GetAssertion request fields.
@@ -74,6 +74,8 @@ const char kGetAssertionResponsePrfKey[] = "prf";
 const char kMakeCredentialResponseEncryptedKey[] = "encrypted";
 const char kMakeCredentialResponsePubKeyKey[] = "pub_key";
 const char kMakeCredentialResponsePrfKey[] = "prf";
+const char kMakeCredentialResponseLargeBlobSupportedKey[] =
+    "largeBlobSupported";
 
 // Specific command names recognizable by the enclave processor.
 const char kGetAssertionCommandName[] = "passkeys/assert";
@@ -83,6 +85,13 @@ const char kAddUVKeyCommandName[] = "device/add_uv_key";
 // Keys in a PRF response structure
 const char kPrfFirst[] = "first";
 const char kPrfSecond[] = "second";
+
+// Keys in a large blob response structure.
+const char kLargeBlobKey[] = "largeBlob";
+const char kLargeBlobDataKey[] = "largeBlobData";
+const char kLargeBlobSizeKey[] = "largeBlobSize";
+const char kLargeBlobWrittenKey[] = "largeBlobWritten";
+const char kEncryptedKey[] = "encrypted";
 
 const cbor::Value::MapValue* cborFindMap(const cbor::Value::MapValue& map,
                                          std::string key) {
@@ -168,7 +177,7 @@ std::optional<AuthenticatorGetAssertionResponse>
 AuthenticatorGetAssertionResponseFromValue(const cbor::Value::MapValue& map) {
   // 'authenticatorData' and signature' are required fields.
   // 'clientDataJSON' is also a required field, by spec, but we ignore it here
-  // since that is cached at a higher layer.
+  // since the enclave may not return it and it is cached at a higher layer.
   // 'attestationObject' is optional and also ignored.
   auto authenticator_data = ReadAuthenticatorData(map);
   if (!authenticator_data) {
@@ -310,6 +319,53 @@ ParseGetAssertionResponse(cbor::Value response_value,
       CredentialType::kPublicKey,
       fido_parsing_utils::Materialize(credential_id));
   response->hmac_secret = std::move(prf_results);
+  const cbor::Value::MapValue* large_blob_map =
+      cborFindMap(*last_response, kLargeBlobKey);
+
+  if (large_blob_map) {
+    const auto* data = cborFindBytestring(*large_blob_map, kLargeBlobDataKey);
+    auto size_it = large_blob_map->find(cbor::Value(kLargeBlobSizeKey));
+    const bool has_data = data != nullptr;
+    const bool has_size = size_it != large_blob_map->end();
+
+    if (has_data != has_size) {
+      return ErrorResponse(
+          "Malformed largeBlob: data/size field mismatch in enclave response.");
+    }
+    if (has_size &&
+        (!size_it->second.is_integer() || size_it->second.GetInteger() < 0)) {
+      return ErrorResponse(
+          "Malformed largeBlob: largeBlobSize must be a non-negative int.");
+    }
+
+    auto it_written = large_blob_map->find(cbor::Value(kLargeBlobWrittenKey));
+    if (it_written != large_blob_map->end() && !it_written->second.is_bool()) {
+      return ErrorResponse(
+          "Malformed largeBlob: largeBlobWritten is not a boolean.");
+    }
+    if (it_written != large_blob_map->end() && it_written->second.GetBool() &&
+        cborFindBytestring(*large_blob_map, kEncryptedKey) == nullptr) {
+      return ErrorResponse(
+          "Malformed largeBlob: encrypted blob data missing when "
+          "largeBlobWritten is true.");
+    }
+
+    // Large blob read path.
+    if (data) {
+      LargeBlob large_blob(std::vector<uint8_t>(*data),
+                           static_cast<uint64_t>(size_it->second.GetInteger()));
+      response->large_blob_extension = std::move(large_blob);
+    }
+
+    // Large blob write acknowledgement path.
+    if (it_written != large_blob_map->end()) {
+      response->large_blob_written = it_written->second.GetBool();
+      if (response->large_blob_written) {
+        response->updated_encrypted_passkey =
+            *cborFindBytestring(*large_blob_map, kEncryptedKey);
+      }
+    }
+  }
 
   return std::move(*response);
 }
@@ -390,6 +446,12 @@ ParseMakeCredentialResponse(cbor::Value response_value,
       }
     }
   }
+  bool large_blob_supported = false;
+  it = last_response->find(
+      cbor::Value(kMakeCredentialResponseLargeBlobSupportedKey));
+  if (it != last_response->end() && it->second.is_bool()) {
+    large_blob_supported = it->second.GetBool();
+  }
 
   std::vector<uint8_t> credential_id =
       crypto::RandBytesAsVector(kCredentialIdSize);
@@ -448,6 +510,9 @@ ParseMakeCredentialResponse(cbor::Value response_value,
   AuthenticatorMakeCredentialResponse response(FidoTransportProtocol::kInternal,
                                                std::move(attestation_object));
   response.is_resident_key = true;
+  response.large_blob_type =
+      large_blob_supported ? std::make_optional(LargeBlobSupportType::kBespoke)
+                           : std::nullopt;
   response.transports.emplace();
   response.transports->insert(FidoTransportProtocol::kInternal);
   response.transports->insert(FidoTransportProtocol::kHybrid);
@@ -486,8 +551,14 @@ cbor::Value BuildGetAssertionCommand(
   entry_map.emplace(cbor::Value(kGetAssertionRequestProtobufKey),
                     cbor::Value(serialized_passkey));
 
-  entry_map.emplace(cbor::Value(kRequestClientDataJSONKey),
-                    cbor::Value(client_data_json));
+  if (base::FeatureList::IsEnabled(
+          kWebAuthenticationHashClientDataJsonForEnclave)) {
+    entry_map.emplace(cbor::Value(kRequestClientDataJSONHashKey),
+                      cbor::Value(crypto::hash::Sha256(client_data_json)));
+  } else {
+    entry_map.emplace(cbor::Value(kRequestClientDataJSONKey),
+                      cbor::Value(client_data_json));
+  }
 
   if (claimed_pin) {
     entry_map.emplace(kRequestClaimedPINKey, std::move(claimed_pin->pin_claim));
@@ -565,9 +636,10 @@ void BuildCommandRequestBody(
   }
 
   SignedMessage signed_message;
-  memcpy(signed_message.data(), handshake_hash.data(), crypto::kSHA256Length);
-  memcpy(signed_message.data() + crypto::kSHA256Length,
-         serialized_requests_hash.data(), crypto::kSHA256Length);
+  UNSAFE_TODO(memcpy(signed_message.data(), handshake_hash.data(),
+                     crypto::kSHA256Length));
+  UNSAFE_TODO(memcpy(signed_message.data() + crypto::kSHA256Length,
+                     serialized_requests_hash.data(), crypto::kSHA256Length));
 
   auto append_signature_and_finish =
       [](cbor::Value::MapValue request_body_map,
@@ -599,6 +671,20 @@ void BuildCommandRequestBody(
            base::BindOnce(append_signature_and_finish,
                           std::move(request_body_map),
                           std::move(complete_callback)));
+}
+
+cbor::Value RedactEnclaveRequest(const cbor::Value& cbor) {
+  return fido_parsing_utils::RedactCbor(
+      cbor, std::array{fido_parsing_utils::ToCborVector(kRequestSecretKey),
+                       fido_parsing_utils::ToCborVector(kWrappingKeyToWrap),
+                       fido_parsing_utils::ToCborVector(kClaimKey)});
+}
+
+cbor::Value RedactEnclaveResponse(const cbor::Value& cbor) {
+  return fido_parsing_utils::RedactCbor(
+      cbor,
+      std::array{fido_parsing_utils::ToCborVector("ok", "ok", "largeBlob"),
+                 fido_parsing_utils::ToCborVector("ok", "ok", "prf")});
 }
 
 }  // namespace device::enclave

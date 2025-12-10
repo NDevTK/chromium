@@ -22,17 +22,20 @@
 #include "base/functional/callback.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
+#include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/sequence_checker.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/component_updater/component_updater_utils.h"
+#include "components/component_updater/component_updater_paths.h"
 #include "components/services/unzip/content/unzip_service.h"
 #include "components/update_client/patcher.h"
 #include "components/update_client/unpacker.h"
@@ -48,6 +51,14 @@ constexpr base::TaskTraits
     RecoveryComponentActionHandler::kThreadPoolTaskTraits;
 constexpr base::TaskTraits
     RecoveryComponentActionHandler::kThreadPoolTaskTraitsRunCommand;
+
+constexpr char kRecoveryImprovedComponentId[] =
+    "ihnlcenocehgdaegdmhbidjhnhdchfmm";
+// The SHA256 of the SubjectPublicKeyInfo used to sign the component CRX.
+constexpr uint8_t kRecoveryImprovedPublicKeySHA256[32] = {
+    0x87, 0xdb, 0x24, 0xde, 0x24, 0x76, 0x30, 0x46, 0x3c, 0x71, 0x83,
+    0x97, 0xd7, 0x32, 0x75, 0xcc, 0xd5, 0x7f, 0xec, 0x09, 0x60, 0x6d,
+    0x20, 0xc3, 0x81, 0xd7, 0xce, 0x7b, 0x10, 0x15, 0x44, 0xd1};
 
 RecoveryComponentActionHandler::RecoveryComponentActionHandler(
     const std::vector<uint8_t>& key_hash,
@@ -79,7 +90,8 @@ void RecoveryComponentActionHandler::Unpack() {
                       base::BindRepeating(&unzip::LaunchUnzipper))
                       ->Create();
   update_client::Unpacker::Unpack(
-      key_hash_, crx_path_, std::move(unzipper), verifier_format_,
+      kRecoveryImprovedComponentId, "RecoveryComponentActionHandler", key_hash_,
+      crx_path_, std::move(unzipper), verifier_format_,
       base::BindOnce(&RecoveryComponentActionHandler::UnpackComplete, this));
 }
 
@@ -146,13 +158,6 @@ void RecoveryComponentActionHandler::WaitForCommand(
       base::BindOnce(std::move(callback_), succeeded, exit_code, extra_code1));
 }
 
-// The SHA256 of the SubjectPublicKeyInfo used to sign the component CRX.
-// The component id is: ihnlcenocehgdaegdmhbidjhnhdchfmm
-constexpr uint8_t kRecoveryImprovedPublicKeySHA256[32] = {
-    0x87, 0xdb, 0x24, 0xde, 0x24, 0x76, 0x30, 0x46, 0x3c, 0x71, 0x83,
-    0x97, 0xd7, 0x32, 0x75, 0xcc, 0xd5, 0x7f, 0xec, 0x09, 0x60, 0x6d,
-    0x20, 0xc3, 0x81, 0xd7, 0xce, 0x7b, 0x10, 0x15, 0x44, 0xd1};
-
 bool RecoveryImprovedInstallerPolicy::
     SupportsGroupPolicyEnabledComponentUpdates() const {
   return true;
@@ -214,6 +219,14 @@ void RegisterRecoveryImprovedComponent(ComponentUpdateService* cus,
       std::make_unique<RecoveryImprovedInstallerPolicy>(prefs),
       RecoveryComponentActionHandler::MakeActionHandler());
   installer->Register(cus, base::OnceClosure());
+
+  // Post a task to clean up the legacy recovery component. This can be removed
+  // in M155+.
+  if (base::FilePath path; base::PathService::Get(DIR_RECOVERY_BASE, &path)) {
+    base::ThreadPool::PostTask(
+        FROM_HERE, {base::MayBlock()},
+        base::BindOnce(base::IgnoreResult(&base::DeletePathRecursively), path));
+  }
 #endif
 }
 

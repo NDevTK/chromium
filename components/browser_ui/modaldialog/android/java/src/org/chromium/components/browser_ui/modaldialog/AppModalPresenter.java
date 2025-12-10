@@ -25,6 +25,7 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import org.chromium.base.Callback;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.StrictModeContext;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
@@ -132,7 +133,7 @@ public class AppModalPresenter extends ModalDialogManager.Presenter {
         } else if (dialogStyle == ModalDialogProperties.DialogStyles.DIALOG_WHEN_LARGE) {
             dialogIndex = 2;
         } else if (dialogStyle == ModalDialogProperties.DialogStyles.FULLSCREEN_DARK_DIALOG) {
-            dialogIndex = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? 3 : 1;
+            dialogIndex = 3;
         }
         int buttonIndex = 0;
         int buttonStyle = mModel.get(ModalDialogProperties.BUTTON_STYLES);
@@ -151,6 +152,13 @@ public class AppModalPresenter extends ModalDialogManager.Presenter {
                 dialogInterface -> {
                     dismissCurrentDialog(DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE);
                 });
+
+        if (DeviceInfo.isXr() && mModel.get(ModalDialogProperties.DISABLE_SCRIM)) {
+            Window window = mDialog.getWindow();
+            if (window != null) {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            }
+        }
 
         // Cancel on touch outside should be disabled by default. The ModelChangeProcessor wouldn't
         // notify change if the property is not set during initialization.

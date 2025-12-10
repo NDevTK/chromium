@@ -42,7 +42,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/permissions_policy/document_policy_features.h"
-#include "third_party/blink/public/common/privacy_budget/identifiable_surface.h"
 #include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/web/web_print_page_description.h"
 #include "third_party/blink/renderer/bindings/core/v8/isolated_world_csp.h"
@@ -53,6 +52,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/css/media_query_list_listener.h"
 #include "third_party/blink/renderer/core/css/media_query_matcher.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document_fragment.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/dom_implementation.h"
@@ -117,7 +117,7 @@ class DocumentTest : public PageTestBase {
     PageTestBase::TearDown();
   }
 
-  void SetHtmlInnerHTML(const char*);
+  void SetHtmlInnerHTML(std::string_view html_content);
 
   // Note: callers must mock any urls that are referred to in `html_content`,
   // with the exception of foo.html, which can be assumed to be defined by this
@@ -188,8 +188,9 @@ class DocumentTest : public PageTestBase {
   }
 };
 
-void DocumentTest::SetHtmlInnerHTML(const char* html_content) {
-  GetDocument().documentElement()->setInnerHTML(String::FromUTF8(html_content));
+void DocumentTest::SetHtmlInnerHTML(std::string_view html_content) {
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      String::FromUTF8(html_content));
   UpdateAllLifecyclePhasesForTest();
 }
 
@@ -256,7 +257,8 @@ bool IsDOMException(ScriptState* script_state,
 }  // anonymous namespace
 
 TEST_F(DocumentTest, CreateRangeAdjustedToTreeScopeWithPositionInShadowTree) {
-  GetDocument().body()->setInnerHTML("<div><select><option>012</option></div>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<div><select><option>012</option></div>");
   Element* const select_element =
       GetDocument().QuerySelector(AtomicString("select"));
   const Position& position =
@@ -329,33 +331,6 @@ TEST_F(DocumentTest, PrintRelayout) {
   EXPECT_EQ(GetDocument().documentElement()->OffsetWidth(), 400);
   GetDocument().GetFrame()->EndPrinting();
   EXPECT_EQ(GetDocument().documentElement()->OffsetWidth(), 800);
-}
-
-// This tests whether we properly set the bits for indicating if a media feature
-// has been evaluated.
-TEST_F(DocumentTest, MediaFeatureEvaluated) {
-  GetDocument().SetMediaFeatureEvaluated(
-      static_cast<int>(IdentifiableSurface::MediaFeatureName::kForcedColors));
-  for (int i = 0; i < 64; i++) {
-    if (i == static_cast<int>(
-                 IdentifiableSurface::MediaFeatureName::kForcedColors)) {
-      EXPECT_TRUE(GetDocument().WasMediaFeatureEvaluated(i));
-    } else {
-      EXPECT_FALSE(GetDocument().WasMediaFeatureEvaluated(i));
-    }
-  }
-  GetDocument().SetMediaFeatureEvaluated(
-      static_cast<int>(IdentifiableSurface::MediaFeatureName::kAnyHover));
-  for (int i = 0; i < 64; i++) {
-    if ((i == static_cast<int>(
-                  IdentifiableSurface::MediaFeatureName::kForcedColors)) ||
-        (i ==
-         static_cast<int>(IdentifiableSurface::MediaFeatureName::kAnyHover))) {
-      EXPECT_TRUE(GetDocument().WasMediaFeatureEvaluated(i));
-    } else {
-      EXPECT_FALSE(GetDocument().WasMediaFeatureEvaluated(i));
-    }
-  }
 }
 
 // This test checks that Documunt::linkManifest() returns a value conform to the
@@ -528,7 +503,7 @@ TEST_F(DocumentTest, ValidationMessageCleanup) {
 // as it is more expensive than just doing layout.
 TEST_F(DocumentTest,
        EnsurePaintLocationDataValidForNodeCompositingInputsOnlyWhenNecessary) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id='ancestor'>
       <div id='sticky' style='position:sticky;'>
         <div id='stickyChild'></div>
@@ -1044,8 +1019,7 @@ TEST_F(DocumentTest, HasPrivateTokenSuccess) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1070,8 +1044,7 @@ TEST_F(DocumentTest, HasPrivateTokenSuccessWithFalseValue) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1096,8 +1069,7 @@ TEST_F(DocumentTest, HasPrivateTokenOperationError) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1124,8 +1096,7 @@ TEST_F(DocumentTest, HasPrivateTokenInvalidArgument) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1152,8 +1123,7 @@ TEST_F(DocumentTest, HasPrivateTokenResourceExhausted) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1179,8 +1149,7 @@ TEST_F(DocumentTest, HasRedemptionRecordSuccess) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1205,8 +1174,7 @@ TEST_F(DocumentTest, HasRedemptionRecordSuccessWithFalseValue) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1231,8 +1199,7 @@ TEST_F(DocumentTest, HasRedemptionRecordOperationError) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1259,8 +1226,7 @@ TEST_F(DocumentTest, HasRedemptionRecordInvalidArgument) {
   Document& document = scope.GetDocument();
   document.GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
       network::mojom::blink::TrustTokenQueryAnswerer::Name_,
-      WTF::BindRepeating(&MockTrustTokenQueryAnswerer::Bind,
-                         WTF::Unretained(&answerer)));
+      BindRepeating(&MockTrustTokenQueryAnswerer::Bind, Unretained(&answerer)));
 
   ScriptState* script_state = scope.GetScriptState();
   ExceptionState exception_state(script_state->GetIsolate());
@@ -1376,7 +1342,8 @@ class ParameterizedViewportFitDocumentTest
       html.Append("'>");
     }
 
-    GetDocument().documentElement()->setInnerHTML(html.ReleaseString());
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+        html.ReleaseString());
     UpdateAllLifecyclePhasesForTest();
   }
 };
@@ -1437,8 +1404,7 @@ TEST_F(DocumentSimTest, DuplicatedDocumentPolicyViolationsAreIgnored) {
   ExecutionContext* execution_context = GetDocument().GetExecutionContext();
   MockReportingContext* mock_reporting_context =
       MakeGarbageCollected<MockReportingContext>(*execution_context);
-  Supplement<ExecutionContext>::ProvideTo(*execution_context,
-                                          mock_reporting_context);
+  execution_context->SetReportingContext(mock_reporting_context);
 
   EXPECT_FALSE(execution_context->IsFeatureEnabled(
       mojom::blink::DocumentPolicyFeature::kForceLoadAtTop,
@@ -1765,7 +1731,7 @@ TEST_F(TopLevelFormsListTest, FormsInLightDomInsertionAndRemoval) {
 // Tests that top level forms inside shadow DOM are listed correctly and
 // insertion and removal updates the cache.
 TEST_F(TopLevelFormsListTest, FormsInShadowDomInsertionAndRemoval) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <form id="f1">
       <input type="text">
     </form>
@@ -1793,7 +1759,7 @@ TEST_F(TopLevelFormsListTest, FormsInShadowDomInsertionAndRemoval) {
 
 // Tests that nested forms across shadow DOM are ignored by `GetTopLevelForms`.
 TEST_F(TopLevelFormsListTest, GetTopLevelFormsIgnoresNestedChildren) {
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <form id="f1">
       <input type="text">
       <div id="d">
@@ -2076,6 +2042,180 @@ TEST_F(DocumentTest, LifecycleState_DirtyStyle_NoBody) {
             DocumentLifecycle::kVisualUpdatePending);
 }
 
+class SyntheticSelectTest : public DocumentTest {
+  base::test::ScopedFeatureList feature_list_{
+      features::kAutofillEnableSyntheticSelectMetricsLogging};
+};
+
+TEST_F(SyntheticSelectTest,
+       MetricsAreReported_WhenPotentialSyntheticSelectIsInNestedForm) {
+  SetHtmlInnerHTML(R"HTML(
+    <form id="f1">
+      <form id="nested-form">
+        <custom-element aria-haspopup="not-listbox"></custom-element>
+      </form>
+    </form>
+  )HTML");
+  Document& document = GetDocument();
+
+  document.GetTopLevelForms();
+
+  EXPECT_TRUE(document.IsUseCounted(
+      blink::mojom::WebFeature::kAutofillMaybeSyntheticSelect));
+  EXPECT_FALSE(document.IsUseCounted(
+      blink::mojom::WebFeature::kAutofillSyntheticSelect));
+}
+
+TEST_F(SyntheticSelectTest,
+       MetricsAreReported_WhenSyntheticSelectIsInNestedForm) {
+  SetHtmlInnerHTML(R"HTML(
+    <form id="f1">
+      <form id="nested-form">
+        <custom-select aria-haspopup="listbox"></custom-select>
+      </form>
+    </form>
+  )HTML");
+  Document& document = GetDocument();
+
+  document.GetTopLevelForms();
+
+  EXPECT_FALSE(document.IsUseCounted(
+      blink::mojom::WebFeature::kAutofillMaybeSyntheticSelect));
+  EXPECT_TRUE(document.IsUseCounted(
+      blink::mojom::WebFeature::kAutofillSyntheticSelect));
+}
+
+struct SyntheticSelectTestCase {
+  std::string_view html;
+  bool has_synthetic_select;
+  bool has_potential_synthetic_select;
+  std::string test_name;
+};
+
+class ParametrizedSyntheticSelectTest
+    : public SyntheticSelectTest,
+      public testing::WithParamInterface<SyntheticSelectTestCase> {};
+
+TEST_P(ParametrizedSyntheticSelectTest, MetricsAreReported_WhenSelectIsInForm) {
+  SyntheticSelectTestCase test_case = GetParam();
+  std::string html = R"HTML(<form id="f1">)HTML";
+  html += test_case.html;
+  html += "</form>";
+  SetHtmlInnerHTML(html);
+  Document& document = GetDocument();
+
+  document.GetTopLevelForms();
+
+  EXPECT_EQ(document.IsUseCounted(
+                blink::mojom::WebFeature::kAutofillMaybeSyntheticSelect),
+            test_case.has_potential_synthetic_select);
+  EXPECT_EQ(
+      document.IsUseCounted(blink::mojom::WebFeature::kAutofillSyntheticSelect),
+      test_case.has_synthetic_select);
+}
+
+TEST_P(ParametrizedSyntheticSelectTest,
+       MetricsAreNotReported_WhenSelectIsNotInForm) {
+  SyntheticSelectTestCase test_case = GetParam();
+  SetHtmlInnerHTML(test_case.html);
+  Document& document = GetDocument();
+
+  document.GetTopLevelForms();
+
+  EXPECT_FALSE(document.IsUseCounted(
+      blink::mojom::WebFeature::kAutofillMaybeSyntheticSelect));
+  EXPECT_FALSE(document.IsUseCounted(
+      blink::mojom::WebFeature::kAutofillSyntheticSelect));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    NotSyntheticSelect,
+    ParametrizedSyntheticSelectTest,
+    testing::Values(
+        SyntheticSelectTestCase{
+            R"HTML(
+            <select aria-haspopup="abcd"></select>
+            )HTML",
+            false, false, "SelectWithAriaHaspopup"},
+        SyntheticSelectTestCase{
+            R"HTML(
+            <select aria-expanded="abcd"></select>
+            )HTML",
+            false, false, "SelectWithAriaExpanded"}),
+    [](const testing::TestParamInfo<ParametrizedSyntheticSelectTest::ParamType>&
+           info) { return info.param.test_name; });
+
+INSTANTIATE_TEST_SUITE_P(
+    MaybeSyntheticSelect,
+    ParametrizedSyntheticSelectTest,
+    testing::Values(
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element aria-haspopup="abcd"></custom-element>
+            )HTML",
+            false, true, "AriaHaspopup"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element aria-expanded="abcd"></custom-element>
+            )HTML",
+            false, true, "AriaExpanded"}),
+    [](const testing::TestParamInfo<ParametrizedSyntheticSelectTest::ParamType>&
+           info) { return info.param.test_name; });
+
+INSTANTIATE_TEST_SUITE_P(
+    IsSyntheticSelect,
+    ParametrizedSyntheticSelectTest,
+    testing::Values(
+        SyntheticSelectTestCase{
+            R"HTML(
+              <mat-select aria-expanded="abcd"></mat-select>
+            )HTML",
+            true, false, "SelectInTagName"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <mat-SeLeCT aria-expanded="abcd"></mat-SeLeCT>
+            )HTML",
+            true, false, "MixedCaseSelectInTagName"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element class="mat-select" aria-expanded="abcd"></custom-element>
+            )HTML",
+            true, false, "SelectInClassAttribute"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element class="MaT-SELECT" aria-expanded="abcd"></custom-element>
+            )HTML",
+            true, false, "MixedCaseSelectInClassAttribute"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element name="mat-select" aria-expanded="abcd"></custom-element>
+            )HTML",
+            true, false, "SelectInNameAttribute"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element name="MaT-SELECT" aria-expanded="abcd"></custom-element>
+            )HTML",
+            true, false, "MixedCaseSelectInNameAttribute"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element role="combobox" aria-expanded="abcd"></custom-element>
+            )HTML",
+            true, false, "RoleIsCombobox"},
+        SyntheticSelectTestCase{
+            R"HTML(
+              <custom-element aria-haspopup="listbox"></custom-element>
+            )HTML",
+            true, false, "AriaHaspopupIsListbox"},
+        SyntheticSelectTestCase{
+            R"HTML(
+            <div>
+              <custom-element aria-haspopup="listbox"></custom-element>
+            </div>
+            )HTML",
+            true, false, "ElementInDiv"}),
+    [](const testing::TestParamInfo<ParametrizedSyntheticSelectTest::ParamType>&
+           info) { return info.param.test_name; });
+
 #if BUILDFLAG(IS_ANDROID)
 class TestPaymentLinkHandler
     : public payments::facilitated::mojom::blink::PaymentLinkHandler {
@@ -2130,6 +2270,9 @@ TEST_F(DocumentTest, PaymentLinkNotHandled_PaymentRel) {
 
   // Check that the payment link was not handled.
   EXPECT_EQ(test_payment_link_handler.get_payment_link_handled_counter(), 0);
+
+  GetDocument().GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      payments::facilitated::mojom::blink::PaymentLinkHandler::Name_, {});
 }
 
 TEST_F(DocumentTest, PaymentLinkHandling_SinglePaymentLink) {
@@ -2158,6 +2301,9 @@ TEST_F(DocumentTest, PaymentLinkHandling_SinglePaymentLink) {
   EXPECT_EQ(test_payment_link_handler.get_payment_link_handled_counter(), 1);
   EXPECT_EQ(test_payment_link_handler.get_handled_url(),
             KURL("upi://payment_link_1"));
+
+  GetDocument().GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      payments::facilitated::mojom::blink::PaymentLinkHandler::Name_, {});
 }
 
 TEST_F(DocumentTest, PaymentLinkHandling_MultiplePaymentLink) {
@@ -2188,6 +2334,9 @@ TEST_F(DocumentTest, PaymentLinkHandling_MultiplePaymentLink) {
   EXPECT_EQ(test_payment_link_handler.get_payment_link_handled_counter(), 1);
   EXPECT_EQ(test_payment_link_handler.get_handled_url(),
             KURL("upi://payment_link_1"));
+
+  GetDocument().GetFrame()->GetBrowserInterfaceBroker().SetBinderForTesting(
+      payments::facilitated::mojom::blink::PaymentLinkHandler::Name_, {});
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 

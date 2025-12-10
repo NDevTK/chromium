@@ -8,14 +8,15 @@ import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.text.format.Formatter;
 
 import androidx.annotation.ColorRes;
 import androidx.annotation.DrawableRes;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.MathUtils;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -144,18 +145,27 @@ public final class UiUtils {
             return context.getString(R.string.download_manager_dangerous_blocked);
         }
 
+        if (DownloadUtils.isBlockedSensitiveDownload(item)) {
+            return context.getString(R.string.download_message_single_download_blocked);
+        }
+
         String displayUrl =
                 DownloadUtils.formatUrlForDisplayInNotification(
                         item.url, DownloadUtils.MAX_ORIGIN_LENGTH_FOR_DOWNLOAD_HOME_CAPTION);
+        boolean hasDisplayUrl = !TextUtils.isEmpty(displayUrl);
 
         if (item.totalSizeBytes == 0) {
-            return context.getString(
-                    R.string.download_manager_list_item_description_no_size, displayUrl);
+            return hasDisplayUrl
+                    ? context.getString(
+                            R.string.download_manager_list_item_description_no_size, displayUrl)
+                    : "";
         }
 
         String displaySize = Formatter.formatFileSize(context, item.totalSizeBytes);
-        return context.getString(
-                R.string.download_manager_list_item_description, displaySize, displayUrl);
+        return hasDisplayUrl
+                ? context.getString(
+                        R.string.download_manager_list_item_description, displaySize, displayUrl)
+                : displaySize;
     }
 
     /**
@@ -190,7 +200,8 @@ public final class UiUtils {
      * @return A drawable resource id representing an icon for {@code item}.
      */
     public static @DrawableRes int getIconForItem(OfflineItem item) {
-        if (DownloadUtils.shouldDisplayDownloadAsDangerous(item.dangerType, item.state)) {
+        if (DownloadUtils.shouldDisplayDownloadAsDangerous(item.dangerType, item.state)
+                || DownloadUtils.isBlockedSensitiveDownload(item)) {
             return R.drawable.dangerous_filled_24dp;
         }
 
@@ -419,7 +430,7 @@ public final class UiUtils {
         }
         // Sharing functionality that leads directly to the Android share sheet is
         // currently disabled.
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             return false;
         }
         return (item.state == OfflineItemState.COMPLETE)

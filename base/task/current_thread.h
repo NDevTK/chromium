@@ -9,7 +9,6 @@
 #include <type_traits>
 
 #include "base/base_export.h"
-#include "base/callback_list.h"
 #include "base/check.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
@@ -36,6 +35,8 @@ class WebTaskEnvironment;
 }
 
 namespace base {
+
+class CallbackListSubscription;
 
 namespace test {
 bool RunUntil(FunctionRef<bool(void)>);
@@ -238,8 +239,6 @@ class BASE_EXPORT CurrentThread {
   raw_ptr<sequence_manager::internal::SequenceManagerImpl> current_;
 };
 
-#if !BUILDFLAG(IS_NACL)
-
 // UI extension of CurrentThread.
 class BASE_EXPORT CurrentUIThread : public CurrentThread {
  public:
@@ -252,7 +251,7 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
 
   CurrentUIThread* operator->() { return this; }
 
-#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA) && !BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_OZONE) && !BUILDFLAG(IS_FUCHSIA)
   static_assert(
       std::is_base_of_v<WatchableIOMessagePumpPosix, MessagePumpForUI>,
       "CurrentThreadForUI::WatchFileDescriptor is supported only"
@@ -293,8 +292,6 @@ class BASE_EXPORT CurrentUIThread : public CurrentThread {
   MessagePumpForUI* GetMessagePumpForUI() const;
 };
 
-#endif  // !BUILDFLAG(IS_NACL)
-
 // ForIO extension of CurrentThread.
 class BASE_EXPORT CurrentIOThread : public CurrentThread {
  public:
@@ -306,8 +303,6 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
   static bool IsSet();
 
   CurrentIOThread* operator->() { return this; }
-
-#if !BUILDFLAG(IS_NACL)
 
 #if BUILDFLAG(IS_WIN)
   // Please see MessagePumpWin for definitions of these methods.
@@ -340,8 +335,6 @@ class BASE_EXPORT CurrentIOThread : public CurrentThread {
                      MessagePumpForIO::ZxHandleWatchController* controller,
                      MessagePumpForIO::ZxHandleWatcher* delegate);
 #endif  // BUILDFLAG(IS_FUCHSIA)
-
-#endif  // !BUILDFLAG(IS_NACL)
 
  private:
   explicit CurrentIOThread(

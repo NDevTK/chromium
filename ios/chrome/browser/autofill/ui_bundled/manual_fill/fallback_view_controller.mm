@@ -11,9 +11,11 @@
 #import "base/task/sequenced_task_runner.h"
 #import "base/time/time.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_action_cell.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/net/model/crurl.h"
+#import "ios/chrome/browser/passwords/ui_bundled/password_suggestion_utils.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_header_footer_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/legacy_chrome_table_view_styler.h"
+#import "ios/chrome/browser/shared/ui/table_view/table_view_favicon_data_source.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
@@ -21,6 +23,7 @@
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/device_form_factor.h"
 #import "ui/base/l10n/l10n_util_mac.h"
+#import "url/gurl.h"
 
 typedef NS_ENUM(NSInteger, SectionIdentifier) {
   HeaderSectionIdentifier = kSectionIdentifierEnumZero,
@@ -28,8 +31,7 @@ typedef NS_ENUM(NSInteger, SectionIdentifier) {
   ActionsSectionIdentifier,
   PlusAddressActionsSectionIdentifier,
   // Must be declared last as it is used as the starting point to dynamically
-  // create section identifiers for each data item when the
-  // Keyboard Accessory Upgrade feature is enabled.
+  // create section identifiers for each data item.
   DataItemsSectionIdentifier
 };
 
@@ -54,7 +56,7 @@ constexpr base::TimeDelta kMinimumLoadingTime = base::Milliseconds(500);
 constexpr CGFloat kSectionHeaderHeight = 6;
 
 // Height of the section footer.
-constexpr CGFloat kSectionFooterHeight = 8;
+constexpr CGFloat kSectionFooterHeight = 6;
 
 // Left inset of the table view's section separators.
 constexpr CGFloat kSectionSepatatorLeftInset = 16;
@@ -98,12 +100,14 @@ bool ShouldResizeViewForPopover(
 
   // The number of data items that are currently being presented.
   NSInteger _dataItemCount;
+
+  // Attributes for the default globe favicon shown when no site-specific
+  // favicon can be retrieved.
+  FaviconAttributes* _defaultGlobeFaviconAttributes;
 }
 
 - (instancetype)init {
-  self = [super initWithStyle:IsKeyboardAccessoryUpgradeEnabled()
-                                  ? ChromeTableViewStyle()
-                                  : UITableViewStylePlain];
+  self = [super initWithStyle:ChromeTableViewStyle()];
 
   if (self) {
     _loadingIndicatorStartingTime = base::Time::Min();
@@ -113,25 +117,17 @@ bool ShouldResizeViewForPopover(
 }
 
 - (void)viewDidLoad {
-  // Super's `viewDidLoad` uses `styler.tableViewBackgroundColor` so it needs to
-  // be set before.
-  self.styler.tableViewBackgroundColor =
-      [UIColor colorNamed:IsKeyboardAccessoryUpgradeEnabled()
-                              ? kGroupedPrimaryBackgroundColor
-                              : kBackgroundColor];
-
   [super viewDidLoad];
+
+  if (@available(iOS 26, *)) {
+    self.tableView.backgroundColor = UIColor.clearColor;
+  }
 
   // Remove extra spacing on top of sections.
   self.tableView.sectionHeaderTopPadding = 0;
 
-  if (IsKeyboardAccessoryUpgradeEnabled()) {
-    self.tableView.separatorInset =
-        UIEdgeInsetsMake(0, kSectionSepatatorLeftInset, 0, 0);
-  } else {
-    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
-    self.tableView.separatorInset = UIEdgeInsetsMake(0, 0, 0, 0);
-  }
+  self.tableView.separatorInset =
+      UIEdgeInsetsMake(0, kSectionSepatatorLeftInset, 0, 0);
   self.tableView.estimatedRowHeight = 1;
   self.tableView.allowsSelection = NO;
   self.definesPresentationContext = YES;
@@ -184,6 +180,30 @@ bool ShouldResizeViewForPopover(
 
 - (void)presentPlusAddressActionItems:(NSArray<TableViewItem*>*)actions {
   [self presentItems:actions ofItemType:ItemType::kItemTypePlusAddressAction];
+}
+
+- (void)loadFaviconForCellIdentifier:(NSString*)cellIdentifier
+                      itemIdentifier:(NSString*)itemIdentifier
+                          faviconURL:(const GURL&)faviconURL
+                          completion:
+                              (ConfigureFaviconCompletionBlock)completion {
+  // Only set the favicon if the cell hasn't been reused.
+  if (![cellIdentifier isEqualToString:itemIdentifier]) {
+    return;
+  }
+
+  if (faviconURL.is_empty()) {
+    completion([self defaultGlobeFaviconAttributes]);
+    return;
+  }
+
+  CrURL* crURL = [[CrURL alloc] initWithGURL:faviconURL];
+  [self.imageDataSource
+      faviconForPageURL:crURL
+             completion:^(FaviconAttributes* attributes, bool cached) {
+               CHECK(attributes);
+               completion(attributes);
+             }];
 }
 
 #pragma mark - UITableViewDelegate
@@ -325,9 +345,6 @@ bool ShouldResizeViewForPopover(
 
   [self updateEmptyStateMessage];
 
-  BOOL sectionExists = [self.tableViewModel
-      hasSectionForSectionIdentifier:DataItemsSectionIdentifier];
-
   // Determine the index at which the next section should be inserted based on
   // header existance.
   NSInteger sectionIndex =
@@ -336,26 +353,12 @@ bool ShouldResizeViewForPopover(
           ? 1
           : 0;
 
-  // If the Keyboard Accessory Upgrade feature is enabled, remove any excess
-  // data item sections, and present the queued data items.
-  if (IsKeyboardAccessoryUpgradeEnabled()) {
-    [self removeUnusedDataItemSections];
-    [self presentFallbackItems:self.queuedDataItems
-             startingAtSection:DataItemsSectionIdentifier
-               startingAtIndex:sectionIndex];
-    _dataItemCount = self.queuedDataItems.count;
-  } else {
-    if (!self.queuedDataItems.count && sectionExists) {
-      [self.tableViewModel
-          removeSectionWithIdentifier:DataItemsSectionIdentifier];
-    } else if (self.queuedDataItems.count && !sectionExists) {
-      [self.tableViewModel
-          insertSectionWithIdentifier:DataItemsSectionIdentifier
-                              atIndex:sectionIndex];
-    }
-    [self presentFallbackItems:self.queuedDataItems
-                     inSection:DataItemsSectionIdentifier];
-  }
+  // Remove any excess data item sections, and present the queued data items.
+  [self removeUnusedDataItemSections];
+  [self presentFallbackItems:self.queuedDataItems
+           startingAtSection:DataItemsSectionIdentifier
+             startingAtIndex:sectionIndex];
+  _dataItemCount = self.queuedDataItems.count;
   self.queuedDataItems = nil;
 }
 
@@ -474,10 +477,6 @@ bool ShouldResizeViewForPopover(
 // amongst passwords, cards and addresses to show. However, plus address can
 // still be shown.
 - (void)updateEmptyStateMessage {
-  if (!IsKeyboardAccessoryUpgradeEnabled()) {
-    return;
-  }
-
   BOOL needsEmptyStateHeader = self.noRegularDataItemsToShowHeaderItem;
   BOOL hasEmptyStateSection = [self.tableViewModel
       hasSectionForSectionIdentifier:NoDataItemsSectionIdentifier];
@@ -499,6 +498,15 @@ bool ShouldResizeViewForPopover(
         removeSectionWithIdentifier:NoDataItemsSectionIdentifier];
     self.noRegularDataItemsToShowHeaderItem = nil;
   }
+}
+
+// Creates the default globe favicon attributes if needed, and returns them.
+- (FaviconAttributes*)defaultGlobeFaviconAttributes {
+  if (!_defaultGlobeFaviconAttributes) {
+    _defaultGlobeFaviconAttributes = GetDefaultGlobeFaviconAttributes();
+  }
+
+  return _defaultGlobeFaviconAttributes;
 }
 
 @end

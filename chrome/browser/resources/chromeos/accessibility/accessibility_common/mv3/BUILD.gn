@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
-import("//build/config/features.gni")
 import(
     "//chrome/browser/resources/chromeos/accessibility/tools/run_jsbundler.gni")
 import("//chrome/test/base/ash/js2gtest.gni")
@@ -38,6 +37,7 @@ misc_sources = [
   "dictation/earcons/audio_initiate.wav",
   "dictation/earcons/null_selection.wav",
   "offscreen.html",
+  "sandboxed_pumpkin_tagger.html",
 ]
 
 # TS files to build.
@@ -70,6 +70,7 @@ ts_modules = [
   "facegaze/gesture_timer.ts",
   "facegaze/metrics_utils.ts",
   "facegaze/mouse_controller.ts",
+  "facegaze/offscreen_web_cam.ts",
   "facegaze/scroll_mode_controller.ts",
   "facegaze/macros/mouse_long_click_macro.ts",
   "facegaze/macros/mouse_scroll_macro.ts",
@@ -87,7 +88,7 @@ ts_definitions = [
   "$mediapipe_dir/vision.d.ts",
   "dictation/parse/pumpkin/pumpkin_tagger_externs.d.ts",
   "../../definitions/accessibility_features_mv2.d.ts",
-  "../../definitions/accessibility_private_mv2.d.ts",
+  "../../definitions/accessibility_private_mv3.d.ts",
   "../../definitions/audio.d.ts",
   "../../definitions/automation.d.ts",
   "../../definitions/command_line_private.d.ts",
@@ -102,7 +103,6 @@ ts_definitions = [
   "../../definitions/settings_private_mv2.d.ts",
   "../../definitions/speech_recognition_private.d.ts",
   "../../definitions/tabs.d.ts",
-  "../../definitions/settings_private_mv2.d.ts",
   "../../definitions/windows.d.ts",
   "//tools/typescript/definitions/chrome_event.d.ts",
   "//tools/typescript/definitions/i18n.d.ts",

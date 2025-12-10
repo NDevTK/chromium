@@ -181,6 +181,8 @@ class _TransitiveValuesBuilder:
           direct_deps.recursive().not_of_type('system_java_library'))
 
     self._CollectClasspath(direct_deps, all_deps)
+    if params.merges_manifests():
+      self._CollectManifests(all_deps_without_under_test)
     if params.collects_resources():
       self._CollectResources(all_deps_without_under_test)
     self._CollectExtraPackageNames(direct_deps, all_deps)
@@ -227,17 +229,17 @@ class _TransitiveValuesBuilder:
         all_deps.collect('input_jars_paths', flatten=True))
 
     # Add the target's .jar (except for dist_jar, where it's the output .jar).
-    if params.collects_host_classpath() or params.collects_device_classpath():
-      if not params.is_dist_jar():
+    if params.collects_processed_classpath():
+      if not params.is_dist_xar():
         if path := params.get('processed_jar_path'):
           ret.all_processed_jars.add(path)
       ret.all_processed_jars.update(all_deps.collect('processed_jar_path'))
 
-      if params.collects_device_classpath() and params.supports_android():
-        if not params.is_dist_jar():
-          if path := params.get('dex_path'):
-            ret.all_dex_files.add(path)
-        ret.all_dex_files.update(all_deps.collect('dex_path'))
+    if params.collects_dex_paths():
+      if not params.is_dist_xar():
+        if path := params.get('dex_path'):
+          ret.all_dex_files.add(path)
+      ret.all_dex_files.update(all_deps.collect('dex_path'))
 
   def _AddBaseModuleToClasspath(self):
     base_module = self._params.base_module()
@@ -247,6 +249,22 @@ class _TransitiveValuesBuilder:
     self._ret.direct_interface_jars.add(base_module['interface_jar_path'])
     self._ret.all_interface_jars.add(base_module['interface_jar_path'])
 
+  def _CollectManifests(self, all_deps_without_under_test):
+    # Manifests are listed from highest priority to lowest priority.
+    # Ensure direct manifests come first, then sort the rest by name.
+    # https://developer.android.com/build/manage-manifests#merge_priorities
+    params = self._params
+    ret = self._ret
+    ret.android_manifests.update(params.get('mergeable_android_manifests', []))
+    indirect_manifests = all_deps_without_under_test.collect(
+        'mergeable_android_manifests', flatten=True)
+    indirect_manifests.sort(key=lambda p: (os.path.basename(p), p))
+    ret.android_manifests.update(indirect_manifests)
+    # Prevent the main manifest from showing up in mergeable_android_manifests.
+    if path := params.get('android_manifest'):
+      if path in ret.android_manifests:
+        ret.android_manifests.remove(path)
+
   def _CollectResources(self, all_deps_without_under_test):
     params = self._params
     ret = self._ret
@@ -254,15 +272,6 @@ class _TransitiveValuesBuilder:
     ret.dependency_zips.update(resource_deps.collect('resources_zip'))
     ret.dependency_zip_overlays.update(
         resource_deps.collect('resources_overlay_zip'))
-
-    # Manifests are listed from highest priority to lowest priority.
-    # Ensure direct manifests come first, then sort the rest by name.
-    # https://developer.android.com/build/manage-manifests#merge_priorities
-    ret.android_manifests.update(params.get('mergeable_android_manifests', []))
-    indirect_manifests = all_deps_without_under_test.collect(
-        'mergeable_android_manifests', flatten=True)
-    indirect_manifests.sort(key=lambda p: (os.path.basename(p), p))
-    ret.android_manifests.update(indirect_manifests)
 
     assets, uncompressed_assets, locale_paks = _MergeAssets(
         all_deps_without_under_test.of_type('android_assets'))
@@ -352,31 +361,6 @@ class _TransitiveValuesBuilder:
         retain_android_manifests=True)
 
 
-def _GradlePrebuiltJarPaths(params):
-  """Returns a list of prebuilt jar paths for Gradle."""
-  filt = lambda p: p['is_prebuilt'] or p.get('gradle_treat_as_prebuilt')
-  return sorted(params.deps().of_type('java_library').filter(filt).collect(
-      'unprocessed_jar_path'))
-
-
-def _GradleLibraryProjectDeps(params):
-  """Returns a list of library project dependencies for Gradle."""
-  ret = {}
-
-  def visit_func(cur):
-    if not cur.is_library() or cur['is_prebuilt']:
-      return False
-    if cur.get('gradle_treat_as_prebuilt'):
-      return True
-    ret[cur] = 1
-    return False
-
-  # Need |ret| rather than walk's return value since
-  # gradle_treat_as_prebuilt deps are traversed but not themselves included.
-  params.deps().walk(visit_func)
-  return list(ret)
-
-
 def _MergeAssets(all_assets):
   """Merges all assets from the given deps.
 
@@ -414,29 +398,6 @@ def _MergeAssets(all_assets):
     return [f'{src}:{dest}' for dest, src in items]
 
   return create_list(compressed), create_list(uncompressed), locale_paks
-
-
-def _ExtractSharedLibsFromRuntimeDeps(runtime_deps_file):
-  """Extracts a list of .so paths from a runtime_deps file."""
-  ret = []
-  with open(runtime_deps_file, encoding='utf-8') as f:
-    for line in f:
-      line = line.rstrip()
-      if not line.endswith('.so'):
-        continue
-      # Only unstripped .so files are listed in runtime deps.
-      # Convert to the stripped .so by going up one directory.
-      ret.append(os.path.normpath(line.replace('lib.unstripped/', '')))
-  ret.reverse()
-  return ret
-
-
-def _CreateJavaLibrariesList(library_paths):
-  """Returns a java literal array with the "base" library names:
-  e.g. libfoo.so -> foo
-  """
-  names = ['"%s"' % os.path.basename(s)[3:-3] for s in library_paths]
-  return ('{%s}' % ','.join(sorted(set(names))))
 
 
 def _CreateJavaLocaleListFromAssets(assets, locale_paks):
@@ -571,6 +532,63 @@ def _ToTraceEventRewrittenPath(jar_dir, path):
   return os.path.join(jar_dir, path)
 
 
+def _CreateLintConfig(params, javac_config, manifest_config):
+  # Collect all sources and resources at the apk/bundle_module level.
+  aars = set()
+  srcjars = set()
+  sources = set()
+  resource_sources = set()
+  resource_zips = set()
+
+  if path := params.get('target_sources_file'):
+    sources.add(path)
+  if paths := params.get('bundled_srcjars'):
+    srcjars.update(paths)
+  for c in params.deps().recursive():
+    if c.get('chromium_code', True) and c.requires_android():
+      if path := c.get('target_sources_file'):
+        sources.add(path)
+      if paths := c.get('bundled_srcjars'):
+        srcjars.update(paths)
+    if path := c.get('aar_path'):
+      aars.add(path)
+
+  for c in params.resource_deps():
+    if c.get('chromium_code', True):
+      # Prefer res_sources_path to resources_zips so that lint errors have
+      # real paths and to avoid needing to extract during lint.
+      if path := c.get('res_sources_path'):
+        resource_sources.add(path)
+      else:
+        resource_zips.add(
+            c.get('resources_zip') or c.get('resources_overlay_zip'))
+
+  if params.is_bundle():
+    classpath = OrderedSet()
+    manifests = OrderedSet(p['android_manifest'] for p in params.module_deps())
+    for m in params.module_deps():
+      classpath.update(
+          m.javac_build_config_json()['javac_full_interface_classpath'])
+      manifests.update(
+          m.manifest_build_config_json()['extra_android_manifests'])
+    classpath = list(classpath)
+    manifests = list(manifests)
+  else:
+    classpath = javac_config['javac_full_interface_classpath']
+    manifests = [params['android_manifest']]
+    manifests += manifest_config['extra_android_manifests']
+
+  config = {}
+  config['aars'] = sorted(aars)
+  config['android_manifests'] = manifests
+  config['classpath'] = classpath
+  config['sources'] = sorted(sources)
+  config['srcjars'] = sorted(srcjars)
+  config['resource_sources'] = sorted(resource_sources)
+  config['resource_zips'] = sorted(resource_zips)
+  return config
+
+
 def main():
   parser = argparse.ArgumentParser(
       description='Writes a .build_config.json file.')
@@ -632,95 +650,94 @@ def main():
       # This must then have instrumentation only for itself.
       manifest.CheckInstrumentationElements(manifest.GetPackageName())
 
-  config = {}
+  main_config = {}
+  # Separate to prevent APK / bundle-related values from invalidating
+  # compile_java.py, and to minimize the .json that compile_java.py needs to
+  # parse.
+  javac_config = {}
+  # Separate to prevent transitive classpath changes invalidating turbine.py.
+  turbine_config = {}
+  # Separate because so few targets enable lint.
+  lint_config = {}
+  # Separate to prevent keys other than extra_android_manifests from
+  # invalidating merge_manifest.py.
+  manifest_config = {}
+  # Separate to prevent .java changes invalidating compile_resources.py, and
+  # new resource targets from invalidating java compiles.
+  res_config = {}
+  # Separate to prevent .java changes invalidating create_r_java.py, and new
+  # resource targets from invalidating java compiles.
+  rtxt_config = {}
+  # Separate to save targets that don't need it from having to parse it.
+  targets_config = {}
 
   if is_apk:
-    config['apk_path'] = params['apk_path']
+    main_config['apk_path'] = params['apk_path']
     if path := params.get('incremental_install_json_path'):
-      config['incremental_install_json_path'] = path
-      config['incremental_apk_path'] = params['incremental_apk_path']
-
-  if has_classpath:
-    # TODO(agrieve): Have generate_gradle.py compute these values directly.
-    dependent_android_projects = []
-    dependent_java_projects = []
-    for c in _GradleLibraryProjectDeps(params):
-      if c['requires_android']:
-        dependent_android_projects.append(c.path)
-      else:
-        dependent_java_projects.append(c.path)
-
-    config['gradle'] = {}
-    config['gradle']['dependent_android_projects'] = dependent_android_projects
-    config['gradle']['dependent_java_projects'] = dependent_java_projects
-    dependent_prebuilt_jars = _GradlePrebuiltJarPaths(params)
-    if dependent_prebuilt_jars:
-      config['gradle']['dependent_prebuilt_jars'] = dependent_prebuilt_jars
-    if apk_under_test_params:
-      config['gradle']['apk_under_test'] = os.path.basename(
-          apk_under_test_params['apk_path'])
+      main_config['incremental_install_json_path'] = path
+      main_config['incremental_apk_path'] = params['incremental_apk_path']
 
   if is_bundle_module:
-    config['unprocessed_jar_path'] = params['unprocessed_jar_path']
-    config['res_size_info_path'] = params['res_size_info_path']
+    main_config['unprocessed_jar_path'] = params['unprocessed_jar_path']
+    main_config['res_size_info_path'] = params['res_size_info_path']
 
   if has_classpath:
     tv = _TransitiveValuesBuilder(params).Build()
+    sdk_deps = params.deps().of_type('system_java_library')
 
-    if apk_under_test_params:
-      assert is_apk
-      config['arsc_package_name'] = (
-          apk_under_test_params.build_config_json()['package_name'])
+    javac_full_classpath = (list(tv.all_unprocessed_jars) +
+                            list(tv.all_input_jars_paths))
 
-    config['classpath'] = list(tv.direct_unprocessed_jars) + list(
-        tv.direct_input_jars_paths)
-    config['interface_classpath'] = list(tv.direct_interface_jars) + list(
-        tv.direct_input_jars_paths)
-    # processor_configs will be of type 'java_annotation_processor', and so not
-    # included in deps().recursive().of_type('java_library'). Annotation
-    # processors run as part of the build, so need processed_jar_path.
-    processor_deps = params.processor_deps()
-    config['processor_classpath'] = _SortClasspath(
-        processor_deps.recursive()).collect('processed_jar_path')
-    config['processor_classes'] = sorted(processor_deps.collect('main_class'))
+    if params.needs_full_javac_classpath():
+      main_config['javac_full_classpath'] = javac_full_classpath
+      main_config['sdk_jars'] = sdk_deps.collect('unprocessed_jar_path')
 
-    config['javac_full_classpath'] = (list(tv.all_unprocessed_jars) +
-                                      list(tv.all_input_jars_paths))
-    config['javac_full_interface_classpath'] = (list(tv.all_interface_jars) +
-                                                list(tv.all_input_jars_paths))
-
-    if params.collects_host_classpath():
-      config['host_classpath'] = list(tv.all_processed_jars)
-
-    if params.collects_device_classpath():
-      config['device_classpath'] = list(tv.all_processed_jars)
-      if params.supports_android():
-        config['all_dex_files'] = list(tv.all_dex_files)
-
+    if params.collects_processed_classpath():
+      main_config['processed_classpath'] = list(tv.all_processed_jars)
       if trace_events_jar_dir := params.get('trace_events_jar_dir'):
-        config['trace_event_rewritten_device_classpath'] = [
+        main_config['trace_event_rewritten_classpath'] = [
             _ToTraceEventRewrittenPath(trace_events_jar_dir, p)
             for p in tv.all_processed_jars
         ]
 
-    if target_type in ('dist_aar', 'java_library'):
-      config['dependency_rtxt_files'] = (
+    if params.collects_dex_paths():
+      main_config['all_dex_files'] = list(tv.all_dex_files)
+
+    if params.needs_transitive_rtxt():
+      rtxt_config['dependency_rtxt_files'] = (
           params.resource_deps().collect('rtxt_path'))
 
-    sdk_deps = params.deps().of_type('system_java_library')
-    config['sdk_jars'] = sdk_deps.collect('unprocessed_jar_path')
-    config['sdk_interface_jars'] = sdk_deps.collect('interface_jar_path')
-
     if proguard_enabled or target_type == 'dist_aar':
-      config['proguard_all_configs'] = sorted(tv.proguard_configs)
+      main_config['proguard_all_configs'] = sorted(tv.proguard_configs)
 
     if proguard_enabled:
-      config['proguard_classpath_jars'] = sorted(tv.all_input_jars_paths)
+      main_config['proguard_classpath_jars'] = sorted(tv.all_input_jars_paths)
 
     if is_apk_or_module:
-      config['java_resources_jars'] = sorted(tv.java_resources_jars)
+      main_config['java_resources_jars'] = sorted(tv.java_resources_jars)
 
-  if params.is_dist_jar():
+  if params.is_compile_type():
+    # Needed by turbine.py and check_for_missing_direct_deps.py:
+    turbine_config['interface_classpath'] = list(
+        tv.direct_interface_jars) + list(tv.direct_input_jars_paths)
+    # processor_configs will be of type 'java_annotation_processor', and so not
+    # included in deps().recursive().of_type('java_library'). Annotation
+    # processors run as part of the build, so need processed_jar_path.
+    processor_deps = params.processor_deps()
+    turbine_config['processor_classpath'] = _SortClasspath(
+        processor_deps.recursive()).collect('processed_jar_path')
+    turbine_config['processor_classes'] = sorted(
+        processor_deps.collect('main_class'))
+
+    sdk_interface_jars = sdk_deps.collect('interface_jar_path')
+    turbine_config['sdk_interface_jars'] = sdk_interface_jars
+
+    javac_config['javac_full_interface_classpath'] = (
+        list(tv.all_interface_jars) + list(tv.all_input_jars_paths))
+    # Duplicate so that compile_java.py does not need to read another .json.
+    javac_config['sdk_interface_jars'] = sdk_interface_jars
+
+  if params.is_dist_xar():
     if params.get('direct_deps_only'):
       if params.get('use_interface_jars'):
         dist_jars = tv.direct_interface_jars
@@ -731,68 +748,35 @@ def main():
     else:
       dist_jars = tv.all_processed_jars
 
-    config['dist_jar'] = {}
-    config['dist_jar']['jars'] = list(dist_jars)
+    main_config['dist_classpath'] = list(dist_jars)
 
   if params.collects_resources():
-    config['extra_android_manifests'] = list(tv.android_manifests)
-    config['assets'] = list(tv.assets)
-    config['uncompressed_assets'] = list(tv.uncompressed_assets)
-    config['locales_java_list'] = _CreateJavaLocaleListFromAssets(
+    main_config['assets'] = sorted(tv.assets)
+    main_config['uncompressed_assets'] = sorted(tv.uncompressed_assets)
+
+  if params.get('create_locales_java_list'):
+    main_config['locales_java_list'] = _CreateJavaLocaleListFromAssets(
         tv.uncompressed_assets, tv.locale_paks)
+
+  if params.collects_resources():
     # Safe to sort: Build checks that non-overlay resource have no overlap.
-    config['dependency_zips'] = sorted(tv.dependency_zips)
-    config['dependency_zip_overlays'] = list(tv.dependency_zip_overlays)
+    res_config['dependency_zips'] = sorted(tv.dependency_zips)
 
-  if has_classpath:
-    config['extra_package_names'] = sorted(tv.extra_package_names)
+    # Reverse overlay list so that dependents override dependencies
+    # The topological walk puts dependencies before dependents, but for resource
+    # overlays we need dependents to come after dependencies in AAPT2's -R list
+    overlay_list = list(reversed(tv.dependency_zip_overlays))
+    res_config['dependency_zip_overlays'] = overlay_list
 
-  # We allow lint to be run on android_apk targets, so we collect lint
-  # artifacts for them.
-  # We allow lint to be run on android_app_bundle targets, so we need to
-  # collect lint artifacts for the android_app_bundle_module targets that the
-  # bundle includes. Different android_app_bundle targets may include different
-  # android_app_bundle_module targets, so the bundle needs to be able to
-  # de-duplicate these lint artifacts.
-  if is_apk_or_module:
-    # Collect all sources and resources at the apk/bundle_module level.
-    lint_aars = set()
-    lint_srcjars = set()
-    lint_sources = set()
-    lint_resource_sources = set()
-    lint_resource_zips = set()
+    if params.compiles_resources():
+      res_config['extra_package_names'] = sorted(tv.extra_package_names)
+      if apk_under_test_params:
+        assert is_apk
+        res_config['arsc_package_name'] = (
+            apk_under_test_params.build_config_json()['package_name'])
 
-    if path := params.get('target_sources_file'):
-      lint_sources.add(path)
-    if paths := params.get('bundled_srcjars'):
-      lint_srcjars.update(paths)
-    for c in params.deps().recursive().of_type('java_library'):
-      if c.get('chromium_code', True) and c['requires_android']:
-        if path := c.get('target_sources_file'):
-          lint_sources.add(path)
-        lint_srcjars.update(c['bundled_srcjars'])
-      if path := c.get('aar_path'):
-        lint_aars.add(path)
-
-    if path := params.get('res_sources_path'):
-      lint_resource_sources.add(path)
-    if path := params.get('resources_zip'):
-      lint_resource_zips.add(path)
-    for c in params.resource_deps():
-      if c.get('chromium_code', True):
-        # Prefer res_sources_path to resources_zips so that lint errors have
-        # real paths and to avoid needing to extract during lint.
-        if path := c.get('res_sources_path'):
-          lint_resource_sources.add(path)
-        else:
-          lint_resource_zips.add(c['resources_zip'])
-
-    config['lint_aars'] = sorted(lint_aars)
-    config['lint_srcjars'] = sorted(lint_srcjars)
-    config['lint_sources'] = sorted(lint_sources)
-    config['lint_resource_sources'] = sorted(lint_resource_sources)
-    config['lint_resource_zips'] = sorted(lint_resource_zips)
-    config['lint_extra_android_manifests'] = []
+  if params.merges_manifests():
+    manifest_config['extra_android_manifests'] = list(tv.android_manifests)
 
   if is_bundle:
     module_deps = params.module_deps()
@@ -809,25 +793,17 @@ def main():
         child_to_ancestors[name].append(module['module_name'])
 
     per_module_fields = [
-        'device_classpath',
-        'trace_event_rewritten_device_classpath',
+        'processed_classpath',
+        'trace_event_rewritten_classpath',
         'all_dex_files',
         'assets',
         'uncompressed_assets',
     ]
-    union_fields = {
-        'javac_full_interface_classpath': 'javac_full_interface_classpath',
-        'lint_extra_android_manifests': 'extra_android_manifests',
-        'lint_aars': 'lint_aars',
-        'lint_srcjars': 'lint_srcjars',
-        'lint_sources': 'lint_sources',
-        'lint_resource_sources': 'lint_resource_sources',
-        'lint_resource_zips': 'lint_resource_zips',
-    }
+    union_fields = {}
     if params.get('trace_events_jar_dir'):
-      union_fields['device_classpath'] = 'device_classpath'
-      union_fields['trace_event_rewritten_device_classpath'] = (
-          'trace_event_rewritten_device_classpath')
+      union_fields['processed_classpath'] = 'processed_classpath'
+      union_fields['trace_event_rewritten_classpath'] = (
+          'trace_event_rewritten_classpath')
     if proguard_enabled:
       union_fields['proguard_classpath_jars'] = 'proguard_classpath_jars'
       union_fields['proguard_all_configs'] = 'proguard_all_configs'
@@ -837,17 +813,13 @@ def main():
     for n, c in module_configs_by_name.items():
       module_params = module_params_by_name[n]
       if n == 'base':
-        assert 'base_module_config' not in config, (
+        assert 'base_module_config' not in main_config, (
             'Must have exactly 1 base module!')
-        config['package_name'] = c['package_name']
-        config['version_code'] = module_params['version_code']
-        config['version_name'] = module_params['version_name']
-        config['base_module_config'] = module_params.path
-        config['android_manifest'] = module_params['android_manifest']
-      else:
-        # All manifests nodes are merged into the main manfiest by lint.py.
-        unioned_values['lint_extra_android_manifests'].add(
-            module_params['android_manifest'])
+        main_config['package_name'] = c['package_name']
+        main_config['version_code'] = module_params['version_code']
+        main_config['version_name'] = module_params['version_name']
+        main_config['base_module_config'] = module_params.path
+        main_config['android_manifest'] = module_params['android_manifest']
 
       for dst_key, src_key in union_fields.items():
         unioned_values[dst_key].update(c[src_key])
@@ -859,52 +831,43 @@ def main():
           module[f] = c[f]
 
     for dst_key in union_fields:
-      config[dst_key] = list(unioned_values[dst_key])
+      main_config[dst_key] = list(unioned_values[dst_key])
 
     # Promote duplicates from siblings/cousins.
     for f in per_module_fields:
       _PromoteToCommonAncestor(modules, child_to_ancestors, f)
-    config['modules'] = modules
+    main_config['modules'] = modules
 
   if is_apk_or_module:
-    config['package_name'] = manifest.GetPackageName()
-    config['android_manifest'] = params['android_manifest']
-    config['merged_android_manifest'] = params['merged_android_manifest']
+    main_config['package_name'] = manifest.GetPackageName()
+    main_config['android_manifest'] = params['android_manifest']
+    main_config['merged_android_manifest'] = params['merged_android_manifest']
 
     if is_apk:
-      config['version_code'] = params['version_code']
-      config['version_name'] = params['version_name']
+      main_config['version_code'] = params['version_code']
+      main_config['version_name'] = params['version_name']
 
     # TrichromeLibrary has no dex.
     if final_dex_path := params.get('final_dex_path'):
-      config['final_dex_path'] = final_dex_path
+      main_config['final_dex_path'] = final_dex_path
 
-    library_paths = []
-    java_libraries_list = None
-    if path := params.get('shared_libraries_runtime_deps_file'):
-      library_paths = _ExtractSharedLibsFromRuntimeDeps(path)
-      java_libraries_list = _CreateJavaLibrariesList(library_paths)
+    library_paths = params.native_libraries()
+    secondary_abi_libraries = params.secondary_abi_native_libraries()
+    paths_without_parent_dirs = [
+        p for p in secondary_abi_libraries if os.path.sep not in p
+    ]
+    if paths_without_parent_dirs:
+      sys.stderr.write('Found secondary native libraries from primary '
+                       'toolchain directory. This is a bug!\n')
+      sys.stderr.write('\n'.join(paths_without_parent_dirs))
+      sys.stderr.write('\n\nIt may be helpful to run: \n')
+      sys.stderr.write('    gn path out/Default //chrome/android:'
+                       'monochrome_secondary_abi_lib //base:base\n')
+      sys.exit(1)
 
-    secondary_abi_library_paths = []
-    if path := params.get('secondary_abi_shared_libraries_runtime_deps_file'):
-      secondary_abi_library_paths = _ExtractSharedLibsFromRuntimeDeps(path)
-      secondary_abi_library_paths.sort()
-      paths_without_parent_dirs = [
-          p for p in secondary_abi_library_paths if os.path.sep not in p
-      ]
-      if paths_without_parent_dirs:
-        sys.stderr.write('Found secondary native libraries from primary '
-                         'toolchain directory. This is a bug!\n')
-        sys.stderr.write('\n'.join(paths_without_parent_dirs))
-        sys.stderr.write('\n\nIt may be helpful to run: \n')
-        sys.stderr.write('    gn path out/Default //chrome/android:'
-                         'monochrome_secondary_abi_lib //base:base\n')
-        sys.exit(1)
-
-    config['native'] = {}
-    config['native']['libraries'] = library_paths
-    config['native']['secondary_abi_libraries'] = secondary_abi_library_paths
-    config['native']['java_libraries_list'] = java_libraries_list
+    main_config['native'] = {}
+    main_config['native']['libraries'] = library_paths
+    main_config['native']['secondary_abi_libraries'] = secondary_abi_libraries
 
     if is_bundle_module:
       loadable_modules = params.get('loadable_modules', [])
@@ -918,28 +881,29 @@ def main():
           'secondary_native_lib_placeholders', [])
       secondary_abi_placeholder_paths.sort()
 
-      config['native']['loadable_modules'] = loadable_modules
-      config['native']['placeholders'] = placeholder_paths
-      config['native'][
+      main_config['native']['loadable_modules'] = loadable_modules
+      main_config['native']['placeholders'] = placeholder_paths
+      main_config['native'][
           'secondary_abi_loadable_modules'] = secondary_abi_loadable_modules
-      config['native'][
+      main_config['native'][
           'secondary_abi_placeholders'] = secondary_abi_placeholder_paths
-      config['native']['library_always_compress'] = params.get(
+      main_config['native']['library_always_compress'] = params.get(
           'library_always_compress')
-      config['proto_resources_path'] = params['proto_resources_path']
-      config['base_allowlist_rtxt_path'] = params['base_allowlist_rtxt_path']
-      config['rtxt_path'] = params['rtxt_path']
-      config['module_pathmap_path'] = params['module_pathmap_path']
+      main_config['proto_resources_path'] = params['proto_resources_path']
+      main_config['base_allowlist_rtxt_path'] = params[
+          'base_allowlist_rtxt_path']
+      main_config['rtxt_path'] = params['rtxt_path']
+      main_config['module_pathmap_path'] = params['module_pathmap_path']
 
   if is_apk_or_module or target_type == 'robolectric_binary':
     if path := params.get('suffix_apk_assets_used_by_config'):
       if path == build_config_path:
-        target_config = config
+        target_config = main_config
       else:
         target_config = params_json_util.get_build_config(path)
-      _SuffixAssets(config, target_config)
+      _SuffixAssets(main_config, target_config)
 
-  if has_classpath:
+  if params.get('enable_bytecode_checks'):
     jar_to_target = {}
     all_params = params.deps() + [params]
     if apk_under_test_params:
@@ -949,13 +913,33 @@ def main():
 
     # Used by check_for_missing_direct_deps.py to give better error message
     # when missing deps are found. Both javac_full_classpath_targets and
-    # javac_full_classpath must be in identical orders, as they get passed as
-    # separate arrays and then paired up based on index.
-    config['javac_full_classpath_targets'] = [
-        jar_to_target[x] for x in config['javac_full_classpath']
+    # javac_full_interface_classpath must be in identical orders, as they get
+    # passed as separate arrays and then paired up based on index.
+    targets_config['javac_full_classpath_targets'] = [
+        jar_to_target[x] for x in javac_full_classpath
     ]
 
-  build_utils.WriteJson(config, build_config_path, only_if_changed=True)
+  if params.get('enable_lint'):
+    lint_config = _CreateLintConfig(params, javac_config, manifest_config)
+
+  # Depfiles expect output order to match the order in GN.
+  outputs = [
+      (main_config, '.build_config.json'),
+      (javac_config, '.javac.build_config.json'),
+      (turbine_config, '.turbine.build_config.json'),
+      (lint_config, '.lint.build_config.json'),
+      (manifest_config, '.manifest.build_config.json'),
+      (res_config, '.res.build_config.json'),
+      (rtxt_config, '.rtxt.build_config.json'),
+      (targets_config, '.targets.build_config.json'),
+  ]
+
+  first_output = None
+  for config, extension in outputs:
+    if config:
+      path = build_config_path.replace('.build_config.json', extension)
+      first_output = first_output or path
+      build_utils.WriteJson(config, path, only_if_changed=True)
 
   if options.depfile:
     all_inputs = params_json_util.all_read_file_paths()
@@ -965,7 +949,7 @@ def main():
       all_inputs.append(path)
     if path := params.get('secondary_abi_shared_libraries_runtime_deps_file'):
       all_inputs.append(path)
-    action_helpers.write_depfile(options.depfile, build_config_path, all_inputs)
+    action_helpers.write_depfile(options.depfile, first_output, all_inputs)
 
 
 if __name__ == '__main__':

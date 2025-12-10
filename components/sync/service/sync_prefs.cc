@@ -128,6 +128,19 @@ SyncPrefs::SyncPrefs(PrefService* pref_service)
       prefs::internal::kSelectedTypesPerAccount,
       base::BindRepeating(&SyncPrefs::OnSelectedTypesPrefChanged,
                           base::Unretained(this)));
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  if (base::FeatureList::IsEnabled(switches::kOfferMigrationToDiceUsers) ||
+      base::FeatureList::IsEnabled(switches::kRollbackDiceMigration)) {
+    // The explicit browser signin pref is used for determining whether some
+    // data types are selected by default. Therefore, upon a change, the
+    // selected types may change.
+    pref_change_registrar_.Add(
+        ::prefs::kExplicitBrowserSignin,
+        base::BindRepeating(&SyncPrefs::OnSelectedTypesPrefChanged,
+                            base::Unretained(this)));
+  }
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 }
 
 SyncPrefs::~SyncPrefs() {
@@ -156,8 +169,6 @@ void SyncPrefs::RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::internal::kSyncInitialSyncFeatureSetupComplete, false);
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  registry->RegisterBooleanPref(
-      prefs::internal::kFirstSyncCompletedInFullSyncMode, false);
   registry->RegisterBooleanPref(kObsoleteAutofillWalletImportEnabledMigrated,
                                 false);
   registry->RegisterIntegerPref(prefs::internal::kSyncToSigninMigrationState,
@@ -252,23 +263,6 @@ void SyncPrefs::ClearInitialSyncFeatureSetupComplete() {
 }
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
-bool SyncPrefs::IsFirstSyncCompletedInFullSyncMode() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return pref_service_->GetBoolean(
-      prefs::internal::kFirstSyncCompletedInFullSyncMode);
-}
-
-void SyncPrefs::SetFirstSyncCompletedInFullSyncMode() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  pref_service_->SetBoolean(prefs::internal::kFirstSyncCompletedInFullSyncMode,
-                            true);
-}
-
-void SyncPrefs::ClearFirstSyncCompletedInFullSyncMode() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  pref_service_->ClearPref(prefs::internal::kFirstSyncCompletedInFullSyncMode);
-}
-
 bool SyncPrefs::HasKeepEverythingSynced() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return pref_service_->GetBoolean(prefs::internal::kSyncKeepEverythingSynced);
@@ -304,10 +298,6 @@ UserSelectableTypeSet SyncPrefs::GetSelectedTypesForAccount(
     }
   }
 
-  if (!password_sync_allowed_) {
-    selected_types.Remove(UserSelectableType::kPasswords);
-  }
-
   return selected_types;
 }
 
@@ -328,10 +318,6 @@ UserSelectableTypeSet SyncPrefs::GetSelectedTypesForSyncingUser() const {
       // individual prefs.
       selected_types.Put(type);
     }
-  }
-
-  if (!password_sync_allowed_) {
-    selected_types.Remove(UserSelectableType::kPasswords);
   }
 
   return selected_types;
@@ -745,8 +731,7 @@ bool SyncPrefs::IsTypeSupportedInTransportMode(UserSelectableType type) {
     case UserSelectableType::kSavedTabGroups:
       return base::FeatureList::IsEnabled(kReplaceSyncPromosWithSignInPromos);
     case UserSelectableType::kExtensions:
-      return base::FeatureList::IsEnabled(
-          switches::kEnableExtensionsExplicitBrowserSignin);
+      return switches::IsExtensionsExplicitBrowserSigninEnabled();
     case UserSelectableType::kThemes:
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
       return false;
@@ -845,7 +830,7 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
                                 kMigratedPart2AndFullyDone);
       return false;
     }
-    case SyncAccountState::kSignedInNotSyncing: {
+    case SyncAccountState::kSignedInWithoutSyncConsent: {
       pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                                 kMigratedPart1ButNot2);
       CHECK(!gaia_id.empty());
@@ -855,6 +840,21 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
           update_selected_types_dict->EnsureDict(
               signin::GaiaIdHash::FromGaiaId(gaia_id).ToBase64());
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+      // Preserve the user's existing enabled state for Bookmarks, Reading List,
+      // and Preferences. Otherwise, use the default value, which will be true
+      // after `kReplaceSyncPromosWithSignInPromos`.
+      for (UserSelectableType type :
+           {UserSelectableType::kBookmarks, UserSelectableType::kReadingList,
+            UserSelectableType::kPreferences}) {
+        const char* pref_name = GetPrefNameForType(type);
+        DCHECK(pref_name);
+        const base::Value* value = account_settings->Find(pref_name);
+        if (value && value->is_bool()) {
+          account_settings->Set(pref_name, value->GetBool());
+        }
+      }
+#else
       // Settings aka preferences always starts out "off" for existing
       // signed-in non-syncing users.
       account_settings->Set(
@@ -878,7 +878,7 @@ bool SyncPrefs::MaybeMigratePrefsForSyncToSigninPart1(
         // `kReplaceSyncPromosWithSignInPromos`.
         account_settings->Set(pref_name, is_type_on);
       }
-
+#endif
       return true;
     }
   }
@@ -1097,17 +1097,6 @@ void SyncPrefs::MarkPartialSyncToSigninMigrationFullyDone() {
       kMigratedPart1ButNot2) {
     pref_service_->SetInteger(prefs::internal::kSyncToSigninMigrationState,
                               kMigratedPart2AndFullyDone);
-  }
-}
-
-void SyncPrefs::SetPasswordSyncAllowed(bool allowed) {
-  if (password_sync_allowed_ == allowed) {
-    return;
-  }
-
-  password_sync_allowed_ = allowed;
-  for (SyncPrefObserver& observer : sync_pref_observers_) {
-    observer.OnSelectedTypesPrefChange();
   }
 }
 

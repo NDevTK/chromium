@@ -118,7 +118,7 @@ class MODULES_EXPORT IDBDatabase final
   void VersionChange(int64_t old_version, int64_t new_version) override;
   void Abort(int64_t transaction_id,
              mojom::blink::IDBException code,
-             const WTF::String& message) override;
+             const String& message) override;
   void Complete(int64_t transaction_id) override;
 
   // ScriptWrappable
@@ -166,8 +166,6 @@ class MODULES_EXPORT IDBDatabase final
   static const char kTransactionReadOnlyErrorMessage[];
   static const char kDatabaseClosedErrorMessage[];
 
-  static const int64_t kMinimumIndexId = 30;
-
   void RenameObjectStore(int64_t transaction_id,
                          int64_t object_store_id,
                          const String& new_name) {
@@ -197,7 +195,7 @@ class MODULES_EXPORT IDBDatabase final
               int64_t index_id,
               const IDBKeyRange*,
               mojom::blink::IDBGetAllResultType result_type,
-              int64_t max_count,
+              uint32_t max_count,
               mojom::blink::IDBCursorDirection direction,
               IDBRequest*);
   void OpenCursor(int64_t object_store_id,

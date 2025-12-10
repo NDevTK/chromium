@@ -19,18 +19,21 @@ class ToolRequestVisitorFunctor;
 // of the <option> children.
 class SelectToolRequest : public PageToolRequest {
  public:
+  static constexpr char kName[] = "Select";
+
   SelectToolRequest(tabs::TabHandle tab_handle,
-                    const Target& target,
+                    const PageTarget& target,
                     std::string_view value);
   ~SelectToolRequest() override;
 
   void Apply(ToolRequestVisitorFunctor& f) const override;
 
   // ToolRequest
-  std::string JournalEvent() const override;
+  std::string_view Name() const override;
 
   // PageToolRequest
-  mojom::ToolActionPtr ToMojoToolAction() const override;
+  mojom::ToolActionPtr ToMojoToolAction(
+      content::RenderFrameHost& frame) const override;
   std::unique_ptr<PageToolRequest> Clone() const override;
 
  private:

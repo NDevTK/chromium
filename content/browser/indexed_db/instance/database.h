@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <map>
+#include <list>
 #include <memory>
 #include <set>
 #include <string>
@@ -19,17 +19,15 @@
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "components/services/storage/indexed_db/locks/partitioned_lock_manager.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "content/browser/indexed_db/indexed_db_value.h"
 #include "content/browser/indexed_db/instance/backing_store.h"
 #include "content/browser/indexed_db/instance/connection_coordinator.h"
-#include "content/browser/indexed_db/instance/factory_client.h"
 #include "content/browser/indexed_db/instance/pending_connection.h"
-#include "content/browser/indexed_db/list_set.h"
 #include "content/common/content_export.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-forward.h"
@@ -41,6 +39,7 @@ struct IndexedDBDatabaseMetadata;
 
 namespace content::indexed_db {
 class BucketContext;
+struct IndexedDBDataLossInfo;
 class Connection;
 class DatabaseCallbacks;
 class Transaction;
@@ -55,8 +54,6 @@ class CONTENT_EXPORT Database {
   // Used to report irrecoverable backend errors. The second argument can be
   // null.
   using ErrorCallback = base::RepeatingCallback<void(Status, const char*)>;
-
-  static const int64_t kMinimumIndexId = 30;
 
   Database(uint32_t id_for_locks,
            const std::u16string& name,
@@ -78,29 +75,48 @@ class CONTENT_EXPORT Database {
   int64_t version() const;
   bool IsInitialized() const;
 
+  // Called to permanently delete the database wrapped by `this`. Will call
+  // `on_complete` and release `locks` when done. This may be called more than
+  // once, in which case latter calls are a no-op, and `on_complete` will not be
+  // called. Returns an error, or the latest version of the deleted database
+  // if successful, or 0 if the database had already been deleted.
+  StatusOr<int64_t> DeleteDatabase(std::vector<PartitionedLock> locks,
+                                   base::OnceClosure on_complete);
+
   // Builds the set of lock requests for the given transaction `mode` and
   // `scope`. `scope` is used iff `mode` is not `VersionChange`.
   std::vector<PartitionedLockManager::PartitionedLockRequest>
   BuildLockRequestsForTransaction(blink::mojom::IDBTransactionMode mode,
                                   const std::set<int64_t>& scope) const;
 
-  const list_set<Connection*>& connections() const { return connections_; }
+  const std::list<Connection*>& connections() const { return connections_; }
+
+  size_t GetNumTransactionsAcrossAllConnections() const;
 
   Status RunTasks();
   void RegisterAndScheduleTransaction(Transaction* transaction);
 
-  // The database object (this object) must be kept alive for the duration of
-  // this call. This means the caller should own an
-  // BucketContextHandle while calling this methods.
-  Status ForceCloseAndRunTasks(const std::string& message);
+  // This closes connections and their transactions, and tells the connection
+  // coordinator to cancel pending open requests. However, pending delete
+  // requests are honored (synchronously). This requires an rvalue reference
+  // because it should only be called right before destruction, by its owner
+  // (BucketContext).
+  Status ForceClose(const std::string& message) &&;
 
-  void ScheduleOpenConnection(std::unique_ptr<PendingConnection> connection);
+  void ScheduleOpenConnection(std::unique_ptr<PendingConnection> connection,
+                              base::TimeDelta synchronous_duration);
 
-  void ScheduleDeleteDatabase(std::unique_ptr<FactoryClient> factory_client,
-                              base::OnceClosure on_deletion_complete);
+  // `on_deletion_complete` is called only if the database existed and was
+  // actually deleted.
+  void ScheduleDeleteDatabase(
+      mojo::AssociatedRemote<blink::mojom::IDBFactoryClient> factory_client,
+      base::OnceClosure on_deletion_complete,
+      base::TimeDelta synchronous_duration);
 
   // Number of connections that have progressed passed initial open call.
   size_t ConnectionCount() const { return connections_.size(); }
+
+  bool force_closing() const { return force_closing_; }
 
   // Number of active open/delete calls (running or blocked on other
   // connections).
@@ -170,7 +186,7 @@ class CONTENT_EXPORT Database {
       int64_t index_id,
       blink::IndexedDBKeyRange key_range,
       blink::mojom::IDBGetAllResultType result_type,
-      int64_t max_count,
+      uint32_t max_count,
       blink::mojom::IDBCursorDirection direction,
       blink::mojom::IDBDatabase::GetAllCallback callback,
       Transaction* transaction);
@@ -191,7 +207,7 @@ class CONTENT_EXPORT Database {
     if (connections_.empty()) {
       OpenInternal();
     }
-    connections_.insert(connection);
+    connections_.push_back(connection);
   }
 
   bool CanBeDestroyed();
@@ -217,6 +233,7 @@ class CONTENT_EXPORT Database {
   class DeleteRequest;
 
   Status OpenInternal();
+  const IndexedDBDataLossInfo& GetDataLossInfo() const;
 
   // This class informs its result sink of an error if a `GetAllOperation` is
   // deleted without being run. This functionality mimics that of
@@ -248,7 +265,7 @@ class CONTENT_EXPORT Database {
                          int64_t index_id,
                          blink::IndexedDBKeyRange key_range,
                          blink::mojom::IDBGetAllResultType result_type,
-                         int64_t max_count,
+                         uint32_t max_count,
                          blink::mojom::IDBCursorDirection direction,
                          std::unique_ptr<GetAllResultSinkWrapper> result_sink,
                          Transaction* transaction);
@@ -267,7 +284,9 @@ class CONTENT_EXPORT Database {
       mojo::Remote<storage::mojom::IndexedDBClientStateChecker>
           client_state_checker,
       base::UnguessableToken client_token,
-      int scheduling_priority);
+      int scheduling_priority,
+      // Not called during a force close.
+      base::OnceClosure on_connection_close = {});
 
   // Ack that one of the connections notified with a "versionchange" event did
   // not promptly close. Therefore a "blocked" event should be fired at the
@@ -281,7 +300,8 @@ class CONTENT_EXPORT Database {
 
   // This can only be called when the given connection is closed and no longer
   // has any transaction objects.
-  void ConnectionClosed(Connection* connection);
+  void ConnectionClosed(base::OnceClosure forward_on_close,
+                        Connection& connection);
 
   // In rare cases there are a very large number of queued
   // requests/transactions, so calculations related to blocking or blocked
@@ -310,14 +330,16 @@ class CONTENT_EXPORT Database {
   // The object that owns `this`.
   raw_ref<BucketContext> bucket_context_;
 
-  list_set<Connection*> connections_;
+  // `list` because iteration order is important.
+  std::list<Connection*> connections_;
 
   // True once `ForceCloseAndRunTasks()` is called.
   bool force_closing_ = false;
 
   ConnectionCoordinator connection_coordinator_;
 
-  // Null until `OpenInternal()` is called successfully.
+  // Null until `OpenInternal()` is called successfully, as well as after the
+  // database has been deleted via `DeleteDatabase()`.
   std::unique_ptr<BackingStore::Database> backing_store_db_;
 
   // `weak_factory_` is used for all callback uses.

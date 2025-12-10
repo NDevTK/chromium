@@ -7,6 +7,7 @@
 #import <memory>
 
 #import "components/enterprise/connectors/core/common.h"
+#import "components/enterprise/connectors/core/content_area_user_provider.h"
 #import "components/policy/core/common/cloud/affiliation.h"
 #import "components/safe_browsing/core/browser/realtime/chrome_enterprise_url_lookup_service.h"
 #import "components/safe_browsing/core/browser/sync/safe_browsing_primary_account_token_fetcher.h"
@@ -82,14 +83,13 @@ ChromeEnterpriseRealTimeUrlLookupServiceFactory::
 
 std::unique_ptr<KeyedService>
 ChromeEnterpriseRealTimeUrlLookupServiceFactory::BuildServiceInstanceFor(
-    web::BrowserState* browser_state) const {
+    ProfileIOS* profile) const {
   SafeBrowsingService* safe_browsing_service =
       GetApplicationContext()->GetSafeBrowsingService();
   if (!safe_browsing_service) {
     return nullptr;
   }
 
-  ProfileIOS* profile = ProfileIOS::FromBrowserState(browser_state);
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
 
@@ -114,6 +114,8 @@ ChromeEnterpriseRealTimeUrlLookupServiceFactory::BuildServiceInstanceFor(
       /*is_guest_session=*/false,
       base::BindRepeating(&enterprise_connectors::GetProfileEmail,
                           identity_manager),
+      base::BindRepeating(&enterprise_connectors::GetActiveContentAreaUser,
+                          IdentityManagerFactory::GetForProfile(profile)),
       base::BindRepeating(&IsProfileAffiliated, profile),
       IsCommandLineSwitchEnabled());
 }

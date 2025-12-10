@@ -11,6 +11,7 @@
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -21,6 +22,7 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extensions_browser_interface_binders.h"
 #include "extensions/browser/null_app_sorting.h"
+#include "extensions/browser/safe_browsing_delegate.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/extension_id.h"
@@ -45,7 +47,8 @@ namespace extensions {
 
 ShellExtensionsBrowserClient::ShellExtensionsBrowserClient()
     : api_client_(new ShellExtensionsAPIClient),
-      extension_cache_(new NullExtensionCache()) {
+      extension_cache_(new NullExtensionCache()),
+      safe_browsing_delegate_(std::make_unique<SafeBrowsingDelegate>()) {
   // app_shell does not have a concept of channel yet, so leave UNKNOWN to
   // enable all channel-dependent extension APIs.
   SetCurrentChannel(version_info::Channel::UNKNOWN);
@@ -319,6 +322,10 @@ KioskDelegate* ShellExtensionsBrowserClient::GetKioskDelegate() {
   return kiosk_delegate_.get();
 }
 
+SafeBrowsingDelegate* ShellExtensionsBrowserClient::GetSafeBrowsingDelegate() {
+  return safe_browsing_delegate_.get();
+}
+
 std::string ShellExtensionsBrowserClient::GetApplicationLocale() {
   // TODO(michaelpg): Use system locale.
   return "en-US";
@@ -331,6 +338,13 @@ void ShellExtensionsBrowserClient::InitWithBrowserContext(
   DCHECK(!pref_service_);
   browser_context_ = context;
   pref_service_ = pref_service;
+}
+
+custom_handlers::ProtocolHandlerRegistry*
+ShellExtensionsBrowserClient::GetProtocolHandlerRegistry(
+    content::BrowserContext* context) {
+  return custom_handlers::SimpleProtocolHandlerRegistryFactory::
+      GetForBrowserContext(context, true);
 }
 
 }  // namespace extensions

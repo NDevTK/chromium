@@ -76,11 +76,11 @@ enum class RateLimitResult : int;
 class CONTENT_EXPORT AttributionStorageSql {
  public:
   // Version number of the database.
-  static constexpr int kCurrentVersionNumber = 69;
+  static constexpr int kCurrentVersionNumber = 70;
 
   // Earliest version which can use a `kCurrentVersionNumber` database
   // without failing.
-  static constexpr int kCompatibleVersionNumber = 69;
+  static constexpr int kCompatibleVersionNumber = 70;
 
   // Latest version of the database that cannot be upgraded to
   // `kCurrentVersionNumber` without razing the database.
@@ -344,11 +344,6 @@ class CONTENT_EXPORT AttributionStorageSql {
       const std::vector<blink::mojom::AggregatableReportHistogramContribution>&
           contributions);
 
-  int64_t StorageFileSizeKB();
-
-  // Returns the number of sources in storage.
-  std::optional<int64_t> NumberOfSources();
-
   // Deactivates the given sources. Returns false on error.
   [[nodiscard]] bool DeactivateSources(base::span<const StoredSource::Id>);
 
@@ -420,11 +415,6 @@ class CONTENT_EXPORT AttributionStorageSql {
   [[nodiscard]] bool StoreDedupKey(StoredSource::Id,
                                    uint64_t dedup_key,
                                    AttributionReport::Type);
-
-  // Returns a negative value on failure.
-  int64_t CountUniqueReportingOriginsPerSiteForAttribution(
-      const AttributionTrigger&,
-      base::Time now);
 
  private:
   using ReportCorruptionStatusSet =

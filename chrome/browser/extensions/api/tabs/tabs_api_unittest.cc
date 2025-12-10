@@ -23,9 +23,9 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper_factory.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -42,6 +42,7 @@
 #include "components/tabs/public/split_tab_visual_data.h"
 #include "components/tabs/public/tab_group.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/api_test_utils.h"
@@ -123,8 +124,7 @@ class TabsApiUnitTest : public ExtensionServiceTestBase {
   }
 
   tab_groups::TabGroupSyncService* sync_service() {
-    return tab_groups::SavedTabGroupUtils::GetServiceForProfile(
-        browser()->profile());
+    return tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile());
   }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -141,7 +141,7 @@ class TabsApiUnitTest : public ExtensionServiceTestBase {
   void TearDown() override;
 
   // The browser (and accompanying window).
-  std::unique_ptr<TestBrowserWindow> browser_window_;
+  raw_ptr<TestBrowserWindow> browser_window_;
   std::unique_ptr<Browser> browser_;
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -161,10 +161,11 @@ void TabsApiUnitTest::SetUp() {
   ExtensionServiceTestBase::SetUp();
   InitializeEmptyExtensionService();
 
-  browser_window_ = std::make_unique<TestBrowserWindow>();
+  auto browser_window = std::make_unique<TestBrowserWindow>();
+  browser_window_ = browser_window.get();
   Browser::CreateParams params(profile(), true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = browser_window_.get();
+  params.window = browser_window.release();
   browser_ = Browser::DeprecatedCreateOwnedForTesting(params);
 
   tab_groups::TabGroupSyncService* saved_service = sync_service();
@@ -176,8 +177,8 @@ void TabsApiUnitTest::TearDown() {
   // Do this first before resetting `browser_`.
   GetTabStripModel()->CloseAllTabs();
 
+  browser_window_ = nullptr;
   browser_.reset();
-  browser_window_.reset();
   ExtensionServiceTestBase::TearDown();
 #if BUILDFLAG(IS_CHROMEOS)
   test_helper_.TearDown();
@@ -578,8 +579,13 @@ TEST_F(TabsApiUnitTest, TabsUpdateSavedTabGroupTab) {
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
   browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
-  EXPECT_TRUE(
-      ExtensionTabUtil::TabIsInSavedTabGroup(raw_contents, GetTabStripModel()));
+  // Check that the tab is in a saved tab group.
+  TabStripModel* tab_strip_model = GetTabStripModel();
+  int index = tab_strip_model->GetIndexOfWebContents(raw_contents);
+  std::optional<tab_groups::TabGroupId> tab_group_id =
+      tab_strip_model->GetTabGroupForTab(index);
+  ASSERT_TRUE(tab_group_id.has_value());
+  EXPECT_TRUE(saved_service->GetGroup(tab_group_id.value()).has_value());
 
   {  // Test the active state change for a saved tab.
     GetTabStripModel()->ActivateTabAt(
@@ -812,10 +818,7 @@ TEST_F(TabsApiUnitTest, TabsMoveAcrossWindows) {
   auto window2 = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), /* user_gesture */ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = window2.get();
-  // TestBrowserWindowOwner handles its own lifetime, and also cleans up
-  // |window2|.
-  new TestBrowserWindowOwner(std::move(window2));
+  params.window = window2.release();
   auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser2.get());
   int window_id2 = ExtensionTabUtil::GetWindowId(browser2.get());
@@ -883,10 +886,7 @@ TEST_F(TabsApiUnitTest, TabsMoveAcrossWindowsShouldRespectGroupContiguity) {
   auto window2 = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), /* user_gesture */ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = window2.get();
-  // TestBrowserWindowOwner handles its own lifetime, and also cleans up
-  // |window2|.
-  new TestBrowserWindowOwner(std::move(window2));
+  params.window = window2.release();
   auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
   BrowserList::SetLastActive(browser2.get());
   int window_id2 = ExtensionTabUtil::GetWindowId(browser2.get());
@@ -1146,10 +1146,7 @@ TEST_F(TabsApiUnitTest, TabsGroupAcrossWindows) {
   auto window2 = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), /* user_gesture */ true);
   params.type = Browser::TYPE_NORMAL;
-  params.window = window2.get();
-  // TestBrowserWindowOwner handles its own lifetime, and also cleans up
-  // |window2|.
-  new TestBrowserWindowOwner(std::move(window2));
+  params.window = window2.release();
   auto browser2 = Browser::DeprecatedCreateOwnedForTesting(params);
 
   constexpr int kNumTabs2 = 3;
@@ -1622,7 +1619,7 @@ TEST_F(TabsApiUnitTest, DontCreateTabsInLockedFullscreenMode) {
   function->set_extension(extension_with_tabs_permission.get());
 
   // In locked fullscreen mode we should not be able to create any tabs.
-  PinWindow(browser_window()->GetNativeWindow(), /*trusted=*/true);
+  ash::PinWindow(browser_window()->GetNativeWindow(), /*trusted=*/true);
 
   EXPECT_EQ(ExtensionTabUtil::kLockedFullscreenModeNewTabError,
             api_test_utils::RunFunctionAndReturnError(
@@ -1652,8 +1649,7 @@ TEST_F(TabsApiUnitTest, ScreenshotDisabledInProfilePreferences) {
   web_contents_tester->NavigateAndCommit(kGoogle);
 
   // Disable screenshot.
-  browser()->profile()->GetPrefs()->SetBoolean(prefs::kDisableScreenshots,
-                                               true);
+  profile()->GetPrefs()->SetBoolean(prefs::kDisableScreenshots, true);
 
   // Run the function and check result.
   std::string error = api_test_utils::RunFunctionAndReturnError(
@@ -1667,7 +1663,7 @@ TEST_F(TabsApiUnitTest, CannotDuplicatePictureInPictureWindows) {
   auto pip_window = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), true);
   params.type = Browser::TYPE_PICTURE_IN_PICTURE;
-  params.window = pip_window.get();
+  params.window = pip_window.release();
   std::unique_ptr<Browser> pip_browser;
   pip_browser = Browser::DeprecatedCreateOwnedForTesting(params);
   std::unique_ptr<content::WebContents> contents(
@@ -1693,7 +1689,6 @@ TEST_F(TabsApiUnitTest, CannotDuplicatePictureInPictureWindows) {
   // Tear down picture-in-picture browser.
   pip_browser->tab_strip_model()->DetachAndDeleteWebContentsAt(0);
   pip_browser.reset();
-  pip_window.reset();
 }
 
 // Tests that calling chrome.tabs.discard discards the tab.
@@ -2071,6 +2066,107 @@ TEST_F(TabsApiSideBySideUnitTest, TabsDeleteFromSplitView) {
   // split view.
   EXPECT_EQ(1, GetTabStripModel()->count());
   EXPECT_FALSE(GetTabStripModel()->GetSplitForTab(0).has_value());
+}
+
+TEST_F(TabsApiSideBySideUnitTest, TabsQueryWithSplitView) {
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("TabsDeleteFromSplitView").Build();
+
+  // Add a couple of web contents to the browser and mark the first two as
+  // split.
+  CreateAndGetWebContents(5);
+  GetTabStripModel()->ActivateTabAt(0);
+  GetTabStripModel()->AddToNewSplit({1}, split_tabs::SplitTabVisualData(),
+                                    split_tabs::SplitTabCreatedSource());
+
+  // Check that the two tabs are split
+  EXPECT_TRUE(GetTabStripModel()->GetSplitForTab(0).has_value());
+  EXPECT_TRUE(GetTabStripModel()->GetSplitForTab(1).has_value());
+
+  // Use the TabsQueryFunction to get the list of tabs without a split.
+  const char* kNoSplitQueryInfo = "[{\"splitViewId\": -1}]";
+  base::Value::List tabs_list_without_split =
+      RunTabsQueryFunction(profile(), extension.get(), kNoSplitQueryInfo);
+  EXPECT_EQ(3u, tabs_list_without_split.size());
+
+  int split_id = ExtensionTabUtil::GetSplitId(
+      GetTabStripModel()->GetSplitForTab(0).value());
+
+  constexpr char kFormatArgs[] = R"([{"splitViewId": %d}])";
+  const std::string args = base::StringPrintf(kFormatArgs, split_id);
+  base::Value::List tabs_list_with_split =
+      RunTabsQueryFunction(profile(), extension.get(), args);
+  EXPECT_EQ(2u, tabs_list_with_split.size());
+  EXPECT_EQ(split_id, tabs_list_with_split[0].GetDict().FindInt("splitViewId"));
+}
+
+TEST_F(TabsApiSideBySideUnitTest, TabsUngroupSingleTabFromSplitView) {
+  ASSERT_TRUE(GetTabStripModel()->SupportsTabGroups());
+
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("TabsUngroupSingleTabFromSplitView").Build();
+
+  // Add a couple of web contents to the browser and mark the first two as
+  // split.
+  std::vector<content::WebContents*> wc = CreateAndGetWebContents(5);
+  GetTabStripModel()->ActivateTabAt(0);
+  GetTabStripModel()->AddToNewSplit({1}, split_tabs::SplitTabVisualData(),
+                                    split_tabs::SplitTabCreatedSource());
+
+  // Add tabs 0 and 1 to a group.
+  GetTabStripModel()->AddToNewGroup({0, 1});
+
+  // Use the TabsUngroupFunction to ungroup tab 1
+  auto function = base::MakeRefCounted<TabsUngroupFunction>();
+  function->set_extension(extension);
+  constexpr char kFormatArgs[] = R"([[%d]])";
+  const std::string args = base::StringPrintf(
+      kFormatArgs, sessions::SessionTabHelper::IdForTab(wc[1]).id());
+  ASSERT_TRUE(api_test_utils::RunFunction(function.get(), args, profile(),
+                                          api_test_utils::FunctionMode::kNone));
+
+  // Expect the group to be deleted because all tabs were ungrouped from it but
+  // the split view will remain.
+  TabStripModel* tab_strip_model = GetTabStripModel();
+  EXPECT_FALSE(tab_strip_model->GetTabGroupForTab(0));
+  EXPECT_FALSE(tab_strip_model->GetTabGroupForTab(1));
+  EXPECT_TRUE(GetTabStripModel()->GetSplitForTab(0).has_value());
+  EXPECT_TRUE(GetTabStripModel()->GetSplitForTab(1).has_value());
+}
+
+TEST_F(TabsApiSideBySideUnitTest, TabsUngroupBothTabsFromSplitView) {
+  ASSERT_TRUE(GetTabStripModel()->SupportsTabGroups());
+
+  scoped_refptr<const Extension> extension =
+      ExtensionBuilder("TabsUngroupBothTabsFromSplitView").Build();
+
+  // Add a couple of web contents to the browser and mark the first two as
+  // split.
+  std::vector<content::WebContents*> wc = CreateAndGetWebContents(5);
+  GetTabStripModel()->ActivateTabAt(0);
+  GetTabStripModel()->AddToNewSplit({1}, split_tabs::SplitTabVisualData(),
+                                    split_tabs::SplitTabCreatedSource());
+
+  // Add tabs 0 and 1 to a group.
+  GetTabStripModel()->AddToNewGroup({0, 1});
+
+  // Use the TabsUngroupFunction to ungroup tabs 0 and 1
+  auto function = base::MakeRefCounted<TabsUngroupFunction>();
+  function->set_extension(extension);
+  constexpr char kFormatArgs[] = R"([[%d, %d]])";
+  const std::string args = base::StringPrintf(
+      kFormatArgs, sessions::SessionTabHelper::IdForTab(wc[0]).id(),
+      sessions::SessionTabHelper::IdForTab(wc[1]).id());
+  ASSERT_TRUE(api_test_utils::RunFunction(function.get(), args, profile(),
+                                          api_test_utils::FunctionMode::kNone));
+
+  // Expect the group to be deleted because all tabs were ungrouped from it but
+  // the split view will remain.
+  TabStripModel* tab_strip_model = GetTabStripModel();
+  EXPECT_FALSE(tab_strip_model->GetTabGroupForTab(0));
+  EXPECT_FALSE(tab_strip_model->GetTabGroupForTab(1));
+  EXPECT_TRUE(GetTabStripModel()->GetSplitForTab(0).has_value());
+  EXPECT_TRUE(GetTabStripModel()->GetSplitForTab(1).has_value());
 }
 
 }  // namespace extensions

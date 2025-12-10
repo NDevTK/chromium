@@ -19,6 +19,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//third_party/angle/src/tests:angle_end2end_tests",
+        "module_scheme": "gtest",
         "name": "angle_end2end_tests iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -29,7 +31,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -73,6 +75,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//third_party/angle/src/tests:angle_end2end_tests",
+        "module_scheme": "gtest",
         "name": "angle_end2end_tests iPhone 14 18.2",
         "resultdb": {
           "enable": true,
@@ -83,7 +87,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -127,6 +131,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//third_party/angle/src/tests:angle_white_box_tests",
+        "module_scheme": "gtest",
         "name": "angle_white_box_tests iPhone 14 17.5",
         "resultdb": {
           "enable": true,
@@ -137,7 +143,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",
@@ -181,6 +187,8 @@
         "merge": {
           "script": "//testing/merge_scripts/standard_isolated_script_merge.py"
         },
+        "module_name": "//third_party/angle/src/tests:angle_white_box_tests",
+        "module_scheme": "gtest",
         "name": "angle_white_box_tests iPhone 14 18.2",
         "resultdb": {
           "enable": true,
@@ -191,7 +199,7 @@
             {
               "cipd_package": "infra/tools/mac_toolchain/${platform}",
               "location": ".",
-              "revision": "git_revision:a18b7d95d26f3c6bf9591978b19cf0ca8268ac7d"
+              "revision": "git_revision:4c7290150d1c360cecc6a93c0214dc531585c3ab"
             }
           ],
           "containment_type": "AUTO",

@@ -29,7 +29,9 @@ import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.PersonalDataManagerObserver;
 import org.chromium.chrome.browser.autofill.PersonalDataManagerFactory;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
+import org.chromium.chrome.browser.settings.search.ChromeBaseSearchIndexProvider;
 import org.chromium.components.autofill.ImageSize;
 import org.chromium.components.autofill.payments.AccountType;
 import org.chromium.components.autofill.payments.BankAccount;
@@ -134,8 +136,9 @@ public class FinancialAccountsManagementFragment extends ChromeBaseSettingsFragm
                 mPersonalDataManager.getFacilitatedPaymentsEwalletPref();
         boolean isFacilitatedPaymentsPixEnabled =
                 mPersonalDataManager.getFacilitatedPaymentsPixPref();
-
-        if (mEwallets.length > 0) {
+        if (!ChromeFeatureList.isEnabled(
+                        ChromeFeatureList.AUTOFILL_ENABLE_SEPARATE_PIX_PREFERENCE_ITEM)
+                && mEwallets.length > 0) {
             ChromeSwitchPreference eWalletSwitch = new ChromeSwitchPreference(getStyledContext());
             eWalletSwitch.setChecked(isFacilitatedPaymentsEwalletEnabled);
             eWalletSwitch.setKey(PREFERENCE_KEY_EWALLET);
@@ -298,4 +301,10 @@ public class FinancialAccountsManagementFragment extends ChromeBaseSettingsFragm
     public @SettingsFragment.AnimationType int getAnimationType() {
         return SettingsFragment.AnimationType.PROPERTY;
     }
+
+    // TODO(crbug.com/444470792): Determine what pieces of logic are dynamic and need handling.
+    // Should this prefs parent pass a title in the Bundle args? Any entries that need adding?
+    public static final ChromeBaseSearchIndexProvider SEARCH_INDEX_DATA_PROVIDER =
+            new ChromeBaseSearchIndexProvider(
+                    FinancialAccountsManagementFragment.class.getName(), 0);
 }

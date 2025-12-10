@@ -511,6 +511,22 @@ def _CreateAarInfos(aar_files):
             raise Exception('Command Failed: {}\n'.format(' '.join(cmd)))
 
 
+def _FixArchiveNames(android_deps_dir):
+    # Make sure the .aar / .jar has the filename according to the cipd.yaml
+    # file. 3pp bot does this transformation for us, but it's needed for
+    # --local and for the autorolled / androidx packages.
+    src_libs_dir = os.path.join(android_deps_dir, _LIBS_DIR)
+    # Match .aar and .jar
+    for src_path in FindInDirectory(src_libs_dir, '*.?ar'):
+        dirname = os.path.dirname(src_path)
+        yaml_path = os.path.join(dirname, 'cipd.yaml')
+        data = pathlib.Path(yaml_path).read_text('utf-8')
+        new_name = re.search(r'- file: (.*)', data).group(1)
+        dst_path = os.path.join(dirname, new_name)
+        logging.debug('mv [%s -> %s]', src_path, dst_path)
+        shutil.move(src_path, dst_path)
+
+
 def _CopyJarFilesToCipd(android_deps_dir):
     src_libs_dir = os.path.join(android_deps_dir, _LIBS_DIR)
     # Match .aar and .jar
@@ -599,8 +615,7 @@ def main():
              _CUSTOM_ANDROID_DEPS_FILES,
              src_path_must_exist=is_primary_android_deps)
 
-        CopyFileOrDirectory(os.path.join(_CHROMIUM_SRC, _DEPS),
-                            os.path.join(build_dir, _DEPS))
+        Copy(_CHROMIUM_SRC, [_DEPS], build_dir, [_DEPS])
 
         _InitSubprojects(args.android_deps_dir, build_android_deps_dir,
                          bool(args.build_dir))
@@ -677,6 +692,10 @@ def main():
              _CUSTOM_ANDROID_DEPS_FILES,
              src_path_must_exist=is_primary_android_deps)
 
+        # Auto-rollers adjust DEPS for androidx & autorolled.
+        if is_primary_android_deps:
+            Copy(build_dir, [_DEPS], _CHROMIUM_SRC, [_DEPS])
+
         # Not all projects (eg: the primary project) output a bill of materials.
         # Thus only copy if it exists.
         Copy(build_android_deps_dir, [_BOM_NAME],
@@ -699,7 +718,8 @@ def main():
                                 dst_pkg_path,
                                 ignore_extension=".tmp")
 
-        if args.local:
+        _FixArchiveNames(output_android_deps_dir)
+        if args.local and not args.output_subdir:
             _CopyJarFilesToCipd(args.android_deps_dir)
 
         # Useful for printing timestamp.

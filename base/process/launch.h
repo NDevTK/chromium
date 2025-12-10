@@ -39,10 +39,6 @@
 #include "base/posix/file_descriptor_shuffle.h"
 #endif
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/binder.h"
-#endif
-
 #if BUILDFLAG(IS_MAC)
 #include "base/mac/process_requirement.h"
 #endif
@@ -226,13 +222,6 @@ struct BASE_EXPORT LaunchOptions {
   // propagate FDs into the child process.
   FileHandleMappingVector fds_to_remap;
 #endif  // BUILDFLAG(IS_WIN)
-
-#if BUILDFLAG(IS_ANDROID)
-  // Set of strong IBinder references to be passed to the child process. These
-  // make their way to ChildProcessServiceDelegate.onConnectionSetup (Java)
-  // within the new child process.
-  std::vector<android::BinderRef> binders;
-#endif
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   // Set/unset environment variables. These are applied on top of the parent
@@ -465,12 +454,12 @@ BASE_EXPORT bool GetAppOutput(CommandLine::StringViewType cl,
 // * an optional `output` providing the complete output of `cl`.
 // * an optional `timeout` if `cl` does not complete in time.
 // * an optional `LaunchOptions`.
-// * an optional `FunctionRef`, called multiple times while waiting, with
-//   streaming partial output received since the last call to the `FunctionRef`
-//   from stdout/stderr of the running `cl` process. The implementation of the
-//   `FunctionRef` can log the output, or concatenate the partial outputs over
-//   successive calls to effectively produce the full `output` from the `cl`
-//   process.
+// * an optional `FunctionRef`, called multiple times while waiting, with the
+//   launched `Process` and streaming partial output received since the last
+//   call to the `FunctionRef` from stdout/stderr of the running `cl` process.
+//   The implementation of the `FunctionRef` can log the output, or concatenate
+//   the partial outputs over successive calls to effectively produce the full
+//   `output` from the `cl` process.
 // * an optional `final_status` `TerminationStatus` value on function return.
 //
 // Returns `true` if the application runs and exits. If this is the case the
@@ -494,8 +483,8 @@ BASE_EXPORT bool GetAppOutputWithExitCodeAndTimeout(
     int* exit_code,
     TimeDelta timeout = TimeDelta::Max(),
     const LaunchOptions& options = {},
-    FunctionRef<void(std::string_view)> still_waiting =
-        [](std::string_view partial_output) {},
+    FunctionRef<void(const Process&, std::string_view)> still_waiting =
+        [](const Process& process, std::string_view partial_output) {},
     TerminationStatus* final_status = nullptr);
 
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
@@ -509,6 +498,11 @@ BASE_EXPORT bool GetAppOutput(const std::vector<std::string>& argv,
 // stderr.
 BASE_EXPORT bool GetAppOutputAndError(const std::vector<std::string>& argv,
                                       std::string* output);
+
+// Like the POSIX-specific GetAppOutput above, but also includes the exit code.
+BASE_EXPORT bool GetAppOutputWithExitCode(const std::vector<std::string>& argv,
+                                          std::string* output,
+                                          int* exit_code);
 #endif  // BUILDFLAG(IS_WIN)
 
 // If supported on the platform, and the user has sufficent rights, increase

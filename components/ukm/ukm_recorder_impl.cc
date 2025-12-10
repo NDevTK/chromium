@@ -153,26 +153,26 @@ void AppendAllowlistedUrls(
   }
 }
 
-// Returns true if the event corresponding to |event_hash| has a comprehensive
-// decode map that includes all valid metrics.
-bool HasComprehensiveDecodeMap(int64_t event_hash) {
-  // All events other than "Identifiability" conforms to its decode map.
-  // TODO(asanka): It is technically an abstraction violation for
-  // //components/ukm to know this fact.
-  return event_hash != builders::Identifiability::kEntryNameHash;
-}
-
 bool HasUnknownMetrics(const builders::DecodeMap& decode_map,
                        const mojom::UkmEntry& entry) {
   const auto it = decode_map.find(entry.event_hash);
-  if (it == decode_map.end())
+  if (it == decode_map.end()) {
+    DVLOG(DebuggingLogLevel::Medium)
+        << "Event hash not in the decode map:"
+        << " [event_hash=" << entry.event_hash
+        << " decode_map.size()=" << decode_map.size() << "]";
     return true;
-  if (!HasComprehensiveDecodeMap(entry.event_hash))
-    return false;
+  }
   const auto& metric_map = it->second.metric_map;
   for (const auto& metric : entry.metrics) {
-    if (metric_map.count(metric.first) == 0)
+    if (metric_map.count(metric.first) == 0) {
+      DVLOG(DebuggingLogLevel::Medium)
+          << "Metric hash not in the decode map:"
+          << " [event_hash=" << entry.event_hash
+          << " metric_hash=" << metric.first
+          << " decode_map.size()=" << decode_map.size() << "]";
       return true;
+    }
   }
   return false;
 }
@@ -345,24 +345,17 @@ void UkmRecorderImpl::SetIsWebstoreExtensionCallback(
   is_webstore_extension_callback_ = callback;
 }
 
-void UkmRecorderImpl::SetEntryFilter(
-    std::unique_ptr<UkmEntryFilter> entry_filter) {
-  DCHECK(!entry_filter_ || !entry_filter);
-  entry_filter_ = std::move(entry_filter);
-}
-
 void UkmRecorderImpl::AddUkmRecorderObserver(
     const base::flat_set<uint64_t>& event_hashes,
     UkmRecorderObserver* observer) {
   DCHECK(observer);
   {
     base::AutoLock auto_lock(lock_);
-    if (!observers_.contains(event_hashes)) {
-      observers_.insert(
-          {event_hashes, base::MakeRefCounted<UkmRecorderObserverList>()});
+    auto [it, inserted] = observers_.try_emplace(event_hashes, nullptr);
+    if (inserted) {
+      it->second = base::MakeRefCounted<UkmRecorderObserverList>();
     }
-
-    observers_[event_hashes]->AddObserver(observer);
+    it->second->AddObserver(observer);
   }
   // Update the UkmRecorderParameters to capture a UKM event which is being
   // observed by any UkmRecorderObserver in |observers_|.
@@ -572,10 +565,6 @@ void UkmRecorderImpl::StoreRecordingsInReport(Report* report) {
   }
   source_counts_proto->set_entryless_sources(num_sources_entryless);
 
-  // Notify observers that a report was generated.
-  if (entry_filter_) {
-    entry_filter_->OnStoreRecordingsInReport();
-  }
   DVLOG(DebuggingLogLevel::Rare)
       << "StoreRecordingsInReport done [num_serialized_entries="
       << num_serialized_entries << "]";
@@ -631,34 +620,7 @@ bool UkmRecorderImpl::ShouldDropEntry(mojom::UkmEntry* entry) {
     return true;
   }
 
-  if (!ApplyEntryFilter(entry)) {
-    RecordDroppedEntry(entry->event_hash,
-                       DroppedDataReason::REJECTED_BY_FILTER);
-    return true;
-  }
-
   return false;
-}
-
-bool UkmRecorderImpl::ApplyEntryFilter(mojom::UkmEntry* entry) {
-  base::flat_set<uint64_t> dropped_metric_hashes;
-
-  if (!entry_filter_)
-    return true;
-
-  bool keep_entry = entry_filter_->FilterEntry(entry, &dropped_metric_hashes);
-
-  for (auto metric : dropped_metric_hashes) {
-    recordings_.event_aggregations[entry->event_hash]
-        .metrics[metric]
-        .dropped_due_to_filter++;
-  }
-
-  if (!keep_entry) {
-    recordings_.event_aggregations[entry->event_hash].dropped_due_to_filter++;
-    return false;
-  }
-  return true;
 }
 
 int UkmRecorderImpl::PruneOldSources(size_t max_kept_sources,
@@ -907,8 +869,7 @@ bool UkmRecorderImpl::ShouldDropExtensionUrl(
   // If the extension is not a webstore extension, drop the record with
   // `EXTENSION_NOT_SYNCED`.
   if (!is_webstore_extension_callback_ ||
-      !is_webstore_extension_callback_.Run(
-          sanitized_extension_url.host_piece())) {
+      !is_webstore_extension_callback_.Run(sanitized_extension_url.host())) {
     RecordDroppedSource(has_recorded_reason,
                         DroppedDataReason::EXTENSION_NOT_SYNCED);
     return true;
@@ -1004,7 +965,12 @@ void UkmRecorderImpl::RecordSource(std::unique_ptr<UkmSource> source) {
 
 void UkmRecorderImpl::AddEntry(mojom::UkmEntryPtr entry) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!HasUnknownMetrics(decode_map_, *entry));
+
+  // This should not happen in practice, but possible if an event name
+  // coming from Android implementation in UkmRecorder.java is misspelled.
+  if (HasUnknownMetrics(decode_map_, *entry)) {
+    return;
+  }
 
   NotifyObserversWithNewEntry(*entry);
 

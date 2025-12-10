@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/containers/adapters.h"
@@ -76,6 +77,7 @@
 #include "third_party/blink/renderer/core/css/resolver/transform_builder.h"
 #include "third_party/blink/renderer/core/css/style_color.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
+#include "third_party/blink/renderer/core/css/style_sheet_contents.h"
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -87,7 +89,7 @@
 #include "third_party/blink/renderer/core/style/reference_clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/reference_offset_path_operation.h"
 #include "third_party/blink/renderer/core/style/scoped_css_name.h"
-#include "third_party/blink/renderer/core/style/scroll_start_data.h"
+#include "third_party/blink/renderer/core/style/scroll_marker_group.h"
 #include "third_party/blink/renderer/core/style/shape_clip_path_operation.h"
 #include "third_party/blink/renderer/core/style/shape_offset_path_operation.h"
 #include "third_party/blink/renderer/core/style/style_border_shape.h"
@@ -95,6 +97,7 @@
 #include "third_party/blink/renderer/core/style/style_svg_resource.h"
 #include "third_party/blink/renderer/core/style/style_view_transition_group.h"
 #include "third_party/blink/renderer/core/style/superellipse.h"
+#include "third_party/blink/renderer/core/style/text_overflow_data.h"
 #include "third_party/blink/renderer/platform/fonts/font_palette.h"
 #include "third_party/blink/renderer/platform/fonts/opentype/open_type_math_support.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
@@ -136,7 +139,7 @@ Length ConvertGridTrackBreadth(const StyleResolverState& state,
 Vector<AtomicString> ValueListToAtomicStringVector(
     const CSSValueList& value_list) {
   Vector<AtomicString> ret;
-  for (auto list_entry : value_list) {
+  for (const auto& list_entry : value_list) {
     const CSSCustomIdentValue& ident = To<CSSCustomIdentValue>(*list_entry);
     ret.push_back(ident.Value());
   }
@@ -174,6 +177,18 @@ Color ResolveQuirkOrLinkOrFocusRingColor(
     default:
       NOTREACHED();
   }
+}
+
+ScopedCSSNameList* ConvertNoneOrCustomIdentList(StyleResolverState& state,
+                                                const CSSValue& value) {
+  DCHECK(value.IsScopedValue());
+  DCHECK(value.IsBaseValueList());
+  HeapVector<Member<const ScopedCSSName>> names;
+  for (const Member<const CSSValue>& item : To<CSSValueList>(value)) {
+    names.push_back(
+        StyleBuilderConverter::ConvertNoneOrCustomIdent(state, *item));
+  }
+  return MakeGarbageCollected<ScopedCSSNameList>(std::move(names));
 }
 
 }  // namespace
@@ -261,22 +276,61 @@ StyleSVGResource* StyleBuilderConverter::ConvertElementReference(
       url_value.ValueForSerialization());
 }
 
+namespace {
+
+struct BasicShapeAndCoordBox {
+  STACK_ALLOCATED();
+
+ public:
+  BasicShape* shape;
+  GeometryBox box;
+};
+
+template <GeometryBox default_box>
+BasicShapeAndCoordBox BasicShapeAndCoordBoxForValue(StyleResolverState& state,
+                                                    const CSSValue& value) {
+  BasicShape* shape = nullptr;
+  GeometryBox box = default_box;
+  if (const auto* pair = DynamicTo<CSSValuePair>(value)) {
+    shape = BasicShapeForValue(state, pair->First());
+    box = To<CSSIdentifierValue>(pair->Second()).ConvertTo<GeometryBox>();
+  } else {
+    shape = BasicShapeForValue(state, value);
+  }
+  return {shape, box};
+}
+
+}  // namespace
+
 StyleBorderShape* StyleBuilderConverter::ConvertBorderShape(
     StyleResolverState& state,
     const CSSValue& value) {
+  // Either:
+  // - none;
+  // - a single shape (meaning default box is half-border-box for stroking);
+  // - a pair of shape + box;
+  // - list of either: two pairs of shape + box or two shapes.
   if (value.IsIdentifierValue()) {
     CHECK_EQ(To<CSSIdentifierValue>(value).GetValueID(), CSSValueID::kNone);
     return nullptr;
   }
 
-  if (const auto* pair = DynamicTo<CSSValuePair>(value)) {
-    return MakeGarbageCollected<StyleBorderShape>(
-        *BasicShapeForValue(state, pair->First()),
-        BasicShapeForValue(state, pair->Second()));
+  if (const auto* list = DynamicTo<CSSValueList>(value)) {
+    DCHECK_EQ(list->length(), 2u);
+    auto [outer_shape, outer_box] =
+        BasicShapeAndCoordBoxForValue<GeometryBox::kBorderBox>(state,
+                                                               list->First());
+    auto [inner_shape, inner_box] =
+        BasicShapeAndCoordBoxForValue<GeometryBox::kPaddingBox>(state,
+                                                                list->Last());
+    return MakeGarbageCollected<StyleBorderShape>(*outer_shape, inner_shape,
+                                                  outer_box, inner_box);
   }
 
+  auto [outer_shape, outer_coord_box] =
+      BasicShapeAndCoordBoxForValue<GeometryBox::kHalfBorderBox>(state, value);
   return MakeGarbageCollected<StyleBorderShape>(
-      *BasicShapeForValue(state, value));
+      *outer_shape, outer_shape, outer_coord_box, outer_coord_box);
 }
 
 LengthBox StyleBuilderConverter::ConvertClip(StyleResolverState& state,
@@ -616,24 +670,39 @@ OpticalSizing StyleBuilderConverter::ConvertFontOpticalSizing(
 scoped_refptr<FontFeatureSettings>
 StyleBuilderConverter::ConvertFontFeatureSettings(StyleResolverState& state,
                                                   const CSSValue& value) {
+  return StyleBuilderConverterBase::ConvertFontFeatureSettings(
+      state.CssToLengthConversionData(), value);
+}
+
+scoped_refptr<FontFeatureSettings>
+StyleBuilderConverterBase::ConvertFontFeatureSettings(
+    const CSSLengthResolver& length_resolver,
+    const CSSValue& value) {
   auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
   if (identifier_value &&
       identifier_value->GetValueID() == CSSValueID::kNormal) {
-    return FontBuilder::InitialFeatureSettings();
+    return FontFeatureSettings::Create();
   }
 
   if (value.IsPendingSystemFontValue()) {
-    return FontBuilder::InitialFeatureSettings();
+    return FontFeatureSettings::Create();
   }
 
   const auto& list = To<CSSValueList>(value);
-  scoped_refptr<FontFeatureSettings> settings = FontFeatureSettings::Create();
-  int len = list.length();
-  for (int i = 0; i < len; ++i) {
-    const auto& feature = To<cssvalue::CSSFontFeatureValue>(list.Item(i));
-    settings->Append(FontFeature(
-        feature.Tag(), feature.Value(state.CssToLengthConversionData())));
+  std::map<uint32_t, int> features;
+
+  for (const auto& css_value : list) {
+    const auto& feature = To<cssvalue::CSSFontFeatureValue>(*css_value);
+    features[AtomicStringToFourByteTag(feature.Tag())] =
+        feature.Value(length_resolver);
   }
+
+  scoped_refptr<FontFeatureSettings> settings = FontFeatureSettings::Create();
+  for (const auto& [tag, feature_value] : features) {
+    settings->Append(FontFeature(tag, feature_value));
+  }
+
+  DCHECK(std::is_sorted(settings->begin(), settings->end()));
   return settings;
 }
 
@@ -673,6 +742,20 @@ StyleBuilderConverter::ConvertFontVariationSettings(
   }
   std::sort(settings->begin(), settings->end(), CompareTags);
   return settings;
+}
+
+AtomicString StyleBuilderConverter::ConvertFontLanguageOverride(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
+  if (identifier_value &&
+      identifier_value->GetValueID() == CSSValueID::kNormal) {
+    return AtomicString();
+  }
+  if (auto* string_value = DynamicTo<CSSStringValue>(value)) {
+    return AtomicString(string_value->Value());
+  }
+  return AtomicString();
 }
 
 scoped_refptr<FontPalette> StyleBuilderConverter::ConvertFontPalette(
@@ -1030,8 +1113,13 @@ FontSelectionValue StyleBuilderConverterBase::ConvertFontStyle(
     const CSSValueList* values = style_range_value->GetObliqueValues();
     CHECK_LT(values->length(), 2u);
     if (values->length()) {
-      return FontSelectionValue(To<CSSPrimitiveValue>(values->Item(0))
-                                    .ComputeDegrees(length_resolver));
+      const double angle_degrees = To<CSSPrimitiveValue>(values->Item(0))
+                                       .ComputeDegrees(length_resolver);
+      if (RuntimeEnabledFeatures::FontStyleObliqueZeroDegreeAsNormalEnabled() &&
+          angle_degrees == 0.0) {
+        return kNormalSlopeValue;
+      }
+      return FontSelectionValue(angle_degrees);
     } else {
       identifier_value = style_range_value->GetFontStyleValue();
       if (identifier_value->GetValueID() == CSSValueID::kNormal) {
@@ -1588,16 +1676,17 @@ GridTrackList StyleBuilderConverter::ConvertGridTrackSizeList(
   return track_list;
 }
 
-void StyleBuilderConverter::ConvertGridTrackList(
-    const CSSValue& value,
-    ComputedGridTrackList& computed_grid_track_list,
-    StyleResolverState& state) {
+ComputedGridTrackList* StyleBuilderConverter::ConvertGridTrackList(
+    StyleResolverState& state,
+    const CSSValue& value) {
   if (auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
     DCHECK_EQ(identifier_value->GetValueID(), CSSValueID::kNone);
-    return;
+    return nullptr;
   }
 
-  GridTrackList& track_list = computed_grid_track_list.track_list;
+  ComputedGridTrackList* computed_grid_track_list =
+      MakeGarbageCollected<ComputedGridTrackList>();
+  GridTrackList& track_list = computed_grid_track_list->GetMutableTrackList();
 
   wtf_size_t current_named_grid_line = 0;
   auto ConvertLineNameOrTrackSize =
@@ -1608,15 +1697,15 @@ void StyleBuilderConverter::ConvertGridTrackList(
       ++line_name_indices_count;
       ConvertGridLineNamesList(
           curr_value, current_named_grid_line,
-          computed_grid_track_list.named_grid_lines,
-          computed_grid_track_list.ordered_named_grid_lines, is_in_repeat,
-          is_first_repeat);
-      if (computed_grid_track_list.IsSubgriddedAxis()) {
+          computed_grid_track_list->GetMutableNamedGridLines(),
+          computed_grid_track_list->GetMutableOrderedNamedGridLines(),
+          is_in_repeat, is_first_repeat);
+      if (computed_grid_track_list->IsSubgriddedAxis()) {
         ++current_named_grid_line;
         track_list.IncrementNonAutoRepeatLineCount();
       }
     } else {
-      DCHECK_EQ(computed_grid_track_list.axis_type,
+      DCHECK_EQ(computed_grid_track_list->GetGridAxisType(),
                 GridAxisType::kStandaloneAxis);
       ++current_named_grid_line;
     }
@@ -1631,7 +1720,7 @@ void StyleBuilderConverter::ConvertGridTrackList(
   if (identifier_value &&
       identifier_value->GetValueID() == CSSValueID::kSubgrid) {
     state.GetDocument().CountUse(WebFeature::kCSSSubgridLayout);
-    computed_grid_track_list.axis_type = GridAxisType::kSubgriddedAxis;
+    computed_grid_track_list->SetGridAxisType(GridAxisType::kSubgriddedAxis);
     track_list.SetAxisType(GridAxisType::kSubgriddedAxis);
     is_subgrid = true;
     UNSAFE_TODO(++curr_value);
@@ -1645,16 +1734,17 @@ void StyleBuilderConverter::ConvertGridTrackList(
       CSSValueID auto_repeat_id = grid_auto_repeat_value->AutoRepeatID();
       DCHECK(auto_repeat_id == CSSValueID::kAutoFill ||
              auto_repeat_id == CSSValueID::kAutoFit);
-      computed_grid_track_list.auto_repeat_type =
+      computed_grid_track_list->SetAutoRepeatType(
           (auto_repeat_id == CSSValueID::kAutoFill) ? AutoRepeatType::kAutoFill
-                                                    : AutoRepeatType::kAutoFit;
+                                                    : AutoRepeatType::kAutoFit);
       for (const CSSValue* auto_repeat_value : To<CSSValueList>(**curr_value)) {
         if (auto_repeat_value->IsGridLineNamesValue()) {
           ConvertGridLineNamesList(
               *auto_repeat_value, auto_repeat_index,
-              computed_grid_track_list.auto_repeat_named_grid_lines,
-              computed_grid_track_list.auto_repeat_ordered_named_grid_lines);
-          if (computed_grid_track_list.IsSubgriddedAxis()) {
+              computed_grid_track_list->GetMutableAutoRepeatNamedGridLines(),
+              computed_grid_track_list
+                  ->GetMutableOrderedAutoRepeatNamedGridLines());
+          if (computed_grid_track_list->IsSubgriddedAxis()) {
             ++auto_repeat_index;
           }
           continue;
@@ -1666,10 +1756,10 @@ void StyleBuilderConverter::ConvertGridTrackList(
       // `repeat_count` is always 1 for auto-repeaters.
       track_list.AddRepeater(repeated_track_sizes,
                              static_cast<GridTrackRepeater::RepeatType>(
-                                 computed_grid_track_list.auto_repeat_type),
+                                 computed_grid_track_list->GetAutoRepeatType()),
                              /*repeat_count=*/1u, auto_repeat_index);
-      computed_grid_track_list.auto_repeat_insertion_point =
-          current_named_grid_line++;
+      computed_grid_track_list->SetAutoRepeatInsertionPoint(
+          current_named_grid_line++);
       continue;
     }
 
@@ -1732,19 +1822,39 @@ void StyleBuilderConverter::ConvertGridTrackList(
   // <track-list> without any <track-size> as this is not conformant to
   // the syntax.
   DCHECK(track_list.RepeaterCount() ||
-         computed_grid_track_list.IsSubgriddedAxis());
+         computed_grid_track_list->IsSubgriddedAxis());
+
+  return computed_grid_track_list;
 }
 
-std::optional<Length> StyleBuilderConverter::ConvertItemTolerance(
+ScrollMarkerGroup* StyleBuilderConverter::ConvertScrollMarkerGroup(
+    StyleResolverState&,
+    const CSSValue& value) {
+  if (auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    if (identifier_value->GetValueID() == CSSValueID::kNone) {
+      return nullptr;
+    }
+    auto position =
+        identifier_value->ConvertTo<ScrollMarkerGroup::ScrollMarkerPosition>();
+    return MakeGarbageCollected<ScrollMarkerGroup>(position);
+  }
+  const auto& pair = To<CSSValuePair>(value);
+  auto position = To<CSSIdentifierValue>(pair.First())
+                      .ConvertTo<ScrollMarkerGroup::ScrollMarkerPosition>();
+  auto mode = To<CSSIdentifierValue>(pair.Second())
+                  .ConvertTo<ScrollMarkerGroup::ScrollMarkerMode>();
+  return MakeGarbageCollected<ScrollMarkerGroup>(position, mode);
+}
+
+ItemTolerance StyleBuilderConverter::ConvertItemTolerance(
     const StyleResolverState& state,
     const CSSValue& value) {
   auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
-  if (identifier_value &&
-      identifier_value->GetValueID() == CSSValueID::kNormal) {
-    return std::nullopt;
+  if (identifier_value) {
+    return ItemTolerance(identifier_value->GetValueID());
   }
 
-  return ConvertLength(state, value);
+  return ItemTolerance(ConvertLength(state, value));
 }
 
 StyleHyphenateLimitChars StyleBuilderConverter::ConvertHyphenateLimitChars(
@@ -1778,7 +1888,18 @@ StyleHyphenateLimitChars StyleBuilderConverter::ConvertHyphenateLimitChars(
   return StyleHyphenateLimitChars(values[0], values[1], values[2]);
 }
 
-int StyleBuilderConverter::ConvertBorderWidth(StyleResolverState& state,
+StyleInterestDelay StyleBuilderConverter::ConvertInterestDelayValue(
+    const StyleResolverState& state,
+    const CSSValue& value) {
+  if (const auto* ident = DynamicTo<CSSIdentifierValue>(value)) {
+    DCHECK_EQ(ident->GetValueID(), CSSValueID::kNormal);
+    return StyleInterestDelay();
+  }
+  return StyleInterestDelay(
+      StyleBuilderConverter::ConvertTimeValue(state, value));
+}
+
+int StyleBuilderConverter::ConvertBorderWidth(const StyleResolverState& state,
                                               const CSSValue& value) {
   double result = 0;
 
@@ -1906,19 +2027,14 @@ Length StyleBuilderConverter::ConvertLengthOrAuto(
       state.CssToLengthConversionData());
 }
 
-ScrollStartData StyleBuilderConverter::ConvertScrollStart(
+std::optional<Length> StyleBuilderConverter::ConvertLengthOrNone(
     const StyleResolverState& state,
     const CSSValue& value) {
-  ScrollStartData scroll_start_data;
-  if (value.IsPrimitiveValue()) {
-    scroll_start_data.value_type = ScrollStartValueType::kLengthOrPercentage;
-    scroll_start_data.value = To<CSSPrimitiveValue>(value).ConvertToLength(
-        state.CssToLengthConversionData());
-    return scroll_start_data;
+  if (const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    DCHECK_EQ(identifier_value->GetValueID(), CSSValueID::kNone);
+    return std::nullopt;
   }
-  scroll_start_data.value_type =
-      To<CSSIdentifierValue>(value).ConvertTo<ScrollStartValueType>();
-  return scroll_start_data;
+  return ConvertLength(state, To<CSSPrimitiveValue>(value));
 }
 
 Length StyleBuilderConverter::ConvertLengthSizing(StyleResolverState& state,
@@ -1936,9 +2052,8 @@ Length StyleBuilderConverter::ConvertLengthSizing(StyleResolverState& state,
     case CSSValueID::kWebkitMaxContent:
       return Length::MaxContent();
     case CSSValueID::kStretch:
-      return Length::Stretch();
     case CSSValueID::kWebkitFillAvailable:
-      return Length::FillAvailable();
+      return Length::Stretch();
     case CSSValueID::kWebkitFitContent:
     case CSSValueID::kFitContent:
       return Length::FitContent();
@@ -2078,15 +2193,18 @@ ScopedCSSName* StyleBuilderConverter::ConvertCustomIdent(
       custom_ident.GetTreeScope());
 }
 
-ScopedCSSName* StyleBuilderConverter::ConvertPositionAnchor(
+StylePositionAnchor StyleBuilderConverter::ConvertPositionAnchor(
     StyleResolverState& state,
     const CSSValue& value) {
   DCHECK(value.IsScopedValue());
   if (const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    if (identifier_value->GetValueID() == CSSValueID::kNone) {
+      return StylePositionAnchor(StylePositionAnchor::Type::kNone);
+    }
     DCHECK_EQ(identifier_value->GetValueID(), CSSValueID::kAuto);
-    return nullptr;
+    return StylePositionAnchor(StylePositionAnchor::Type::kAuto);
   }
-  return ConvertCustomIdent(state, value);
+  return StylePositionAnchor(ConvertCustomIdent(state, value));
 }
 
 PositionVisibility StyleBuilderConverter::ConvertPositionVisibility(
@@ -2123,7 +2241,7 @@ ScopedCSSNameList* StyleBuilderConverter::ConvertAnchorName(
   return MakeGarbageCollected<ScopedCSSNameList>(std::move(names));
 }
 
-StyleAnchorScope StyleBuilderConverter::ConvertAnchorScope(
+StyleNameScope StyleBuilderConverter::ConvertNameScope(
     StyleResolverState& state,
     const CSSValue& value) {
   CHECK(value.IsScopedValue());
@@ -2131,22 +2249,28 @@ StyleAnchorScope StyleBuilderConverter::ConvertAnchorScope(
           DynamicTo<cssvalue::CSSScopedKeywordValue>(value)) {
     CHECK_EQ(scoped_keyword_value->GetValueID(), CSSValueID::kAll);
     state.SetHasTreeScopedReference();
-    return StyleAnchorScope(StyleAnchorScope::Type::kAll,
-                            scoped_keyword_value->GetTreeScope(),
-                            /* names */ nullptr);
+    return StyleNameScope(StyleNameScope::Type::kAll,
+                          scoped_keyword_value->GetTreeScope(),
+                          /* names */ nullptr);
   }
   if (const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
     CHECK_EQ(identifier_value->GetValueID(), CSSValueID::kNone);
-    return StyleAnchorScope();
+    return StyleNameScope();
   }
   CHECK(value.IsBaseValueList());
   HeapVector<Member<const ScopedCSSName>> names;
   for (const Member<const CSSValue>& item : To<CSSValueList>(value)) {
     names.push_back(ConvertCustomIdent(state, *item));
   }
-  return StyleAnchorScope(
-      StyleAnchorScope::Type::kNames, /* all_tree_scope */ nullptr,
+  return StyleNameScope(
+      StyleNameScope::Type::kNames, /* all_tree_scope */ nullptr,
       /* names */ MakeGarbageCollected<ScopedCSSNameList>(std::move(names)));
+}
+
+StyleAnchorScope StyleBuilderConverter::ConvertAnchorScope(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  return ConvertNameScope(state, value);
 }
 
 StyleInitialLetter StyleBuilderConverter::ConvertInitialLetter(
@@ -2336,13 +2460,13 @@ LengthSize StyleBuilderConverter::ConvertRadius(const StyleResolverState& state,
 }
 
 template <typename T>
-T ConvertGapDecorationPropertyValue(StyleResolverState& state,
+T ConvertGapDecorationPropertyValue(const StyleResolverState& state,
                                     const CSSValue& value,
                                     bool for_visited_link = false);
 
 template <>
 StyleColor ConvertGapDecorationPropertyValue<StyleColor>(
-    StyleResolverState& state,
+    const StyleResolverState& state,
     const CSSValue& value,
     bool for_visited_link) {
   return StyleBuilderConverter::ConvertStyleColor(state, value,
@@ -2350,7 +2474,7 @@ StyleColor ConvertGapDecorationPropertyValue<StyleColor>(
 }
 
 template <>
-int ConvertGapDecorationPropertyValue<int>(StyleResolverState& state,
+int ConvertGapDecorationPropertyValue<int>(const StyleResolverState& state,
                                            const CSSValue& value,
                                            bool for_visited_link) {
   return ClampTo<uint16_t>(
@@ -2359,14 +2483,14 @@ int ConvertGapDecorationPropertyValue<int>(StyleResolverState& state,
 
 template <>
 EBorderStyle ConvertGapDecorationPropertyValue<EBorderStyle>(
-    StyleResolverState& state,
+    const StyleResolverState& state,
     const CSSValue& value,
     bool for_visited_link) {
   return To<CSSIdentifierValue>(value).ConvertTo<blink::EBorderStyle>();
 }
 
 template <typename T>
-GapDataList<T> ConvertGapDecorationDataList(StyleResolverState& state,
+GapDataList<T> ConvertGapDecorationDataList(const StyleResolverState& state,
                                             const CSSValue& value,
                                             bool for_visited_link = false) {
   // The `value` will not be a list in two scenarios:
@@ -2435,7 +2559,7 @@ GapDataList<T> ConvertGapDecorationDataList(StyleResolverState& state,
 
 GapDataList<StyleColor>
 StyleBuilderConverter::ConvertGapDecorationColorDataList(
-    StyleResolverState& state,
+    const StyleResolverState& state,
     const CSSValue& value,
     bool for_visited_link) {
   return ConvertGapDecorationDataList<blink::StyleColor>(state, value,
@@ -2443,14 +2567,14 @@ StyleBuilderConverter::ConvertGapDecorationColorDataList(
 }
 
 GapDataList<int> StyleBuilderConverter::ConvertGapDecorationWidthDataList(
-    StyleResolverState& state,
+    const StyleResolverState& state,
     const CSSValue& value) {
   return ConvertGapDecorationDataList<int>(state, value);
 }
 
 GapDataList<EBorderStyle>
 StyleBuilderConverter::ConvertGapDecorationStyleDataList(
-    StyleResolverState& state,
+    const StyleResolverState& state,
     const CSSValue& value) {
   return ConvertGapDecorationDataList<EBorderStyle>(state, value);
 }
@@ -2484,7 +2608,7 @@ ShadowData StyleBuilderConverter::ConvertShadow(
       black_text_link_colors.SetActiveLinkColor(Color::kBlack);
 
       const ResolveColorValueContext context{
-          .length_resolver = conversion_data,
+          .conversion_data = conversion_data,
           .text_link_colors = black_text_link_colors};
       color = ResolveColorValue(*shadow.color, context);
       if (!color.IsAbsoluteColor()) {
@@ -2546,42 +2670,29 @@ ShapeValue* StyleBuilderConverter::ConvertShapeValue(StyleResolverState& state,
   return MakeGarbageCollected<ShapeValue>(css_box);
 }
 
-// TODO(crbug.com/327740939): Merge ConvertLetterSpacing and ConvertWordSpacing
-// if percentage for word-spacing is implemented.
-Length StyleBuilderConverter::ConvertLetterSpacing(StyleResolverState& state,
-                                                   const CSSValue& value) {
+Length StyleBuilderConverter::ConvertSpacing(StyleResolverState& state,
+                                             const CSSValue& value) {
   auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
   if (identifier_value &&
       identifier_value->GetValueID() == CSSValueID::kNormal) {
-    return ComputedStyleInitialValues::InitialLetterSpacing();
+    return Length::Fixed();
   }
   return ConvertLength(state, value);
 }
 
-float StyleBuilderConverter::ConvertWordSpacing(StyleResolverState& state,
-                                                const CSSValue& value) {
-  auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
-  if (identifier_value &&
-      identifier_value->GetValueID() == CSSValueID::kNormal) {
-    return 0;
-  }
-  return To<CSSPrimitiveValue>(value).ComputeLength<float>(
-      state.CssToLengthConversionData());
-}
-
-scoped_refptr<SVGDashArray> StyleBuilderConverter::ConvertStrokeDasharray(
+SVGDashArray* StyleBuilderConverter::ConvertStrokeDasharray(
     StyleResolverState& state,
     const CSSValue& value) {
   const auto* dashes = DynamicTo<CSSValueList>(value);
   if (!dashes) {
-    return EmptyDashArray();
+    return nullptr;
   }
+  DCHECK(dashes->length());
 
-  scoped_refptr<SVGDashArray> array = base::MakeRefCounted<SVGDashArray>();
-
-  wtf_size_t length = dashes->length();
-  for (wtf_size_t i = 0; i < length; ++i) {
-    array->data.push_back(
+  SVGDashArray* array = MakeGarbageCollected<SVGDashArray>();
+  array->ReserveInitialCapacity(dashes->length());
+  for (wtf_size_t i = 0; i < dashes->length(); ++i) {
+    array->push_back(
         ConvertLength(state, To<CSSPrimitiveValue>(dashes->Item(i))));
   }
 
@@ -2645,6 +2756,33 @@ ScopedCSSNameList* StyleBuilderConverter::ConvertViewTransitionClass(
   return MakeGarbageCollected<ScopedCSSNameList>(std::move(names));
 }
 
+ScopedCSSNameList* StyleBuilderConverter::ConvertOverscrollArea(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  DCHECK(value.IsScopedValue());
+  if (const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    DCHECK_EQ(identifier_value->GetValueID(), CSSValueID::kNone);
+    return nullptr;
+  }
+  DCHECK(value.IsBaseValueList());
+  HeapVector<Member<const ScopedCSSName>> names;
+  for (const Member<const CSSValue>& item : To<CSSValueList>(value)) {
+    names.push_back(ConvertCustomIdent(state, *item));
+  }
+  return MakeGarbageCollected<ScopedCSSNameList>(std::move(names));
+}
+
+ScopedCSSName* StyleBuilderConverter::ConvertOverscrollPosition(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  DCHECK(value.IsScopedValue());
+  if (const auto* identifier_value = DynamicTo<CSSIdentifierValue>(value)) {
+    DCHECK_EQ(identifier_value->GetValueID(), CSSValueID::kNone);
+    return nullptr;
+  }
+  return ConvertCustomIdent(state, value);
+}
+
 namespace {
 
 const CSSValue& ResolveLightDarkPair(const CSSLightDarkValuePair& value,
@@ -2689,7 +2827,7 @@ StyleColor ResolveColorValueImpl(const CSSValue& value,
     // TODO(crbug.com/40238188): Not sure what is appropriate to return when
     // both mix amounts are zero.
     color_mix_value->NormalizePercentages(mix_amount, alpha_multiplier,
-                                          context.length_resolver);
+                                          context.conversion_data);
     const StyleColor::UnresolvedColorMix* unresolved_color_mix =
         MakeGarbageCollected<StyleColor::UnresolvedColorMix>(
             color_mix_value->ColorInterpolationSpace(),
@@ -2715,7 +2853,7 @@ StyleColor ResolveColorValueImpl(const CSSValue& value,
             origin_color, relative_color_value->ColorInterpolationSpace(),
             relative_color_value->Channel0(), relative_color_value->Channel1(),
             relative_color_value->Channel2(), relative_color_value->Alpha(),
-            context.length_resolver);
+            context.conversion_data);
     // https://drafts.csswg.org/css-color-5/#resolving-rcs
     // If the origin color is resolvable at computed-value time, the relative
     // color function should be resolved at computed-value time as well.
@@ -2729,7 +2867,7 @@ StyleColor ResolveColorValueImpl(const CSSValue& value,
 
   if (auto* unresolved_color_value =
           DynamicTo<cssvalue::CSSUnresolvedColorValue>(value)) {
-    return StyleColor(unresolved_color_value->Resolve(context.length_resolver));
+    return StyleColor(unresolved_color_value->Resolve(context.conversion_data));
   }
 
   auto& light_dark_pair = To<CSSLightDarkValuePair>(value);
@@ -2779,14 +2917,15 @@ StyleColor ResolveColorValue(const CSSValue& value,
   return result;
 }
 
-StyleColor StyleBuilderConverter::ConvertStyleColor(StyleResolverState& state,
-                                                    const CSSValue& value,
-                                                    bool for_visited_link) {
+StyleColor StyleBuilderConverter::ConvertStyleColor(
+    const StyleResolverState& state,
+    const CSSValue& value,
+    bool for_visited_link) {
   mojom::blink::ColorScheme color_scheme =
       state.StyleBuilder().UsedColorScheme();
   auto& document = state.GetDocument();
   const ResolveColorValueContext context{
-      .length_resolver = state.CssToLengthConversionData(),
+      .conversion_data = state.CssToLengthConversionData(),
       .text_link_colors = document.GetTextLinkColors(),
       .used_color_scheme = color_scheme,
       .color_provider = document.GetColorProviderForPainting(color_scheme),
@@ -3208,12 +3347,12 @@ BasicShape* StyleBuilderConverter::ConvertObjectViewBox(
 }
 
 static const CSSValue& ComputeColorValue(
-    const CSSLengthResolver& length_resolver,
+    const CSSToLengthConversionData& conversion_data,
     const CSSValue& color_value,
     const Document& document,
     mojom::blink::ColorScheme color_scheme) {
   const ResolveColorValueContext context{
-      .length_resolver = length_resolver,
+      .conversion_data = conversion_data,
       .text_link_colors = document.GetTextLinkColors(),
       .used_color_scheme = color_scheme,
       .color_provider = document.GetColorProviderForPainting(color_scheme),
@@ -3549,55 +3688,24 @@ StyleIntrinsicLength StyleBuilderConverter::ConvertIntrinsicDimension(
     const StyleResolverState& state,
     const CSSValue& value) {
   // The valid grammar for this value is the following:
-  // none | <length> | auto && <length> | auto && none.
-
-  auto* identifier_value = DynamicTo<CSSIdentifierValue>(value);
-  if (identifier_value) {
-    if (identifier_value->GetValueID() == CSSValueID::kNone) {
-      return StyleIntrinsicLength(/*has_auto=*/false, /*matches_element=*/false,
-                                  std::nullopt);
-    } else {
-      DCHECK(RuntimeEnabledFeatures::ResponsiveIframesEnabled());
-      DCHECK(identifier_value->GetValueID() == CSSValueID::kFromElement);
-      return StyleIntrinsicLength(/*has_auto=*/false, /*matches_element=*/true,
-                                  std::nullopt);
+  // `[ auto | from-element ]? [ none | <length [0,∞]> ]`.
+  if (const CSSValueList* list = DynamicTo<CSSValueList>(value)) {
+    DCHECK_EQ(list->length(), 2u);
+    DCHECK(IsA<CSSIdentifierValue>(list->Item(0)));
+    if (RuntimeEnabledFeatures::ResponsiveIframesEnabled()) {
+      const auto& identifier = To<CSSIdentifierValue>(list->Item(0));
+      if (identifier.GetValueID() == CSSValueID::kFromElement) {
+        return StyleIntrinsicLength::CreateFromElement(
+            ConvertLengthOrNone(state, list->Item(1)));
+      }
     }
+    DCHECK(To<CSSIdentifierValue>(list->Item(0)).GetValueID() ==
+           CSSValueID::kAuto);
+    return StyleIntrinsicLength(ConvertLengthOrNone(state, list->Item(1)),
+                                {.has_auto = true});
   }
 
-  // Handle "<length> | auto && <length> | auto && none, which will all come
-  // from a list.
-  const CSSValueList* list = DynamicTo<CSSValueList>(value);
-  DCHECK(list);
-  DCHECK_GT(list->length(), 0u);
-
-  // Handle "<length>".
-  if (auto* primitive_value = DynamicTo<CSSPrimitiveValue>(list->Item(0))) {
-    DCHECK_EQ(list->length(), 1u);
-    return StyleIntrinsicLength(
-        /*has_auto=*/false, /*matches_element=*/false,
-        ConvertLength(state, *primitive_value));
-  }
-
-  // The rest of the syntax will have "auto" as the first keyword.
-  DCHECK_EQ(list->length(), 2u);
-  DCHECK(IsA<CSSIdentifierValue>(list->Item(0)));
-  DCHECK(To<CSSIdentifierValue>(list->Item(0)).GetValueID() ==
-         CSSValueID::kAuto);
-
-  // Handle "auto && <length>"
-  if (auto* primitive_value = DynamicTo<CSSPrimitiveValue>(list->Item(1))) {
-    return StyleIntrinsicLength(
-        /*has_auto=*/true, /*matches_element=*/false,
-        ConvertLength(state, *primitive_value));
-  }
-
-  // The only grammar left is "auto && none".
-  DCHECK(IsA<CSSIdentifierValue>(list->Item(1)));
-  DCHECK(To<CSSIdentifierValue>(list->Item(1)).GetValueID() ==
-         CSSValueID::kNone);
-
-  return StyleIntrinsicLength(/*has_auto=*/true, /*matches_element=*/false,
-                              std::nullopt);
+  return StyleIntrinsicLength(ConvertLengthOrNone(state, value));
 }
 
 ColorSchemeFlags StyleBuilderConverter::ExtractColorSchemes(
@@ -3721,13 +3829,7 @@ Vector<TimelineInset> StyleBuilderConverter::ConvertViewTimelineInset(
 ScopedCSSNameList* StyleBuilderConverter::ConvertViewTimelineName(
     StyleResolverState& state,
     const CSSValue& value) {
-  DCHECK(value.IsScopedValue());
-  DCHECK(value.IsBaseValueList());
-  HeapVector<Member<const ScopedCSSName>> names;
-  for (const Member<const CSSValue>& item : To<CSSValueList>(value)) {
-    names.push_back(ConvertNoneOrCustomIdent(state, *item));
-  }
-  return MakeGarbageCollected<ScopedCSSNameList>(std::move(names));
+  return ConvertNoneOrCustomIdentList(state, value);
 }
 
 ScopedCSSNameList* StyleBuilderConverter::ConvertTimelineScope(
@@ -3748,7 +3850,8 @@ ScopedCSSNameList* StyleBuilderConverter::ConvertTimelineScope(
 
 PositionArea StyleBuilderConverter::ConvertPositionArea(
     StyleResolverState& state,
-    const CSSValue& value) {
+    const CSSValue& value,
+    bool allow_any_keyword) {
   auto extract_position_area_span = [](CSSValueID value)
       -> std::pair<PositionAreaRegion, PositionAreaRegion> {
     PositionAreaRegion start = PositionAreaRegion::kNone;
@@ -3788,19 +3891,19 @@ PositionArea StyleBuilderConverter::ConvertPositionArea(
         start = PositionAreaRegion::kCenter;
         end = PositionAreaRegion::kXEnd;
         break;
-      case CSSValueID::kXSelfStart:
-        start = end = PositionAreaRegion::kXSelfStart;
+      case CSSValueID::kSelfXStart:
+        start = end = PositionAreaRegion::kSelfXStart;
         break;
-      case CSSValueID::kXSelfEnd:
-        start = end = PositionAreaRegion::kXSelfEnd;
+      case CSSValueID::kSelfXEnd:
+        start = end = PositionAreaRegion::kSelfXEnd;
         break;
-      case CSSValueID::kSpanXSelfStart:
-        start = PositionAreaRegion::kXSelfStart;
+      case CSSValueID::kSpanSelfXStart:
+        start = PositionAreaRegion::kSelfXStart;
         end = PositionAreaRegion::kCenter;
         break;
-      case CSSValueID::kSpanXSelfEnd:
+      case CSSValueID::kSpanSelfXEnd:
         start = PositionAreaRegion::kCenter;
-        end = PositionAreaRegion::kXSelfEnd;
+        end = PositionAreaRegion::kSelfXEnd;
         break;
       case CSSValueID::kTop:
         start = end = PositionAreaRegion::kTop;
@@ -3830,19 +3933,19 @@ PositionArea StyleBuilderConverter::ConvertPositionArea(
         start = PositionAreaRegion::kCenter;
         end = PositionAreaRegion::kYEnd;
         break;
-      case CSSValueID::kYSelfStart:
-        start = end = PositionAreaRegion::kYSelfStart;
+      case CSSValueID::kSelfYStart:
+        start = end = PositionAreaRegion::kSelfYStart;
         break;
-      case CSSValueID::kYSelfEnd:
-        start = end = PositionAreaRegion::kYSelfEnd;
+      case CSSValueID::kSelfYEnd:
+        start = end = PositionAreaRegion::kSelfYEnd;
         break;
-      case CSSValueID::kSpanYSelfStart:
-        start = PositionAreaRegion::kYSelfStart;
+      case CSSValueID::kSpanSelfYStart:
+        start = PositionAreaRegion::kSelfYStart;
         end = PositionAreaRegion::kCenter;
         break;
-      case CSSValueID::kSpanYSelfEnd:
+      case CSSValueID::kSpanSelfYEnd:
         start = PositionAreaRegion::kCenter;
-        end = PositionAreaRegion::kYSelfEnd;
+        end = PositionAreaRegion::kSelfYEnd;
         break;
       case CSSValueID::kBlockStart:
         start = end = PositionAreaRegion::kBlockStart;
@@ -3928,24 +4031,30 @@ PositionArea StyleBuilderConverter::ConvertPositionArea(
         start = PositionAreaRegion::kCenter;
         end = PositionAreaRegion::kSelfEnd;
         break;
+      case CSSValueID::kAny:
+        start = end = PositionAreaRegion::kAny;
+        break;
       default:
         NOTREACHED();
     }
     return std::make_pair(start, end);
   };
 
-  if (const auto* first_value = DynamicTo<CSSIdentifierValue>(value)) {
-    CSSValueID first_keyword = first_value->GetValueID();
-    if (first_keyword == CSSValueID::kNone) {
+  if (const auto* single_keyword_value = DynamicTo<CSSIdentifierValue>(value)) {
+    CSSValueID single_keyword = single_keyword_value->GetValueID();
+    if (single_keyword == CSSValueID::kNone) {
       return PositionArea();
     }
     PositionAreaRegion span[2];
-    std::tie(span[0], span[1]) = extract_position_area_span(first_keyword);
-    if (css_parsing_utils::IsRepeatedPositionAreaValue(first_keyword)) {
+    std::tie(span[0], span[1]) = extract_position_area_span(single_keyword);
+    if (css_parsing_utils::IsRepeatedPositionAreaValue(single_keyword)) {
       return PositionArea(span[0], span[1], span[0], span[1]);
     } else {
-      return PositionArea(span[0], span[1], PositionAreaRegion::kAll,
-                          PositionAreaRegion::kAll);
+      PositionAreaRegion default_second_span = allow_any_keyword
+                                                   ? PositionAreaRegion::kAny
+                                                   : PositionAreaRegion::kAll;
+      return PositionArea(span[0], span[1], default_second_span,
+                          default_second_span);
     }
   }
 
@@ -3961,10 +4070,12 @@ PositionArea StyleBuilderConverter::ConvertPositionArea(
 
 PositionTryFallback StyleBuilderConverter::ConvertSinglePositionTryFallback(
     StyleResolverState& state,
-    const CSSValue& value) {
+    const CSSValue& value,
+    bool allow_any_keyword_in_position_area) {
   // <'position-area'>
   if (IsA<CSSValuePair>(value) || IsA<CSSIdentifierValue>(value)) {
-    return PositionTryFallback(ConvertPositionArea(state, value));
+    return PositionTryFallback(
+        ConvertPositionArea(state, value, allow_any_keyword_in_position_area));
   }
   // [<dashed-ident> || <try-tactic>]
   const ScopedCSSName* scoped_name = nullptr;
@@ -4022,6 +4133,32 @@ FitText StyleBuilderConverter::ConvertFitText(StyleResolverState& state,
         To<CSSPrimitiveValue>(list.Item(next_index)), parent_size));
   }
   return FitText(target, method, size_limit);
+}
+
+TextOverflowData StyleBuilderConverter::ConvertTextOverflow(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  if (const auto* string_value = DynamicTo<CSSStringValue>(value)) {
+    return TextOverflowData(string_value->Value());
+  }
+  const auto& identifier_value = To<CSSIdentifierValue>(value);
+  if (identifier_value.GetValueID() == CSSValueID::kEllipsis) {
+    return TextOverflowData(TextOverflowData::Type::kEllipsis);
+  }
+  DCHECK(identifier_value.GetValueID() == CSSValueID::kClip);
+  return TextOverflowData(TextOverflowData::Type::kClip);
+}
+
+ScopedCSSNameList* StyleBuilderConverter::ConvertTimelineTriggerName(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  return ConvertNoneOrCustomIdentList(state, value);
+}
+
+StyleTriggerScope StyleBuilderConverter::ConvertTriggerScope(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  return ConvertNameScope(state, value);
 }
 
 }  // namespace blink

@@ -29,6 +29,7 @@ class SkBitmap;
 
 namespace actor {
 class Journal;
+class PageStabilityMonitor;
 }
 
 namespace gfx {
@@ -90,7 +91,8 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
       mojo::ScopedInterfaceEndpointHandle* handle) override;
   void ReadyToCommitNavigation(
       blink::WebDocumentLoader* document_loader) override;
-  void DidSetPageLifecycleState(bool restoring_from_bfcache) override;
+  void DidSetPageLifecycleState(
+      blink::BFCacheStateChange bfcache_change) override;
   void DidFinishLoad() override;
   void DidCreateNewDocument() override;
   void DidCommitProvisionalLoad(ui::PageTransition transition) override;
@@ -123,7 +125,6 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
 #endif
   void GetMediaFeedURL(GetMediaFeedURLCallback callback) override;
   void LoadBlockedPlugins(const std::string& identifier) override;
-  void SetSupportsDraggableRegions(bool supports_draggable_regions) override;
   void SetShouldDeferMediaLoad(bool should_defer) override;
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -132,6 +133,17 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
   void StartActorJournal(
       mojo::PendingAssociatedRemote<actor::mojom::JournalClient> client)
       override;
+  // Multiple calls will clobber a PageStabilityMonitor previously created and
+  // it's the caller's responsibility to ensure the monitor is unneeded before
+  // creating a new one.
+  //
+  // `task_id` identifies the ID of the active actor tool.
+  // `supports_paint_stability` indicates whether to include paint stability in
+  // page stability heuristics.
+  void CreatePageStabilityMonitor(
+      mojo::PendingReceiver<actor::mojom::PageStabilityMonitor> monitor,
+      const actor::TaskId& task_id,
+      bool supports_paint_stability) override;
 #endif
 
   // Initialize a |phishing_classifier_delegate_|.
@@ -165,7 +177,7 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
                             const gfx::Size& requested_image_max_size);
 
   // Check if the image need to encode to fit requested image format.
-  static bool NeedsEncodeImage(const std::string& image_extension,
+  static bool NeedsEncodeImage(const std::string& mime_type,
                                chrome::mojom::ImageFormat image_format);
 
   // Check if the image is an animated Webp image by looking for animation
@@ -196,6 +208,7 @@ class ChromeRenderFrameObserver : public content::RenderFrameObserver,
 
 #if !BUILDFLAG(IS_ANDROID)
   std::unique_ptr<actor::ToolExecutor> tool_executor_;
+  std::unique_ptr<actor::PageStabilityMonitor> page_stability_monitor_;
 #endif
 
   mojo::AssociatedReceiverSet<chrome::mojom::ChromeRenderFrame> receivers_;

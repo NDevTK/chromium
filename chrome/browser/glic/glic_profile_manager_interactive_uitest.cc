@@ -7,10 +7,10 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/glic/fre/glic_fre_controller.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_profile_manager.h"
 #include "chrome/browser/glic/host/host.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/test_support/glic_test_util.h"
 #include "chrome/browser/glic/test_support/interactive_glic_test.h"
 #include "chrome/browser/glic/widget/glic_window_controller.h"
@@ -61,7 +61,10 @@ class GlicProfileManagerUiTest
                                 {features::kGlicWarming,
                                  {{features::kGlicWarmingDelayMs.name, "0"},
                                   {features::kGlicWarmingJitterMs.name, "0"}}}},
-          /*disabled_features=*/{});
+          /*disabled_features=*/{
+              // TODO(b/453696965): These tests need fixed to work with
+              // kGlicMultiInstance.
+              features::kGlicMultiInstance});
     } else {
       feature_list_.InitWithFeaturesAndParameters(
           /*enabled_features=*/{{features::kGlicFreWarming, {}},
@@ -70,7 +73,10 @@ class GlicProfileManagerUiTest
                                      {features::kGlicWarmingDelayMs.name, "0"},
                                      {features::kGlicWarmingJitterMs.name, "0"},
                                  }}},
-          /*disabled_features=*/{features::kGlicWarmMultiple});
+          /*disabled_features=*/{features::kGlicWarmMultiple,
+                                 // TODO(b/453696965): These tests need fixed to
+                                 // work with kGlicMultiInstance.
+                                 features::kGlicMultiInstance});
     }
   }
   ~GlicProfileManagerUiTest() override = default;
@@ -80,8 +86,7 @@ class GlicProfileManagerUiTest
     // web client before we've initialized the embedded test server and can set
     // the correct URL.
     GlicProfileManager::ForceMemoryPressureForTesting(
-        base::MemoryPressureMonitor::MemoryPressureLevel::
-            MEMORY_PRESSURE_LEVEL_CRITICAL);
+        base::MEMORY_PRESSURE_LEVEL_CRITICAL);
     GlicProfileManager::ForceConnectionTypeForTesting(
         network::mojom::ConnectionType::CONNECTION_ETHERNET);
     fre_server_.ServeFilesFromDirectory(
@@ -136,7 +141,8 @@ class GlicProfileManagerUiTest
           GetTestEnvForSecondProfile().SetFRECompletion(
               prefs::FreStatus::kNotStarted);
         }
-        GetService(primary_profile)->TryPreloadFre();
+        GetService(primary_profile)
+            ->TryPreloadFre(glic::GlicPrewarmingFreSource::kTest);
       } else {
         GetService(primary_profile)->TryPreload();
       }
@@ -147,15 +153,16 @@ class GlicProfileManagerUiTest
     return Do([primary_warmed, secondary_warmed, this]() {
       auto IsWarmedAndSized = [](GlicKeyedService* service) {
         const bool warmed =
-            service->window_controller().IsWarmed() ||
-            service->window_controller().fre_controller()->IsWarmed() ||
-            service->window_controller().IsPanelOrFreShowing();
+            service->GetSingleInstanceWindowController().IsWarmed() ||
+            service->fre_controller().IsWarmed() ||
+            service->IsWindowOrFreShowing();
         if (!warmed) {
           return false;
         }
-        auto* contents = service->host().webui_contents();
+        auto* contents =
+            service->GetInstanceForActiveTab(nullptr)->host().webui_contents();
         if (!contents) {
-          contents = service->window_controller().GetFreWebContents();
+          contents = service->fre_controller().GetWebContents();
         }
         return contents && !contents->GetSize().IsEmpty();
       };
@@ -168,8 +175,7 @@ class GlicProfileManagerUiTest
   auto ResetMemoryPressure() {
     return Do([]() {
       GlicProfileManager::ForceMemoryPressureForTesting(
-          base::MemoryPressureMonitor::MemoryPressureLevel::
-              MEMORY_PRESSURE_LEVEL_NONE);
+          base::MEMORY_PRESSURE_LEVEL_NONE);
     });
   }
 
@@ -177,9 +183,9 @@ class GlicProfileManagerUiTest
     return Do([this, primary_profile]() {
       auto* service = GetService(primary_profile);
       if (ShouldWarmFRE()) {
-        web_client_contents_ = service->window_controller().GetFreWebContents();
+        web_client_contents_ = service->fre_controller().GetWebContents();
       } else {
-        web_client_contents_ = service->host().webui_contents();
+        web_client_contents_ = GetHost()->webui_contents();
       }
     });
   }
@@ -187,13 +193,13 @@ class GlicProfileManagerUiTest
   auto CheckCachedClientContents(bool primary_profile) {
     return Do([this, primary_profile]() {
       auto* service = GetService(primary_profile);
-      auto& controller = GetService(primary_profile)->window_controller();
       if (ShouldWarmFRE()) {
-        EXPECT_EQ(web_client_contents_, controller.GetFreWebContents());
-        EXPECT_NE(nullptr, controller.GetFreWebContents());
+        EXPECT_EQ(web_client_contents_,
+                  service->fre_controller().GetWebContents());
+        EXPECT_NE(nullptr, service->fre_controller().GetWebContents());
       } else {
-        EXPECT_EQ(web_client_contents_, service->host().webui_contents());
-        EXPECT_NE(nullptr, service->host().webui_contents());
+        EXPECT_EQ(web_client_contents_, GetHost()->webui_contents());
+        EXPECT_NE(nullptr, GetHost()->webui_contents());
       }
       web_client_contents_ = nullptr;
     });
@@ -208,16 +214,14 @@ class GlicProfileManagerUiTest
   auto SendMemoryPressureSignal(bool primary_profile) {
     return Do([this, primary_profile]() {
       GlicProfileManager::ForceMemoryPressureForTesting(
-          base::MemoryPressureMonitor::MemoryPressureLevel::
-              MEMORY_PRESSURE_LEVEL_CRITICAL);
+          base::MEMORY_PRESSURE_LEVEL_CRITICAL);
       GetService(primary_profile)
-          ->OnMemoryPressure(base::MemoryPressureListener::MemoryPressureLevel::
-                                 MEMORY_PRESSURE_LEVEL_CRITICAL);
+          ->OnMemoryPressure(base::MEMORY_PRESSURE_LEVEL_CRITICAL);
     });
   }
 
   GlicFreController* GetFreController(bool primary_profile) {
-    return GetService(true)->window_controller().fre_controller();
+    return &GetService(true)->fre_controller();
   }
   GlicTestEnvironmentService& GetTestEnvForSecondProfile() {
     return *glic::GlicTestEnvironment::GetService(GetSecondProfile());

@@ -5,23 +5,34 @@
 package org.chromium.chrome.browser.ntp_customization;
 
 import static org.chromium.build.NullUtil.assumeNonNull;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.CHROME_COLORS;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.FEED;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MAIN;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MVT;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.NTP_CARDS;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.SINGLE_THEME_COLLECTION;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.THEME;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.THEME_COLLECTIONS;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils.NtpBackgroundImageType.THEME_COLLECTION;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LAYOUT_TO_DISPLAY;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_VIEW_DELEGATE;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_MVT_SECTION_SUBTITLE;
 
 import android.content.Context;
-import android.support.annotation.VisibleForTesting;
+import android.graphics.Bitmap;
 import android.view.View;
 import android.widget.ViewFlipper;
 
+import androidx.annotation.StringRes;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.ResettersForTesting;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.feed.FeedFeatures;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.ntp_customization.theme.NtpThemeStateProvider;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
@@ -36,6 +47,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * A mediator class that manages the view flipper and {@link BottomSheetContent} of NTP
@@ -43,6 +55,13 @@ import java.util.Map;
  */
 @NullMarked
 public class NtpCustomizationMediator {
+    // Defines the back navigation hierarchy for theme-related bottom sheets. <Child, Parent>
+    private final Map<Integer, Integer> mThemeBackNavigationMap =
+            Map.ofEntries(
+                    Map.entry(SINGLE_THEME_COLLECTION, THEME_COLLECTIONS),
+                    Map.entry(THEME_COLLECTIONS, THEME),
+                    Map.entry(CHROME_COLORS, THEME));
+
     /**
      * A map of <{@link NtpCustomizationCoordinator.BottomSheetType}, view's position index in the
      * {@link ViewFlipper}>.
@@ -54,19 +73,23 @@ public class NtpCustomizationMediator {
     private final NtpCustomizationBottomSheetContent mBottomSheetContent;
     private final BottomSheetObserver mBottomSheetObserver;
     private final PropertyModel mViewFlipperPropertyModel;
-    private List<Integer> mListContent;
-    private final Supplier<Profile> mProfileSupplier;
+    private final List<Integer> mListContent;
+    private final Supplier<@Nullable Profile> mProfileSupplier;
     private final @Nullable PropertyModel mContainerPropertyModel;
+    private final boolean mNtpCustomizationForMvtFeatureEnabled;
     private @Nullable Profile mProfile;
     private @Nullable Integer mCurrentBottomSheet;
+    private boolean mShouldRecreate;
+    private @Nullable Bitmap mNewThemeCollectionImage;
     private static @Nullable PrefService sPrefServiceForTest;
 
     public NtpCustomizationMediator(
+            Context context,
             BottomSheetController bottomSheetController,
             NtpCustomizationBottomSheetContent bottomSheetContent,
             PropertyModel viewFlipperPropertyModel,
             @Nullable PropertyModel containerPropertyModel,
-            Supplier<Profile> profileSupplier) {
+            Supplier<@Nullable Profile> profileSupplier) {
         mBottomSheetController = bottomSheetController;
         mBottomSheetContent = bottomSheetContent;
         mViewFlipperPropertyModel = viewFlipperPropertyModel;
@@ -75,6 +98,8 @@ public class NtpCustomizationMediator {
         mViewFlipperMap = new HashMap<>();
         mTypeToListenersMap = new HashMap<>();
         mListContent = buildListContent();
+        mNtpCustomizationForMvtFeatureEnabled =
+                ChromeFeatureList.sNewTabPageCustomizationForMvt.isEnabled();
 
         mBottomSheetObserver =
                 new EmptyBottomSheetObserver() {
@@ -85,8 +110,20 @@ public class NtpCustomizationMediator {
 
                     @Override
                     public void onSheetClosed(@BottomSheetController.StateChangeReason int reason) {
+                        // Pick and save the primary color if a new theme collection image is
+                        // selected.
+                        if (NtpCustomizationConfigManager.getInstance().getBackgroundImageType()
+                                        == THEME_COLLECTION
+                                && mNewThemeCollectionImage != null) {
+                            NtpCustomizationUtils.pickAndSavePrimaryColor(mNewThemeCollectionImage);
+                        }
                         mBottomSheetContent.onSheetClosed();
                         mBottomSheetController.removeObserver(mBottomSheetObserver);
+                        // Notify to recreate activities if a new customized theme color is selected
+                        // or removed.
+                        if (mShouldRecreate) {
+                            NtpThemeStateProvider.getInstance().notifyApplyThemeChanges();
+                        }
                     }
                 };
         mBottomSheetController.addObserver(mBottomSheetObserver);
@@ -121,24 +158,47 @@ public class NtpCustomizationMediator {
         NtpCustomizationMetricsUtils.recordBottomSheetShown(type);
     }
 
+    // Called when a customized theme color is selected or removed.
+    void onNewColorSelected(boolean isDifferentColor) {
+        mShouldRecreate = isDifferentColor;
+    }
+
+    // Called when a new theme collection image is selected or removed.
+    void onNewThemeCollectionImageSelected(@Nullable Bitmap image) {
+        mNewThemeCollectionImage = image;
+    }
+
     /** Handles system back press and back button clicks on the bottom sheet. */
     void backPressOnCurrentBottomSheet() {
         if (mCurrentBottomSheet == null) return;
 
         if (mCurrentBottomSheet == MAIN) {
-            dismissBottomSheet();
+            dismissBottomSheet(/* animate= */ true);
+            return;
+        }
+
+        @NtpCustomizationCoordinator.BottomSheetType
+        Integer parentSheet = mThemeBackNavigationMap.get(mCurrentBottomSheet);
+
+        if (parentSheet != null) {
+            showBottomSheet(parentSheet);
         } else {
             showBottomSheet(MAIN);
 
             // Updates the visibility status (on or off) of the feeds section in the main bottom
             // sheet.
             updateFeedSectionSubtitle(getPrefService().getBoolean(Pref.ARTICLES_LIST_VISIBLE));
+
+            boolean isMvtVisible =
+                    mNtpCustomizationForMvtFeatureEnabled
+                            && NtpCustomizationConfigManager.getInstance().getPrefIsMvtToggleOn();
+            updateMvtSectionSubtitle(isMvtVisible);
         }
     }
 
     /** Closes the entire bottom sheet view and returns to the New Tab Page. */
-    void dismissBottomSheet() {
-        mBottomSheetController.hideContent(mBottomSheetContent, true);
+    void dismissBottomSheet(boolean animate) {
+        mBottomSheetController.hideContent(mBottomSheetContent, animate);
         mCurrentBottomSheet = null;
     }
 
@@ -156,10 +216,14 @@ public class NtpCustomizationMediator {
             @Override
             public int getListItemId(int type) {
                 switch (type) {
+                    case MVT:
+                        return R.id.mvt_settings;
                     case NTP_CARDS:
                         return R.id.ntp_cards;
                     case FEED:
                         return R.id.feed_settings;
+                    case THEME:
+                        return R.id.theme;
                     default:
                         return View.NO_ID;
                 }
@@ -168,10 +232,14 @@ public class NtpCustomizationMediator {
             @Override
             public String getListItemTitle(int type, Context context) {
                 switch (type) {
+                    case MVT:
+                        return context.getString(R.string.ntp_customization_mvt_settings_title);
                     case NTP_CARDS:
                         return context.getString(R.string.home_modules_configuration);
                     case FEED:
                         return context.getString(R.string.ntp_customization_feed_settings_title);
+                    case THEME:
+                        return context.getString(R.string.ntp_customization_theme_title);
                     default:
                         assert false : "Bottom sheet type not supported!";
                         return assumeNonNull(null);
@@ -182,6 +250,10 @@ public class NtpCustomizationMediator {
             public @Nullable String getListItemSubtitle(int type, Context context) {
                 if (type == FEED) {
                     return context.getString(getFeedSectionSubtitleId());
+                }
+
+                if (type == MVT) {
+                    return context.getString(getMvtSectionSubtitleId());
                 }
                 return null;
             }
@@ -225,15 +297,22 @@ public class NtpCustomizationMediator {
      */
     @VisibleForTesting
     List<Integer> buildListContent() {
-        if (!mProfileSupplier.hasValue()) {
+        Profile profile = mProfileSupplier.get();
+        if (profile == null) {
             return List.of(NTP_CARDS);
         }
 
-        mProfile = mProfileSupplier.get().getOriginalProfile();
+        mProfile = profile.getOriginalProfile();
         List<Integer> content = new ArrayList<>();
+        if (ChromeFeatureList.sNewTabPageCustomizationForMvt.isEnabled()) {
+            content.add(MVT);
+        }
         content.add(NTP_CARDS);
         if (FeedFeatures.isFeedEnabled(mProfile)) {
             content.add(FEED);
+        }
+        if (ChromeFeatureList.sNewTabPageCustomizationV2.isEnabled()) {
+            content.add(THEME);
         }
         return content;
     }
@@ -258,9 +337,24 @@ public class NtpCustomizationMediator {
                 isFeedVisible ? R.string.text_on : R.string.text_off);
     }
 
+    void updateMvtSectionSubtitle(boolean isMvtVisible) {
+        assumeNonNull(mContainerPropertyModel);
+        mContainerPropertyModel.set(
+                MAIN_BOTTOM_SHEET_MVT_SECTION_SUBTITLE,
+                isMvtVisible ? R.string.text_on : R.string.text_off);
+    }
+
     /** Returns the source id of the feed section subtitle. */
     private int getFeedSectionSubtitleId() {
         return getPrefService().getBoolean(Pref.ARTICLES_LIST_VISIBLE)
+                ? R.string.text_on
+                : R.string.text_off;
+    }
+
+    /** Returns the source id of the mvt section subtitle. */
+    @StringRes
+    private int getMvtSectionSubtitleId() {
+        return NtpCustomizationConfigManager.getInstance().getPrefIsMvtToggleOn()
                 ? R.string.text_on
                 : R.string.text_off;
     }
@@ -284,7 +378,7 @@ public class NtpCustomizationMediator {
         return mViewFlipperMap;
     }
 
-    @SuppressWarnings("NullAway") // The call sites require non-null but the value is nullable.
+    @Nullable
     @NtpCustomizationCoordinator.BottomSheetType
     Integer getCurrentBottomSheetType() {
         return mCurrentBottomSheet;
@@ -301,9 +395,5 @@ public class NtpCustomizationMediator {
 
     Map<Integer, View.OnClickListener> getTypeToListenersForTesting() {
         return mTypeToListenersMap;
-    }
-
-    void setListContetForTesting(List<Integer> listContent) {
-        mListContent = listContent;
     }
 }

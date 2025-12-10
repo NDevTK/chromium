@@ -8,6 +8,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
+#include "chrome/common/actor/task_id.h"
 #include "chrome/renderer/actor/tool_base.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_select_element.h"
@@ -22,13 +23,15 @@ namespace actor {
 class SelectTool : public ToolBase {
  public:
   SelectTool(content::RenderFrame& frame,
-             Journal::TaskId task_id,
+             TaskId task_id,
              Journal& journal,
-             mojom::SelectActionPtr action);
+             mojom::SelectActionPtr action,
+             mojom::ToolTargetPtr target,
+             mojom::ObservedToolTargetPtr observed_target);
   ~SelectTool() override;
 
   // actor::ToolBase
-  mojom::ActionResultPtr Execute() override;
+  void Execute(ToolFinishedCallback callback) override;
   std::string DebugString() const override;
 
  private:

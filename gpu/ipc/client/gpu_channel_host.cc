@@ -12,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
@@ -20,7 +21,7 @@
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/common/command_buffer_trace_utils.h"
 #include "gpu/ipc/common/gpu_watchdog_timeout.h"
-#include "ipc/ipc_channel_mojo.h"
+#include "ipc/ipc_channel.h"
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "url/gurl.h"
 
@@ -47,10 +48,6 @@ GpuChannelHost::GpuChannelHost(
           this,
           static_cast<int32_t>(GpuChannelReservedRoutes::kSharedImageInterface),
           shared_image_capabilities),
-      image_decode_accelerator_proxy_(
-          this,
-          static_cast<int32_t>(
-              GpuChannelReservedRoutes::kImageDecodeAccelerator)),
       sync_point_graph_validation_enabled_(
           features::IsSyncPointGraphValidationEnabled()) {
   mojo::PendingAssociatedRemote<mojom::GpuChannel> channel;
@@ -138,7 +135,9 @@ void GpuChannelHost::CopyToGpuMemoryBufferAsync(
       mailbox, std::move(sync_token_dependencies), release_count,
       std::move(callback));
 }
+#endif  // BUILDFLAG(IS_WIN)
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 void GpuChannelHost::CopyNativeGmbToSharedMemoryAsync(
     gfx::GpuMemoryBufferHandle buffer_handle,
     base::UnsafeSharedMemoryRegion memory_region,
@@ -152,7 +151,7 @@ void GpuChannelHost::CopyNativeGmbToSharedMemoryAsync(
   GetGpuChannel().CopyNativeGmbToSharedMemoryAsync(
       std::move(buffer_handle), std::move(memory_region), std::move(callback));
 }
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 
 void GpuChannelHost::DelayedEnsureFlush(uint32_t deferred_message_id) {
   AutoLock lock(deferred_message_lock_);
@@ -340,16 +339,6 @@ void GpuChannelHost::CreateGpuMemoryBuffer(
                                         buffer_handle);
 }
 
-void GpuChannelHost::GetGpuMemoryBufferHandleInfo(
-    const Mailbox& mailbox,
-    gfx::GpuMemoryBufferHandle* handle,
-    viz::SharedImageFormat* format,
-    gfx::Size* size,
-    gfx::BufferUsage* buffer_usage) {
-  GetGpuChannel().GetGpuMemoryBufferHandleInfo(mailbox, handle, format, size,
-                                               buffer_usage);
-}
-
 void GpuChannelHost::CrashGpuProcessForTesting() {
   GetGpuChannel().CrashForTesting();
 }
@@ -358,7 +347,7 @@ void GpuChannelHost::TerminateGpuProcessForTesting() {
   GetGpuChannel().TerminateForTesting();
 }
 
-scoped_refptr<ClientSharedImageInterface>
+scoped_refptr<SharedImageInterface>
 GpuChannelHost::CreateClientSharedImageInterface() {
   return base::MakeRefCounted<ClientSharedImageInterface>(
       &shared_image_interface_, this);
@@ -377,11 +366,15 @@ void GpuChannelHost::ConnectionTracker::OnDisconnectedFromGpuProcess() {
   NotifyGpuChannelLost();
 }
 
-void GpuChannelHost::ConnectionTracker::AddObserver(
+bool GpuChannelHost::ConnectionTracker::AddObserverIfNotAlreadyLost(
     GpuChannelLostObserver* obs) {
   AutoLock lock(channel_obs_lock_);
+  if (!is_connected()) {
+    return false;
+  }
   CHECK(!base::Contains(observer_list_, obs));
   observer_list_.push_back(obs);
+  return true;
 }
 
 void GpuChannelHost::ConnectionTracker::RemoveObserver(
@@ -415,14 +408,12 @@ void GpuChannelHost::Listener::Initialize(
     mojo::PendingAssociatedReceiver<mojom::GpuChannel> receiver,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner) {
   base::AutoLock lock(lock_);
-  channel_ =
-      IPC::ChannelMojo::Create(std::move(handle), IPC::Channel::MODE_CLIENT,
-                               this, io_task_runner, io_task_runner);
+  channel_ = IPC::Channel::Create(std::move(handle), IPC::Channel::MODE_CLIENT,
+                                  this, io_task_runner, io_task_runner);
   DCHECK(channel_);
   bool result = channel_->Connect();
   DCHECK(result);
-  channel_->GetAssociatedInterfaceSupport()->GetRemoteAssociatedInterface(
-      std::move(receiver));
+  channel_->GetRemoteAssociatedInterface(std::move(receiver));
 }
 
 GpuChannelHost::Listener::~Listener() = default;
@@ -431,17 +422,13 @@ void GpuChannelHost::Listener::Close() {
   OnChannelError();
 }
 
-bool GpuChannelHost::Listener::OnMessageReceived(const IPC::Message& message) {
-  return false;
-}
-
 void GpuChannelHost::Listener::OnChannelError() {
   AutoLock lock(lock_);
   channel_ = nullptr;
 }
 
-void GpuChannelHost::AddObserver(GpuChannelLostObserver* obs) {
-  connection_tracker_->AddObserver(obs);
+bool GpuChannelHost::AddObserverIfNotAlreadyLost(GpuChannelLostObserver* obs) {
+  return connection_tracker_->AddObserverIfNotAlreadyLost(obs);
 }
 
 void GpuChannelHost::RemoveObserver(GpuChannelLostObserver* obs) {

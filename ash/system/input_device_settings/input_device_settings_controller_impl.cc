@@ -45,7 +45,6 @@
 #include "base/containers/flat_tree.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/hash/sha1.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
@@ -69,6 +68,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/ash/keyboard_capability.h"
+#include "ui/events/ash/mojom/extended_fkeys_modifier.mojom.h"
 #include "ui/events/ash/top_row_action_keys.h"
 #include "ui/events/devices/input_device.h"
 #include "ui/events/devices/keyboard_device.h"
@@ -257,14 +257,10 @@ mojom::KeyboardPtr BuildMojomKeyboard(const ui::KeyboardDevice& keyboard) {
           keyboard);
   mojom_keyboard->is_external =
       keyboard.type != ui::InputDeviceType::INPUT_DEVICE_INTERNAL;
-  // Enable only when flag is enabled to avoid crashing while problem is
-  // addressed. See b/272960076
-  if (features::IsInputDeviceSettingsSplitEnabled()) {
-    mojom_keyboard->modifier_keys =
-        Shell::Get()->keyboard_capability()->GetModifierKeys(keyboard);
-    mojom_keyboard->meta_key =
-        Shell::Get()->keyboard_capability()->GetMetaKey(keyboard);
-  }
+  mojom_keyboard->modifier_keys =
+      Shell::Get()->keyboard_capability()->GetModifierKeys(keyboard);
+  mojom_keyboard->meta_key =
+      Shell::Get()->keyboard_capability()->GetMetaKey(keyboard);
   if (::features::AreF11AndF12ShortcutsEnabled()) {
     mojom_keyboard->top_row_action_keys = GetTopRowActionKeys(keyboard);
   }
@@ -617,40 +613,6 @@ T* FindDevice(InputDeviceSettingsControllerImpl::DeviceId id,
   return nullptr;
 }
 
-void DeleteLoginScreenSettingsPrefWhenInputDeviceSettingsSplitDisabled(
-    PrefService* local_state) {
-  // local_state could be null in tests.
-  if (!local_state) {
-    return;
-  }
-  user_manager::KnownUser known_user(local_state);
-  AccountId account_id =
-      Shell::Get()->session_controller()->GetActiveAccountId();
-
-  known_user.SetPath(account_id, prefs::kMouseLoginScreenInternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id, prefs::kMouseLoginScreenExternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id,
-                     prefs::kKeyboardLoginScreenInternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id,
-                     prefs::kKeyboardLoginScreenExternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id,
-                     prefs::kPointingStickLoginScreenInternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id,
-                     prefs::kPointingStickLoginScreenExternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id,
-                     prefs::kTouchpadLoginScreenInternalSettingsPref,
-                     std::nullopt);
-  known_user.SetPath(account_id,
-                     prefs::kTouchpadLoginScreenExternalSettingsPref,
-                     std::nullopt);
-}
-
 void DeleteLoginScreenButtonRemappingListPrefWhenPeripheralCustomizationDisabled(
     PrefService* local_state) {
   // local_state could be null in tests.
@@ -863,8 +825,10 @@ void InputDeviceSettingsControllerImpl::
             GetBluetoothDevice(bluetooth_adapter_.get(), keyboard->device_key);
         device != nullptr) {
       auto updated_battery_info = GetBatteryInfo(*device);
-      if (keyboard->battery_info.is_null() ||
-          BatteryInfoChanged(*keyboard->battery_info, *updated_battery_info)) {
+      if (!updated_battery_info.is_null() &&
+          (keyboard->battery_info.is_null() ||
+           BatteryInfoChanged(*keyboard->battery_info,
+                              *updated_battery_info))) {
         keyboard->battery_info = std::move(updated_battery_info);
         DispatchKeyboardBatteryInfoChanged(id);
       }
@@ -876,8 +840,10 @@ void InputDeviceSettingsControllerImpl::
             GetBluetoothDevice(bluetooth_adapter_.get(), touchpad->device_key);
         device != nullptr) {
       auto updated_battery_info = GetBatteryInfo(*device);
-      if (touchpad->battery_info.is_null() ||
-          BatteryInfoChanged(*touchpad->battery_info, *updated_battery_info)) {
+      if (!updated_battery_info.is_null() &&
+          (touchpad->battery_info.is_null() ||
+           BatteryInfoChanged(*touchpad->battery_info,
+                              *updated_battery_info))) {
         touchpad->battery_info = std::move(updated_battery_info);
         DispatchTouchpadBatteryInfoChanged(id);
       }
@@ -889,8 +855,9 @@ void InputDeviceSettingsControllerImpl::
             GetBluetoothDevice(bluetooth_adapter_.get(), mouse->device_key);
         device != nullptr) {
       auto updated_battery_info = GetBatteryInfo(*device);
-      if (mouse->battery_info.is_null() ||
-          BatteryInfoChanged(*mouse->battery_info, *updated_battery_info)) {
+      if (!updated_battery_info.is_null() &&
+          (mouse->battery_info.is_null() ||
+           BatteryInfoChanged(*mouse->battery_info, *updated_battery_info))) {
         mouse->battery_info = std::move(updated_battery_info);
         DispatchMouseBatteryInfoChanged(id);
       }
@@ -902,9 +869,10 @@ void InputDeviceSettingsControllerImpl::
                                           graphics_tablet->device_key);
         device != nullptr) {
       auto updated_battery_info = GetBatteryInfo(*device);
-      if (graphics_tablet->battery_info.is_null() ||
-          BatteryInfoChanged(*graphics_tablet->battery_info,
-                             *updated_battery_info)) {
+      if (!updated_battery_info.is_null() &&
+          (graphics_tablet->battery_info.is_null() ||
+           BatteryInfoChanged(*graphics_tablet->battery_info,
+                              *updated_battery_info))) {
         graphics_tablet->battery_info = std::move(updated_battery_info);
         DispatchGraphicsTabletBatteryInfoChanged(id);
       }
@@ -1073,27 +1041,6 @@ void InputDeviceSettingsControllerImpl::OnActiveUserPrefServiceChanged(
     if (local_state_) {
       local_state_->ClearPref(prefs::kDeviceImagesDictPref);
     }
-  }
-
-  // If the flag is disabled, clear all the settings dictionaries.
-  if (!features::IsInputDeviceSettingsSplitEnabled()) {
-    active_pref_service_ = nullptr;
-    pref_service->SetDict(prefs::kKeyboardDeviceSettingsDictPref, {});
-    pref_service->SetDict(prefs::kMouseDeviceSettingsDictPref, {});
-    pref_service->SetDict(prefs::kPointingStickDeviceSettingsDictPref, {});
-    pref_service->SetDict(prefs::kTouchpadDeviceSettingsDictPref, {});
-    pref_service->SetList(prefs::kKeyboardDeviceImpostersListPref, {});
-    pref_service->SetList(prefs::kMouseDeviceImpostersListPref, {});
-
-    pref_service->ClearPref(prefs::kKeyboardInternalSettings);
-    pref_service->ClearPref(prefs::kKeyboardUpdateSettingsMetricInfo);
-    pref_service->ClearPref(prefs::kMouseUpdateSettingsMetricInfo);
-    pref_service->ClearPref(prefs::kTouchpadUpdateSettingsMetricInfo);
-    pref_service->ClearPref(prefs::kPointingStickUpdateSettingsMetricInfo);
-
-    DeleteLoginScreenSettingsPrefWhenInputDeviceSettingsSplitDisabled(
-        local_state_);
-    return;
   }
 
   // If the flag is disabled, clear the new touchpad and keyboard settings from
@@ -2220,6 +2167,8 @@ void InputDeviceSettingsControllerImpl::RestoreDefaultKeyboardRemappings(
   mojom::KeyboardSettingsPtr new_settings = keyboard.settings->Clone();
   new_settings->modifier_remappings = {};
   new_settings->six_pack_key_remappings = mojom::SixPackKeyInfo::New();
+  new_settings->f11 = ui::mojom::ExtendedFkeysModifier::kDisabled;
+  new_settings->f12 = ui::mojom::ExtendedFkeysModifier::kDisabled;
   if (keyboard.meta_key == ui::mojom::MetaKey::kCommand) {
     new_settings->modifier_remappings[ui::mojom::ModifierKey::kControl] =
         ui::mojom::ModifierKey::kMeta;

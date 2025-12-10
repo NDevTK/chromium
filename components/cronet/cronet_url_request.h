@@ -10,12 +10,13 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "net/base/idempotency.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
 #include "net/shared_dictionary/shared_dictionary.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_types.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
 

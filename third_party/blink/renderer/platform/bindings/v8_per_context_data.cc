@@ -36,6 +36,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "components/crash/core/common/crash_key.h"
+#include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/bindings/origin_trial_features.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_binding.h"
@@ -52,7 +53,7 @@ constexpr char kContextLabel[] = "V8PerContextData::context_";
 }  // namespace
 
 V8PerContextData::V8PerContextData(v8::Local<v8::Context> context)
-    : isolate_(context->GetIsolate()),
+    : isolate_(v8::Isolate::GetCurrent()),
       context_holder_(std::make_unique<gin::ContextHolder>(isolate_)),
       context_(isolate_, context),
       activity_logger_(nullptr) {

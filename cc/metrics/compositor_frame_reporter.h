@@ -28,12 +28,13 @@
 #include "cc/metrics/frame_sequence_tracker_collection.h"
 #include "cc/metrics/predictor_jank_tracker.h"
 #include "cc/metrics/scroll_jank_dropped_frame_tracker.h"
+#include "cc/metrics/scroll_jank_v4_processor.h"
 #include "cc/scheduler/scheduler.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_timing_details.h"
 
 namespace viz {
-struct FrameTimingDetails;
+class FrameTimingDetails;
 }
 
 namespace cc {
@@ -52,6 +53,7 @@ struct GlobalMetricsTrackers {
   RAW_PTR_EXCLUSION ScrollJankDroppedFrameTracker*
       scroll_jank_dropped_frame_tracker = nullptr;
   RAW_PTR_EXCLUSION ScrollJankUkmReporter* scroll_jank_ukm_reporter = nullptr;
+  RAW_PTR_EXCLUSION ScrollJankV4Processor* scroll_jank_v4_processor = nullptr;
   RAW_PTR_EXCLUSION FrameSorter* frame_sorter = nullptr;
 };
 
@@ -108,10 +110,27 @@ class CC_EXPORT CompositorFrameReporter {
     kCommit = 2,
     kEndCommitToActivation = 3,
     kActivation = 4,
+    // Regular path
     kEndActivateToSubmitCompositorFrame = 5,
     kSubmitCompositorFrameToPresentationCompositorFrame = 6,
-    kTotalLatency = 7,
+    // For TreesInViz mode
+    kEndActivateToSubmitUpdateDisplayTree = 7,
+    kSubmitUpdateDisplayTreeToPresentationCompositorFrame = 8,
+    kTotalLatency = 9,
     kStageTypeCount
+  };
+
+  // Optional substages of `kEndActivateToSubmitUpdateDisplayTree` and
+  // `kSubmitUpdateDisplayeTreeToPresentationCompositorFrame` introduced by
+  // TreesInViz mode.
+  enum class TreesInVizBreakdown {
+    kEndActivateToDrawLayers = 0,                          // in cc
+    kDrawLayersToSubmitUpdateDisplayTree = 1,              // in cc
+    kSendUpdateDisplayTreeToReceiveUpdateDisplayTree = 2,  // cc-> viz
+    kReceiveUpdateDisplayTreeToStartPrepareToDraw = 3,     // viz
+    kStartPrepareToDrawToStartDrawLayers = 4,              // viz
+    kStartDrawLayersToSubmitCompositorFrame = 5,           // viz
+    kTreesInVizBreakdownCount
   };
 
   // Note that the values of `VizBreakdown` enum should be defined in order,
@@ -152,20 +171,6 @@ class CC_EXPORT CompositorFrameReporter {
     kUpdateLayers = 9,
     kBeginMainSentToStarted = 10,
     kBreakdownCount
-  };
-
-  // These numbers are used for indexing UMA histograms. The order should be
-  // preserved, and entries should not be deleted.
-  //
-  // These represent ratios of stages in EventMetrics::DispatchStage to the
-  // VSync time when the event originally arrived. This can be different than
-  // the frame where this event was eventually presented.
-  enum class VSyncRatioType {
-    kArrivedInRendererVsVSyncRatioAfterVSync = 0,
-    kArrivedInRendererVsVSyncRatioBeforeVSync = 1,
-    kGenerationVsVsyncRatioAfterVSync = 2,
-    kGenerationVsVsyncRatioBeforeVSync = 3,
-    kVSyncRatioTypeCount
   };
 
   // To distinguish between impl and main reporter
@@ -278,6 +283,52 @@ class CC_EXPORT CompositorFrameReporter {
     base::TimeTicks swap_start_;
   };
 
+  class CC_EXPORT ProcessedTreesInVizBreakdown {
+   public:
+    class Iterator {
+     public:
+      explicit Iterator(const ProcessedTreesInVizBreakdown* owner);
+      ~Iterator();
+
+      bool IsValid() const;
+      void Advance();
+      TreesInVizBreakdown GetBreakdown() const;
+      base::TimeTicks GetStartTime() const;
+      base::TimeTicks GetEndTime() const;
+      base::TimeDelta GetDuration() const;
+
+     private:
+      bool HasValue() const;
+      void SkipBreakdownsIfNecessary();
+
+      // RAW_PTR_EXCLUSION: Renderer performance: visible in sampling profiler
+      // stacks.
+      RAW_PTR_EXCLUSION const ProcessedTreesInVizBreakdown* owner_;
+
+      size_t index_ = 0;
+    };
+
+    explicit ProcessedTreesInVizBreakdown(
+        base::TimeTicks trees_in_viz_branch_time,
+        base::TimeTicks start_draw_layers,
+        base::TimeTicks viz_start_time,
+        const viz::FrameTimingDetails& viz_breakdown);
+    ~ProcessedTreesInVizBreakdown();
+
+    ProcessedTreesInVizBreakdown(const ProcessedTreesInVizBreakdown&) = delete;
+    ProcessedTreesInVizBreakdown& operator=(
+        const ProcessedTreesInVizBreakdown&) = delete;
+
+    // Returns a new iterator for the TreesInViz breakdowns.
+    Iterator CreateIterator() const;
+
+   private:
+    std::array<std::optional<std::pair<base::TimeTicks, base::TimeTicks>>,
+               static_cast<size_t>(
+                   TreesInVizBreakdown::kTreesInVizBreakdownCount)>
+        list_;
+  };
+
   CompositorFrameReporter(const ActiveTrackers& active_trackers,
                           const viz::BeginFrameArgs& args,
                           bool should_report_histograms,
@@ -296,12 +347,17 @@ class CC_EXPORT CompositorFrameReporter {
   static const char* GetStageName(
       StageType stage_type,
       std::optional<VizBreakdown> viz_breakdown = std::nullopt,
-      std::optional<BlinkBreakdown> blink_breakdown = std::nullopt);
+      std::optional<BlinkBreakdown> blink_breakdown = std::nullopt,
+      std::optional<TreesInVizBreakdown> trees_in_viz_breakdown = std::nullopt);
 
   // Name for the viz breakdowns which are shown in traces as substages under
   // PipelineReporter -> SubmitCompositorFrameToPresentationCompositorFrame or
   // EventLatency -> SubmitCompositorFrameToPresentationCompositorFrame.
   static const char* GetVizBreakdownName(VizBreakdown breakdown);
+  // Same but for TreesInVizBreakdowns, which are substages under
+  // kEndActivateToSubmitUpdateDisplayTree &
+  // kSubmitUpdateDisplayTreeToPresentationCompositorFrame.
+  static const char* GetTreesInVizBreakdownName(TreesInVizBreakdown breakdown);
 
   // Creates and returns a clone of the reporter, only if it is currently in the
   // 'begin impl frame' stage. For any other state, it returns null.
@@ -313,6 +369,9 @@ class CC_EXPORT CompositorFrameReporter {
   // Note that the started stage may be reported to UMA. If the histogram is
   // intended to be reported then the histograms.xml file must be updated too.
   void StartStage(StageType stage_type, base::TimeTicks start_time);
+  // Helper functions for TreesInViz Stages.
+  void StartStageUpdateDisplayTree(SubmitInfo& submit_info);
+  void StartStagePresentationCompositorFrame(SubmitInfo& submit_info);
   void TerminateFrame(FrameTerminationStatus termination_status,
                       base::TimeTicks termination_time);
   void SetBlinkBreakdown(std::unique_ptr<BeginMainFrameMetrics> blink_breakdown,
@@ -320,6 +379,7 @@ class CC_EXPORT CompositorFrameReporter {
   void SetVizBreakdown(const viz::FrameTimingDetails& viz_breakdown);
 
   void AddEventsMetrics(EventMetrics::List events_metrics);
+  void SetTreesInVizBranchTime(base::TimeTicks timestamp);
 
   // Erase and return all EventMetrics objects from our list.
   EventMetrics::List TakeEventsMetrics();
@@ -331,7 +391,7 @@ class CC_EXPORT CompositorFrameReporter {
     return stage_history_.size();
   }
 
-  void OnFinishImplFrame(base::TimeTicks timestamp);
+  void OnFinishImplFrame(base::TimeTicks timestamp, bool waiting_for_main);
   void OnAbortBeginMainFrame(base::TimeTicks timestamp);
   void OnDidNotProduceFrame(FrameSkippedReason skip_reason);
   void EnableCompositorOnlyReporting();
@@ -354,6 +414,7 @@ class CC_EXPORT CompositorFrameReporter {
     return *main_frame_abort_time_;
   }
 
+  bool has_frame_skip_reason() const { return frame_skip_reason_.has_value(); }
   FrameSkippedReason frame_skip_reason() const { return *frame_skip_reason_; }
 
   void set_tick_clock(const base::TickClock* tick_clock) {
@@ -430,6 +491,21 @@ class CC_EXPORT CompositorFrameReporter {
   // updates (see comments on EventMetrics::requires_main_thread_update_).
   EventMetrics::List TakeMainBlockedEventsMetrics();
 
+  bool will_throttle_main() const { return will_throttle_main_; }
+  void set_will_throttle_main(bool will_throttle_main) {
+    will_throttle_main_ = will_throttle_main;
+  }
+  bool waiting_for_main() const { return waiting_for_main_; }
+  void waiting_for_main(bool waiting_for_main) {
+    waiting_for_main_ = waiting_for_main;
+  }
+  void set_active_tree_staleness(bool active_tree_staleness) {
+    active_tree_staleness_ = active_tree_staleness;
+  }
+  void set_frame_skipped_reason_v4(std::optional<FrameSkippedReason> reason) {
+    frame_skipped_reason_v4_ = reason;
+  }
+
  protected:
   void set_has_partial_update(bool has_partial_update) {
     has_partial_update_ = has_partial_update;
@@ -447,18 +523,26 @@ class CC_EXPORT CompositorFrameReporter {
   void ReportCompositorLatencyBlinkBreakdowns(
       FrameSequenceTrackerType frame_sequence_tracker_type) const;
   void ReportCompositorLatencyVizBreakdowns(
+      FrameSequenceTrackerType frame_sequence_tracker_type,
+      StageType stage_type) const;
+  void ReportCompositorLatencyTreesInVizBreakdowns(
       FrameSequenceTrackerType frame_sequence_tracker_type) const;
   void ReportCompositorLatencyHistogram(
       FrameSequenceTrackerType intraction_type,
       StageType stage_type,
       std::optional<VizBreakdown> viz_breakdown,
       std::optional<BlinkBreakdown> blink_breakdown,
+      std::optional<TreesInVizBreakdown> trees_in_viz_breakdown,
       base::TimeDelta time_delta) const;
+
+  void DropEventMetricsWhichDidNotCauseFrameUpdate();
 
   void ReportEventLatencyMetrics() const;
   void ReportCompositorLatencyTraceEvents(const FrameInfo& info) const;
   void ReportEventLatencyTraceEvents() const;
-  void ReportScrollJankMetrics() const;
+  void ReportScrollJankMetrics();
+  void ReportScrollJankV1Metrics();
+  void ReportScrollJankV4Metrics();
 
   void ReportPaintMetric() const;
 
@@ -493,8 +577,19 @@ class CC_EXPORT CompositorFrameReporter {
   std::unique_ptr<ProcessedBlinkBreakdown> processed_blink_breakdown_;
 
   viz::FrameTimingDetails viz_breakdown_;
-  base::TimeTicks viz_start_time_;
+  base::TimeTicks viz_start_time_;  // Not valid for TreesInViz breakdown.
   std::unique_ptr<ProcessedVizBreakdown> processed_viz_breakdown_;
+
+  // Optional breakdowns for TreesInViz mode.
+  struct TreesInVizTimestamps {
+    base::TimeTicks trees_in_viz_activate_time_;
+    base::TimeTicks trees_in_viz_branch_time_;
+    base::TimeTicks trees_in_viz_viz_start_time_;
+  };
+
+  std::optional<TreesInVizTimestamps> trees_in_viz_timestamps_;
+  std::unique_ptr<ProcessedTreesInVizBreakdown>
+      processed_trees_in_viz_breakdown_;
 
   // Stage data is recorded here. On destruction these stages will be reported
   // to UMA if the termination status is |kPresentedFrame|. Reported data will
@@ -503,6 +598,12 @@ class CC_EXPORT CompositorFrameReporter {
 
   // List of metrics for events affecting this frame.
   EventMetrics::List events_metrics_;
+
+  // Whether metrics which didn't cause a frame update have already been removed
+  // from `events_metrics_`. This should only become true at the very end of a
+  // reporter's lifetime when it's being terminated so that these metrics
+  // wouldn't affect UMA metrics like EventLatency.TotalLatency.
+  bool dropped_non_damaging_events_metrics_ = false;
 
   // Total invalidated (repainted) area of a frame, normalized by the frame's
   // output size.
@@ -581,6 +682,23 @@ class CC_EXPORT CompositorFrameReporter {
   bool created_new_tree_ = false;
 
   bool invalidate_raster_scroll_ = false;
+
+  // Main thread can be throttled separately from Compositor thread work. We
+  // can also be scheduled to not wait for the Main thread at all. We denote
+  // these as partial updates where we do not give Main a chance to respond.
+  // These frames should not be considered dropped.
+  bool will_throttle_main_ = false;
+  bool waiting_for_main_ = true;
+  // The difference of `viz::BeginFrameId.sequence_number` of the current frame
+  // and the current `active_tree`. Denotes how stale updates from the
+  // Main-thread are.
+  uint64_t active_tree_staleness_ = 0;
+  // Similar to above, we may skip the entire production of a Compositor thread
+  // if there is no damage. We need to account for Main thread itself
+  // producing no damage. Such as when a rAF is completely offscreen. We track
+  // this separately from `frame_skipped_reason_` so as to not shift the V3
+  // metrics
+  std::optional<FrameSkippedReason> frame_skipped_reason_v4_;
 
   const GlobalMetricsTrackers global_trackers_;
 

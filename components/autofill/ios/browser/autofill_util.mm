@@ -89,7 +89,8 @@ bool IsContextSecureForWebState(web::WebState* web_state) {
 
 std::unique_ptr<base::Value> ParseJson(NSString* json_string) {
   std::optional<base::Value> json_value =
-      base::JSONReader::Read(base::SysNSStringToUTF8(json_string));
+      base::JSONReader::Read(base::SysNSStringToUTF8(json_string),
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!json_value) {
     return nullptr;
   }
@@ -380,6 +381,7 @@ bool ExtractFormFieldData(const base::Value::Dict& field,
 
   field_data->set_is_focusable(
       field.FindBool("is_focusable").value_or(field_data->is_focusable()));
+  field_data->set_is_visible(field_data->is_focusable());
   field_data->set_should_autocomplete(
       field.FindBool("should_autocomplete")
           .value_or(field_data->should_autocomplete()));

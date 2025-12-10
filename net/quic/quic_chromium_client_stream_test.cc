@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "net/quic/quic_chromium_client_stream.h"
 
 #include <string>
@@ -840,8 +835,8 @@ TEST_P(QuicChromiumClientStreamTest, WriteConnectUdpPayload) {
       &session_, quic::HttpDatagramSupport::kRfc);
   EXPECT_CALL(
       *static_cast<quic::test::MockQuicConnection*>(session_.connection()),
-      SendMessage(1, _, false))
-      .WillOnce(Return(quic::MESSAGE_STATUS_SUCCESS));
+      SendDatagram(1, _, false))
+      .WillOnce(Return(quic::DATAGRAM_STATUS_SUCCESS));
   EXPECT_EQ(OK, handle_->WriteConnectUdpPayload(packet));
   histogram_tester_.ExpectBucketCount(
       QuicChromiumClientStream::kHttp3DatagramDroppedHistogram, false, 1);

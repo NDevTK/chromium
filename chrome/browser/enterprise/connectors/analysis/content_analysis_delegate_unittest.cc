@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate.h"
 
 #include <algorithm>
@@ -41,6 +40,7 @@
 #include "components/enterprise/buildflags/buildflags.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/connectors/core/analysis_settings.h"
+#include "components/enterprise/connectors/core/cloud_content_scanning/common.h"
 #include "components/enterprise/connectors/core/features.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
@@ -48,11 +48,21 @@
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "base/values.h"
+#include "chrome/browser/extensions/extension_service.h"  // nogncheck
+#include "chrome/browser/extensions/test_extension_system.h"
+#include "extensions/browser/extension_registrar.h"
+#include "extensions/common/extension.h"
+#include "extensions/common/extension_builder.h"
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 #if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
 #include "chrome/browser/enterprise/connectors/test/fake_content_analysis_sdk_manager.h"  // nogncheck
@@ -155,8 +165,12 @@ class BaseTest : public testing::Test {
     profile_ = profile_manager_.CreateTestingProfile("test-user");
     ContentAnalysisDelegate::DisableUIForTesting();
     scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{safe_browsing::kEnhancedFieldsForSecOps,
-                              kEnterpriseIframeDlpRulesSupport},
+        /*enabled_features=*/
+        {
+            safe_browsing::kEnhancedFieldsForSecOps,
+            kEnterpriseIframeDlpRulesSupport,
+            kDlpScanPastedImages,
+        },
         /*disabled_features=*/{});
   }
 
@@ -166,9 +180,9 @@ class BaseTest : public testing::Test {
     // The access point is only used for metrics and choosing the dialog text if
     // one is shown, so its value doesn't affect the tests in this file and can
     // always be the same.
-    ContentAnalysisDelegate::CreateForWebContents(
-        web_contents, std::move(data), std::move(callback),
-        safe_browsing::DeepScanAccessPoint::UPLOAD);
+    ContentAnalysisDelegate::CreateForWebContents(web_contents, std::move(data),
+                                                  std::move(callback),
+                                                  DeepScanAccessPoint::UPLOAD);
   }
 
   void CreateFilesForTest(
@@ -511,7 +525,7 @@ TEST_F(ContentAnalysisDelegateIsEnabledTest, MalwareEnabledWithPatterns) {
   ValidateIsEnabled("custom://google.com", /*dlp*/ false, /*malware*/ false);
   ValidateIsEnabled("custom://version", /*dlp*/ false, /*malware*/ false);
   ValidateIsEnabled("devtools://devtools/bundled/inspector.html", /*dlp*/ false,
-                    /*malware*/ true);
+                    /*malware*/ false);
   ValidateIsEnabled("custom://devtools/bundled/inspector.html", /*dlp*/ false,
                     /*malware*/ false);
   ValidateIsEnabled("http://google.com/a/specific/path/", /*dlp*/ false,
@@ -769,7 +783,7 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, PagePrintAllowed) {
             *called = true;
           },
           &called),
-      safe_browsing::DeepScanAccessPoint::PRINT);
+      DeepScanAccessPoint::PRINT);
   RunUntilDone();
   EXPECT_EQ(1,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
@@ -803,7 +817,7 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, PagePrintBlocked) {
             *called = true;
           },
           &called),
-      safe_browsing::DeepScanAccessPoint::PRINT);
+      DeepScanAccessPoint::PRINT);
   RunUntilDone();
   EXPECT_EQ(1,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
@@ -1220,9 +1234,9 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, ImageDataCloudScan) {
                  &called));
   RunUntilDone();
 
-  // There shouldn't be any image request made when the policy is set to do
+  // There should be an image request made when the policy is set to do
   // cloud scanning.
-  EXPECT_EQ(0,
+  EXPECT_EQ(1,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
   EXPECT_TRUE(called);
 }
@@ -1282,8 +1296,9 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, TextAndImageDataCloudScan) {
                  &called));
   RunUntilDone();
 
-  // Only the text data is scanned for cloud scans.
-  EXPECT_EQ(1,
+  // Both text and image data are scanned for cloud scans.
+
+  EXPECT_EQ(2,
             test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
   EXPECT_TRUE(called);
 }
@@ -1511,7 +1526,7 @@ TEST_F(ContentAnalysisDelegateAuditOnlyTest, EmptyWait) {
 class ContentAnalysisDelegateResultHandlingTest
     : public BaseTest,
       public testing::WithParamInterface<
-          std::tuple<safe_browsing::BinaryUploadService::Result, bool, bool>> {
+          std::tuple<ScanRequestUploadResult, bool, bool>> {
  public:
   ContentAnalysisDelegateResultHandlingTest() = default;
 
@@ -1539,9 +1554,7 @@ class ContentAnalysisDelegateResultHandlingTest
         ResetStaticDialogFlagsAndTotalRequestsCount();
   }
 
-  safe_browsing::BinaryUploadService::Result result() const {
-    return std::get<0>(GetParam());
-  }
+  ScanRequestUploadResult result() const { return std::get<0>(GetParam()); }
 
   bool is_cloud() const { return std::get<1>(GetParam()); }
 
@@ -1565,17 +1578,13 @@ class ContentAnalysisDelegateResultHandlingTest
   ScopedSetDMToken scoped_dm_token_{
       policy::DMToken::CreateValidToken(kDmToken)};
 
-  bool ResultIsFailClosed(safe_browsing::BinaryUploadService::Result result) {
-    return result ==
-               safe_browsing::BinaryUploadService::Result::UPLOAD_FAILURE ||
-           result == safe_browsing::BinaryUploadService::Result::TIMEOUT ||
-           result == safe_browsing::BinaryUploadService::Result::
-                         FAILED_TO_GET_TOKEN ||
-           result ==
-               safe_browsing::BinaryUploadService::Result::TOO_MANY_REQUESTS ||
-           result == safe_browsing::BinaryUploadService::Result::UNKNOWN ||
-           result ==
-               safe_browsing::BinaryUploadService::Result::INCOMPLETE_RESPONSE;
+  bool ResultIsFailClosed(ScanRequestUploadResult result) {
+    return result == ScanRequestUploadResult::kUploadFailure ||
+           result == ScanRequestUploadResult::kTimeout ||
+           result == ScanRequestUploadResult::kFailedToGetToken ||
+           result == ScanRequestUploadResult::kTooManyRequests ||
+           result == ScanRequestUploadResult::kUnknown ||
+           result == ScanRequestUploadResult::kIncompleteResponse;
   }
 
 #if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
@@ -1636,18 +1645,16 @@ TEST_P(ContentAnalysisDelegateResultHandlingTest, Test) {
 INSTANTIATE_TEST_SUITE_P(
     ,
     ContentAnalysisDelegateResultHandlingTest,
-    testing::Combine(
-        testing::Values(
-            safe_browsing::BinaryUploadService::Result::UNKNOWN,
-            safe_browsing::BinaryUploadService::Result::SUCCESS,
-            safe_browsing::BinaryUploadService::Result::UPLOAD_FAILURE,
-            safe_browsing::BinaryUploadService::Result::TIMEOUT,
-            safe_browsing::BinaryUploadService::Result::FILE_TOO_LARGE,
-            safe_browsing::BinaryUploadService::Result::FAILED_TO_GET_TOKEN,
-            safe_browsing::BinaryUploadService::Result::UNAUTHORIZED,
-            safe_browsing::BinaryUploadService::Result::FILE_ENCRYPTED),
-        testing::Bool(),
-        testing::Bool()));
+    testing::Combine(testing::Values(ScanRequestUploadResult::kUnknown,
+                                     ScanRequestUploadResult::kSuccess,
+                                     ScanRequestUploadResult::kUploadFailure,
+                                     ScanRequestUploadResult::kTimeout,
+                                     ScanRequestUploadResult::kFileTooLarge,
+                                     ScanRequestUploadResult::kFailedToGetToken,
+                                     ScanRequestUploadResult::kUnauthorized,
+                                     ScanRequestUploadResult::kFileEncrypted),
+                     testing::Bool(),
+                     testing::Bool()));
 
 // The following tests should only be executed on the OS that support LCAC.
 #if BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
@@ -1796,83 +1803,5 @@ TEST_F(ContentAnalysisDelegateWithLocalClient, FailClosed) {
   EXPECT_TRUE(called);
 }
 #endif
-
-class ContentAnalysisDelegateFrameUrlChainTest
-    : public ContentAnalysisDelegateAuditOnlyTest {
- public:
-  ContentAnalysisDelegateFrameUrlChainTest() = default;
-
- protected:
-  void SetUp() override {
-    ContentAnalysisDelegateAuditOnlyTest::SetUp();
-
-    // Create test web contents as we need to navigate to a URL to get a valid
-    // frame chain.
-    web_contents_ = content::WebContentsTester::CreateTestWebContents(
-        profile(), content::SiteInstance::Create(profile()));
-    content::WebContentsTester::For(web_contents_.get())
-        ->NavigateAndCommit(GURL(kTestUrl));
-  }
-
-  void TearDown() override {
-    // `WebContentsTester` needs to be destroyed before the
-    // `RenderViewHostTestEnabler`.
-    if (web_contents_) {
-      web_contents_.reset();
-    }
-    ContentAnalysisDelegateAuditOnlyTest::TearDown();
-  }
-
- private:
-  // Needed for frame tree and navigation operations.
-  content::RenderViewHostTestEnabler rvh_test_enabler_;
-};
-
-TEST_F(ContentAnalysisDelegateFrameUrlChainTest, UploadWithNestedFrames) {
-  base::HistogramTester histogram_tester;
-  ContentAnalysisDelegate::Data data;
-
-  // Create main frame.
-  content::RenderFrameHost* main_frame = web_contents_->GetPrimaryMainFrame();
-  content::RenderFrameHostTester* main_frame_tester =
-      content::RenderFrameHostTester::For(main_frame);
-
-  // Create and navigate the first child frame.
-  content::RenderFrameHost* child_frame1 =
-      main_frame_tester->AppendChild("child1");
-  content::NavigationSimulator::NavigateAndCommitFromDocument(
-      GURL("http://child1.example.com/"), child_frame1);
-
-  // Create and navigate the second (nested) child frame.
-  content::RenderFrameHostTester* child_frame1_tester =
-      content::RenderFrameHostTester::For(child_frame1);
-  content::RenderFrameHost* child_frame2 =
-      child_frame1_tester->AppendChild("child2");
-  content::NavigationSimulator::NavigateAndCommitFromDocument(
-      GURL("http://child2.example.com/"), child_frame2);
-
-  // Set focus on the innermost frame.
-  content::FocusWebContentsOnFrame(web_contents_.get(), child_frame2);
-
-  ASSERT_TRUE(ContentAnalysisDelegate::IsEnabled(profile(), GURL(kTestUrl),
-                                                 &data, FILE_ATTACHED));
-
-  bool called = false;
-  ScanUpload(
-      contents(), std::move(data),
-      base::BindOnce(
-          [](bool* called, const ContentAnalysisDelegate::Data& data,
-             ContentAnalysisDelegate::Result& result) { *called = true; },
-          &called));
-  RunUntilDone();
-
-  EXPECT_EQ(0,
-            test::FakeContentAnalysisDelegate::GetTotalAnalysisRequestsCount());
-  EXPECT_TRUE(called);
-  histogram_tester.ExpectTotalCount(
-      "Enterprise.IframeDlpRulesSupport.Upload.UrlChainSize", 1);
-  histogram_tester.ExpectBucketCount(
-      "Enterprise.IframeDlpRulesSupport.Upload.UrlChainSize", 3, 1);
-}
 
 }  // namespace enterprise_connectors

@@ -103,12 +103,17 @@ class DiceWebSigninInterceptionBubbleBrowserTest
   WebSigninInterceptor::Delegate::BubbleParameters
   GetTestBubbleParametersWithInterceptType(
       WebSigninInterceptor::SigninInterceptionType intercept_type) {
-    AccountInfo account;
-    account.account_id = CoreAccountId::FromGaiaId(GaiaId("ID1"));
+    AccountInfo account =
+        AccountInfo::Builder(GaiaId("ID1"), "test1@example.com")
+            .SetAccountId(CoreAccountId::FromGaiaId(GaiaId("ID1")))
+            .Build();
     AccountInfo primary_account;
     if (intercept_type !=
         WebSigninInterceptor::SigninInterceptionType::kChromeSignin) {
-      primary_account.account_id = CoreAccountId::FromGaiaId(GaiaId("ID2"));
+      primary_account =
+          AccountInfo::Builder(GaiaId("ID2"), "test2@example.com")
+              .SetAccountId(CoreAccountId::FromGaiaId(GaiaId("ID2")))
+              .Build();
     }
 
     ProfileAttributesEntry* entry =
@@ -715,6 +720,95 @@ IN_PROC_BROWSER_TEST_F(DiceWebSigninInterceptionBubbleBrowserTest,
   histogram_tester.ExpectUniqueSample(
       "Signin.Intercept.BubbleDismissReason",
       SigninInterceptionDismissReason::kUserNotEligible, 1);
+  histogram_tester.ExpectTotalCount(
+      "Signin.Intercept.ChromeSignin.ResponseTimeDismissed", 1);
+}
+
+// The regression test for https://crbug.com/464474819 to ensure that the
+// browser doesn't crash when an empty account is used as a primary account.
+IN_PROC_BROWSER_TEST_F(DiceWebSigninInterceptionBubbleBrowserTest,
+                       EmptyPrimaryAccount) {
+  WebSigninInterceptor::Delegate::BubbleParameters bubble_parameters =
+      GetTestBubbleParameters();
+  bubble_parameters.primary_account = AccountInfo();
+
+  // Creating the bubble through the static function.
+  std::unique_ptr<ScopedWebSigninInterceptionBubbleHandle> handle =
+      DiceWebSigninInterceptionBubbleView::CreateBubble(
+          browser(), GetAvatarButton(), bubble_parameters,
+          base::BindOnce(&DiceWebSigninInterceptionBubbleBrowserTest::
+                             OnInterceptionComplete,
+                         base::Unretained(this)));
+  // `bubble` is owned by the view hierarchy.
+  DiceWebSigninInterceptionBubbleView* bubble =
+      static_cast<DiceWebSigninInterceptionBubbleView::ScopedHandle*>(
+          handle.get())
+          ->GetBubbleViewForTesting();
+
+  views::Widget* widget = bubble->GetWidget();
+  views::test::WidgetVisibleWaiter visible_waiter(widget);
+  visible_waiter.Wait();
+  EXPECT_FALSE(callback_result_.has_value());
+
+  // The bubble loads the WebUI. The crash happens when the WebUI sends the
+  // 'pageLoaded' message, which triggers HandlePageLoaded in the handler.
+  // We wait for the load to finish.
+  content::WebContents* web_contents = bubble->GetBubbleWebContentsForTesting();
+  EXPECT_TRUE(content::WaitForLoadStop(web_contents));
+
+  views::test::WidgetDestroyedWaiter closed_waiter(widget);
+  widget->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
+  closed_waiter.Wait();
+}
+
+IN_PROC_BROWSER_TEST_F(DiceWebSigninInterceptionBubbleBrowserTest,
+                       ChromeSigninSignedOutBeforeBubbleShown) {
+  base::HistogramTester histogram_tester;
+
+  ASSERT_TRUE(GetAvatarButton()->GetEnabled());
+
+  AccountInfo account_info = SetAccountsCookiesAndTokens({"test@gmail.com"})[0];
+  auto bubble_paramerers = GetTestChromeSigninBubbleParameters();
+  bubble_paramerers.intercepted_account = account_info;
+
+  // Creating the bubble through the static function.
+  std::unique_ptr<ScopedWebSigninInterceptionBubbleHandle> handle =
+      DiceWebSigninInterceptionBubbleView::CreateBubble(
+          browser(), GetAvatarButton(), bubble_paramerers,
+          base::BindOnce(&DiceWebSigninInterceptionBubbleBrowserTest::
+                             OnInterceptionComplete,
+                         base::Unretained(this)));
+  // `bubble` is owned by the view hierarchy.
+  DiceWebSigninInterceptionBubbleView* bubble =
+      static_cast<DiceWebSigninInterceptionBubbleView::ScopedHandle*>(
+          handle.get())
+          ->GetBubbleViewForTesting();
+
+  views::Widget* widget = bubble->GetWidget();
+  // Equivalent to `kInterceptionBubbleBaseHeight` default.
+  EXPECT_FALSE(callback_result_.has_value());
+
+  views::test::WidgetDestroyedWaiter closing_observer(widget);
+  EXPECT_FALSE(bubble->GetAccepted());
+  // Remove account from Chrome.
+  identity_manager()->GetAccountsMutator()->RemoveAccount(
+      account_info.account_id,
+      signin_metrics::SourceForRefreshTokenOperation::kUnknown);
+
+  // Widget will close now.
+  closing_observer.Wait();
+
+  ASSERT_TRUE(callback_result_.has_value());
+  EXPECT_EQ(callback_result_, SigninInterceptionResult::kDismissed);
+  EXPECT_FALSE(GetAvatarButton()->IsButtonActionDisabled());
+
+  histogram_tester.ExpectUniqueSample("Signin.InterceptResult.ChromeSignin",
+                                      SigninInterceptionResult::kDismissed, 1);
+  histogram_tester.ExpectUniqueSample(
+      "Signin.Intercept.BubbleDismissReason",
+      SigninInterceptionDismissReason::kUserNotEligible, 1);
+  histogram_tester.ExpectTotalCount(
+      "Signin.Intercept.ChromeSignin.ResponseTimeDismissed", 0);
 }
 
 IN_PROC_BROWSER_TEST_F(DiceWebSigninInterceptionBubbleBrowserTest,

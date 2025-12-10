@@ -58,11 +58,13 @@ class CORE_EXPORT TextAutoSpace {
 };
 
 inline TextAutoSpace::TextAutoSpace(const InlineItemsData& data) {
-  if (!RuntimeEnabledFeatures::CSSTextAutoSpaceEnabled()) {
-    return;
-  }
-
   if (data.text_content.Is8Bit() ||
+      std::ranges::none_of(data.items,
+                           [](const auto& item) {
+                             return item->Type() == InlineItem::kText &&
+                                    item->Style()->TextAutospace() !=
+                                        ETextAutospace::kNoAutospace;
+                           }) ||
       data.text_content.IsAllSpecialCharacters<[](UChar ch) {
         return !Character::MayNeedEastAsianSpacing(ch);
       }>()) {

@@ -107,9 +107,9 @@ class NET_EXPORT QueryIterator {
   std::string unescaped_value_;
 };
 
-// Looks for |search_key| in the query portion of |url|. Returns true if the
-// key is found and sets |out_value| to the unescaped value for the key.
-// Returns false if the key is not found.
+// Looks for |search_key| in the query portion of |url|. Returns true if the key
+// is found, false otherwise. If the key is found and |out_value| is not null,
+// sets its contents to the unescaped value for the key.
 NET_EXPORT bool GetValueForKeyInQuery(const GURL& url,
                                       std::string_view search_key,
                                       std::string* out_value);
@@ -223,10 +223,13 @@ NET_EXPORT bool IsLocalhost(const GURL& url);
 // machine.
 NET_EXPORT bool HostStringIsLocalhost(std::string_view host);
 
-// Strip the portions of |url| that aren't core to the network request.
+// Strip the portions of `url` that aren't core to the network request.
 //   - user name / password
 //   - reference section
 NET_EXPORT GURL SimplifyUrlForRequest(const GURL& url);
+
+// Remove the name / password from `url`, if it has them. Always duplicates URL.
+NET_EXPORT GURL RemoveCredentialsFromUrl(const GURL& url);
 
 // Changes scheme "ws" to "http" and "wss" to "https". This is useful for origin
 // checks and authentication, where WebSocket URLs are treated as if they were

@@ -27,7 +27,6 @@
 #include "components/safe_browsing/core/browser/sync/sync_utils.h"
 #include "components/safe_browsing/core/browser/test_safe_browsing_token_fetcher.h"
 #include "components/safe_browsing/core/browser/verdict_cache_manager.h"
-#include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -58,6 +57,7 @@ constexpr char kRealTimeLookupUrl[] =
     "realtime";
 
 constexpr char kTestProfileEmail[] = "test@example.com";
+constexpr char kContentAreaAccountEmail[] = "area@example.com";
 
 class MockReferrerChainProvider : public ReferrerChainProvider {
  public:
@@ -184,6 +184,9 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
         /*webui_delegate=*/nullptr, identity_test_env_.identity_manager(),
         management_service_.get(), is_off_the_record, is_guest_session,
         base::BindRepeating([]() -> std::string { return kTestProfileEmail; }),
+        base::BindRepeating([](const GURL& tab_url) -> std::string {
+          return kContentAreaAccountEmail;
+        }),
         base::BindRepeating([] { return true; }),
         /*is_command_line_switch_supported=*/true);
 
@@ -262,11 +265,6 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
                                          expected_response_str);
   }
 
-  void EnableLocalIpAddressInEvents() {
-    scoped_feature_list_.InitAndEnableFeature(
-        safe_browsing::kLocalIpAddressInEvents);
-  }
-
   // Must be the first member to be initialized first and destroyed last.
   content::BrowserTaskEnvironment task_environment_;
   network::TestURLLoaderFactory test_url_loader_factory_;
@@ -285,7 +283,6 @@ class ChromeEnterpriseRealTimeUrlLookupServiceTest : public PlatformTest {
   raw_ptr<TestingProfile> test_profile_;
   syncer::TestSyncService test_sync_service_;
   std::unique_ptr<MockReferrerChainProvider> referrer_chain_provider_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
@@ -315,7 +312,6 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
 TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
        TestStartLookup_RequestWithDmTokenAndAccessToken) {
   base::HistogramTester histogram_tester;
-  EnableLocalIpAddressInEvents();
   GURL url("http://example.test/");
   SetUpRTLookupResponse(RTLookupResponse::ThreatInfo::DANGEROUS,
                         RTLookupResponse::ThreatInfo::SOCIAL_ENGINEERING, 60,
@@ -346,6 +342,8 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
         EXPECT_EQ("test@example.com", request_proto.email());
         EXPECT_EQ("dm_token", request_proto.browser_dm_token());
         EXPECT_TRUE(request_proto.has_client_reporting_metadata());
+        EXPECT_EQ(kContentAreaAccountEmail,
+                  request_proto.content_area_account_email());
         EXPECT_EQ("", request_proto.profile_dm_token());
         EXPECT_FALSE(request_proto.local_ips().empty());
         EXPECT_EQ(ChromeUserPopulation::SAFE_BROWSING,
@@ -560,6 +558,16 @@ TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest, CanCheckUrl_IPAddresses) {
   EXPECT_TRUE(enterprise_rt_service()->CanCheckUrl(GURL("http://192.168.1.1")));
   EXPECT_TRUE(enterprise_rt_service()->CanCheckUrl(GURL("http://172.16.2.2")));
   EXPECT_TRUE(enterprise_rt_service()->CanCheckUrl(GURL("http://127.0.0.1")));
+}
+
+TEST_F(ChromeEnterpriseRealTimeUrlLookupServiceTest,
+       CheckShouldOverrideKnownSafeUrlDecision) {
+  EXPECT_TRUE(enterprise_rt_service()->ShouldOverrideKnownSafeUrlDecision(
+      GURL("chrome://flags/")));
+  EXPECT_FALSE(enterprise_rt_service()->ShouldOverrideKnownSafeUrlDecision(
+      GURL("chrome://newtab/")));
+  EXPECT_FALSE(enterprise_rt_service()->ShouldOverrideKnownSafeUrlDecision(
+      GURL("http://example.com/")));
 }
 
 }  // namespace safe_browsing

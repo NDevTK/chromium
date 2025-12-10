@@ -78,6 +78,9 @@ inline constexpr int kModalButtonSpinnerSize = 20;
 
 inline constexpr char kImageFetcherUmaClient[] = "FedCMAccountChooser";
 
+using AccountSelectionCallback =
+    base::RepeatingCallback<bool(const ui::Event&)>;
+
 class BrandIconImageView : public views::ImageView {
   METADATA_HEADER(BrandIconImageView, views::ImageView)
 
@@ -98,7 +101,7 @@ class BrandIconImageView : public views::ImageView {
 
 class AccountHoverButton : public HoverButton {
  public:
-  AccountHoverButton(PressedCallback callback,
+  AccountHoverButton(AccountSelectionCallback callback,
                      std::unique_ptr<views::View> icon_view,
                      const std::u16string& title,
                      const std::u16string& subtitle,
@@ -108,7 +111,7 @@ class AccountHoverButton : public HoverButton {
                      int button_position);
   AccountHoverButton(const AccountHoverButton&) = delete;
   AccountHoverButton& operator=(const AccountHoverButton&) = delete;
-  ~AccountHoverButton() override = default;
+  ~AccountHoverButton() override;
 
   // HoverButton
   void StateChanged(ButtonState old_state) override;
@@ -125,10 +128,10 @@ class AccountHoverButton : public HoverButton {
   void ReplaceSecondaryViewWithSpinner();
 
   // Used for testing.
-  void SetCallbackForTesting(PressedCallback callback);
+  void SetCallbackForTesting(AccountSelectionCallback callback);
 
  private:
-  PressedCallback callback_;
+  AccountSelectionCallback callback_;
   // The order of this account button relative to other account buttons in
   // the dialog (e.g. 0 is the topmost account, 1 the one below it, etc.). Used
   // to record a metric when the button is clicked.
@@ -205,6 +208,8 @@ class AccountSelectionViewBase {
   // Gets the subtitle of the dialog, if any.
   virtual std::optional<std::string> GetDialogSubtitle() const = 0;
 
+  virtual void UpdateTitleAndSubtitle(const content::RelyingPartyData& rp_data);
+
  protected:
   void SetLabelProperties(views::Label* label);
 
@@ -212,14 +217,15 @@ class AccountSelectionViewBase {
   // the account on the left, and information about the account on the right.
   // |clickable_position| contains an int if and only if the account is a
   // HoverButton, and in that case the number is the 0-based position of that
-  // account in the overall dialog.
+  // account in the overall dialog. |used_string| is set if this is a returning
+  // account in a multi IDP dialog.
   std::unique_ptr<views::View> CreateAccountRow(
       const IdentityRequestAccountPtr& account,
       std::optional<int> clickable_position,
       bool should_include_idp,
       bool is_modal_dialog = false,
       int additional_vertical_padding = 0,
-      std::optional<std::u16string> last_used_string = std::nullopt);
+      std::optional<std::u16string> used_string = std::nullopt);
 
   // Returns a StyledLabel containing a disclosure label. The label links to
   // privacy policy and terms of service URLs, if available.

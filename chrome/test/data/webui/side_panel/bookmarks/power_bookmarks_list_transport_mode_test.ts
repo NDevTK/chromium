@@ -66,6 +66,7 @@ suite('TransportMode', () => {
       emptyBodyGuest: 'guest body',
       bookmarksTreeViewEnabled: false,
       isBookmarksInTransportModeEnabled: true,
+      splitViewEnabled: false,
     });
 
     powerBookmarksList = await initializeUi(bookmarksApi);
@@ -87,7 +88,7 @@ suite('TransportMode', () => {
     const menuItems =
         contextMenu.shadowRoot!.querySelectorAll('.dropdown-item');
     assertEquals(
-        menuItems[3]!.textContent!.includes(loadTimeData.getString('menuEdit')),
+        menuItems[3]!.textContent.includes(loadTimeData.getString('menuEdit')),
         true);
     const editItem = contextMenu.shadowRoot!.querySelectorAll<HTMLElement>(
         '.dropdown-item')[3]!;
@@ -123,7 +124,7 @@ suite('TransportMode', () => {
     const menuItems =
         contextMenu.shadowRoot!.querySelectorAll('.dropdown-item');
     assertEquals(
-        menuItems[4]!.textContent!.includes(
+        menuItems[4]!.textContent.includes(
             loadTimeData.getString('tooltipMove')),
         true);
     const moveItem = contextMenu.shadowRoot!.querySelectorAll<HTMLElement>(

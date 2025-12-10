@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/page_info/chrome_page_info_ui_delegate.h"
-#include "chrome/browser/ui/views/accessibility/non_accessible_image_view.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/page_info/page_info_navigation_handler.h"
 #include "chrome/browser/ui/views/page_info/page_info_view_factory.h"
@@ -27,6 +26,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/vector_icons/vector_icons.h"
+#include "media/base/media_switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/ui_base_features.h"
@@ -36,6 +36,7 @@
 #include "ui/views/controls/button/image_button_factory.h"
 #include "ui/views/controls/button/toggle_button.h"
 #include "ui/views/controls/highlight_path_generator.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/view_class_properties.h"
@@ -71,8 +72,6 @@ PermissionToggleRowView::PermissionToggleRowView(
     : permission_(permission),
       delegate_(delegate),
       navigation_handler_(navigation_handler) {
-  // TODO(crbug.com/40064612): Directly subclass `RichControlsContainerView`
-  // instead of adding it as the only child.
   SetUseDefaultFillLayout(true);
   row_view_ = AddChildView(std::make_unique<RichControlsContainerView>());
 
@@ -228,7 +227,10 @@ void PermissionToggleRowView::InitForUserSource(
           permission_.type) ||
       (permission_.type == ContentSettingsType::FILE_SYSTEM_WRITE_GUARD &&
        base::FeatureList::IsEnabled(
-           features::kFileSystemAccessPersistentPermissions))) {
+           features::kFileSystemAccessPersistentPermissions)) ||
+      (permission_.type == ContentSettingsType::AUTO_PICTURE_IN_PICTURE &&
+       base::FeatureList::IsEnabled(
+           media::kAutoPictureInPicturePageInfoDetails))) {
     auto subpage_button = views::CreateVectorImageButtonWithNativeTheme(
         base::BindRepeating(
             [=](PermissionToggleRowView* row) {
@@ -275,7 +277,7 @@ void PermissionToggleRowView::InitForManagedSource(
                            gfx::Insets::VH(0, icon_label_spacing));
   row_view_->AddControl(std::move(state_label));
 
-  auto managed_icon = std::make_unique<NonAccessibleImageView>();
+  auto managed_icon = std::make_unique<views::ImageView>();
   managed_icon->SetImage(GetManagedPermissionIcon(permission_));
   std::u16string managed_tooltip =
       PageInfoUI::PermissionManagedTooltipToUIString(delegate, permission_);
@@ -285,7 +287,7 @@ void PermissionToggleRowView::InitForManagedSource(
 
 void PermissionToggleRowView::UpdateUiOnPermissionChanged() {
   if (blocked_on_system_level_label_) {
-    if (permission_.setting == CONTENT_SETTING_DEFAULT) {
+    if (!permission_.setting) {
       permission_blocked_on_system_level_ = false;
       blocked_on_system_level_label_->SetVisible(false);
     } else {
@@ -306,8 +308,7 @@ void PermissionToggleRowView::UpdateUiOnPermissionChanged() {
 
   // Reset |state_label_|, readd it after if needed.
   if (state_label_) {
-    delete state_label_;
-    state_label_ = nullptr;
+    delete std::exchange(state_label_, nullptr);
   }
 
   // Add explanation for the user-managed permission state if needed. This would
@@ -332,7 +333,7 @@ void PermissionToggleRowView::UpdateUiOnPermissionChanged() {
 }
 
 void PermissionToggleRowView::ResetPermission() {
-  permission_.setting = CONTENT_SETTING_DEFAULT;
+  permission_.setting.reset();
   permission_.is_one_time = false;
   permission_.is_in_use = false;
   PermissionChanged();

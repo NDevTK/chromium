@@ -4,10 +4,8 @@
 
 package org.chromium.net;
 
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.CoreMatchers.notNullValue;
-import static org.hamcrest.CoreMatchers.nullValue;
-import static org.junit.Assert.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -110,22 +108,21 @@ public class HttpNegotiateAuthenticatorTest {
                         mBundleCallbackCaptor.capture(),
                         any(Handler.class));
 
-        assertThat(
-                "There is no existing context",
-                mBundleCaptor.getValue().get(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT),
-                nullValue());
-        assertThat(
-                "The existing token is empty",
-                mBundleCaptor.getValue().getString(HttpNegotiateConstants.KEY_INCOMING_AUTH_TOKEN),
-                equalTo(""));
-        assertThat(
-                "Delegation is allowed",
-                mBundleCaptor.getValue().getBoolean(HttpNegotiateConstants.KEY_CAN_DELEGATE),
-                equalTo(true));
-        assertThat(
-                "getAuthTokenByFeatures was called with a callback",
-                mBundleCallbackCaptor.getValue(),
-                notNullValue());
+        assertWithMessage("There is no existing context")
+                .that(mBundleCaptor.getValue().get(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT))
+                .isNull();
+        assertWithMessage("The existing token is empty")
+                .that(
+                        mBundleCaptor
+                                .getValue()
+                                .getString(HttpNegotiateConstants.KEY_INCOMING_AUTH_TOKEN))
+                .isEqualTo("");
+        assertWithMessage("Delegation is allowed")
+                .that(mBundleCaptor.getValue().getBoolean(HttpNegotiateConstants.KEY_CAN_DELEGATE))
+                .isEqualTo(true);
+        assertWithMessage("getAuthTokenByFeatures was called with a callback")
+                .that(mBundleCallbackCaptor.getValue())
+                .isNotNull();
     }
 
     /**
@@ -161,18 +158,18 @@ public class HttpNegotiateAuthenticatorTest {
                         any(HttpNegotiateAuthenticator.GetTokenCallback.class),
                         any(Handler.class));
 
-        assertThat(
-                "There is no existing context",
-                mBundleCaptor.getValue().get(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT),
-                nullValue());
-        assertThat(
-                "The existing token is empty",
-                mBundleCaptor.getValue().getString(HttpNegotiateConstants.KEY_INCOMING_AUTH_TOKEN),
-                equalTo(""));
-        assertThat(
-                "Delegation is allowed",
-                mBundleCaptor.getValue().getBoolean(HttpNegotiateConstants.KEY_CAN_DELEGATE),
-                equalTo(true));
+        assertWithMessage("There is no existing context")
+                .that(mBundleCaptor.getValue().get(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT))
+                .isNull();
+        assertWithMessage("The existing token is empty")
+                .that(
+                        mBundleCaptor
+                                .getValue()
+                                .getString(HttpNegotiateConstants.KEY_INCOMING_AUTH_TOKEN))
+                .isEqualTo("");
+        assertWithMessage("Delegation is allowed")
+                .that(mBundleCaptor.getValue().getBoolean(HttpNegotiateConstants.KEY_CAN_DELEGATE))
+                .isEqualTo(true);
     }
 
     /** Tests the behavior of {@link HttpNegotiateAuthenticator.GetAccountsCallback} */
@@ -188,11 +185,7 @@ public class HttpNegotiateAuthenticatorTest {
         // Should fail because there are no accounts
         callback.run(makeFuture(new Account[] {}));
         verify(mAuthenticatorJniMock)
-                .setResult(
-                        eq(42L),
-                        eq(authenticator),
-                        eq(NetError.ERR_MISSING_AUTH_CREDENTIALS),
-                        (String) isNull());
+                .setResult(eq(42L), eq(NetError.ERR_MISSING_AUTH_CREDENTIALS), (String) isNull());
 
         // Should succeed, for a single account we use it for the AccountManager#getAuthToken call.
         Account testAccount = new Account("a", type);
@@ -209,11 +202,7 @@ public class HttpNegotiateAuthenticatorTest {
         // Should fail because there is more than one account
         callback.run(makeFuture(new Account[] {new Account("a", type), new Account("b", type)}));
         verify(mAuthenticatorJniMock, times(2))
-                .setResult(
-                        eq(42L),
-                        eq(authenticator),
-                        eq(NetError.ERR_MISSING_AUTH_CREDENTIALS),
-                        (String) isNull());
+                .setResult(eq(42L), eq(NetError.ERR_MISSING_AUTH_CREDENTIALS), (String) isNull());
     }
 
     /**
@@ -238,7 +227,9 @@ public class HttpNegotiateAuthenticatorTest {
         ShadowApplication shadowApplication =
                 shadowOf((Application) RuntimeEnvironment.application);
         List<BroadcastReceiver> receivers = shadowApplication.getReceiversForIntent(intent);
-        assertThat("There is one registered broadcast receiver", receivers.size(), equalTo(1));
+        assertWithMessage("There is one registered broadcast receiver")
+                .that(receivers.size())
+                .isEqualTo(1);
 
         // Send the intent to the receiver.
         BroadcastReceiver receiver = receivers.get(0);
@@ -282,7 +273,7 @@ public class HttpNegotiateAuthenticatorTest {
         resultBundle.putBundle(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT, context);
         resultBundle.putString(AccountManager.KEY_AUTHTOKEN, "output_token");
         mBundleCallbackCaptor.getValue().run(makeFuture(resultBundle));
-        verify(mAuthenticatorJniMock).setResult(1234, authenticator, 0, "output_token");
+        verify(mAuthenticatorJniMock).setResult(1234, 0, "output_token");
 
         // Check that the next call to getNextAuthToken uses the correct context
         authenticator.getNextAuthToken(5678, "test_principal", "", true);
@@ -297,16 +288,15 @@ public class HttpNegotiateAuthenticatorTest {
                         mBundleCallbackCaptor.capture(),
                         any(Handler.class));
 
-        assertThat(
-                "The spnego context is preserved between calls",
-                mBundleCaptor.getValue().getBundle(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT),
-                equalTo(context));
+        assertWithMessage("The spnego context is preserved between calls")
+                .that(mBundleCaptor.getValue().getBundle(HttpNegotiateConstants.KEY_SPNEGO_CONTEXT))
+                .isEqualTo(context);
 
         // Test exception path
         mBundleCallbackCaptor
                 .getValue()
                 .run(this.<Bundle>makeFuture(new OperationCanceledException()));
-        verify(mAuthenticatorJniMock).setResult(5678, authenticator, NetError.ERR_UNEXPECTED, null);
+        verify(mAuthenticatorJniMock).setResult(5678, NetError.ERR_UNEXPECTED, null);
     }
 
     @Test
@@ -318,7 +308,6 @@ public class HttpNegotiateAuthenticatorTest {
         verify(mAuthenticatorJniMock)
                 .setResult(
                         anyLong(),
-                        eq(authenticator),
                         eq(NetError.ERR_MISCONFIGURED_AUTH_ENVIRONMENT),
                         (String) isNull());
     }
@@ -423,8 +412,7 @@ public class HttpNegotiateAuthenticatorTest {
             resultBundle.putInt(HttpNegotiateConstants.KEY_SPNEGO_RESULT, spnegoError);
         }
         mBundleCallbackCaptor.getValue().run(makeFuture(resultBundle));
-        verify(mAuthenticatorJniMock)
-                .setResult(anyLong(), eq(authenticator), eq(expectedError), (String) isNull());
+        verify(mAuthenticatorJniMock).setResult(anyLong(), eq(expectedError), (String) isNull());
     }
 
     /**

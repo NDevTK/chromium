@@ -86,6 +86,24 @@
   }
 }
 
+@keyframes rotate-glif-anim-infinite {
+  from {
+    rotate: var(--glif-angle-start);
+  }
+  to {
+    rotate: calc(var(--glif-angle-start) + 360deg);
+  }
+}
+
+@keyframes rotate-mask-anim-infinite {
+  from {
+    rotate: var(--mask-angle-start);
+  }
+  to {
+    rotate: calc(var(--mask-angle-start) + 360deg);
+  }
+}
+
 @keyframes fade-in-out {
   0% {
     opacity: 0;
@@ -98,6 +116,21 @@
   }
   100% {
     opacity: 0;
+  }
+}
+
+@keyframes fade-in-out-infinite {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
   }
 }
 
@@ -117,7 +150,30 @@
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 100;
+  z-index: var(--cr-searchbox-compose-button-z-index, 100);
+}
+
+:host-context([dir='rtl']) .glow-container {
+  left: 8px;
+  right: unset;
+}
+
+:host-context([ntp-realbox-next-enabled]) {
+  --cr-button-height: 36px;
+}
+
+:host-context([ntp-realbox-next-enabled]) #composeButton {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:host-context([ntp-realbox-next-enabled]) .glow-container {
+  height: var(--cr-searchbox-icon-size);
+}
+
+:host-context([searchbox-layout-mode^='Tall']) .glow-container {
+  top: var(--cr-searchbox-compose-button-position-top);
+  transform: none;
 }
 
 /* A wrapper class to hold each gradient and its mask. Don't show unless on page
@@ -136,9 +192,18 @@
   pointer-events: auto;
 }
 
+#glowAnimationWrapper:hover .gradient-and-mask-wrapper{
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* The outer blurred glow. */
 .outer-glow {
   filter: blur(40px);
+}
+
+#glowAnimationWrapper:hover .outer-glow{
+  filter: none;
 }
 
 /* Containers used to position the gradient and masks correctly. The gradient
@@ -180,4 +245,17 @@
 
 .play .mask:before {
   animation: rotate-mask-anim var(--anim-duration) var(--acceleration) forwards;
+}
+
+
+#glowAnimationWrapper:hover .mask:before {
+  --anim-duration: 8s;
+  animation: rotate-mask-anim-infinite var(--anim-duration) linear infinite,
+             fade-in-out-infinite var(--anim-duration) linear forwards;
+}
+
+#glowAnimationWrapper:hover .gradient:before {
+  --anim-duration: 8s;
+  animation: rotate-glif-anim-infinite var(--anim-duration) linear infinite,
+             fade-in-out-infinite var(--anim-duration) linear forwards;
 }

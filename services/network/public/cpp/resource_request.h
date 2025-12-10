@@ -14,7 +14,6 @@
 #include "base/debug/crash_logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/unguessable_token.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/isolation_info.h"
 #include "net/base/request_priority.h"
 #include "net/cookies/site_for_cookies.h"
@@ -54,8 +53,6 @@ namespace network {
 //
 // Note: Please revise EqualsForTesting accordingly on any updates to this
 // struct.
-//
-// LINT.IfChange(ResourceRequest)
 struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
   // Typemapped to network.mojom.TrustedUrlRequestParams, see comments there
   // for details of each field.
@@ -63,6 +60,28 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
   // TODO(mmenke):  There are likely other fields that should be moved into this
   // class.
   struct COMPONENT_EXPORT(NETWORK_CPP_BASE) TrustedParams {
+    // Typemapped to network.mojom.EnabledClientHints, see comments there for
+    // details of each field.
+    struct COMPONENT_EXPORT(NETWORK_CPP_BASE) EnabledClientHints {
+      EnabledClientHints();
+      ~EnabledClientHints();
+      EnabledClientHints(const EnabledClientHints&);
+      EnabledClientHints& operator=(const EnabledClientHints&);
+      bool operator==(const EnabledClientHints& other) const;
+
+      url::Origin origin;
+      bool is_outermost_main_frame = false;
+      // The set of client hints that are enabled for the origin and currently
+      // allowed to be attached to the request (e.g., by Feature Policy).
+      std::vector<network::mojom::WebClientHintsType> hints;
+      // The set of client hints that are persisted for the origin but are
+      // currently not allowed to be attached to the request (e.g., blocked by
+      // Feature Policy). This is used in the network service to avoid an
+      // unnecessary IPC to the browser process when an ACCEPT_CH frame contains
+      // such hints.
+      std::vector<network::mojom::WebClientHintsType> not_allowed_hints;
+    };
+
     TrustedParams();
     ~TrustedParams();
     // TODO(crbug.com/332706093): Make this move-only to avoid cloning mojo
@@ -79,6 +98,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
     bool has_user_activation = false;
     bool allow_cookies_from_browser = false;
     bool include_request_cookies_with_response = false;
+    std::optional<EnabledClientHints> enabled_client_hints;
     mojo::PendingRemote<mojom::CookieAccessObserver> cookie_observer;
     mojo::PendingRemote<mojom::TrustTokenAccessObserver> trust_token_observer;
     mojo::PendingRemote<mojom::URLLoaderNetworkServiceObserver>
@@ -138,6 +158,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
 
   // See comments in network.mojom.URLRequest in url_request.mojom for details
   // of each field.
+  // LINT.IfChange(ResourceRequestFields)
   std::string method = net::HttpRequestHeaders::kGetMethod;
   GURL url;
   net::SiteForCookies site_for_cookies;
@@ -183,7 +204,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
   std::string fetch_integrity;
   // Used to populate `Accept-Signatures`
   // https://www.rfc-editor.org/rfc/rfc9421.html#name-the-accept-signature-field
-  std::vector<std::string> expected_public_keys;
+  std::vector<std::vector<uint8_t>> expected_public_keys;
   mojom::RequestDestination destination = mojom::RequestDestination::kEmpty;
   mojom::RequestDestination original_destination =
       mojom::RequestDestination::kEmpty;
@@ -223,17 +244,6 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
   std::optional<net::NetLogSource> net_log_create_info;
   std::optional<net::NetLogSource> net_log_reference_info;
 
-  // Used internally by the network service. Should not be modified by external
-  // callers, which should pass in address space of the request initiator via
-  // the ClientSecurityState includde either in URLLoaderFactoryParams or
-  // ResourceRequest::TrustedParams.
-  //
-  // See
-  // https://source.chromium.org/chromium/chromium/src/+/main:services/network/public/mojom/url_request.mojom
-  // for more details.
-  mojom::IPAddressSpace target_ip_address_space =
-      mojom::IPAddressSpace::kUnknown;
-
   net::StorageAccessApiStatus storage_access_api_status =
       net::StorageAccessApiStatus::kNone;
   network::mojom::AttributionSupport attribution_reporting_support =
@@ -256,8 +266,8 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
   std::optional<network::PermissionsPolicy> permissions_policy;
 
   std::optional<network::FetchRetryOptions> fetch_retry_options;
+  // LINT.ThenChange(//services/network/prefetch_matches.cc)
 };
-// LINT.ThenChange(//services/network/prefetch_matches.cc)
 
 // This does not accept |kDefault| referrer policy.
 COMPONENT_EXPORT(NETWORK_CPP_BASE)

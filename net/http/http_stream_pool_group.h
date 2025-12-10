@@ -14,6 +14,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "base/types/expected.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_export.h"
@@ -91,6 +92,9 @@ class HttpStreamPool::Group {
   const NetLogWithSource& net_log() { return net_log_; }
 
   bool force_quic() const { return force_quic_; }
+
+  const perfetto::Track& track() const { return track_; }
+  const perfetto::Flow& flow() const { return flow_; }
 
   // Creates a Job to attempt connection(s). We have separate methods for
   // creating and starting a Job to ensure that the owner of the Job can
@@ -173,10 +177,10 @@ class HttpStreamPool::Group {
   void CloseIdleStreams(std::string_view net_log_close_reason_utf8);
 
   // Cancels all on-going jobs.
-  void CancelJobs(int error);
+  void CancelJobs(int error, StreamSocketCloseReason cancel_reason);
 
-  // Create an AttemptManager if needed.
-  AttemptManager* EnsureAttemptManager();
+  // Returns an active AttemptManager for `job`.
+  AttemptManager* GetAttemptManagerForJob(Job* job);
 
   // Called when the active AttemptManager is shutting down.
   void OnAttemptManagerShuttingDown(AttemptManager* attempt_manager);
@@ -195,8 +199,6 @@ class HttpStreamPool::Group {
   void CleanupTimedoutIdleStreamSocketsForTesting();
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(HttpStreamPoolGroupTest, ComparePausedJobSet);
-
   struct IdleStreamSocket {
     IdleStreamSocket(std::unique_ptr<StreamSocket> stream_socket,
                      base::TimeTicks start_time);
@@ -222,6 +224,9 @@ class HttpStreamPool::Group {
   void CleanupIdleStreamSockets(CleanupMode mode,
                                 std::string_view net_log_close_reason_utf8);
 
+  // Returns an `AttemptManager` for an Alt-Svc QUIC preconnect job.
+  AttemptManager* GetAttemptManagerForAltSvcQuicPreconnect();
+
   void MaybeComplete();
 
   // Posts a task to call MaybeComplete() later.
@@ -233,12 +238,17 @@ class HttpStreamPool::Group {
   const QuicSessionAliasKey quic_session_alias_key_;
   const NetLogWithSource net_log_;
   const bool force_quic_;
+  const perfetto::NamedTrack track_;
+  const perfetto::Flow flow_;
 
   size_t handed_out_stream_count_ = 0;
   int64_t generation_ = 0;
   std::list<IdleStreamSocket> idle_stream_sockets_;
 
   std::unique_ptr<AttemptManager> attempt_manager_;
+
+  // An `AttemptManager` for Alt-Svc QUIC preconnects.
+  std::unique_ptr<AttemptManager> alt_svc_quic_preconnect_attempt_manager_;
 
   // Keeps AttemptManagers that are shutting down.
   std::set<std::unique_ptr<AttemptManager>, base::UniquePtrComparator>

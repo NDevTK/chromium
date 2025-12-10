@@ -38,7 +38,8 @@ void MathRadicalLayoutAlgorithm::GatherChildren(
     if (child.IsOutOfFlowPositioned()) {
       if (container_builder) {
         container_builder->AddOutOfFlowChildCandidate(
-            block_child, BorderScrollbarPadding().StartOffset());
+            block_child,
+            LogicalStaticPosition(BorderScrollbarPadding().StartOffset()));
       }
       continue;
     }
@@ -122,7 +123,8 @@ const LayoutResult* MathRadicalLayoutAlgorithm::Layout() {
   if (HasBaseGlyphForRadical(Style())) {
     // Stretch the radical operator to cover the base height.
     StretchyOperatorShaper shaper(uchar::kSquareRoot,
-                                  OpenTypeMathStretchData::Vertical);
+                                  OpenTypeMathStretchData::Vertical,
+                                  GetConstraintSpace().Direction());
     float target_size = base_ascent + base_descent + vertical.vertical_gap +
                         vertical.rule_thickness;
     const ShapeResult* shape_result =
@@ -221,8 +223,8 @@ MinMaxSizesResult MathRadicalLayoutAlgorithm::ComputeMinMaxSizes(
         std::max(-index_result.sizes.max_size, horizontal.kern_after_degree);
   }
   if (HasBaseGlyphForRadical(Style())) {
-    sizes +=
-        GetMinMaxSizesForVerticalStretchyOperator(Style(), uchar::kSquareRoot);
+    sizes += GetMinMaxSizesForVerticalStretchyOperator(
+        Style(), uchar::kSquareRoot, GetConstraintSpace().Direction());
   }
   if (base) {
     const auto base_result = ComputeMinAndMaxContentContributionForMathChild(

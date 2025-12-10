@@ -137,7 +137,7 @@ std::string FormStructuresToString(
         }
       }
       string_form += base::JoinString(
-          {field->Type().ToStringView(), base::UTF16ToUTF8(field->name()),
+          {field->Type().ToString(), base::UTF16ToUTF8(field->name()),
            base::UTF16ToUTF8(field->label()), base::UTF16ToUTF8(field->value()),
            section},
           " | ");
@@ -212,7 +212,9 @@ FormStructureBrowserTest::FormStructureBrowserTest()
           features::kAutofillEnableSupportForParsingWithSharedLabels,
           // TODO(crbug.com/40266396): Remove once launched.
           features::kAutofillEnableExpirationDateImprovements,
-          features::kAutofillUnifyRationalizationAndSectioningOrder,
+          features::kAutofillIgnoreCheckableElements,
+          // TODO(crbug.com/369503318): Remove once launched.
+          features::kAutofillSupportSplitZipCode,
       },
       // Disabled
       {
@@ -247,11 +249,6 @@ void FormStructureBrowserTest::SetUpCommandLine(
   command_line->AppendSwitchASCII(switches::kLoggingLevel, "2");
   command_line->AppendSwitchASCII(
       variations::switches::kVariationsOverrideCountry, "us");
-  // SelectParserRelaxation affects the results from the test data because the
-  // test data has unclosed <select> tags. Since SelectParserRelaxation is not
-  // enabled by default, we are disabling it for this test.
-  command_line->AppendSwitchASCII("disable-blink-features",
-                                  "SelectParserRelaxation");
 }
 
 void FormStructureBrowserTest::SetUpOnMainThread() {

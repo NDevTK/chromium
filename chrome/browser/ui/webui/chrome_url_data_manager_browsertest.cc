@@ -22,6 +22,7 @@
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/collaboration/public/features.h"
 #include "components/enterprise/browser/controller/fake_browser_dm_token_storage.h"
 #include "components/history_clusters/core/features.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
@@ -29,6 +30,7 @@
 #include "components/regional_capabilities/regional_capabilities_switches.h"
 #include "components/search/ntp_features.h"
 #include "components/search_engines/search_engines_switches.h"
+#include "components/variations/variations_switches.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/url_data_source.h"
@@ -198,6 +200,7 @@ class ChromeURLDataManagerWebUITrustedTypesTest
     enabled_features.push_back(ntp_features::kCustomizeChromeWallpaperSearch);
     enabled_features.push_back(
         optimization_guide::features::kOptimizationGuideModelExecution);
+    enabled_features.push_back(collaboration::features::kCollaborationComments);
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
     enabled_features.push_back(whats_new::kForceEnabled);
@@ -219,7 +222,8 @@ class ChromeURLDataManagerWebUITrustedTypesTest
     }
 
     const std::string kMessageFilter =
-        "*Refused to create a TrustedTypePolicy*";
+        "*Creating a TrustedTypePolicy * violates the following Content "
+        "Security Policy directive *";
     content::WebContents* content =
         browser()->tab_strip_model()->GetActiveWebContents();
     content::WebContentsConsoleObserver console_observer(content);
@@ -276,6 +280,8 @@ class ChromeURLDataManagerWebUITrustedTypesTest
       // Command line arguments needed to render chrome://search-engine-choice.
       command_line->AppendSwitchASCII(switches::kSearchEngineChoiceCountry,
                                       "BE");
+      command_line->AppendSwitchASCII(
+          variations::switches::kVariationsOverrideCountry, "BE");
       command_line->AppendSwitch(switches::kForceSearchEngineChoiceScreen);
       command_line->AppendSwitch(
           switches::kIgnoreNoFirstRunForSearchEngineChoiceScreen);
@@ -343,6 +349,7 @@ static constexpr const char* const kChromeUrls[] = {
     "chrome://autofill-internals",
     "chrome://bookmarks",
     "chrome://bookmarks-side-panel.top-chrome",
+    "chrome://comments-side-panel.top-chrome",
     "chrome://chrome-urls",
     "chrome://components",
     "chrome://connection-help",
@@ -453,7 +460,6 @@ static constexpr const char* const kChromeUrls[] = {
     "chrome://add-supervision/",
     "chrome://app-disabled",
     "chrome://camera-app/views/main.html",
-    "chrome://assistant-optin/",
     "chrome://bluetooth-pairing",
     "chrome://certificate-manager/",
 

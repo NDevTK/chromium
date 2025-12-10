@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/core/timing/animation_frame_timing_info.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/performance_server_timing.h"
 #include "third_party/blink/renderer/core/timing/task_attribution_timing.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
@@ -29,7 +28,8 @@ PerformanceScriptTiming::PerformanceScriptTiming(
     ScriptTimingInfo* info,
     base::TimeTicks time_origin,
     bool cross_origin_isolated_capability,
-    DOMWindow* source)
+    DOMWindow* source,
+    uint32_t navigation_id)
     : PerformanceEntry((info->EndTime() - info->StartTime()).InMilliseconds(),
                        performance_entry_names::kScript,
                        Performance::MonotonicTimeToDOMHighResTimeStamp(
@@ -37,7 +37,8 @@ PerformanceScriptTiming::PerformanceScriptTiming(
                            info->StartTime(),
                            false,
                            cross_origin_isolated_capability),
-                       source) {
+                       source,
+                       navigation_id) {
   info_ = info;
   if (!info_->Window() || !source) {
     window_attribution_ = V8ScriptWindowAttribution::Enum::kOther;
@@ -161,10 +162,10 @@ V8ScriptInvokerType PerformanceScriptTiming::invokerType() const {
   NOTREACHED();
 }
 
-WTF::String PerformanceScriptTiming::sourceURL() const {
+String PerformanceScriptTiming::sourceURL() const {
   return info_->GetSourceLocation().url;
 }
-WTF::String PerformanceScriptTiming::sourceFunctionName() const {
+String PerformanceScriptTiming::sourceFunctionName() const {
   return info_->GetSourceLocation().function_name;
 }
 int32_t PerformanceScriptTiming::sourceCharPosition() const {
@@ -186,8 +187,8 @@ PerformanceEntryType PerformanceScriptTiming::EntryTypeEnum() const {
 void PerformanceScriptTiming::BuildJSONValue(V8ObjectBuilder& builder) const {
   PerformanceEntry::BuildJSONValue(builder);
   builder.AddString("invoker", invoker());
-  builder.AddString("invokerType", invokerType().AsString());
-  builder.AddString("windowAttribution", windowAttribution().AsString());
+  builder.AddString("invokerType", invokerType().AsStringView());
+  builder.AddString("windowAttribution", windowAttribution().AsStringView());
   builder.AddNumber("executionStart", executionStart());
   builder.AddNumber("forcedStyleAndLayoutDuration",
                     forcedStyleAndLayoutDuration());

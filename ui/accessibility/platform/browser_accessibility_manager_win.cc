@@ -12,6 +12,7 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/containers/heap_array.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/typed_macros.h"
@@ -155,7 +156,17 @@ void BrowserAccessibilityManagerWin::FireAriaNotificationEvent(
   }
 
   auto* provider = ToBrowserAccessibilityWin(node)->GetCOM();
-  if (!provider->HasEventListenerForEvent(UIA_NotificationEventId)) {
+  while (provider && !provider->IsUIAControl()) {
+    // If the node is not a UIA control, we need to find the first ancestor
+    // that is a UIA control.
+    BrowserAccessibility* parent = node->PlatformGetParent();
+    CHECK(parent) << "FireAriaNotificationEvent called on a node without a UIA "
+                     "control ancestor.";
+    provider = ToBrowserAccessibilityWin(parent)->GetCOM();
+    node = parent;
+  }
+  if (!provider ||
+      !provider->HasEventListenerForEvent(UIA_NotificationEventId)) {
     return;
   }
 
@@ -599,6 +610,7 @@ void BrowserAccessibilityManagerWin::FireGeneratedEvent(
     case AXEventGenerator::Event::AUTOFILL_AVAILABILITY_CHANGED:
     case AXEventGenerator::Event::CARET_BOUNDS_CHANGED:
     case AXEventGenerator::Event::CHECKED_STATE_DESCRIPTION_CHANGED:
+    case AXEventGenerator::Event::DEFAULT_ACTION_VERB_CHANGED:
     case AXEventGenerator::Event::DETAILS_CHANGED:
     case AXEventGenerator::Event::DOCUMENT_TITLE_CHANGED:
     case AXEventGenerator::Event::FOCUS_CHANGED:
@@ -697,7 +709,8 @@ void BrowserAccessibilityManagerWin::FireUiaAccessibilityEvent(
   }
 
   auto* provider = ToBrowserAccessibilityWin(node)->GetCOM();
-  if (!provider->HasEventListenerForEvent(uia_event)) {
+  if (!provider->AlwaysFireUIAEvent(uia_event) &&
+      !provider->HasEventListenerForEvent(uia_event)) {
     return;
   }
 
@@ -870,11 +883,18 @@ void BrowserAccessibilityManagerWin::OnAtomicUpdateFinished(
   absl::flat_hash_set<AXPlatformNode*> objs_to_update;
   CollectChangedNodesAndParentsForAtomicUpdate(tree, changes, &objs_to_update);
 
+  // Allocate space to hold intermediate state for all nodes.
+  auto update_states =
+      base::HeapArray<BrowserAccessibilityComWin::UpdateState>::WithSize(
+          objs_to_update.size());
+
   // The first step moves win_attributes_ to old_win_attributes_ and then
   // recomputes all of win_attributes_ other than IAccessibleText.
+  auto state_scan = update_states.begin();
   for (auto* node : objs_to_update) {
     static_cast<BrowserAccessibilityComWin*>(node)
-        ->UpdateStep1ComputeWinAttributes();
+        ->UpdateStep1ComputeWinAttributes(&*state_scan);
+    ++state_scan;
   }
 
   // The next step updates the hypertext of each node, which is a

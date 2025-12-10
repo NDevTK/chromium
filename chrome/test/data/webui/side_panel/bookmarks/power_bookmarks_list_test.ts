@@ -138,6 +138,7 @@ suite('General', () => {
       emptyBodyGuest: 'guest body',
       bookmarksTreeViewEnabled: false,
       isBookmarksInTransportModeEnabled: false,
+      splitViewEnabled: false,
     });
 
     powerBookmarksList = await initializeUi(bookmarksApi);
@@ -221,6 +222,37 @@ suite('General', () => {
           JSON.stringify([
             'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
             'bookmark-5',
+            'bookmark-3',
+          ]));
+    });
+
+    test('RebuildsKeyboardNavigationFiltered', async () => {
+      await flushTasks();
+
+      assertEquals(
+          JSON.stringify(
+              powerBookmarksList.getKeyboardNavigationServiceforTesting()
+                  .getElementsForTesting()
+                  .map((el: HTMLElement) => el.id)),
+          JSON.stringify([
+            'bookmark-SIDE_PANEL_BOOKMARK_BAR_ID',
+            'bookmark-5',
+            'bookmark-4',
+            'bookmark-3',
+          ]));
+
+      await performSearch('child');
+      await microtasksFinished();
+      await flushTasks();
+
+      assertEquals(
+          JSON.stringify(
+              powerBookmarksList.getKeyboardNavigationServiceforTesting()
+                  .getElementsForTesting()
+                  .map((el: HTMLElement) => el.id)),
+          JSON.stringify([
+            'bookmark-5',
+            'bookmark-4',
             'bookmark-3',
           ]));
     });
@@ -512,6 +544,43 @@ suite('General', () => {
       assertEquals(2, getBookmarksInList(powerBookmarksList, 0).length);
       assertEquals(4, getBookmarksInList(powerBookmarksList, 1).length);
     });
+
+    test('AddRemoveAddRemove', async () => {
+      const addTabButton = getAddTabButton();
+      assertFalse(addTabButton.disabled);
+
+      const newBookmark = {
+        id: '999',
+        title: 'New bookmark of current url',
+        index: 0,
+        parentId: FOLDERS[1]!.id,
+        url: powerBookmarksList.getCurrentUrlForTesting()!,
+        children: null,
+        dateAdded: null,
+        dateLastUsed: null,
+        unmodifiable: false,
+      };
+
+      // Add a bookmark for the current URL.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodeAdded(newBookmark);
+      await flushTasks();
+      assertTrue(addTabButton.disabled);
+
+      // Remove the bookmark.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodesRemoved(['999']);
+      await flushTasks();
+      assertFalse(addTabButton.disabled);
+
+      // Undo the removal.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodeAdded(newBookmark);
+      await flushTasks();
+      assertTrue(addTabButton.disabled);
+
+      // Remove the bookmark again.
+      bookmarksApi.callbackRouterRemote.onBookmarkNodesRemoved(['999']);
+      await flushTasks();
+      assertFalse(addTabButton.disabled);
+    });
   });
 
   suite('Part2', function() {
@@ -773,7 +842,7 @@ suite('General', () => {
       const menuItems =
           contextMenu.shadowRoot!.querySelectorAll('.dropdown-item');
       assertEquals(
-          menuItems[3]!.textContent!.includes(
+          menuItems[3]!.textContent.includes(
               loadTimeData.getString('menuEdit')),
           true);
       const editItem = contextMenu.shadowRoot!.querySelectorAll<HTMLElement>(
@@ -808,7 +877,7 @@ suite('General', () => {
       const menuItems =
           contextMenu.shadowRoot!.querySelectorAll('.dropdown-item');
       assertEquals(
-          menuItems[4]!.textContent!.includes(
+          menuItems[4]!.textContent.includes(
               loadTimeData.getString('tooltipMove')),
           true);
       const moveItem = contextMenu.shadowRoot!.querySelectorAll<HTMLElement>(
@@ -907,6 +976,21 @@ suite('General', () => {
       callbackRouterRemote.priceTrackedForBookmark(newProduct);
       await flushTasks();
       assertFalse(isHidden(labels));
+    });
+
+    test('PreventsClickDuringDrag', async () => {
+      // Top level folder has 4 bookmarks.
+      assertEquals(4, getBookmarksInList(powerBookmarksList, 0).length);
+
+      // Simulate a drag occurring and then click the folder.
+      getPowerBookmarksRowElement(powerBookmarksList, '5')!.hasActiveDrag =
+          true;
+
+      getCrUrlListItemElementWithId('5')!.click();
+      await flushTasks();
+
+      // Folder should still have 4 bookmarks because the click was ignored.
+      assertEquals(4, getBookmarksInList(powerBookmarksList, 0).length);
     });
   });
 });

@@ -9,8 +9,9 @@
 #include <memory>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service_delegate.h"
 #include "components/signin/public/base/signin_buildflags.h"
@@ -59,16 +60,19 @@ class FakeProfileOAuth2TokenServiceDelegate
       const CoreAccountId& account_id) const override;
 #endif  // BUILDFLAG(IS_IOS)
 
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
   bool IsRefreshTokenBound(const CoreAccountId& account_id) const override;
   std::vector<uint8_t> GetWrappedBindingKey(
       const CoreAccountId& account_id) const override;
+  bool AllBoundTokensShareSameBindingKey() const override;
   void GenerateRefreshTokenBindingKeyAssertionForMultilogin(
       const CoreAccountId& account_id,
       std::string_view challenge,
       std::string_view ephemeral_public_key,
       TokenBindingHelper::GenerateAssertionCallback callback) override;
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  void AddBindingKeyToService(
+      base::span<const uint8_t> wrapped_binding_key) override;
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
   std::vector<CoreAccountId> GetAccounts() const override;
 
@@ -97,24 +101,18 @@ class FakeProfileOAuth2TokenServiceDelegate
       signin_metrics::SourceForRefreshTokenOperation source) override;
   void LoadCredentialsInternal(
       const CoreAccountId& primary_account_id) override;
-  void UpdateCredentialsInternal(const CoreAccountId& account_id,
-                                 const std::string& refresh_token
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-                                 ,
-                                 const std::vector<uint8_t>& wrapped_binding_key
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-                                 ) override;
+  void UpdateCredentialsInternal(
+      const CoreAccountId& account_id,
+      const std::string& refresh_token,
+      const std::vector<uint8_t>& wrapped_binding_key) override;
   void RevokeCredentialsInternal(const CoreAccountId& account_id) override;
   void ExtractCredentialsInternal(ProfileOAuth2TokenService* to_service,
                                   const CoreAccountId& account_id) override;
 
-  void IssueRefreshTokenForUser(const CoreAccountId& account_id,
-                                const std::string& token
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-                                ,
-                                const std::vector<uint8_t>& wrapped_binding_key
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  );
+  void IssueRefreshTokenForUser(
+      const CoreAccountId& account_id,
+      const std::string& token,
+      const std::vector<uint8_t>& wrapped_binding_key);
 
 #if BUILDFLAG(IS_ANDROID)
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject() override;
@@ -127,9 +125,7 @@ class FakeProfileOAuth2TokenServiceDelegate
   // Maps account ids to tokens.
   std::map<CoreAccountId, std::string> refresh_tokens_;
 
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   std::map<CoreAccountId, std::vector<uint8_t>> wrapped_binding_keys_;
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_factory_;

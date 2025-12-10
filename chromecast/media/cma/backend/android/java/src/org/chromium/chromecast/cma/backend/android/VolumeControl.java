@@ -17,8 +17,8 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.chromecast.media.AudioContentType;
 
@@ -153,7 +153,7 @@ class VolumeControl {
     private static boolean isSingleVolumeDevice() {
         // Android TV devices map all stream types to STREAM_MUSIC, so they functionally have only
         // one volume stream.
-        return BuildInfo.getInstance().isTV;
+        return DeviceInfo.isTV();
     }
 
     /** Construction */
@@ -223,8 +223,8 @@ class VolumeControl {
             if (DEBUG_LEVEL >= 1) {
                 Log.i(TAG, "New volume for castType " + castType + " is " + s.getVolumeLevel());
             }
-            VolumeControlJni.get().onVolumeChange(
-                    mNativeVolumeControl, VolumeControl.this, castType, s.getVolumeLevel());
+            VolumeControlJni.get()
+                    .onVolumeChange(mNativeVolumeControl, castType, s.getVolumeLevel());
         }
     }
 
@@ -239,8 +239,7 @@ class VolumeControl {
             if (DEBUG_LEVEL >= 1) {
                 Log.i(TAG, "New mute state for castType " + castType + " is " + s.isMuted());
             }
-            VolumeControlJni.get().onMuteChange(
-                    mNativeVolumeControl, VolumeControl.this, castType, s.isMuted());
+            VolumeControlJni.get().onMuteChange(mNativeVolumeControl, castType, s.isMuted());
         }
     }
 
@@ -283,10 +282,8 @@ class VolumeControl {
 
     @NativeMethods
     interface Natives {
-        void onVolumeChange(
-                long nativeVolumeControlAndroid, VolumeControl caller, int type, float level);
+        void onVolumeChange(long nativeVolumeControlAndroid, int type, float level);
 
-        void onMuteChange(
-                long nativeVolumeControlAndroid, VolumeControl caller, int type, boolean muted);
+        void onMuteChange(long nativeVolumeControlAndroid, int type, boolean muted);
     }
 }

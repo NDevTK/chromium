@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
 
 #include <stdint.h>
@@ -321,7 +316,7 @@ const char* BuildDescriptionFromHeaders(AXPlatformNodeDelegate* delegate,
 
   std::string result = base::JoinString(names, " ");
 
-#if defined(LEAK_SANITIZER) && !BUILDFLAG(IS_NACL)
+#if defined(LEAK_SANITIZER)
   // http://crbug.com/982839
   // atk_table_get_column_description and atk_table_get_row_description return
   // const gchar*, which suggests the caller does not gain ownership of the
@@ -2893,6 +2888,8 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() const {
       return ATK_ROLE_CHECK_MENU_ITEM;
     case ax::mojom::Role::kMenuItemRadio:
       return ATK_ROLE_RADIO_MENU_ITEM;
+    case ax::mojom::Role::kMenuItemSeparator:
+      return ATK_ROLE_SEPARATOR;
     case ax::mojom::Role::kMenuListPopup:
       return ATK_ROLE_MENU;
     case ax::mojom::Role::kMenuListOption:
@@ -4638,7 +4635,7 @@ void AXPlatformNodeAuraLinux::GetFloatAttributeInGValue(
     GValue* value) {
   float float_val;
   if (GetFloatAttribute(attr, &float_val)) {
-    memset(value, 0, sizeof(*value));
+    UNSAFE_TODO(memset(value, 0, sizeof(*value)));
     g_value_init(value, G_TYPE_FLOAT);
     g_value_set_float(value, float_val);
   }

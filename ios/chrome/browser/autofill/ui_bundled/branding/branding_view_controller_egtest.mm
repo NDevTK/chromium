@@ -79,18 +79,9 @@ void CheckBrandingHasVisiblity(BOOL visibility) {
 // Opens the manual fallback menu by pressing the right keyboard accessory
 // button.
 void OpenManualFallback() {
-  id<GREYMatcher> button_to_tap;
-  if ([AutofillAppInterface isKeyboardAccessoryUpgradeEnabled]) {
-    button_to_tap = grey_allOf(grey_accessibilityLabel(l10n_util::GetNSString(
-                                   IDS_IOS_AUTOFILL_PASSWORD_AUTOFILL_DATA)),
-                               grey_ancestor(grey_accessibilityID(
-                                   kFormInputAccessoryViewAccessibilityID)),
-                               nil);
-  } else {
-    button_to_tap = manual_fill::PasswordIconMatcher();
-  }
-
-  [[EarlGrey selectElementWithMatcher:button_to_tap] performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:manual_fill::PasswordManualFillViewButton()]
+      performAction:grey_tap()];
 }
 
 }  // namespace
@@ -147,11 +138,6 @@ void OpenManualFallback() {
   BringUpKeyboard();
   CheckBrandingHasVisiblity(YES);
   OpenManualFallback();
-
-  if (!base::ios::IsRunningOnIOS16OrLater() && [ChromeEarlGrey isIPadIdiom]) {
-    [ChromeEarlGreyUI dismissByTappingOnTheWindowOfPopover:
-                          manual_fill::PasswordTableViewMatcher()];
-  }
 
   DismissKeyboard();
   // Second time: branding is still visible after user interacts with a keyboard

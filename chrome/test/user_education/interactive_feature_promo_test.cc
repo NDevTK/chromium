@@ -17,6 +17,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
@@ -41,23 +42,23 @@ InteractiveFeaturePromoTestApi::InteractiveFeaturePromoTestApi(
     TrackerMode tracker_mode,
     ClockMode clock_mode,
     InitialSessionState initial_session_state)
-    : InteractiveBrowserTestApi(
-          std::make_unique<internal::InteractiveFeaturePromoTestPrivate>(
-              std::make_unique<InteractionTestUtilBrowser>(),
-              std::move(tracker_mode),
-              clock_mode,
-              initial_session_state)) {}
+    : test_impl_(private_test_impl()
+                     .MaybeRegisterFrameworkImpl<
+                         internal::InteractiveFeaturePromoTestPrivate>(
+                         std::move(tracker_mode),
+                         clock_mode,
+                         initial_session_state)) {}
 
 InteractiveFeaturePromoTestApi::~InteractiveFeaturePromoTestApi() = default;
 
 void InteractiveFeaturePromoTestApi::SetControllerMode(
     ControllerMode controller_mode) {
-  test_impl().SetControllerMode(controller_mode);
+  test_impl_->SetControllerMode(controller_mode);
 }
 
 InteractiveFeaturePromoTestApi::MockTracker*
 InteractiveFeaturePromoTestApi::GetMockTrackerFor(Browser* browser) {
-  return test_impl().GetMockTrackerFor(browser);
+  return test_impl_->GetMockTrackerFor(browser);
 }
 
 void InteractiveFeaturePromoTestApi::RegisterTestFeature(
@@ -78,7 +79,7 @@ InteractiveFeaturePromoTestApi::WaitForFeatureEngagementReady() {
       WithView(kBrowserViewElementId,
                [this, browser](BrowserView* browser_view) {
                  browser->data = browser_view->browser();
-                 CHECK(!test_impl().GetMockTrackerFor(browser->data));
+                 CHECK(!test_impl_->GetMockTrackerFor(browser->data));
                }),
       ObserveState(kFeatureEngagementInitializedState,
                    [browser]() { return browser->data; }),
@@ -91,14 +92,14 @@ InteractiveFeaturePromoTestApi::WaitForFeatureEngagementReady() {
 InteractiveFeaturePromoTestApi::StepBuilder
 InteractiveFeaturePromoTestApi::AdvanceTime(NewTime time) {
   return std::move(Do([this, time]() {
-                     test_impl().AdvanceTime(time);
+                     test_impl_->AdvanceTime(time);
                    }).SetDescription("AdvanceTime()"));
 }
 
 InteractiveFeaturePromoTestApi::StepBuilder
 InteractiveFeaturePromoTestApi::SetLastActive(NewTime time) {
   return std::move(Do([this, time]() {
-                     test_impl().SetLastActive(time);
+                     test_impl_->SetLastActive(time);
                    }).SetDescription("SetLastActive()"));
 }
 
@@ -135,7 +136,7 @@ InteractiveFeaturePromoTestApi::MaybeShowPromo(
                 // If using a mock tracker, ensure that it returns the correct
                 // status.
                 auto* const tracker =
-                    test_impl().GetMockTrackerFor(browser_view->browser());
+                    test_impl_->GetMockTrackerFor(browser_view->browser());
                 if (tracker) {
                   if (expected_result) {
                     EXPECT_CALL(*tracker,
@@ -173,7 +174,8 @@ InteractiveFeaturePromoTestApi::MaybeShowPromo(
                     });
 
                 // Attempt to show the promo.
-                browser_view->MaybeShowFeaturePromo(std::move(params));
+                BrowserUserEducationInterface::From(browser_view->browser())
+                    ->MaybeShowFeaturePromo(std::move(params));
 
                 // If the promo showed, expect it to be dismissed at some point.
                 if (expected_result) {
@@ -181,15 +183,15 @@ InteractiveFeaturePromoTestApi::MaybeShowPromo(
                     EXPECT_CALL(*tracker, Dismissed(testing::Ref(iph_feature)));
                   }
                 } else if (user_education::features::IsUserEducationV25()) {
-                  switch (test_impl().clock_mode()) {
+                  switch (test_impl_->clock_mode()) {
                     case ClockMode::kUseTestClock:
-                      test_impl().AdvanceTime(
+                      test_impl_->AdvanceTime(
                           user_education::features::GetLowPriorityTimeout() +
                           base::Seconds(1));
                       break;
                     case ClockMode::kUseDefaultClock:
-                      CHECK(test_impl()
-                                .use_shortened_timeouts_for_internal_testing())
+                      CHECK(test_impl_
+                                ->use_shortened_timeouts_for_internal_testing())
                           << "Tests that verify an IPH has not been shown that "
                              "also use a live (default) clock must use "
                              "set_use_shortened_timeouts_for_internal_testing()"
@@ -245,6 +247,13 @@ InteractiveFeaturePromoTestApi::CheckPromoRequested(
 }
 
 InteractiveFeaturePromoTestApi::StepBuilder
+InteractiveFeaturePromoTestApi::CheckPromoActive(
+    const base::Feature& iph_feature,
+    bool active) {
+  return CheckPromoImpl(iph_feature, active, false);
+}
+
+InteractiveFeaturePromoTestApi::StepBuilder
 InteractiveFeaturePromoTestApi::CheckPromoImpl(const base::Feature& iph_feature,
                                                bool requested,
                                                bool include_queued) {
@@ -255,19 +264,25 @@ InteractiveFeaturePromoTestApi::CheckPromoImpl(const base::Feature& iph_feature,
               ui::InteractionSequence* seq, ui::TrackedElement* browser_el) {
             bool actual = false;
             if (seq->IsCurrentStepInAnyContextForTesting()) {
-              for (const auto browser : *BrowserList::GetInstance()) {
-                if (browser->window()->IsFeaturePromoActive(iph_feature) ||
-                    (include_queued &&
-                     browser->window()->IsFeaturePromoQueued(iph_feature))) {
-                  actual = true;
-                  break;
-                }
-              }
+              ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+                  [&actual, &iph_feature,
+                   include_queued](BrowserWindowInterface* browser) {
+                    if (BrowserUserEducationInterface::From(browser)
+                            ->IsFeaturePromoActive(iph_feature) ||
+                        (include_queued &&
+                         BrowserUserEducationInterface::From(browser)
+                             ->IsFeaturePromoQueued(iph_feature))) {
+                      actual = true;
+                    }
+                    return !actual;
+                  });
             } else {
               auto* const browser = AsView<BrowserView>(browser_el);
-              actual = browser->IsFeaturePromoActive(iph_feature) ||
+              actual = BrowserUserEducationInterface::From(browser->browser())
+                           ->IsFeaturePromoActive(iph_feature) ||
                        (include_queued &&
-                        browser->IsFeaturePromoQueued(iph_feature));
+                        BrowserUserEducationInterface::From(browser->browser())
+                            ->IsFeaturePromoQueued(iph_feature));
             }
             if (actual != requested) {
               seq->FailForTesting();
@@ -284,7 +299,8 @@ InteractiveFeaturePromoTestApi::AbortPromo(const base::Feature& iph_feature,
   auto steps = Steps(CheckView(
       kBrowserViewElementId,
       [&iph_feature](BrowserView* browser_view) {
-        return browser_view->AbortFeaturePromo(iph_feature);
+        return BrowserUserEducationInterface::From(browser_view->browser())
+            ->AbortFeaturePromo(iph_feature);
       },
       expected_result));
   if (expected_result) {

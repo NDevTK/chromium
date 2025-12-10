@@ -23,6 +23,7 @@
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema.h"
+#include "components/policy/core/common/schema_registry.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/policy/android/jni_headers/PolicyConverter_jni.h"
@@ -54,12 +55,11 @@ std::optional<base::Value> SplitCommaSeparatedList(
 
 }  // namespace
 
-PolicyConverter::PolicyConverter(const Schema* policy_schema)
-    : policy_schema_(policy_schema) {
+PolicyConverter::PolicyConverter(const SchemaRegistry* schema_registry)
+    : schema_registry_(schema_registry) {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_obj_.Reset(
-      env,
-      Java_PolicyConverter_create(env, reinterpret_cast<intptr_t>(this)).obj());
+      env, Java_PolicyConverter_create(env, reinterpret_cast<intptr_t>(this)));
   DCHECK(!java_obj_.is_null());
 }
 
@@ -79,7 +79,6 @@ base::android::ScopedJavaLocalRef<jobject> PolicyConverter::GetJavaObject() {
 }
 
 void PolicyConverter::SetPolicyBoolean(JNIEnv* env,
-                                       const JavaRef<jobject>& obj,
                                        const JavaRef<jstring>& policyKey,
                                        jboolean value) {
   SetPolicyValue(ConvertJavaStringToUTF8(env, policyKey),
@@ -87,7 +86,6 @@ void PolicyConverter::SetPolicyBoolean(JNIEnv* env,
 }
 
 void PolicyConverter::SetPolicyInteger(JNIEnv* env,
-                                       const JavaRef<jobject>& obj,
                                        const JavaRef<jstring>& policyKey,
                                        jint value) {
   SetPolicyValue(ConvertJavaStringToUTF8(env, policyKey),
@@ -95,7 +93,6 @@ void PolicyConverter::SetPolicyInteger(JNIEnv* env,
 }
 
 void PolicyConverter::SetPolicyString(JNIEnv* env,
-                                      const JavaRef<jobject>& obj,
                                       const JavaRef<jstring>& policyKey,
                                       const JavaRef<jstring>& value) {
   SetPolicyValue(ConvertJavaStringToUTF8(env, policyKey),
@@ -103,7 +100,6 @@ void PolicyConverter::SetPolicyString(JNIEnv* env,
 }
 
 void PolicyConverter::SetPolicyStringArray(JNIEnv* env,
-                                           const JavaRef<jobject>& obj,
                                            const JavaRef<jstring>& policyKey,
                                            const JavaRef<jobjectArray>& array) {
   SetPolicyValue(ConvertJavaStringToUTF8(env, policyKey),
@@ -229,10 +225,14 @@ void PolicyConverter::SetPolicyValueForTesting(const std::string& key,
 
 void PolicyConverter::SetPolicyValue(const std::string& key,
                                      base::Value value) {
-  const Schema schema = policy_schema_->GetKnownProperty(key);
+  // When SchemaRegistry::(Un)RegisterComponents adds/remove a Schema, it always
+  // creates a new SchemaMap instance, so we choose to fetch the schema from
+  // SchemaRegistry to always get the latest version.
   const PolicyNamespace ns(POLICY_DOMAIN_CHROME, std::string());
-  std::optional<base::Value> converted_value =
-      ConvertValueToSchema(std::move(value), schema);
+  const Schema* policy_schema = schema_registry_->schema_map()->GetSchema(ns);
+  CHECK(policy_schema);
+  std::optional<base::Value> converted_value = ConvertValueToSchema(
+      std::move(value), policy_schema->GetKnownProperty(key));
   if (converted_value) {
     // Do not set list/dictionary policies that are sent as empty strings from
     // the UEM. This is common on Android when the UEM pushes the policy with
@@ -245,3 +245,5 @@ void PolicyConverter::SetPolicyValue(const std::string& key,
 
 }  // namespace android
 }  // namespace policy
+
+DEFINE_JNI(PolicyConverter)

@@ -35,10 +35,7 @@
 
 #include "third_party/blink/renderer/core/svg/properties/svg_property_info.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-
-namespace WTF {
-class String;
-}  // namespace WTF
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
@@ -55,7 +52,7 @@ class SVGPropertyBase : public GarbageCollected<SVGPropertyBase> {
 
   virtual ~SVGPropertyBase() = default;
 
-  virtual WTF::String ValueAsString() const = 0;
+  virtual String ValueAsString() const = 0;
 
   // Set the initial value based on a per-type defined (encoded) value. Overload
   // this in the specific subclass to handle initial values, and set

@@ -296,8 +296,7 @@ bool TextFragmentAnchor::InvokeSelector() {
 
 void TextFragmentAnchor::Installed() {
   AnnotationAgentContainerImpl* container =
-      Supplement<Document>::From<AnnotationAgentContainerImpl>(
-          frame_->GetDocument());
+      frame_->GetDocument()->GetAnnotationAgentContainerImpl();
   CHECK(container);
   container->AddObserver(this);
 }
@@ -469,8 +468,7 @@ void TextFragmentAnchor::DidFinishSearch() {
   }
 
   AnnotationAgentContainerImpl* container =
-      Supplement<Document>::From<AnnotationAgentContainerImpl>(
-          frame_->GetDocument());
+      frame_->GetDocument()->GetAnnotationAgentContainerImpl();
   CHECK(container);
   container->RemoveObserver(this);
 
@@ -492,8 +490,8 @@ void TextFragmentAnchor::DidFinishSearch() {
 
   // Finalizing the anchor may cause script execution so schedule a new frame
   // to perform finalization.
-  frame_->GetDocument()->EnqueueAnimationFrameTask(WTF::BindOnce(
-      &TextFragmentAnchor::FinalizeAnchor, WrapWeakPersistent(this)));
+  frame_->GetDocument()->EnqueueAnimationFrameTask(
+      BindOnce(&TextFragmentAnchor::FinalizeAnchor, WrapWeakPersistent(this)));
   finalize_pending_ = true;
 }
 

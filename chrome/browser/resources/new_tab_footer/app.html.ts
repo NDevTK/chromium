@@ -14,14 +14,14 @@ Container for housing the items in the center of the footer that are
 separated from each other by a divider.
 -->
 <div id="container" @contextmenu="${this.onContextMenu_}">
-  ${this.showCustomizeButtons_ ? html`<div id="spacer"></div>` : ''}
+  <div id="spacer"></div>
   <div id="infoContainer">
   ${this.managementNotice_ ?
       html`<div id="managementNoticeContainer" class="notice-item"
         title="${this.managementNotice_.text}">
         <div id="managementNoticeLogoContainer"
-             class=${this.managementNotice_.customBitmapDataUrl ?
-             'custom_logo' : ''}>
+             class="${this.managementNotice_.customBitmapDataUrl ?
+             'custom_logo' : ''}">
           ${this.managementNotice_.customBitmapDataUrl ? html`
             <img id="managementNoticeLogo" alt=""
                 src="${this.managementNotice_.customBitmapDataUrl.url}">`: html`
@@ -46,7 +46,7 @@ separated from each other by a divider.
     ${this.showBackgroundAttribution_ ? html`
       ${this.backgroundAttributionLink_ && this.backgroundAttributionLink_.url ?  html`
         <div id="backgroundAttributionContainer" class="notice-item"
-          title="${this.backgroundAttributionText_}"">
+            title="${this.backgroundAttributionText_}">
           <button @click="${this.onBackgroundAttributionClick_}" role="link"
               aria-label="${this.backgroundAttributionText_}"
               aria-description="$i18n{backgroundAttributionDesc}">
@@ -58,6 +58,7 @@ separated from each other by a divider.
         </div>`}`
       : ''}
   </div>
+  ${!this.showCustomizeButtons_ ? html`<div id="spacer"></div>` : ''}
   ${this.showCustomizeButtons_ ? html`
     <ntp-customize-buttons id="customizeButtons"
         ?info-shown-to-user="${this.managementNotice_ || this.extensionName_}"

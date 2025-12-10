@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "net/test/cert_builder.h"
 
 #include <algorithm>
@@ -18,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/memory/ptr_util.h"
@@ -25,6 +21,7 @@
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "crypto/evp.h"
 #include "crypto/hash.h"
@@ -129,7 +126,7 @@ std::vector<uint8_t> FinishCBBToVector(CBB* cbb) {
   }
 
   bssl::UniquePtr<uint8_t> delete_bytes(cbb_bytes);
-  return std::vector<uint8_t>(cbb_bytes, cbb_bytes + cbb_len);
+  return std::vector<uint8_t>(cbb_bytes, UNSAFE_TODO(cbb_bytes + cbb_len));
 }
 
 }  // namespace
@@ -432,7 +429,7 @@ void CertBuilder::SetCertificateVersion(bssl::CertificateVersion version) {
 void CertBuilder::SetExtension(const bssl::der::Input& oid,
                                std::string value,
                                bool critical) {
-  auto& extension_value = extensions_[oid.AsString()];
+  auto& extension_value = extensions_[std::string(base::as_string_view(oid))];
   extension_value.critical = critical;
   extension_value.value = std::move(value);
 
@@ -440,7 +437,7 @@ void CertBuilder::SetExtension(const bssl::der::Input& oid,
 }
 
 void CertBuilder::EraseExtension(const bssl::der::Input& oid) {
-  extensions_.erase(oid.AsString());
+  extensions_.erase(std::string(base::as_string_view(oid)));
 
   Invalidate();
 }
@@ -588,7 +585,7 @@ void CertBuilder::SetCaIssuersAndOCSPUrls(
     ASSERT_TRUE(CBB_add_asn1(&aia, &access_description, CBS_ASN1_SEQUENCE));
     ASSERT_TRUE(
         CBB_add_asn1(&access_description, &access_method, CBS_ASN1_OBJECT));
-    ASSERT_TRUE(CBBAddBytes(&access_method, entry.first.AsStringView()));
+    ASSERT_TRUE(CBBAddBytes(&access_method, entry.first));
     ASSERT_TRUE(CBB_add_asn1(&access_description, &access_location,
                              CBS_ASN1_CONTEXT_SPECIFIC | 6));
     ASSERT_TRUE(CBBAddBytes(&access_location, entry.second));
@@ -774,7 +771,7 @@ void CertBuilder::SetExtendedKeyUsages(
   for (const auto& oid : purpose_oids) {
     CBB purpose_cbb;
     ASSERT_TRUE(CBB_add_asn1(&eku, &purpose_cbb, CBS_ASN1_OBJECT));
-    ASSERT_TRUE(CBBAddBytes(&purpose_cbb, oid.AsStringView()));
+    ASSERT_TRUE(CBBAddBytes(&purpose_cbb, oid));
     ASSERT_TRUE(CBB_flush(&eku));
   }
   SetExtension(bssl::der::Input(bssl::kExtKeyUsageOid), FinishCBB(cbb.get()));
@@ -1076,8 +1073,7 @@ uint64_t CertBuilder::GetSerialNumber() {
 }
 
 std::string CertBuilder::GetSubjectKeyIdentifier() {
-  std::string ski_oid =
-      bssl::der::Input(bssl::kSubjectKeyIdentifierOid).AsString();
+  std::string ski_oid(base::as_string_view(bssl::kSubjectKeyIdentifierOid));
   if (extensions_.find(ski_oid) == extensions_.end()) {
     // If no SKI is present, this means that the certificate was either
     // created by FromStaticCert() and lacked one, or it was explicitly
@@ -1091,7 +1087,7 @@ std::string CertBuilder::GetSubjectKeyIdentifier() {
                                        &ski_value)) {
     return std::string();
   }
-  return ski_value.AsString();
+  return std::string(base::as_string_view(ski_value));
 }
 
 bool CertBuilder::GetValidity(base::Time* not_before,
@@ -1301,7 +1297,7 @@ void CertBuilder::InitFromCert(const bssl::der::Input& cert) {
   // validity
   bssl::der::Input validity_tlv;
   ASSERT_TRUE(tbs_certificate.ReadRawTLV(&validity_tlv));
-  validity_tlv_ = validity_tlv.AsString();
+  validity_tlv_ = base::as_string_view(validity_tlv);
 
   // subject
   ASSERT_TRUE(tbs_certificate.SkipTag(CBS_ASN1_SEQUENCE));
@@ -1330,9 +1326,10 @@ void CertBuilder::InitFromCert(const bssl::der::Input& cert) {
     ASSERT_TRUE(ParseExtensions(extensions_tlv.value(), &parsed_extensions));
 
     for (const auto& parsed_extension : parsed_extensions) {
-      SetExtension(parsed_extension.second.oid,
-                   parsed_extension.second.value.AsString(),
-                   parsed_extension.second.critical);
+      SetExtension(
+          parsed_extension.second.oid,
+          std::string(base::as_string_view(parsed_extension.second.value)),
+          parsed_extension.second.critical);
     }
   }
 }

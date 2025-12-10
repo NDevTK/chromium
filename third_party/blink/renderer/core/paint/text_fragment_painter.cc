@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/editing/markers/text_match_marker.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
+#include "third_party/blink/renderer/core/layout/inline/fit_text_scale.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
@@ -95,15 +96,6 @@ inline const InlineCursor& InlineCursorForBlockFlow(
   return **storage;
 }
 
-// Check if text-emphasis and ruby annotation text are on different sides.
-//
-// TODO(layout-dev): The current behavior is compatible with the legacy layout.
-// However, the specification asks to draw emphasis marks over ruby annotation
-// text.
-// https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property
-// > If emphasis marks are applied to characters for which ruby is drawn in the
-// > same position as the emphasis mark, the emphasis marks are placed outside
-// > the ruby.
 bool ShouldPaintEmphasisMark(const ComputedStyle& style,
                              const LayoutObject& layout_object,
                              const FragmentItem& text_item) {
@@ -115,6 +107,10 @@ bool ShouldPaintEmphasisMark(const ComputedStyle& style,
 
   if (text_item.IsEllipsis()) {
     return false;
+  }
+
+  if (RuntimeEnabledFeatures::TextEmphasisWithRubyEnabled()) {
+    return true;
   }
 
   if (style.GetTextEmphasisLineLogicalSide() == LineLogicalSide::kOver) {
@@ -311,6 +307,7 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   const auto* const svg_inline_text =
       DynamicTo<LayoutSVGInlineText>(layout_object);
   float scaling_factor = 1.0f;
+  bool is_scaled_inline_only = false;
   if (svg_inline_text) [[unlikely]] {
     DCHECK(text_item.IsSvgText());
     scaling_factor = svg_inline_text->ScalingFactor();
@@ -319,9 +316,35 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
         svg_inline_text->Parent()->VisualRectInLocalSVGCoordinates());
   } else {
     DCHECK(!text_item.IsSvgText());
+    if (RuntimeEnabledFeatures::CssFitWidthTextEnabled()) {
+      auto fit_text_scale = text_item.GetFitTextScale();
+      scaling_factor = fit_text_scale.first;
+      is_scaled_inline_only = fit_text_scale.second;
+    }
     PhysicalRect ink_overflow = text_item.SelfInkOverflowRect();
     ink_overflow.Move(physical_box.offset);
     visual_rect = ToEnclosingRect(ink_overflow);
+
+    // Expand |visual_rect| to prevent emphasis mark clipping if emphasis mark
+    // and nested ruby annotation exist on the same side.
+    bool has_over_text_emphasis =
+        style.GetTextEmphasisLineLogicalSide() == LineLogicalSide::kOver;
+    if (RuntimeEnabledFeatures::TextEmphasisWithRubyEnabled() &&
+        ShouldPaintEmphasisMark(style, *layout_object, text_item) &&
+        ((has_over_text_emphasis && text_item.HasOverAnnotation()) ||
+         (!has_over_text_emphasis && text_item.HasUnderAnnotation()))) {
+      gfx::Rect emphasis_rect = visual_rect;
+      FontHeight annotation_metrics = text_item.AnnotationMetrics();
+      if (has_over_text_emphasis) {
+        const auto ascent = annotation_metrics.ascent.Ceil();
+        emphasis_rect.set_y(emphasis_rect.y() - ascent);
+        emphasis_rect.set_height(emphasis_rect.height() + ascent);
+      } else {
+        const auto descent = annotation_metrics.descent.Ceil();
+        emphasis_rect.set_height(emphasis_rect.height() + descent);
+      }
+      visual_rect.Union(emphasis_rect);
+    }
   }
 
   // Ensure the selection bounds are recorded on the paint chunk regardless of
@@ -391,8 +414,12 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
 
   GraphicsContextStateSaver state_saver(context, /*save_and_restore=*/false);
   const int ascent = font_data ? font_data->GetFontMetrics().Ascent() : 0;
-  LineRelativeOffset text_origin{physical_box.offset.left,
-                                 physical_box.offset.top + ascent};
+  LayoutUnit top = physical_box.offset.top + ascent;
+  if (RuntimeEnabledFeatures::CssFitWidthTextEnabled() &&
+      !is_scaled_inline_only && !svg_inline_text) {
+    top = LayoutUnit(physical_box.offset.top + ascent * scaling_factor);
+  }
+  LineRelativeOffset text_origin{physical_box.offset.left, top};
   if (text_combine) [[unlikely]] {
     text_origin.line_over =
         text_combine->AdjustTextTopForPaint(physical_box.offset.top);
@@ -438,6 +465,21 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
       svg_state.EnsureShaderTransform().PostConcat(
           fragment_transform.Inverse());
     }
+  } else if (RuntimeEnabledFeatures::CssFitWidthTextEnabled() &&
+             scaling_factor != 1.0f) {
+    state_saver.SaveIfNeeded();
+    AffineTransform t;
+    if (is_scaled_inline_only) {
+      t.SetMatrix(
+          scaling_factor, 0, 0, 1,
+          text_origin.line_left - scaling_factor * text_origin.line_left, 0);
+    } else {
+      t.SetMatrix(
+          scaling_factor, 0, 0, scaling_factor,
+          text_origin.line_left - scaling_factor * text_origin.line_left,
+          text_origin.line_over - scaling_factor * text_origin.line_over);
+    }
+    context.ConcatCTM(t);
   }
 
   const bool paint_marker_backgrounds =
@@ -479,7 +521,8 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   // overlays are active, but paint shadows in full <https://crbug.com/1147859>
   if (ShouldPaintEmphasisMark(style, *layout_object, text_item)) {
     text_painter.SetEmphasisMark(style.TextEmphasisMarkString(),
-                                 style.GetTextEmphasisLineLogicalSide());
+                                 style.GetTextEmphasisLineLogicalSide(),
+                                 &text_item);
   }
 
   DOMNodeId node_id = kInvalidDOMNodeId;

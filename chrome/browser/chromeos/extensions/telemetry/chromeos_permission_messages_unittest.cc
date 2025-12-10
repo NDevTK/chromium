@@ -10,11 +10,11 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/permissions/permissions_test_util.h"
 #include "chrome/browser/extensions/test_extension_environment.h"
 #include "chrome/common/extensions/permissions/chrome_permission_message_provider.h"
 #include "chrome/test/base/testing_profile.h"
 #include "extensions/browser/extension_registrar.h"
+#include "extensions/browser/permissions/permissions_test_util.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
@@ -74,7 +74,6 @@ class ChromeOSPermissionMessageUnittest : public testing::Test {
       base::Value::List required_permissions,
       base::Value::List optional_permissions) {
     app_ = extensions::ExtensionBuilder("Test ChromeOS System Extension")
-               .SetManifestVersion(3)
                .SetManifestKey("chromeos_system_extension", base::Value::Dict())
                .SetManifestKey("permissions", std::move(required_permissions))
                .SetManifestKey("optional_permissions",

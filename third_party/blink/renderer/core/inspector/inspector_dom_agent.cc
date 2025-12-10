@@ -33,12 +33,14 @@
 #include <memory>
 
 #include "base/notreached.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_file.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_html_document.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_node.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_observable_array_css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/css_computed_style_declaration.h"
 #include "third_party/blink/renderer/core/css/css_container_rule.h"
 #include "third_party/blink/renderer/core/css/css_property_name.h"
@@ -73,6 +75,7 @@
 #include "third_party/blink/renderer/core/html/forms/html_button_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
+#include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
 #include "third_party/blink/renderer/core/html/html_link_element.h"
 #include "third_party/blink/renderer/core/html/html_slot_element.h"
@@ -120,9 +123,9 @@ template <typename Functor>
 void ForEachSupportedPseudo(const Element* element, Functor& func) {
   for (PseudoId pseudo_id :
        {kPseudoIdCheckMark, kPseudoIdBefore, kPseudoIdAfter,
-        kPseudoIdPickerIcon, kPseudoIdMarker, kPseudoIdBackdrop,
-        kPseudoIdScrollMarker, kPseudoIdScrollMarkerGroupBefore,
-        kPseudoIdScrollMarkerGroupAfter,
+        kPseudoIdPickerIcon, kPseudoIdInterestHint, kPseudoIdMarker,
+        kPseudoIdBackdrop, kPseudoIdScrollMarker,
+        kPseudoIdScrollMarkerGroupBefore, kPseudoIdScrollMarkerGroupAfter,
         kPseudoIdScrollButtonBlockStart, kPseudoIdScrollButtonInlineStart,
         kPseudoIdScrollButtonInlineEnd, kPseudoIdScrollButtonBlockEnd}) {
     if (!PseudoElement::IsWebExposed(pseudo_id, element))
@@ -130,10 +133,11 @@ void ForEachSupportedPseudo(const Element* element, Functor& func) {
     if (PseudoElement* pseudo_element = element->GetPseudoElement(pseudo_id))
       func(pseudo_element);
   }
-  ViewTransitionUtils::ForEachDirectTransitionPseudo(element, func);
+  ViewTransitionUtils::ForEachTransitionPseudo(
+      *element, func, ViewTransitionUtils::Filter::kDirectChildren);
   if (const ColumnPseudoElementsVector* column_pseudo_elements =
       element->GetColumnPseudoElements()) {
-    for (auto column_pseudo_element : *column_pseudo_elements) {
+    for (const auto& column_pseudo_element : *column_pseudo_elements) {
       func(column_pseudo_element.Get());
     }
   }
@@ -146,6 +150,7 @@ class InspectorRevalidateDOMTask final
  public:
   explicit InspectorRevalidateDOMTask(InspectorDOMAgent*);
   void ScheduleStyleAttrRevalidationFor(Element*);
+  void ScheduleAdoptedStyleSheetRevalidationFor(Node*);
   void Reset() { timer_.Stop(); }
   void OnTimer(TimerBase*);
   void Trace(Visitor*) const;
@@ -154,6 +159,7 @@ class InspectorRevalidateDOMTask final
   Member<InspectorDOMAgent> dom_agent_;
   HeapTaskRunnerTimer<InspectorRevalidateDOMTask> timer_;
   HeapHashSet<Member<Element>> style_attr_invalidated_elements_;
+  HeapHashSet<Member<Node>> adopted_style_sheet_invalidated_elements_;
 };
 
 InspectorRevalidateDOMTask::InspectorRevalidateDOMTask(
@@ -171,19 +177,35 @@ void InspectorRevalidateDOMTask::ScheduleStyleAttrRevalidationFor(
     timer_.StartOneShot(base::TimeDelta(), FROM_HERE);
 }
 
+void InspectorRevalidateDOMTask::ScheduleAdoptedStyleSheetRevalidationFor(
+    Node* node) {
+  adopted_style_sheet_invalidated_elements_.insert(node);
+  if (!timer_.IsActive()) {
+    timer_.StartOneShot(base::TimeDelta(), FROM_HERE);
+  }
+}
+
 void InspectorRevalidateDOMTask::OnTimer(TimerBase*) {
   // The timer is stopped on m_domAgent destruction, so this method will never
   // be called after m_domAgent has been destroyed.
-  HeapVector<Member<Element>> elements;
-  for (auto& attribute : style_attr_invalidated_elements_)
-    elements.push_back(attribute.Get());
-  dom_agent_->StyleAttributeInvalidated(elements);
-  style_attr_invalidated_elements_.clear();
+  if (!style_attr_invalidated_elements_.empty()) {
+    HeapVector<Member<Element>> elements;
+    for (auto& attribute : style_attr_invalidated_elements_) {
+      elements.push_back(attribute.Get());
+    }
+    dom_agent_->StyleAttributeInvalidated(elements);
+    style_attr_invalidated_elements_.clear();
+  }
+  for (auto& node : adopted_style_sheet_invalidated_elements_) {
+    dom_agent_->AdoptedStyleSheetsInvalidated(node);
+  }
+  adopted_style_sheet_invalidated_elements_.clear();
 }
 
 void InspectorRevalidateDOMTask::Trace(Visitor* visitor) const {
   visitor->Trace(dom_agent_);
   visitor->Trace(style_attr_invalidated_elements_);
+  visitor->Trace(adopted_style_sheet_invalidated_elements_);
   visitor->Trace(timer_);
 }
 
@@ -216,6 +238,8 @@ protocol::DOM::PseudoType InspectorDOMAgent::ProtocolPseudoElementType(
       return protocol::DOM::PseudoTypeEnum::After;
     case kPseudoIdPickerIcon:
       return protocol::DOM::PseudoTypeEnum::PickerIcon;
+    case kPseudoIdInterestHint:
+      return protocol::DOM::PseudoTypeEnum::InterestHint;
     case kPseudoIdMarker:
       return protocol::DOM::PseudoTypeEnum::Marker;
     case kPseudoIdBackdrop:
@@ -286,6 +310,8 @@ protocol::DOM::PseudoType InspectorDOMAgent::ProtocolPseudoElementType(
       return protocol::DOM::PseudoTypeEnum::ViewTransitionNew;
     case kPseudoIdViewTransitionOld:
       return protocol::DOM::PseudoTypeEnum::ViewTransitionOld;
+    case kPseudoIdOverscrollAreaParent:
+      return protocol::DOM::PseudoTypeEnum::OverscrollAreaParent;
     case kAfterLastInternalPseudoId:
     case kPseudoIdNone:
     case kPseudoIdInvalid:
@@ -684,6 +710,7 @@ protocol::Response InspectorDOMAgent::enable(
 protocol::Response InspectorDOMAgent::disable() {
   if (!enabled_.Get())
     return protocol::Response::ServerError("DOM agent hasn't been enabled");
+  ReleaseForcedPopovers();
   include_whitespace_.Clear();
   enabled_.Clear();
   instrumenting_agents_->RemoveInspectorDOMAgent(this);
@@ -772,10 +799,9 @@ protocol::Response InspectorDOMAgent::getNodesForSubtreeByStyle(
 
   HeapVector<Member<Node>> nodes;
 
-  CollectNodes(
-      root_node, INT_MAX, pierce.value_or(false), IncludeWhitespace(),
-      WTF::BindRepeating(&NodeHasMatchingStyles, WTF::Unretained(&properties)),
-      &nodes);
+  CollectNodes(root_node, INT_MAX, pierce.value_or(false), IncludeWhitespace(),
+               BindRepeating(&NodeHasMatchingStyles, Unretained(&properties)),
+               &nodes);
 
   NodeToIdMap* nodes_map = document_node_to_id_map_.Get();
   *node_ids = std::make_unique<protocol::Array<int>>();
@@ -844,6 +870,7 @@ void InspectorDOMAgent::PushChildNodesToFrontend(int node_id,
 }
 
 void InspectorDOMAgent::DiscardFrontendBindings() {
+  ReleaseForcedPopovers();
   if (history_)
     history_->Reset();
   search_results_.clear();
@@ -971,8 +998,8 @@ protocol::Response InspectorDOMAgent::getTopLayerElements(
     return protocol::Response::ServerError("DOM agent hasn't been enabled");
 
   *result = std::make_unique<protocol::Array<int>>();
-  for (auto document : Documents()) {
-    for (auto element : document->TopLayerElements()) {
+  for (const auto& document : Documents()) {
+    for (const auto& element : document->TopLayerElements()) {
       int node_id = PushNodePathToFrontend(element);
       if (node_id)
         (*result)->emplace_back(node_id);
@@ -1096,10 +1123,12 @@ protocol::Response InspectorDOMAgent::setAttributesAsText(
                         : StrCat({"<span ", text, "></span>"});
     DocumentFragment* fragment =
         element->GetDocument().createDocumentFragment();
-    if (is_html_document && contextElement)
-      fragment->ParseHTML(markup, contextElement, kAllowScriptingContent);
-    else
+    if (is_html_document && contextElement) {
+      fragment->ParseHTML(markup, contextElement, /*registry*/ nullptr,
+                          kAllowScriptingContent);
+    } else {
       fragment->ParseXML(markup, contextElement, IGNORE_EXCEPTION);
+    }
     return DynamicTo<Element>(fragment->firstChild());
   };
 
@@ -1211,14 +1240,20 @@ protocol::Response InspectorDOMAgent::getOuterHTML(
     std::optional<int> node_id,
     std::optional<int> backend_node_id,
     std::optional<String> object_id,
-    WTF::String* outer_html) {
+    std::optional<bool> include_shadow_dom,
+    String* outer_html) {
   Node* node = nullptr;
   protocol::Response response =
       AssertNode(node_id, backend_node_id, object_id, node);
   if (!response.IsSuccess())
     return response;
 
-  *outer_html = CreateMarkup(node);
+  ShadowRootInclusion shadow_roots{
+      include_shadow_dom.value_or(false)
+          ? ShadowRootInclusion::Behavior::kIncludeAllShadowRootsForInspector
+          : ShadowRootInclusion::Behavior::kOnlyProvidedShadowRoots};
+  *outer_html =
+      CreateMarkup(node, kIncludeNode, kDoNotResolveURLs, shadow_roots);
   return protocol::Response::Success();
 }
 
@@ -1352,15 +1387,34 @@ protocol::Response InspectorDOMAgent::performSearch(
   // Selector evaluation
   for (Document* document : docs) {
     DummyExceptionStateForTesting exception_state;
+
+    // First, evaluate the query selector on the document
     StaticElementList* element_list = document->QuerySelectorAll(
         AtomicString(whitespace_trimmed_query), exception_state);
-    if (exception_state.HadException() || !element_list) {
-      continue;
+    if (element_list && !exception_state.HadException()) {
+      for (unsigned i = 0; i < element_list->length(); ++i) {
+        result_collector.insert(element_list->item(i));
+      }
     }
 
-    unsigned size = element_list->length();
-    for (unsigned i = 0; i < size; ++i) {
-      result_collector.insert(element_list->item(i));
+    // Second, evaluate the query selector on each shadow root
+    Node* document_element = document->documentElement();
+    Node* node = document_element;
+    if (!node) {
+      continue;
+    }
+    for (; node; node = NextNodeWithShadowDOMInMind(
+                     *node, document_element, include_user_agent_shadow_dom)) {
+      if (auto* shadow_root = DynamicTo<ShadowRoot>(node)) {
+        element_list = shadow_root->QuerySelectorAll(
+            AtomicString(whitespace_trimmed_query), exception_state);
+        if (exception_state.HadException() || !element_list) {
+          continue;
+        }
+        for (unsigned i = 0; i < element_list->length(); ++i) {
+          result_collector.insert(element_list->item(i));
+        }
+      }
     }
   }
 
@@ -1810,6 +1864,7 @@ protocol::Response InspectorDOMAgent::getContainerForNode(
     std::optional<protocol::DOM::PhysicalAxes> physical_axes,
     std::optional<protocol::DOM::LogicalAxes> logical_axes,
     std::optional<bool> queries_scroll_state,
+    std::optional<bool> queries_anchored,
     std::optional<int>* container_node_id) {
   Element* element = nullptr;
   protocol::Response response = AssertElement(node_id, element);
@@ -1848,7 +1903,7 @@ protocol::Response InspectorDOMAgent::getContainerForNode(
       element,
       ContainerSelector(AtomicString(container_name.value_or(g_null_atom)),
                         physical, logical, queries_scroll_state.value_or(false),
-                        /* anchored_query */ false),
+                        queries_anchored.value_or(false)),
       nullptr /* selector_tree_scope */);
   if (container)
     *container_node_id = PushNodePathToFrontend(container);
@@ -1936,10 +1991,20 @@ protocol::Response InspectorDOMAgent::getAnchorElement(
         AtomicString(anchor_specifier.value()),
         &querying_object->GetDocument()));
   } else {
-    const ComputedStyle& style = box->StyleRef();
-    target_object = style.PositionAnchor()
-                        ? box->FindTargetAnchor(*style.PositionAnchor())
-                        : box->AcceptableImplicitAnchor();
+    const StylePositionAnchor& position_anchor =
+        box->StyleRef().PositionAnchor();
+    using Type = StylePositionAnchor::Type;
+    switch (position_anchor.GetType()) {
+      case Type::kNone:
+        target_object = nullptr;
+        break;
+      case Type::kAuto:
+        target_object = box->AcceptableImplicitAnchor();
+        break;
+      case Type::kName:
+        target_object = box->FindTargetAnchor(position_anchor.GetName());
+        break;
+    }
   }
 
   if (target_object) {
@@ -1949,6 +2014,69 @@ protocol::Response InspectorDOMAgent::getAnchorElement(
     }
   }
   return protocol::Response::Success();
+}
+
+static void HidePopover(Node* node) {
+  if (auto* element = DynamicTo<HTMLElement>(node);
+      element && element->popoverOpen()) {
+    element->HidePopoverInternal(
+        /*invoker=*/nullptr, HidePopoverFocusBehavior::kNone,
+        HidePopoverTransitionBehavior::kNoEventsNoWaiting,
+        /*exception_state=*/nullptr);
+  }
+}
+
+void InspectorDOMAgent::ReleaseForcedPopovers() {
+  HeapHashSet<WeakMember<Node>> forced_popovers;
+  forced_popovers_.swap(forced_popovers);
+  for (auto& popover : forced_popovers) {
+    HidePopover(popover);
+  }
+}
+
+protocol::Response InspectorDOMAgent::forceShowPopover(
+    int node_id,
+    bool enable,
+    std::unique_ptr<protocol::Array<int>>* out_node_ids) {
+  if (!base::FeatureList::IsEnabled(features::kDevToolsAllowPopoverForcing)) {
+    return protocol::Response::ServerError("Feature is not enabled");
+  }
+
+  Node* node = nullptr;
+  protocol::Response response = AssertNode(node_id, node);
+  if (!response.IsSuccess()) {
+    return response;
+  }
+  *out_node_ids = std::make_unique<protocol::Array<int>>();
+  if (!enable) {
+    if (forced_popovers_.Contains(node)) {
+      forced_popovers_.erase(node);
+      HidePopover(node);
+      NodeToIdMap* nodes_map = document_node_to_id_map_.Get();
+      int id = PushNodePathToFrontend(node, nodes_map);
+      (*out_node_ids)->push_back(id);
+    }
+  } else {
+    auto* element = DynamicTo<HTMLElement>(node);
+    if (!element || !element->IsPopover()) {
+      return protocol::Response::ServerError("node is not a popover");
+    }
+
+    bool should_open = forced_popovers_.insert(node).is_new_entry;
+    if (should_open && !element->popoverOpen()) {
+      element->ShowPopoverInternal(/*invoker=*/nullptr,
+                                   /*exception_state=*/nullptr);
+    }
+  }
+  return protocol::Response::Success();
+}
+
+void InspectorDOMAgent::WillHidePopover(HTMLElement* element,
+                                        bool* force_open) {
+  if (base::FeatureList::IsEnabled(features::kDevToolsAllowPopoverForcing) &&
+      force_open && forced_popovers_.Contains(element)) {
+    *force_open = true;
+  }
 }
 
 // static
@@ -2089,6 +2217,17 @@ std::unique_ptr<protocol::DOM::Node> InspectorDOMAgent::BuildObjectForNode(
   if (node->IsSVGElement())
     value->setIsSVG(true);
 
+  if (node->IsTreeScope()) {
+    auto* sheets = node->GetTreeScope().AdoptedStyleSheets();
+    if (sheets) {
+      auto adopted_style_sheets = std::make_unique<protocol::Array<String>>();
+      for (auto& sheet : *sheets) {
+        adopted_style_sheets->push_back(
+            IdentifiersFactory::IdForCSSStyleSheet(sheet));
+      }
+      value->setAdoptedStyleSheets(std::move(adopted_style_sheets));
+    }
+  }
   bool force_push_children = false;
   if (auto* element = DynamicTo<Element>(node)) {
     value->setAttributes(BuildArrayForElementAttributes(element));
@@ -2134,8 +2273,9 @@ std::unique_ptr<protocol::DOM::Node> InspectorDOMAgent::BuildObjectForNode(
     if (element->IsPseudoElement()) {
       value->setPseudoType(
           ProtocolPseudoElementType(element->GetPseudoIdForStyling()));
-      if (auto tag = To<PseudoElement>(element)->view_transition_name())
+      if (auto tag = To<PseudoElement>(element)->GetPseudoArgument()) {
         value->setPseudoIdentifier(tag);
+      }
     } else {
       if (!element->ownerDocument()->xmlVersion().empty())
         value->setXmlVersion(element->ownerDocument()->xmlVersion());
@@ -2187,6 +2327,9 @@ std::unique_ptr<protocol::DOM::Node> InspectorDOMAgent::BuildObjectForNode(
   }
   if (isNodeScrollable(node)) {
     value->setIsScrollable(true);
+  }
+  if (AffectedByStartingStyles(node)) {
+    value->setAffectedByStartingStyles(true);
   }
   return value;
 }
@@ -2547,6 +2690,31 @@ void InspectorDOMAgent::DidRemoveDOMAttr(Element* element,
   GetFrontend()->attributeRemoved(id, name.ToString());
 }
 
+void InspectorDOMAgent::DidModifyAdoptedStyleSheets(Node* node) {
+  RevalidateTask()->ScheduleAdoptedStyleSheetRevalidationFor(node);
+}
+
+void InspectorDOMAgent::AdoptedStyleSheetsInvalidated(Node* node) {
+  int id = BoundNodeId(node);
+  // If node is not mapped yet -> ignore the event.
+  if (!id) {
+    return;
+  }
+
+  if (node->IsTreeScope()) {
+    auto* sheets = node->GetTreeScope().AdoptedStyleSheets();
+    auto adopted_style_sheets = std::make_unique<protocol::Array<String>>();
+    if (sheets) {
+      for (auto& sheet : *sheets) {
+        adopted_style_sheets->push_back(
+            IdentifiersFactory::IdForCSSStyleSheet(sheet));
+      }
+    }
+    GetFrontend()->adoptedStyleSheetsModified(id,
+                                              std::move(adopted_style_sheets));
+  }
+}
+
 void InspectorDOMAgent::StyleAttributeInvalidated(
     const HeapVector<Member<Element>>& elements) {
   auto node_ids = std::make_unique<protocol::Array<int>>();
@@ -2598,6 +2766,15 @@ bool InspectorDOMAgent::isNodeScrollable(Node* node) {
     return box->IsUserScrollable();
   }
   return false;
+}
+
+bool InspectorDOMAgent::AffectedByStartingStyles(Node* node) {
+  Element* element = DynamicTo<Element>(node);
+  if (!element) {
+    return false;
+  }
+
+  return element->AffectedByStartingStyles();
 }
 
 void InspectorDOMAgent::DidPushShadowRoot(Element* host, ShadowRoot* root) {
@@ -2725,6 +2902,22 @@ void InspectorDOMAgent::UpdateScrollableFlag(
   GetFrontend()->scrollableFlagUpdated(nodeId, override_flag.has_value()
                                                    ? override_flag.value()
                                                    : isNodeScrollable(node));
+}
+
+void InspectorDOMAgent::UpdateAffectedByStartingStylesFlag(
+    Node* node,
+    std::optional<bool> override_flag) {
+  if (!node) {
+    return;
+  }
+  int nodeId = BoundNodeId(node);
+  // If node is not mapped yet -> ignore the event.
+  if (!nodeId) {
+    return;
+  }
+  GetFrontend()->affectedByStartingStylesFlagUpdated(
+      nodeId, override_flag.has_value() ? override_flag.value()
+                                        : AffectedByStartingStyles(node));
 }
 
 namespace {
@@ -3075,6 +3268,7 @@ void InspectorDOMAgent::Trace(Visitor* visitor) const {
   visitor->Trace(history_);
   visitor->Trace(dom_editor_);
   visitor->Trace(node_to_creation_source_location_map_);
+  visitor->Trace(forced_popovers_);
   InspectorBaseAgent::Trace(visitor);
 }
 

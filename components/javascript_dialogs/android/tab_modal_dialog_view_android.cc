@@ -18,7 +18,7 @@
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF16ToJavaString;
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -66,8 +66,7 @@ std::u16string TabModalDialogViewAndroid::GetUserInput() {
 }
 
 void TabModalDialogViewAndroid::Accept(JNIEnv* env,
-                                       const JavaParamRef<jobject>&,
-                                       const JavaParamRef<jstring>& prompt) {
+                                       const JavaRef<jstring>& prompt) {
   if (callback_on_button_clicked_) {
     std::u16string prompt_text =
         base::android::ConvertJavaStringToUTF16(env, prompt);
@@ -77,7 +76,6 @@ void TabModalDialogViewAndroid::Accept(JNIEnv* env,
 }
 
 void TabModalDialogViewAndroid::Cancel(JNIEnv* env,
-                                       const JavaParamRef<jobject>&,
                                        jboolean button_clicked) {
   if (button_clicked) {
     if (callback_on_button_clicked_) {
@@ -146,3 +144,5 @@ TabModalDialogViewAndroid::TabModalDialogViewAndroid(
 }
 
 }  // namespace javascript_dialogs
+
+DEFINE_JNI(JavascriptTabModalDialog)

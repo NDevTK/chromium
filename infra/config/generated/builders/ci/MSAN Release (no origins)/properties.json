@@ -22,9 +22,9 @@
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
+                  "clobber",
                   "mb",
-                  "msan",
-                  "clobber"
+                  "msan"
                 ],
                 "build_config": "Release",
                 "config": "chromium_clang",
@@ -52,7 +52,8 @@
         }
       ],
       "retry_failed_shards": true,
-      "targets_spec_directory": "src/infra/config/generated/builders/ci/MSAN Release (no origins)/targets"
+      "targets_spec_directory": "infra/config/generated/builders/ci/MSAN Release (no origins)/targets",
+      "targets_spec_directory_relative_to_source_dir": true
     }
   },
   "$build/siso": {

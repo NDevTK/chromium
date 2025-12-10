@@ -11,10 +11,17 @@
 #include "chrome/browser/supervised_user/supervised_user_service_bridge_jni_headers/SupervisedUserServiceBridge_jni.h"
 
 namespace supervised_user {
-jboolean JNI_SupervisedUserServiceBridge_IsSupervisedLocally(
+static jboolean JNI_SupervisedUserServiceBridge_IsSupervisedLocally(
     JNIEnv* env,
     Profile* profile) {
-  return SupervisedUserServiceFactory::GetForProfile(profile)
-      ->IsSupervisedLocally();
+  SupervisedUserService* supervised_user_service =
+      SupervisedUserServiceFactory::GetForProfile(profile);
+  if (!supervised_user_service) {
+    // Incognito profiles are not supervised.
+    return false;
+  }
+  return supervised_user_service->IsSupervisedLocally();
 }
 }  // namespace supervised_user
+
+DEFINE_JNI(SupervisedUserServiceBridge)

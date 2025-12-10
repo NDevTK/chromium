@@ -86,7 +86,7 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
     GridMediatorTestClass::SetUp();
 
     WebStateList* web_state_list = browser_->GetWebStateList();
-    CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
+    CloseAllWebStates(*web_state_list, WebStateList::ClosingReason::kDefault);
     builder_ =
         std::make_unique<WebStateListBuilderFromDescription>(web_state_list);
     ASSERT_TRUE(builder_->BuildWebStateListFromDescription(
@@ -143,7 +143,7 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
  protected:
   TestTabGroupMediator* mediator_;
   id<TabGroupConsumer> tab_group_consumer_;
-  raw_ptr<const TabGroup> tab_group_;
+  raw_ptr<const TabGroup, DanglingUntriaged> tab_group_;
   std::unique_ptr<WebStateListBuilderFromDescription> builder_;
   std::unique_ptr<ShareKitService> share_kit_service_;
   std::unique_ptr<collaboration::MockCollaborationService>
@@ -324,8 +324,8 @@ TEST_F(TabGroupMediatorTest, CreateAnotherGroupAndCloseTabs) {
   EXPECT_EQ("| f [ 1 a* b c ] [ _ d e ]",
             builder_->GetWebStateListDescription());
 
-  web_state_list->CloseWebStateAt(4, WebStateList::CLOSE_USER_ACTION);
-  web_state_list->CloseWebStateAt(4, WebStateList::CLOSE_USER_ACTION);
+  web_state_list->CloseWebStateAt(4, WebStateList::ClosingReason::kUserAction);
+  web_state_list->CloseWebStateAt(4, WebStateList::ClosingReason::kUserAction);
   EXPECT_EQ("| f [ 1 a* b c ]", builder_->GetWebStateListDescription());
 }
 

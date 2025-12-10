@@ -8,20 +8,22 @@
 #import <PhotosUI/PhotosUI.h>
 #import <UIKit/UIKit.h>
 
+#import "base/values.h"
 #import "ios/chrome/browser/shared/coordinator/chrome_coordinator/chrome_coordinator.h"
 
+@protocol HomeCustomizationSearchEngineLogoMediatorProvider;
+@class HomeCustomizationBackgroundPhotoFramingMediator;
 @class HomeCustomizationBackgroundPhotoPickerCoordinator;
 
 // Protocol for handling selected images from the photo picker.
 @protocol HomeCustomizationBackgroundPhotoPickerCoordinatorDelegate <NSObject>
 
-// Called when the user successfully selects and frames an image.
-- (void)photoPickerCoordinator:
-            (HomeCustomizationBackgroundPhotoPickerCoordinator*)coordinator
-                didSelectImage:(UIImage*)image;
-
 // Called when the user cancels the photo selection process.
 - (void)photoPickerCoordinatorDidCancel:
+    (HomeCustomizationBackgroundPhotoPickerCoordinator*)coordinator;
+
+// Called when the user successfully saves a framed image.
+- (void)photoPickerCoordinatorDidFinish:
     (HomeCustomizationBackgroundPhotoPickerCoordinator*)coordinator;
 
 @end
@@ -36,6 +38,10 @@
 @property(nonatomic, weak)
     id<HomeCustomizationBackgroundPhotoPickerCoordinatorDelegate>
         delegate;
+
+// A provider responsible for supplying a logo vendor object.
+@property(nonatomic, weak) id<HomeCustomizationSearchEngineLogoMediatorProvider>
+    searchEngineLogoMediatorProvider;
 
 @end
 

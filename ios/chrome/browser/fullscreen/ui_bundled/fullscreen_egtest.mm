@@ -8,6 +8,7 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
+#import "components/omnibox/browser/omnibox_pref_names.h"
 #import "components/translate/core/browser/translate_pref_names.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/test/fullscreen_app_interface.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -44,31 +45,10 @@ void HideToolbarUsingUI() {
       performAction:grey_swipeSlowInDirection(kGREYDirectionUp)];
 }
 
-// Asserts that the current URL is the `expectedURL` one.
-void AssertURLIs(const GURL& expectedURL) {
-  NSString* description = [NSString
-      stringWithFormat:@"Timeout waiting for the url to be %@",
-                       base::SysUTF8ToNSString(expectedURL.GetContent())];
-
-  ConditionBlock condition = ^{
-    NSError* error = nil;
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
-                                            expectedURL.GetContent())]
-        assertWithMatcher:grey_notNil()
-                    error:&error];
-    return (error == nil);
-  };
-  GREYAssert(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, condition),
-             description);
-}
-
 // A PDF itself can take a little longer to appear even after the page is
 // loaded. Instead, do an additional wait for the internal PDF class to appear
 // in the view hierarchy.
 void WaitforPDFExtensionView() {
-  // TODO(crbug.com/424744794): Code below was added as a speculative fix. That
-  // code is now skipped on iOS26, consider adding a long term fix in case
-  // tests become flaky without that logic.
   if (@available(iOS 26, *)) {
     [ChromeEarlGrey waitForPageToFinishLoading];
     return;
@@ -121,7 +101,8 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
   [ChromeEarlGrey setBoolValue:NO
                    forUserPref:translate::prefs::kOfferTranslateEnabled];
 
-  [ChromeEarlGrey setBoolValue:NO forLocalStatePref:prefs::kBottomOmnibox];
+  [ChromeEarlGrey setBoolValue:NO
+             forLocalStatePref:omnibox::kIsOmniboxInBottomPosition];
 }
 
 - (void)tearDownHelper {
@@ -191,7 +172,8 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
 
 // Tests that link clicks from a chrome:// to chrome:// link result in the
 // header being shown even if was not previously shown.
-- (void)testChromeToChromeURLKeepsHeaderOnScreen {
+// TODO(crbug.com/461735565): Test flaky on device and simulator.
+- (void)DISABLED_testChromeToChromeURLKeepsHeaderOnScreen {
   const GURL kChromeAboutURL("chrome://chrome-urls");
   [ChromeEarlGrey loadURL:kChromeAboutURL];
   [ChromeEarlGrey waitForWebStateContainingText:"chrome://version"];
@@ -325,7 +307,7 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
   [ChromeEarlGrey waitForWebStateContainingText:"link2"];
   [ChromeEarlGrey waitForMainTabCount:2];
 
-  AssertURLIs(destinationURL);
+  [ChromeEarlGrey waitForWebStateVisibleURL:destinationURL];
 
   // Hide the toolbar.
   HideToolbarUsingUI();
@@ -424,7 +406,13 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
 
 // Tests that the header is shown when loading an error page in a native view
 // even if fullscreen was enabled previously.
-- (void)testShowHeaderOnErrorPage {
+// TODO(crbug.com/437072563): Test flaky on device.
+#if !TARGET_IPHONE_SIMULATOR
+#define MAYBE_testShowHeaderOnErrorPage DISABLED_testShowHeaderOnErrorPage
+#else
+#define MAYBE_testShowHeaderOnErrorPage testShowHeaderOnErrorPage
+#endif
+- (void)MAYBE_testShowHeaderOnErrorPage {
   GURL errorURL = ErrorPageResponseProvider::GetDnsFailureUrl();
 
   self.testServer->RegisterRequestHandler(base::BindRepeating(
@@ -448,7 +436,8 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
   [ChromeEarlGreyUI waitForToolbarVisible:NO];
 
   [ChromeEarlGrey tapWebStateElementWithID:@"link"];
-  AssertURLIs(ErrorPageResponseProvider::GetDnsFailureUrl());
+  [ChromeEarlGrey
+      waitForWebStateVisibleURL:ErrorPageResponseProvider::GetDnsFailureUrl()];
   [ChromeEarlGreyUI waitForToolbarVisible:YES];
 }
 
@@ -475,12 +464,13 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
   [ChromeEarlGreyUI waitForToolbarVisible:NO];
 
   // Rotate and check that toolbar is still collapsed.
-  [EarlGrey rotateDeviceToOrientation:UIDeviceOrientationLandscapeLeft
-                                error:nil];
+  [EarlGrey rotateInterfaceToOrientation:UIInterfaceOrientationLandscapeLeft
+                                   error:nil];
   [ChromeEarlGreyUI waitForToolbarVisible:NO];
 
   // Cancel the rotation.
-  [EarlGrey rotateDeviceToOrientation:UIDeviceOrientationPortrait error:nil];
+  [EarlGrey rotateInterfaceToOrientation:UIInterfaceOrientationPortrait
+                                   error:nil];
 }
 
 // Tests that the toolbar reappears after backgrounding and foregrounding the
@@ -535,7 +525,8 @@ std::unique_ptr<net::test_server::HttpResponse> CreateHttpResponse(
 
 - (void)setUp {
   [super setUp];
-  [ChromeEarlGrey setBoolValue:YES forLocalStatePref:prefs::kBottomOmnibox];
+  [ChromeEarlGrey setBoolValue:YES
+             forLocalStatePref:omnibox::kIsOmniboxInBottomPosition];
 }
 
 // This is currently needed to prevent this test case from being ignored.

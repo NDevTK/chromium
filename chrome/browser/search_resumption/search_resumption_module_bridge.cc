@@ -16,7 +16,6 @@
 #include "chrome/browser/search_resumption/jni_headers/SearchResumptionModuleBridge_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
-using jni_zero::JavaParamRef;
 using jni_zero::JavaRef;
 using RequestSource = SearchTermsData::RequestSource;
 
@@ -31,15 +30,13 @@ SearchResumptionModuleBridge::SearchResumptionModuleBridge(
       StartSuggestServiceFactory::GetInstance()->GetForBrowserContext(profile);
 }
 
-void SearchResumptionModuleBridge::Destroy(JNIEnv* env,
-                                           const JavaParamRef<jobject>& obj) {
+void SearchResumptionModuleBridge::Destroy(JNIEnv* env) {
   delete this;
 }
 
 void SearchResumptionModuleBridge::FetchSuggestions(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jstring>& j_page_url) {
+    const JavaRef<jstring>& j_page_url) {
   if (start_suggest_service_ == nullptr) {
     return;
   }
@@ -73,7 +70,7 @@ void SearchResumptionModuleBridge::OnSuggestionsReceived(
 
 static jlong JNI_SearchResumptionModuleBridge_Create(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
+    const JavaRef<jobject>& obj,
     Profile* profile) {
   SearchResumptionModuleBridge* native_bridge =
       new SearchResumptionModuleBridge(env, obj, profile);
@@ -81,3 +78,5 @@ static jlong JNI_SearchResumptionModuleBridge_Create(
 }
 
 }  // namespace search_resumption_module
+
+DEFINE_JNI(SearchResumptionModuleBridge)

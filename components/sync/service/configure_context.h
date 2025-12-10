@@ -8,7 +8,7 @@
 #include <string>
 
 #include "base/time/time.h"
-#include "components/sync/base/previously_syncing_gaia_id_info_for_metrics.h"
+#include "components/signin/public/identity_manager/account_managed_status_finder_outcome.h"
 #include "components/sync/base/sync_mode.h"
 #include "components/sync/engine/configure_reason.h"
 #include "google_apis/gaia/gaia_id.h"
@@ -27,12 +27,12 @@ struct ConfigureContext {
   ~ConfigureContext();
 
   GaiaId authenticated_gaia_id;
+  signin::AccountManagedStatusFinderOutcome account_managed_status =
+      signin::AccountManagedStatusFinderOutcome::kPending;
   std::string cache_guid;
   SyncMode sync_mode = SyncMode::kFull;
-  ConfigureReason reason = CONFIGURE_REASON_UNKNOWN;
+  ConfigureReason reason = ConfigureReason::kUnknown;
   base::Time configuration_start_time;
-  PreviouslySyncingGaiaIdInfoForMetrics previously_syncing_gaia_id_info =
-      PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified;
 };
 
 }  // namespace syncer

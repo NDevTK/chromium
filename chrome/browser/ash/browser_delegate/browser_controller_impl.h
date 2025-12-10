@@ -15,6 +15,7 @@
 
 class Browser;
 class BrowserList;
+class BrowserWindowInterface;
 
 namespace ash {
 
@@ -28,10 +29,15 @@ class BrowserControllerImpl : public BrowserController,
   ~BrowserControllerImpl() override;
 
   // BrowserController:
-  BrowserDelegate* GetDelegate(Browser* browser) override;
+  BrowserDelegate* GetDelegate(BrowserWindowInterface* bwi) override;
   BrowserDelegate* GetLastUsedBrowser() override;
   BrowserDelegate* GetLastUsedVisibleBrowser() override;
   BrowserDelegate* GetLastUsedVisibleOnTheRecordBrowser() override;
+  void ForEachBrowser(BrowserOrder order,
+                      base::FunctionRef<IterationDirective(BrowserDelegate&)>
+                          callback) override;
+  BrowserDelegate* GetBrowserForWindow(aura::Window* window) override;
+  BrowserDelegate* GetBrowserForTab(content::WebContents* contents) override;
   BrowserDelegate* FindWebApp(const AccountId& account_id,
                               webapps::AppId app_id,
                               BrowserType browser_type,
@@ -47,17 +53,21 @@ class BrowserControllerImpl : public BrowserController,
   BrowserDelegate* CreateCustomTab(
       const AccountId& account_id,
       std::unique_ptr<content::WebContents> contents) override;
+  void CreateAutofillClientForWebContents(
+      content::WebContents* web_contents) override;
 
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
 
   // BrowserListObserver:
+  void OnBrowserAdded(Browser* browser) override;
+  void OnBrowserSetLastActive(Browser* browser) override;
   void OnBrowserRemoved(Browser* browser) override;
 
  private:
-  BrowserDelegate* GetBrowserDelegate(Browser* browser);
-
-  absl::flat_hash_map<Browser*, std::unique_ptr<BrowserDelegateImpl>> browsers_;
+  absl::flat_hash_map<BrowserWindowInterface*,
+                      std::unique_ptr<BrowserDelegateImpl>>
+      browsers_;
   base::ObserverList<Observer> observers_;
   base::ScopedObservation<BrowserList, BrowserListObserver> observation_{this};
 };

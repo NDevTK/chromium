@@ -9,6 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
+#include "components/autofill/core/browser/metrics/payments/bnpl_metrics.h"
 #include "components/autofill/core/browser/payments/payments_util.h"
 #include "components/autofill/core/browser/payments/payments_window_manager.h"
 #include "url/gurl.h"
@@ -22,7 +23,7 @@ ParseUrlForVcn3ds(const GURL& url,
                   const Vcn3dsChallengeOptionMetadata& metadata) {
   std::string redirect_completion_result;
   bool is_failure = false;
-  std::string_view query_piece = url.query_piece();
+  std::string_view query_piece = url.query();
   url::Component query(0, query_piece.length());
   url::Component key;
   url::Component value;
@@ -114,6 +115,36 @@ CreateVcn3dsAuthenticationResponseFromServerResult(
         kAuthenticationFailed;
   }
   return response;
+}
+
+void TriggerCompletionCallbackAndLogMetricsForBnpl(
+    PaymentsWindowManager::FlowState&& flow_state) {
+  CHECK(flow_state.bnpl_context.has_value());
+  CHECK(flow_state.bnpl_popup_shown_timestamp.has_value());
+
+  PaymentsWindowManager::BnplPopupStatus status = ParseUrlForBnpl(
+      flow_state.most_recent_url_navigation, flow_state.bnpl_context.value());
+  PaymentsWindowManager::BnplFlowResult result;
+  switch (status) {
+    case PaymentsWindowManager::BnplPopupStatus::kSuccess:
+      result = PaymentsWindowManager::BnplFlowResult::kSuccess;
+      break;
+    case PaymentsWindowManager::BnplPopupStatus::kFailure:
+      result = PaymentsWindowManager::BnplFlowResult::kFailure;
+      break;
+    case PaymentsWindowManager::BnplPopupStatus::kNotFinished:
+      result = PaymentsWindowManager::BnplFlowResult::kUserClosed;
+      break;
+  }
+  std::move(flow_state.bnpl_context->completion_callback)
+      .Run(result, std::move(flow_state.most_recent_url_navigation));
+  autofill_metrics::LogBnplPopupWindowResult(flow_state.bnpl_context->issuer_id,
+                                             result);
+  autofill_metrics::LogBnplPopupWindowLatency(
+      /*duration=*/base::TimeTicks::Now() -
+          flow_state.bnpl_popup_shown_timestamp.value(),
+      /*issuer_id=*/flow_state.bnpl_context->issuer_id,
+      /*result=*/result);
 }
 
 }  // namespace autofill::payments

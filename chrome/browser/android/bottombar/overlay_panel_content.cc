@@ -26,12 +26,13 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/OverlayPanelContent_jni.h"
 
-using base::android::JavaParamRef;
-
+using base::android::JavaRef;
 
 // This class manages the native behavior of the panel.
 // Instances of this class are owned by the Java OverlayPanelContentl.
-OverlayPanelContent::OverlayPanelContent(JNIEnv* env, jobject obj) {
+OverlayPanelContent::OverlayPanelContent(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& obj) {
   java_manager_.Reset(env, obj);
 }
 
@@ -57,7 +58,7 @@ void OverlayPanelContent::OnPhysicalBackingSizeChanged(
 void OverlayPanelContent::SetWebContents(
     JNIEnv* env,
     content::WebContents* web_contents,
-    const JavaParamRef<jobject>& jweb_contents_delegate) {
+    const JavaRef<jobject>& jweb_contents_delegate) {
   // NOTE(pedrosimonetti): Takes ownership of the WebContents. This is to make
   // sure that the WebContens and the Compositor are in the same process.
   // TODO(pedrosimonetti): Confirm with dtrainor@ if the comment above
@@ -89,7 +90,7 @@ void OverlayPanelContent::DestroyWebContents(JNIEnv* env) {
 
 void OverlayPanelContent::SetInterceptNavigationDelegate(
     JNIEnv* env,
-    const JavaParamRef<jobject>& delegate,
+    const JavaRef<jobject>& delegate,
     content::WebContents* web_contents) {
   navigation_interception::InterceptNavigationDelegate::Associate(
       web_contents,
@@ -111,8 +112,10 @@ void OverlayPanelContent::UpdateBrowserControlsState(
       state, cc::BrowserControlsState::kBoth, false, std::nullopt);
 }
 
-jlong JNI_OverlayPanelContent_Init(JNIEnv* env,
-                                   const JavaParamRef<jobject>& obj) {
+static jlong JNI_OverlayPanelContent_Init(JNIEnv* env,
+                                          const JavaRef<jobject>& obj) {
   OverlayPanelContent* content = new OverlayPanelContent(env, obj);
   return reinterpret_cast<intptr_t>(content);
 }
+
+DEFINE_JNI(OverlayPanelContent)

@@ -37,12 +37,10 @@
 #include "mojo/core/node_controller.h"
 #endif
 
-#if !BUILDFLAG(IS_NACL)
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 #include "mojo/core/channel_linux.h"
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
         // BUILDFLAG(IS_ANDROID)
-#endif  // !BUILDFLAG(IS_NACL)
 
 namespace mojo::core {
 
@@ -51,7 +49,7 @@ namespace {
 #if BUILDFLAG(MOJO_SUPPORT_LEGACY_CORE)
 #if BUILDFLAG(IS_CHROMEOS) && !defined(ENABLE_IPCZ_ON_CHROMEOS)
 std::atomic<bool> g_mojo_ipcz_enabled{false};
-#elif !BUILDFLAG(IS_ANDROID)
+#else
 // Default to enabled even if InitFeatures() is never called.
 std::atomic<bool> g_mojo_ipcz_enabled{true};
 #endif
@@ -80,16 +78,10 @@ bool g_enable_memv2 = false;
 void InitFeatures() {
   CHECK(base::FeatureList::GetInstance());
 
-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL) && \
-    !BUILDFLAG(MOJO_USE_APPLE_CHANNEL)
-  Channel::set_posix_use_writev(
-      base::FeatureList::IsEnabled(kMojoPosixUseWritev));
-
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(MOJO_USE_APPLE_CHANNEL)
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
-  bool shared_mem_enabled =
-      base::FeatureList::IsEnabled(kMojoLinuxChannelSharedMem);
-  bool use_zero_on_wake = kMojoLinuxChannelSharedMemEfdZeroOnWake.Get();
-  int num_pages = kMojoLinuxChannelSharedMemPages.Get();
+  bool shared_mem_enabled = base::FeatureList::IsEnabled(kMojoUseEventFd);
+  int num_pages = kMojoUseEventFdPages.Get();
   if (num_pages < 0) {
     num_pages = 4;
   } else if (num_pages > 128) {
@@ -97,11 +89,10 @@ void InitFeatures() {
   }
 
   ChannelLinux::SetSharedMemParameters(shared_mem_enabled,
-                                       static_cast<unsigned int>(num_pages),
-                                       use_zero_on_wake);
+                                       static_cast<unsigned int>(num_pages));
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
         // BUILDFLAG(IS_ANDROID)
-#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_MAC)
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
 
   Channel::set_use_trivial_messages(
       base::FeatureList::IsEnabled(kMojoInlineMessagePayloads));

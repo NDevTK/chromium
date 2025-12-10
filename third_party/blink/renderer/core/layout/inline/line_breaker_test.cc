@@ -915,20 +915,27 @@ TEST_F(LineBreakerTest, SplitTextIntoSegementsCrash) {
       <text id="container" x="50 100 150">&#x0343;&#x2585;&#x0343;&#x2585;<!--
       -->&#x0343;&#x2585;</text>
       </svg>)HTML");
-  BreakLines(node, LayoutUnit::Max(),
-             [](const LineBreaker& line_breaker, const LineInfo& line_info) {
-               Vector<const InlineItemResult*> text_results;
-               for (const auto& result : line_info.Results()) {
-                 if (result.item->Type() == InlineItem::kText) {
-                   text_results.push_back(&result);
-                 }
-               }
-               EXPECT_EQ(4u, text_results.size());
-               EXPECT_EQ(1u, text_results[0]->Length());  // U+0343
-               EXPECT_EQ(1u, text_results[1]->Length());  // U+2585
-               EXPECT_EQ(2u, text_results[2]->Length());  // U+0343 U+2585
-               EXPECT_EQ(2u, text_results[3]->Length());  // U+0343 U+2585
-             });
+  BreakLines(
+      node, LayoutUnit::Max(),
+      [](const LineBreaker& line_breaker, const LineInfo& line_info) {
+        Vector<unsigned> text_results_indices;
+        for (unsigned i = 0; i < line_info.Results().size(); ++i) {
+          if (line_info.Results()[i].item->Type() == InlineItem::kText) {
+            text_results_indices.push_back(i);
+          }
+        }
+        EXPECT_EQ(4u, text_results_indices.size());
+        EXPECT_EQ(
+            1u,
+            line_info.Results()[text_results_indices[0]].Length());  // U+0343
+        EXPECT_EQ(
+            1u,
+            line_info.Results()[text_results_indices[1]].Length());  // U+2585
+        EXPECT_EQ(2u, line_info.Results()[text_results_indices[2]]
+                          .Length());  // U+0343 U+2585
+        EXPECT_EQ(2u, line_info.Results()[text_results_indices[3]]
+                          .Length());  // U+0343 U+2585
+      });
 }
 
 // crbug.com/1214232
@@ -1252,6 +1259,20 @@ struct CanBreakInsideTestData {
     {true, "<span>a</span> b"},
     {true, "<span>a </span>b"},
     {true, "a<span> </span>b"},
+    {false, "a<span></span>b"},
+    {false, "<span> </span>", "span { position: absolute; }"},
+    {false, "a<span></span>", "span { position: absolute; }"},
+    {false, "a<span></span>b", "span { position: absolute; }"},
+    {false, "a<span></span><span></span>b", "span { position: absolute; }"},
+    {true, "<span></span>a b", "span { position: absolute; }"},
+    {true, "a <span></span>b", "span { position: absolute; }"},
+    {true, "a<span></span> b", "span { position: absolute; }"},
+    {false, "a<span></span><span></span>", "span { position: absolute; }"},
+    {true, "ab c<span></span>", "span { position: absolute; }"},
+    {false, "ab <span></span> <span></span> <span></span>",
+     "span { position: absolute; }"},
+    {false, "a<span></span>b", "span { flaot: left; }"},
+    {true, "a <span></span>b", "span { flaot: left; }"},
     {false, "<ib></ib>", nullptr, "ib { display: inline-block; }"},
     {true, "<ib></ib><ib></ib>", nullptr, "ib { display: inline-block; }"},
     {true, "a<ib></ib>", nullptr, "ib { display: inline-block; }"},

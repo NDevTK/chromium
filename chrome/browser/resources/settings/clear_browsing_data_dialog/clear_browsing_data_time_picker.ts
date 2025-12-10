@@ -16,10 +16,12 @@ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import type {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
 import {AnchorAlignment} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
 import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import {assertNotReachedCase} from 'chrome://resources/js/assert.js';
 import type {DomRepeatEvent} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {loadTimeData} from '../i18n_setup.js';
+import {MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
 
 import {TimePeriod} from './clear_browsing_data_browser_proxy.js';
 import {getTemplate} from './clear_browsing_data_time_picker.html.js';
@@ -48,6 +50,8 @@ export function getTimePeriodString(
       return loadTimeData.getString('clearPeriod4Weeks');
     case TimePeriod.ALL_TIME:
       return loadTimeData.getString('clearPeriodEverything');
+    default:
+      assertNotReachedCase(timePeriod);
   }
 }
 
@@ -240,6 +244,9 @@ export class SettingsClearBrowsingDataTimePicker extends
       anchorAlignmentX: AnchorAlignment.BEFORE_END,
       top: target.getBoundingClientRect().bottom + MENU_VERTICAL_OFFSET_PX,
     });
+
+    MetricsBrowserProxyImpl.getInstance().recordAction(
+        'Settings.DeleteBrowsingData.TimePickerMoreClick');
   }
 
   private onMoreOptionsMenuClose_(e: Event) {

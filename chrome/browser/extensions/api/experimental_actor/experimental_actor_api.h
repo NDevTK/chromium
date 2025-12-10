@@ -5,6 +5,10 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_EXPERIMENTAL_ACTOR_EXPERIMENTAL_ACTOR_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_EXPERIMENTAL_ACTOR_EXPERIMENTAL_ACTOR_API_H_
 
+#include "chrome/browser/actor/actor_keyed_service.h"
+#include "chrome/browser/actor/aggregated_journal.h"
+#include "chrome/common/actor.mojom-forward.h"
+#include "chrome/common/actor/task_id.h"
 #include "components/optimization_guide/proto/features/actions_data.pb.h"
 #include "extensions/browser/extension_function.h"
 
@@ -22,26 +26,6 @@ class ExperimentalActorApiFunction : public ExtensionFunction {
  protected:
   ~ExperimentalActorApiFunction() override;
   bool PreRunValidation(std::string* error) override;
-};
-
-// Starts an actor task.
-class ExperimentalActorStartTaskFunction : public ExperimentalActorApiFunction {
- public:
-  ExperimentalActorStartTaskFunction();
-
-  ExperimentalActorStartTaskFunction(
-      const ExperimentalActorStartTaskFunction&) = delete;
-  ExperimentalActorStartTaskFunction& operator=(
-      const ExperimentalActorStartTaskFunction&) = delete;
-
- protected:
-  ~ExperimentalActorStartTaskFunction() override;
-  ResponseAction Run() override;
-  void OnTaskStarted(
-      optimization_guide::proto::BrowserStartTaskResult response);
-
-  DECLARE_EXTENSION_FUNCTION("experimentalActor.startTask",
-                             EXPERIMENTALACTOR_STARTTASK)
 };
 
 // Stops an actor task.
@@ -62,25 +46,65 @@ class ExperimentalActorStopTaskFunction : public ExperimentalActorApiFunction {
                              EXPERIMENTALACTOR_STOPTASK)
 };
 
-// Executes an actor action.
-class ExperimentalActorExecuteActionFunction
+class ExperimentalActorCreateTaskFunction
     : public ExperimentalActorApiFunction {
  public:
-  ExperimentalActorExecuteActionFunction();
-
-  ExperimentalActorExecuteActionFunction(
-      const ExperimentalActorExecuteActionFunction&) = delete;
-  ExperimentalActorExecuteActionFunction& operator=(
-      const ExperimentalActorExecuteActionFunction&) = delete;
+  ExperimentalActorCreateTaskFunction();
+  ExperimentalActorCreateTaskFunction(
+      const ExperimentalActorCreateTaskFunction&) = delete;
+  ExperimentalActorCreateTaskFunction& operator=(
+      const ExperimentalActorCreateTaskFunction&) = delete;
 
  protected:
-  ~ExperimentalActorExecuteActionFunction() override;
+  ~ExperimentalActorCreateTaskFunction() override;
   ResponseAction Run() override;
-  void OnResponseReceived(
-      optimization_guide::proto::BrowserActionResult response);
+  DECLARE_EXTENSION_FUNCTION("experimentalActor.createTask",
+                             EXPERIMENTALACTOR_CREATETASK)
+};
 
-  DECLARE_EXTENSION_FUNCTION("experimentalActor.executeAction",
-                             EXPERIMENTALACTOR_EXECUTEACTION)
+class ExperimentalActorPerformActionsFunction
+    : public ExperimentalActorApiFunction {
+ public:
+  ExperimentalActorPerformActionsFunction();
+  ExperimentalActorPerformActionsFunction(
+      const ExperimentalActorPerformActionsFunction&) = delete;
+  ExperimentalActorPerformActionsFunction& operator=(
+      const ExperimentalActorPerformActionsFunction&) = delete;
+
+ protected:
+  ~ExperimentalActorPerformActionsFunction() override;
+  ResponseAction Run() override;
+  void OnActionsFinished(
+      actor::TaskId task_id,
+      base::TimeTicks start_time,
+      bool skip_async_observation_information,
+      actor::mojom::ActionResultCode result_code,
+      std::optional<size_t> index_of_failed_action,
+      std::vector<actor::ActionResultWithLatencyInfo> action_results);
+  void OnObservationResult(
+      std::unique_ptr<optimization_guide::proto::ActionsResult> response,
+      std::unique_ptr<actor::AggregatedJournal::PendingAsyncEntry>
+          journal_entry);
+  DECLARE_EXTENSION_FUNCTION("experimentalActor.performActions",
+                             EXPERIMENTALACTOR_PERFORMACTIONS)
+};
+
+class ExperimentalActorRequestTabObservationFunction
+    : public ExperimentalActorApiFunction {
+ public:
+  ExperimentalActorRequestTabObservationFunction();
+  ExperimentalActorRequestTabObservationFunction(
+      const ExperimentalActorRequestTabObservationFunction&) = delete;
+  ExperimentalActorRequestTabObservationFunction& operator=(
+      const ExperimentalActorRequestTabObservationFunction&) = delete;
+
+ protected:
+  ~ExperimentalActorRequestTabObservationFunction() override;
+  ResponseAction Run() override;
+  void OnObservationFinished(
+      actor::ActorKeyedService::TabObservationResult observation_result);
+  DECLARE_EXTENSION_FUNCTION("experimentalActor.requestTabObservation",
+                             EXPERIMENTALACTOR_REQUESTTABOBSERVATION)
 };
 
 }  //  namespace extensions

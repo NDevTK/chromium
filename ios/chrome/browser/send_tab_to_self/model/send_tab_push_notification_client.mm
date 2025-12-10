@@ -53,6 +53,15 @@ SendTabPushNotificationClient::SendTabPushNotificationClient()
 
 SendTabPushNotificationClient::~SendTabPushNotificationClient() = default;
 
+std::optional<NotificationType>
+SendTabPushNotificationClient::GetNotificationType(
+    UNNotification* notification) {
+  if (CanHandleNotification(notification)) {
+    return NotificationType::kSendTab;
+  }
+  return std::nullopt;
+}
+
 bool SendTabPushNotificationClient::CanHandleNotification(
     UNNotification* notification) {
   NSDictionary* user_info = notification.request.content.userInfo;
@@ -120,13 +129,12 @@ void SendTabPushNotificationClient::OnURLLoadedInNewTab(std::string guid,
         AuthenticationServiceFactory::GetForProfile(browser->GetProfile());
     id<SystemIdentity> identity =
         authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-    const GaiaId gaiaID(identity.gaiaID);
     if (!push_notification_settings::
             GetMobileNotificationPermissionStatusForClient(
-                PushNotificationClientId::kSendTab, gaiaID)) {
+                PushNotificationClientId::kSendTab, identity.gaiaId)) {
       PushNotificationService* service =
           GetApplicationContext()->GetPushNotificationService();
-      service->SetPreference(gaiaID.ToNSString(),
+      service->SetPreference(identity.gaiaId,
                              PushNotificationClientId::kSendTab, true);
     }
   }

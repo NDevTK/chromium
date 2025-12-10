@@ -17,7 +17,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/file_util_icu.h"
 #include "base/notreached.h"
@@ -28,10 +27,10 @@
 #include "base/task/thread_pool.h"
 #include "base/types/expected_macros.h"
 #include "base/unguessable_token.h"
-#include "base/uuid.h"
 #include "build/build_config.h"
 #include "components/services/storage/public/cpp/buckets/bucket_id.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/file_system_access/features.h"
 #include "content/browser/file_system_access/file_system_access.pb.h"
 #include "content/browser/file_system_access/file_system_access_access_handle_host_impl.h"
@@ -63,6 +62,8 @@
 #include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
 #include "storage/common/file_system/file_system_types.h"
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_data_transfer_token.mojom.h"
 #include "third_party/blink/public/mojom/file_system_access/file_system_access_error.mojom.h"
@@ -149,7 +150,7 @@ void ShowFilePickerOnUIThread(
   WebContents* web_contents = WebContents::FromRenderFrameHost(rfh);
   RenderFrameHost* outermost_rfh = rfh ? rfh->GetOutermostMainFrame() : nullptr;
 
-  if (!web_contents || !outermost_rfh) {
+  if (!web_contents || !outermost_rfh || !outermost_rfh->IsActive()) {
     std::move(callback).Run(file_system_access_error::FromStatus(
                                 FileSystemAccessStatus::kOperationAborted),
                             {});
@@ -157,6 +158,16 @@ void ShowFilePickerOnUIThread(
   }
 
   DCHECK(outermost_rfh->IsInPrimaryMainFrame());
+
+  if (!GetContentClient()->browser()->IsFileSystemAccessApiFilePickerAllowed(
+          content::WebContents::FromRenderFrameHost(rfh))) {
+    std::move(callback).Run(file_system_access_error::FromStatus(
+                                FileSystemAccessStatus::kPermissionDenied,
+                                "File Picker for file system access APIs not "
+                                "allowed at this time."),
+                            {});
+    return;
+  }
 
   if (rfh->IsNestedWithinFencedFrame()) {
     std::move(callback).Run(
@@ -190,11 +201,6 @@ void ShowFilePickerOnUIThread(
                       return;
                     });
   }
-
-  // Drop fullscreen mode so that the user sees the URL bar.
-  base::ScopedClosureRunner fullscreen_block =
-      web_contents->ForSecurityDropFullscreen(
-          /*display_id=*/display::kInvalidDisplayId);
 
 #if BUILDFLAG(IS_ANDROID)
   // Allow android WebView to handle chooser.
@@ -232,8 +238,18 @@ void ShowFilePickerOnUIThread(
   }
 #endif
 
-  FileSystemChooser::CreateAndShow(web_contents, options, std::move(callback),
-                                   std::move(fullscreen_block));
+  FileSystemChooser::ScopedObjects scoped_objects(
+      // Drop fullscreen mode so that the user sees the URL bar.
+      /*fullscreen_block=*/web_contents->ForSecurityDropFullscreen(
+          display::kInvalidDisplayId),
+      // Maybe tuck the pip window so that it would not block the file picker
+      // UI.
+      /*pip_tucker=*/GetContentClient()
+          ->browser()
+          ->MaybeGetScopedPictureInPictureTucker(web_contents));
+
+  FileSystemChooser::CreateAndShow(rfh, options, std::move(callback),
+                                   std::move(scoped_objects));
 }
 
 // Called after creating a file that was picked by a save file picker. If
@@ -541,8 +557,10 @@ void FileSystemAccessManagerImpl::ChooseEntries(
             context.storage_key.origin()) ||
         ((options->type_specific_options->is_save_file_picker_options() ||
           (options->type_specific_options->is_directory_picker_options() &&
+           // TODO(crbug.com/40276567): Support kWrite.
            options->type_specific_options->get_directory_picker_options()
-               ->request_writable)) &&
+                   ->permission_mode ==
+               blink::mojom::FileSystemAccessPermissionMode::kReadWrite)) &&
          !permission_context_->CanObtainWritePermission(
              context.storage_key.origin()))) {
       std::move(callback).Run(
@@ -562,31 +580,14 @@ void FileSystemAccessManagerImpl::ChooseEntries(
     return;
   }
 
-  // Renderer process should already check for user activation before sending
-  // IPC, but just to be sure double check here as well. This is not treated
-  // as a BadMessage because it is possible for the transient user activation
-  // to expire between the renderer side check and this check.
-  ContentBrowserClient* content_browser_client = GetContentClient()->browser();
-  WebContents* web_contents = WebContents::FromRenderFrameHost(rfh);
-  if (!rfh->HasTransientUserActivation() &&
-      content_browser_client
-          ->IsTransientActivationRequiredForShowFileOrDirectoryPicker(
-              web_contents)) {
-    std::move(callback).Run(
-        file_system_access_error::FromStatus(
-            FileSystemAccessStatus::kPermissionDenied,
-            "User activation is required to show a file picker."),
-        std::vector<blink::mojom::FileSystemAccessEntryPtr>());
-    return;
-  }
-
   // Consume user activation to address this issue: crbug.com/40059071
   // TODO(crbug.com/411125804): Consider moving this user activation check to
   // the renderer process or informing the renderer that it lost user
   // activation.
-  if (content_browser_client
+  if (GetContentClient()
+          ->browser()
           ->IsTransientActivationRequiredForShowFileOrDirectoryPicker(
-              web_contents)) {
+              WebContents::FromRenderFrameHost(rfh))) {
     FrameTreeNode::From(rfh)->UpdateUserActivationState(
         blink::mojom::UserActivationUpdateType::kConsumeTransientActivation,
         blink::mojom::UserActivationNotificationType::kNone);
@@ -702,10 +703,12 @@ void FileSystemAccessManagerImpl::SetDefaultPathAndShowPicker(
         context.storage_key.origin());
   }
 
-  auto request_directory_write_access =
+  // TODO(crbug.com/40276567): Support kWrite.
+  bool request_directory_write_access =
       options->type_specific_options->is_directory_picker_options() &&
       options->type_specific_options->get_directory_picker_options()
-          ->request_writable;
+              ->permission_mode ==
+          blink::mojom::FileSystemAccessPermissionMode::kReadWrite;
 
   auto suggested_name =
       options->type_specific_options->is_save_file_picker_options()
@@ -945,6 +948,11 @@ void FileSystemAccessManagerImpl::BindObserverHost(
     mojo::PendingReceiver<blink::mojom::FileSystemAccessObserverHost>
         host_receiver) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (!base::FeatureList::IsEnabled(blink::features::kFileSystemObserver)) {
+    receivers_.ReportBadMessage("FileSystemAccessObserver not available");
+    return;
+  }
 
   const BindingContext& context = receivers_.current_context();
   watcher_manager().BindObserverHost(context, std::move(host_receiver));
@@ -1547,7 +1555,7 @@ void FileSystemAccessManagerImpl::DidChooseEntries(
     const BindingContext& binding_context,
     const FileSystemChooser::Options& options,
     const std::string& starting_directory_id,
-    const bool request_directory_write_access,
+    bool request_directory_write_access,
     ChooseEntriesCallback callback,
     blink::mojom::FileSystemAccessErrorPtr result,
     std::vector<PathInfo> entries) {
@@ -1592,7 +1600,7 @@ void FileSystemAccessManagerImpl::DidVerifySensitiveDirectoryAccess(
     const BindingContext& binding_context,
     const FileSystemChooser::Options& options,
     const std::string& starting_directory_id,
-    const bool request_directory_write_access,
+    bool request_directory_write_access,
     ChooseEntriesCallback callback,
     std::vector<PathInfo> entries,
     SensitiveEntryResult result) {
@@ -1906,6 +1914,12 @@ FileSystemAccessManagerImpl::GetSharedHandleStateForNonSandboxedPath(
         break;
     }
   }
+
+  if (shared_handle_state_callback_for_test_) {
+    return shared_handle_state_callback_for_test_.Run(read_grant,  // IN-TEST
+                                                      write_grant);
+  }
+
   return SharedHandleState(std::move(read_grant), std::move(write_grant));
 }
 
@@ -1928,6 +1942,12 @@ FileSystemAccessManagerImpl::GetSharedHandleStateForSandboxedPath() {
   auto permission_grant =
       base::MakeRefCounted<FixedFileSystemAccessPermissionGrant>(
           PermissionStatus::GRANTED, PathInfo());
+
+  if (shared_handle_state_callback_for_test_) {
+    return shared_handle_state_callback_for_test_.Run(  // IN-TEST
+        permission_grant, permission_grant);
+  }
+
   return SharedHandleState(permission_grant, permission_grant);
 }
 
@@ -2064,6 +2084,15 @@ base::WeakPtr<FileSystemAccessManagerImpl>
 FileSystemAccessManagerImpl::AsWeakPtr() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return weak_factory_.GetWeakPtr();
+}
+
+// static
+blink::mojom::FileSystemAccessPermissionMode
+FileSystemAccessManagerImpl::GetEffectiveWritePermissionMode() {
+  return base::FeatureList::IsEnabled(
+             blink::features::kFileSystemAccessWriteMode)
+             ? blink::mojom::FileSystemAccessPermissionMode::kWrite
+             : blink::mojom::FileSystemAccessPermissionMode::kReadWrite;
 }
 
 bool FileSystemAccessManagerImpl::IsSafePathComponent(

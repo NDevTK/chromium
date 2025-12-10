@@ -36,10 +36,12 @@
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/policy_disposition.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_html_iframe_element.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_string_trustedhtml.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+#include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/client_hints_util.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
@@ -86,7 +88,6 @@ void HTMLIFrameElement::Trace(Visitor* visitor) const {
   visitor->Trace(sandbox_);
   visitor->Trace(policy_);
   HTMLFrameElementBase::Trace(visitor);
-  Supplementable<HTMLIFrameElement>::Trace(visitor);
 }
 
 HTMLIFrameElement::~HTMLIFrameElement() = default;
@@ -94,7 +95,8 @@ HTMLIFrameElement::~HTMLIFrameElement() = default;
 const AttrNameToTrustedType& HTMLIFrameElement::GetCheckedAttributeTypes()
     const {
   DEFINE_STATIC_LOCAL(AttrNameToTrustedType, attribute_map,
-                      ({{"srcdoc", SpecificTrustedType::kHTML}}));
+                      ({{"srcdoc", std::pair{SpecificTrustedType::kHTML,
+                                             "HTMLIFrameElement"}}}));
   return attribute_map;
 }
 
@@ -216,8 +218,8 @@ void HTMLIFrameElement::ParseAttribute(
         GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kOther,
             mojom::blink::ConsoleMessageLevel::kError,
-            "Error while parsing the 'sandbox' attribute: " +
-                String::FromUTF8(parsed.error_message)));
+            StrCat({"Error while parsing the 'sandbox' attribute: ",
+                    String::FromUTF8(parsed.error_message)})));
       }
     }
     SetSandboxFlags(current_flags);
@@ -288,7 +290,8 @@ void HTMLIFrameElement::ParseAttribute(
       if (new_browsing_topics) {
         UseCounter::Count(GetDocument(),
                           WebFeature::kIframeBrowsingTopicsAttribute);
-        UseCounter::Count(GetDocument(), WebFeature::kTopicsAPIAll);
+        Deprecation::CountDeprecation(GetExecutionContext(),
+                                      WebFeature::kTopicsAPIAll);
       }
 
       if (new_browsing_topics != old_browsing_topics) {
@@ -329,6 +332,9 @@ void HTMLIFrameElement::ParseAttribute(
       if (!params.new_value.IsNull()) {
         UseCounter::Count(GetDocument(),
                           WebFeature::kSharedStorageAPI_Iframe_Attribute);
+        Deprecation::CountDeprecation(
+            GetExecutionContext(),
+            mojom::blink::WebFeature::kSharedStorageAPIAll);
       }
     }
   } else if (name == html_names::kCredentiallessAttr &&
@@ -711,6 +717,23 @@ void HTMLIFrameElement::NaturalSizingInfoChanged() {
     object->SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
         layout_invalidation_reason::kSizeChanged);
   }
+}
+
+const V8UnionStringOrTrustedHTML* HTMLIFrameElement::srcdoc() const {
+  return MakeGarbageCollected<V8UnionStringOrTrustedHTML>(
+      getAttribute(html_names::kSrcdocAttr));
+}
+
+void HTMLIFrameElement::setSrcdoc(const V8UnionStringOrTrustedHTML* value,
+                                  ExceptionState& exception_state) {
+  String compliantValue =
+      TrustedTypesCheckForHTML(value, GetExecutionContext(),
+                               "HTMLIFrameElement", "srcdoc", exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  SetAttributeWithoutValidation(html_names::kSrcdocAttr,
+                                AtomicString(compliantValue));
 }
 
 }  // namespace blink

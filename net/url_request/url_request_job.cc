@@ -51,6 +51,14 @@ base::Value::Dict SourceStreamSetParams(SourceStream* source_stream) {
   return event_params;
 }
 
+const scoped_refptr<base::SingleThreadTaskRunner>& TaskRunner(
+    net::RequestPriority priority) {
+  if (features::kNetTaskSchedulerURLRequestJob.Get()) {
+    return net::GetTaskRunner(priority);
+  }
+  return base::SingleThreadTaskRunner::GetCurrentDefault();
+}
+
 }  // namespace
 
 // Each SourceStreams own the previous SourceStream in the chain, but the
@@ -509,10 +517,12 @@ void URLRequestJob::NotifyFinalHeadersReceived() {
       // headers, and the response body is not compressed, try to get the
       // expected content size from the headers.
       if (expected_content_size_ == -1 && request_->response_headers()) {
-        // This sets |expected_content_size_| to its previous value of -1 if
-        // there's no Content-Length header.
-        expected_content_size_ =
+        // This keeps |expected_content_size_| at its value of -1 if there's no
+        // Content-Length header.
+        std::optional<base::ByteCount> content_length =
             request_->response_headers()->GetContentLength();
+        expected_content_size_ =
+            content_length ? content_length->InBytes() : -1;
       }
     } else {
       request_->net_log().AddEvent(
@@ -593,7 +603,7 @@ void URLRequestJob::OnDone(int net_error, bool notify_done) {
   if (notify_done) {
     // Complete this notification later.  This prevents us from re-entering the
     // delegate if we're done because of a synchronous call.
-    net::GetTaskRunner(request_->priority())
+    TaskRunner(request_->priority())
         ->PostTask(FROM_HERE, base::BindOnce(&URLRequestJob::NotifyDone,
                                              weak_factory_.GetWeakPtr()));
   }

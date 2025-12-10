@@ -2,19 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/public/platform/web_audio_source_provider_impl.h"
 
 #include <stddef.h>
 
+#include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
+#include "base/types/zip.h"
+#include "media/base/audio_bus.h"
 #include "media/base/audio_glitch_info.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/fake_audio_render_callback.h"
@@ -40,6 +38,15 @@ const int kTestSampleRate = 48000;
 
 // TODO(crbug.com/420150619): Re-enable this and make it a global feature.
 constexpr bool kDelayStopForMediaElementSourceNode = false;
+
+std::vector<float*> GetRawChannelPointers(media::AudioBus* bus) {
+  std::vector<float*> channel_pointers;
+  channel_pointers.reserve(static_cast<size_t>(bus->channels()));
+  for (auto channel : bus->AllChannels()) {
+    channel_pointers.push_back(channel.data());
+  }
+  return channel_pointers;
+}
 
 }  // namespace
 
@@ -106,9 +113,9 @@ class WebAudioSourceProviderImplTest : public testing::Test,
   bool CompareBusses(const media::AudioBus* bus1, const media::AudioBus* bus2) {
     EXPECT_EQ(bus1->channels(), bus2->channels());
     EXPECT_EQ(bus1->frames(), bus2->frames());
-    for (int ch = 0; ch < bus1->channels(); ++ch) {
-      if (memcmp(bus1->channel(ch), bus2->channel(ch),
-                 sizeof(*bus1->channel(ch)) * bus1->frames()) != 0) {
+    for (auto [ch_1, ch_2] :
+         base::zip(bus1->AllChannels(), bus2->AllChannels())) {
+      if (ch_1 != ch_2) {
         return false;
       }
     }
@@ -185,11 +192,6 @@ TEST_F(WebAudioSourceProviderImplTest, RenderTainted) {
   auto bus = media::AudioBus::Create(params_);
   bus->Zero();
 
-  // Point the std::vector into memory owned by |bus|.
-  std::vector<float*> audio_data(static_cast<size_t>(bus->channels()));
-  for (size_t i = 0; i < audio_data.size(); ++i)
-    audio_data[i] = bus->channel(static_cast<int>(i));
-
   wasp_impl_->Initialize(params_, &fake_callback_);
 
   EXPECT_CALL(*mock_sink_, Start());
@@ -215,12 +217,10 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
   auto bus2 = media::AudioBus::Create(params_);
 
   // Point the std::vector into memory owned by |bus1|.
-  std::vector<float*> audio_data(static_cast<size_t>(bus1->channels()));
-  for (size_t i = 0; i < audio_data.size(); ++i)
-    audio_data[i] = bus1->channel(static_cast<int>(i));
+  std::vector<float*> audio_data = GetRawChannelPointers(bus1.get());
 
   // Verify provideInput() works before Initialize() and returns silence.
-  bus1->channel(0)[0] = 1;
+  bus1->channel_span(0)[0] = 1;
   bus2->Zero();
   wasp_impl_->ProvideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
@@ -230,7 +230,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
 
   // Verify provideInput() is muted prior to Start() and no calls to the render
   // callback have occurred.
-  bus1->channel(0)[0] = 1;
+  bus1->channel_span(0)[0] = 1;
   bus2->Zero();
   wasp_impl_->ProvideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
@@ -239,7 +239,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
   wasp_impl_->Start();
 
   // Ditto for Play().
-  bus1->channel(0)[0] = 1;
+  bus1->channel_span(0)[0] = 1;
   wasp_impl_->ProvideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
   ASSERT_EQ(fake_callback_.last_delay(), base::TimeDelta::Max());
@@ -263,7 +263,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
 
   // Pause should return to silence.
   wasp_impl_->Pause();
-  bus1->channel(0)[0] = 1;
+  bus1->channel_span(0)[0] = 1;
   bus2->Zero();
   wasp_impl_->ProvideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
@@ -289,7 +289,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInput) {
 
   // Stop() should return silence.
   wasp_impl_->Stop();
-  bus1->channel(0)[0] = 1;
+  bus1->channel_span(0)[0] = 1;
   bus2->Zero();
   wasp_impl_->ProvideInput(audio_data, params_.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus1.get(), bus2.get()));
@@ -301,9 +301,7 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInputTainted) {
   bus->Zero();
 
   // Point the std::vector into memory owned by |bus|.
-  std::vector<float*> audio_data(static_cast<size_t>(bus->channels()));
-  for (size_t i = 0; i < audio_data.size(); ++i)
-    audio_data[i] = bus->channel(static_cast<int>(i));
+  std::vector<float*> audio_data = GetRawChannelPointers(bus.get());
 
   wasp_impl_->Initialize(params_, &fake_callback_);
   SetClient(this);
@@ -324,8 +322,8 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInputTainted) {
 TEST_F(WebAudioSourceProviderImplTest, CopyAudioCB) {
   testing::InSequence s;
   wasp_impl_->Initialize(params_, &fake_callback_);
-  wasp_impl_->SetCopyAudioCallback(WTF::BindRepeating(
-      &WebAudioSourceProviderImplTest::DoCopyAudioCB, WTF::Unretained(this)));
+  wasp_impl_->SetCopyAudioCallback(BindRepeating(
+      &WebAudioSourceProviderImplTest::DoCopyAudioCB, Unretained(this)));
 
   const auto bus1 = media::AudioBus::Create(params_);
   EXPECT_CALL(*this, DoCopyAudioCB(_, 0, params_.sample_rate())).Times(1);
@@ -342,8 +340,8 @@ TEST_F(WebAudioSourceProviderImplTest, CopyAudioCB) {
 TEST_F(WebAudioSourceProviderImplTest, CopyAudioCBTainted) {
   testing::InSequence s;
   wasp_impl_->Initialize(params_, &fake_callback_);
-  wasp_impl_->SetCopyAudioCallback(WTF::BindRepeating(
-      &WebAudioSourceProviderImplTest::DoCopyAudioCB, WTF::Unretained(this)));
+  wasp_impl_->SetCopyAudioCallback(BindRepeating(
+      &WebAudioSourceProviderImplTest::DoCopyAudioCB, Unretained(this)));
 
   const auto bus1 = media::AudioBus::Create(params_);
   EXPECT_CALL(*this,
@@ -399,12 +397,10 @@ TEST_F(WebAudioSourceProviderImplTest, MultipleInitializeWithSetClient) {
   auto bus2 = media::AudioBus::Create(stream_params);
 
   // Point the std::vector into memory owned by |bus1|.
-  std::vector<float*> audio_data(static_cast<size_t>(bus1->channels()));
-  for (size_t i = 0; i < audio_data.size(); ++i)
-    audio_data[i] = bus1->channel(static_cast<int>(i));
+  std::vector<float*> audio_data = GetRawChannelPointers(bus1.get());
 
   // Verify provideInput() doesn't return silence and doesn't crash.
-  bus1->channel(0)[0] = 1;
+  bus1->channel_span(0)[0] = 1;
   bus2->Zero();
   wasp_impl_->ProvideInput(audio_data, params_.frames_per_buffer());
   ASSERT_FALSE(CompareBusses(bus1.get(), bus2.get()));
@@ -435,15 +431,13 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInputDifferentChannelCount) {
   auto bus = media::AudioBus::Create(mono_params);
 
   // Point the std::vector into memory owned by |bus|.
-  std::vector<float*> audio_data(static_cast<size_t>(bus->channels()));
-  for (size_t i = 0; i < audio_data.size(); ++i)
-    audio_data[i] = bus->channel(static_cast<int>(i));
+  std::vector<float*> audio_data = GetRawChannelPointers(bus.get());
 
   auto zero_bus = media::AudioBus::Create(mono_params);
   zero_bus->Zero();
 
   // Verify ProvideInput() returns silence and doesn't crash.
-  bus->channel(0)[0] = 1;
+  bus->channel_span(0)[0] = 1;
   wasp_impl_->ProvideInput(audio_data, mono_params.frames_per_buffer());
   ASSERT_TRUE(CompareBusses(bus.get(), zero_bus.get()));
 }
@@ -451,8 +445,8 @@ TEST_F(WebAudioSourceProviderImplTest, ProvideInputDifferentChannelCount) {
 TEST_F(WebAudioSourceProviderImplTest, SetClientCallback) {
   wasp_impl_ = base::MakeRefCounted<WebAudioSourceProviderImpl>(
       mock_sink_, &media_log_,
-      WTF::BindOnce(&WebAudioSourceProviderImplTest::OnClientSet,
-                    weak_factory_.GetWeakPtr()));
+      blink::BindOnce(&WebAudioSourceProviderImplTest::OnClientSet,
+                      weak_factory_.GetWeakPtr()));
   // SetClient with a nullptr client should not trigger the callback if no
   // client is set.
   EXPECT_CALL(*this, OnClientSet()).Times(0);
@@ -477,8 +471,8 @@ TEST_F(WebAudioSourceProviderImplTest, SetClientCallback) {
 TEST_F(WebAudioSourceProviderImplTest, ConnectToDestinationReadyCallStop) {
   wasp_impl_ = base::MakeRefCounted<WebAudioSourceProviderImpl>(
       mock_sink_, &media_log_,
-      WTF::BindOnce(&WebAudioSourceProviderImplTest::OnClientSet,
-                    weak_factory_.GetWeakPtr()));
+      blink::BindOnce(&WebAudioSourceProviderImplTest::OnClientSet,
+                      weak_factory_.GetWeakPtr()));
 
   // ConnectToDestinationReady call without client does not call stop().
   EXPECT_CALL(*mock_sink_, Stop()).Times(0);

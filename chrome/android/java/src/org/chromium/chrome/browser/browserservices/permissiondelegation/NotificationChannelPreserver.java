@@ -4,11 +4,12 @@
 
 package org.chromium.chrome.browser.browserservices.permissiondelegation;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.notifications.NotificationChannelStatus;
 import org.chromium.chrome.browser.notifications.channels.ChromeChannelDefinitions;
 import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
-import org.chromium.components.content_settings.ContentSettingValues;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.embedder_support.util.Origin;
 
 /**
@@ -19,6 +20,7 @@ import org.chromium.components.embedder_support.util.Origin;
  * <p>Lifecycle: Singleton. Thread safety: Only call methods on a single thread. Native: Does not
  * require native.
  */
+@NullMarked
 public class NotificationChannelPreserver {
     private NotificationChannelPreserver() {}
 
@@ -53,11 +55,11 @@ public class NotificationChannelPreserver {
                     assert status == NotificationChannelStatus.ENABLED
                             || status == NotificationChannelStatus.BLOCKED;
 
-                    @ContentSettingValues
+                    @ContentSetting
                     int settingValue =
                             status == NotificationChannelStatus.ENABLED
-                                    ? ContentSettingValues.ALLOW
-                                    : ContentSettingValues.BLOCK;
+                                    ? ContentSetting.ALLOW
+                                    : ContentSetting.BLOCK;
                     WebappRegistry.getInstance()
                             .getPermissionStore()
                             .setPreInstallNotificationPermission(origin, settingValue);
@@ -67,7 +69,7 @@ public class NotificationChannelPreserver {
 
     /** Restores the SiteChannel if called on a version of Android that requires it. */
     static void restoreChannelIfNeeded(Origin origin) {
-        @ContentSettingValues
+        @ContentSetting
         Integer settingValue =
                 WebappRegistry.getInstance()
                         .getPermissionStore()
@@ -78,7 +80,7 @@ public class NotificationChannelPreserver {
             return;
         }
 
-        boolean enabled = settingValue == ContentSettingValues.ALLOW;
+        boolean enabled = settingValue == ContentSetting.ALLOW;
         SiteChannelsManager.getInstance()
                 .createSiteChannel(origin.toString(), System.currentTimeMillis(), enabled);
     }

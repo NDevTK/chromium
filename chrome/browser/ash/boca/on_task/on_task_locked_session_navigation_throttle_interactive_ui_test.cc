@@ -22,9 +22,11 @@
 #include "chrome/browser/ash/boca/on_task/on_task_system_web_app_manager_impl.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/platform_util.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/test/test_browser_closed_waiter.h"
@@ -173,6 +175,11 @@ class OnTaskLockedSessionNavigationThrottleInteractiveUITestBase
   }
 
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
+
   base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<boca::OnTaskSystemWebAppManagerImpl> system_web_app_manager_;
   raw_ptr<FakeOnTaskNotificationsManagerDelegate>
@@ -771,11 +778,11 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
       LockedSessionWindowTrackerFactory::GetInstance()->GetForBrowserContext(
           profile());
   ASSERT_TRUE(window_tracker->CanOpenNewPopup());
-  const size_t original_browser_count = BrowserList::GetInstance()->size();
+  const size_t original_browser_count = chrome::GetTotalBrowserCount();
   Browser* const popup_browser = Browser::Create(Browser::CreateParams(
       Browser::TYPE_APP_POPUP, profile(), /*user_gesture=*/true));
   content::RunAllTasksUntilIdle();
-  ASSERT_EQ(BrowserList::GetInstance()->size(), original_browser_count + 1);
+  ASSERT_EQ(chrome::GetTotalBrowserCount(), original_browser_count + 1);
   EXPECT_FALSE(window_tracker->CanOpenNewPopup());
 
   TestBrowserClosedWaiter popup_closed_waiter(popup_browser);
@@ -785,7 +792,7 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
   navigate_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   ui_test_utils::NavigateToURL(&navigate_params);
   ASSERT_TRUE(popup_closed_waiter.WaitUntilClosed());
-  EXPECT_EQ(BrowserList::GetInstance()->size(), original_browser_count);
+  EXPECT_EQ(chrome::GetTotalBrowserCount(), original_browser_count);
 }
 
 IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
@@ -824,7 +831,7 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
   // request without worrying that the corresponding test files exist.
   content::URLLoaderInterceptor interceptor(base::BindLambdaForTesting(
       [&](content::URLLoaderInterceptor::RequestParams* params) {
-        if (params->url_request.url.host() == kTabUrlRedirectHost) {
+        if (params->url_request.url.GetHost() == kTabUrlRedirectHost) {
           content::URLLoaderInterceptor::WriteResponse(
               "chrome/test/data/title2.html", params->client.get());
           return true;
@@ -833,7 +840,7 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
         return false;
       }));
 
-  const size_t original_browser_count = BrowserList::GetInstance()->size();
+  const size_t original_browser_count = chrome::GetTotalBrowserCount();
   auto* const window_tracker =
       LockedSessionWindowTrackerFactory::GetInstance()->GetForBrowserContext(
           profile());
@@ -844,13 +851,14 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
                                      "/authenticate?client_id=123"),
       ui::PAGE_TRANSITION_LINK);
   navigate_params.disposition = WindowOpenDisposition::NEW_POPUP;
-  navigate_params.window_action = NavigateParams::SHOW_WINDOW;
+  navigate_params.window_action = NavigateParams::WindowAction::kShowWindow;
   ui_test_utils::NavigateToURL(&navigate_params);
-  Browser* const popup_browser = navigate_params.browser;
+  Browser* const popup_browser =
+      navigate_params.browser->GetBrowserForMigrationOnly();
 
   ui_test_utils::BrowserActivationWaiter popup_activation_waiter(popup_browser);
   popup_activation_waiter.WaitForActivation();
-  ASSERT_EQ(BrowserList::GetInstance()->size(), original_browser_count + 1);
+  ASSERT_EQ(chrome::GetTotalBrowserCount(), original_browser_count + 1);
   EXPECT_FALSE(window_tracker->CanOpenNewPopup());
   ASSERT_TRUE(window_tracker->oauth_in_progress());
 
@@ -911,7 +919,7 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
   // request without worrying that the corresponding test files exist.
   content::URLLoaderInterceptor interceptor(base::BindLambdaForTesting(
       [&](content::URLLoaderInterceptor::RequestParams* params) {
-        if (params->url_request.url.host() == kTabUrlRedirectHost) {
+        if (params->url_request.url.GetHost() == kTabUrlRedirectHost) {
           content::URLLoaderInterceptor::WriteResponse(
               "chrome/test/data/title2.html", params->client.get());
           return true;
@@ -920,20 +928,21 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
         return false;
       }));
 
-  const size_t original_browser_count = BrowserList::GetInstance()->size();
+  const size_t original_browser_count = chrome::GetTotalBrowserCount();
   NavigateParams navigate_params(
       boca_app_browser,
       embedded_test_server()->GetURL(kTabUrlRedirectHost,
                                      "/authenticate?client_id=123"),
       ui::PAGE_TRANSITION_LINK);
   navigate_params.disposition = WindowOpenDisposition::NEW_POPUP;
-  navigate_params.window_action = NavigateParams::SHOW_WINDOW;
+  navigate_params.window_action = NavigateParams::WindowAction::kShowWindow;
   ui_test_utils::NavigateToURL(&navigate_params);
-  Browser* const popup_browser = navigate_params.browser;
+  Browser* const popup_browser =
+      navigate_params.browser->GetBrowserForMigrationOnly();
 
   ui_test_utils::BrowserActivationWaiter popup_activation_waiter(popup_browser);
   popup_activation_waiter.WaitForActivation();
-  ASSERT_EQ(BrowserList::GetInstance()->size(), original_browser_count + 1);
+  ASSERT_EQ(chrome::GetTotalBrowserCount(), original_browser_count + 1);
   EXPECT_FALSE(window_tracker->CanOpenNewPopup());
 
   // The oauth popup in reality should close once the login flow is complete.
@@ -1392,6 +1401,48 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(ui_test_utils::NavigateToURL(boca_app_browser, google_url));
   EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
             google_url);
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/true);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    OnTaskLockedSessionNavigationThrottleWorkspaceNavigationInteractiveUITest,
+    BlockRedirectsCreatedAsSeparateNavigationRequests) {
+  // Launch OnTask SWA.
+  base::test::TestFuture<bool> launch_future;
+  system_web_app_manager()->LaunchSystemWebAppAsync(
+      launch_future.GetCallback());
+  ASSERT_TRUE(launch_future.Get());
+  Browser* const boca_app_browser = FindBocaSystemWebAppBrowser();
+  ASSERT_THAT(boca_app_browser, NotNull());
+  ASSERT_TRUE(boca_app_browser->IsLockedForOnTask());
+
+  // Set up window tracker to track the app window.
+  const SessionID window_id = boca_app_browser->session_id();
+  ASSERT_TRUE(window_id.is_valid());
+  system_web_app_manager()->SetWindowTrackerForSystemWebAppWindow(
+      window_id, /*observers=*/{});
+
+  // Spawn tab for testing purposes.
+  CreateBackgroundTabAndWait(
+      window_id, embedded_test_server()->GetURL(kTabUrl1Host, "/"),
+      ::boca::LockedNavigationOptions::LIMITED_NAVIGATION);
+  auto* const tab_strip_model = boca_app_browser->tab_strip_model();
+  ASSERT_EQ(tab_strip_model->count(), 2);
+  tab_strip_model->ActivateTabAt(1);
+  WaitForUrlBlocklistUpdate();
+
+  // Simulate URL redirect as a separate navigation request.
+  const GURL google_redirect_url = embedded_test_server()->GetURL(
+      kTabGoogleHost, "/url?q=https://www.foo.com");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, google_redirect_url));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_redirect_url);
+
+  const GURL url_1 = embedded_test_server()->GetURL(kTabUrl1Host, "/");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(boca_app_browser, url_1));
+  EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            url_1);
   VerifyUrlBlockedToastShown(/*toast_was_shown=*/true);
 }
 

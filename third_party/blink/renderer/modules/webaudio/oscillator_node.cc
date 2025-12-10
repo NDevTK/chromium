@@ -93,7 +93,8 @@ OscillatorNode* OscillatorNode::Create(BaseAudioContext& context,
 OscillatorNode* OscillatorNode::Create(BaseAudioContext* context,
                                        const OscillatorOptions* options,
                                        ExceptionState& exception_state) {
-  if (options->type() == "custom" && !options->hasPeriodicWave()) {
+  if (options->type() == V8OscillatorType::Enum::kCustom &&
+      !options->hasPeriodicWave()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "A PeriodicWave must be specified if the type is set to \"custom\"");
@@ -102,7 +103,7 @@ OscillatorNode* OscillatorNode::Create(BaseAudioContext* context,
 
   // TODO(crbug.com/1070871): Use periodicWaveOr(nullptr).
   OscillatorNode* node =
-      Create(*context, IDLEnumAsString(options->type()),
+      Create(*context, options->type().AsString(),
              options->hasPeriodicWave() ? options->periodicWave() : nullptr,
              exception_state);
 

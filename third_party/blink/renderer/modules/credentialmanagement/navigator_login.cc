@@ -28,20 +28,14 @@ void OnSetIdpSigninStatus(ScriptPromiseResolver<IDLUndefined>* resolver) {
 }
 }  // namespace
 
-const char NavigatorLogin::kSupplementName[] = "NavigatorLogin";
-
 NavigatorLogin* NavigatorLogin::login(Navigator& navigator) {
-  NavigatorLogin* supplement =
-      Supplement<Navigator>::From<NavigatorLogin>(navigator);
+  NavigatorLogin* supplement = navigator.GetNavigatorLogin();
   if (!supplement) {
-    supplement = MakeGarbageCollected<NavigatorLogin>(navigator);
-    ProvideTo(navigator, supplement);
+    supplement = MakeGarbageCollected<NavigatorLogin>();
+    navigator.SetNavigatorLogin(supplement);
   }
   return supplement;
 }
-
-NavigatorLogin::NavigatorLogin(Navigator& navigator)
-    : Supplement<Navigator>(navigator) {}
 
 ScriptPromise<IDLUndefined> NavigatorLogin::setStatus(
     ScriptState* script_state,
@@ -65,7 +59,7 @@ ScriptPromise<IDLUndefined> NavigatorLogin::setStatus(
   }
   request->SetIdpSigninStatus(
       context->GetSecurityOrigin(), status, nullptr,
-      WTF::BindOnce(&OnSetIdpSigninStatus, WrapPersistent(resolver)));
+      BindOnce(&OnSetIdpSigninStatus, WrapPersistent(resolver)));
   return promise;
 }
 
@@ -117,13 +111,12 @@ ScriptPromise<IDLUndefined> NavigatorLogin::setStatus(
   request->SetIdpSigninStatus(
       context->GetSecurityOrigin(), status,
       mojo::ConvertTo<blink::mojom::blink::LoginStatusOptionsPtr>(*options),
-      WTF::BindOnce(&OnSetIdpSigninStatus, WrapPersistent(resolver)));
+      BindOnce(&OnSetIdpSigninStatus, WrapPersistent(resolver)));
   return promise;
 }
 
 void NavigatorLogin::Trace(Visitor* visitor) const {
   ScriptWrappable::Trace(visitor);
-  Supplement<Navigator>::Trace(visitor);
 }
 
 }  // namespace blink

@@ -15,7 +15,6 @@
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/feature_list.h"
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -56,7 +55,6 @@
 #include "components/crx_file/id_util.h"
 #include "components/enterprise/browser/controller/browser_dm_token_storage.h"
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
-#include "components/enterprise/browser/promotion/promotion_eligibility_checker.h"
 #include "components/enterprise/browser/reporting/common_pref_names.h"
 #include "components/policy/core/browser/configuration_policy_handler_list.h"
 #include "components/policy/core/browser/policy_conversions.h"
@@ -126,7 +124,6 @@ constexpr char kExtensionsKey[] = "extensions";
 
 namespace features {
 BASE_FEATURE(kPolicyPagePromotionEligibilityCheckedBanner,
-             "PolicyPagePromotionEligibilityCheckedBanner",
              base::FEATURE_DISABLED_BY_DEFAULT);
 }  // namespace features
 
@@ -161,6 +158,7 @@ void PolicyUIHandler::AddCommonLocalizedStringsToSource(
       {"future", IDS_POLICY_LABEL_FUTURE},
       {"info", IDS_POLICY_LABEL_INFO},
       {"ignored", IDS_POLICY_LABEL_IGNORED},
+      {"ignoredByExtension", IDS_POLICY_IGNORED_EXTENSION},
       {"notSpecified", IDS_POLICY_NOT_SPECIFIED},
       {"ok", IDS_POLICY_OK},
       {"scopeDevice", IDS_POLICY_SCOPE_DEVICE},
@@ -271,6 +269,16 @@ void PolicyUIHandler::RegisterMessages() {
       "uploadReport", base::BindRepeating(&PolicyUIHandler::HandleUploadReport,
                                           base::Unretained(this)));
 #endif  // !BUILDFLAG(IS_CHROMEOS)
+}
+
+void PolicyUIHandler::AddPolicyPromotionObserver(
+    PolicyPromotionObserver* observer) {
+  promotion_eligibility_observers_.AddObserver(observer);
+}
+
+void PolicyUIHandler::RemovePolicyPromotionObserver(
+    PolicyPromotionObserver* observer) {
+  promotion_eligibility_observers_.RemoveObserver(observer);
 }
 
 void PolicyUIHandler::OnPolicyValueAndStatusChanged() {
@@ -414,7 +422,7 @@ void PolicyUIHandler::HandleRestartBrowser(const base::Value::List& args) {
 }
 
 void PolicyUIHandler::HandleSetUserAffiliated(const base::Value::List& args) {
-  CHECK_EQ(static_cast<int>(args.size()), 2);
+  CHECK_EQ(args.size(), 2u);
   bool affiliated = args[1].GetBool();
 
   auto* local_test_provider = static_cast<policy::LocalTestPolicyProvider*>(
@@ -427,7 +435,7 @@ void PolicyUIHandler::HandleSetUserAffiliated(const base::Value::List& args) {
 
 void PolicyUIHandler::HandleGetAppliedTestPolicies(
     const base::Value::List& args) {
-  CHECK_EQ(static_cast<int>(args.size()), 1);
+  CHECK_EQ(args.size(), 1u);
 
   auto* local_test_provider = static_cast<policy::LocalTestPolicyProvider*>(
       g_browser_process->browser_policy_connector()
@@ -515,42 +523,22 @@ void PolicyUIHandler::HandleShouldShowPromotion(const base::Value::List& args) {
   Profile* profile = Profile::FromWebUI(web_ui());
   const std::string& callback_id = args[0].GetString();
 
-  if (!base::FeatureList::IsEnabled(features::kEnablePolicyPromotionBanner) ||
-      profile->IsIncognitoProfile() || profile->IsGuestSession() ||
-      !profile->GetCloudPolicyManager() ||
-      !profile->GetCloudPolicyManager()->core()->client()) {
-    OnPromotionEligibilityFetched(
-        callback_id,
-        enterprise_management::GetUserEligiblePromotionsResponse());
-    return;
-  }
-
-  auto* profile_id_service =
-      enterprise::ProfileIdServiceFactory::GetForProfile(profile);
-  if (!profile_id_service->GetProfileId().has_value()) {
-    OnPromotionEligibilityFetched(
-        callback_id,
-        enterprise_management::GetUserEligiblePromotionsResponse());
-    return;
-  }
-
-  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
-
-  std::string locale = g_browser_process->GetApplicationLocale();
-
   bool dismissed_banner_pref = profile->GetPrefs()->GetBoolean(
       policy::policy_prefs::kHasDismissedPolicyPagePromotionBanner);
 
+  bool feature_enabled =
+      base::FeatureList::IsEnabled(features::kEnablePolicyPromotionBanner);
+
   promotion_eligibility_checker_ =
-      std::make_unique<enterprise_promotion::PromotionEligibilityChecker>(
-          /*profile_id=*/profile_id_service->GetProfileId().value(),
-          /*client=*/
-          profile->GetCloudPolicyManager()->core()->client(),
-          /*identity_manager=*/identity_manager,
-          /*locale=*/locale,
-          /*dismissed_banner_pref=*/dismissed_banner_pref);
+      policy::CreatePromotionEligibilityChecker(
+          profile, dismissed_banner_pref, feature_enabled);
+  if (!promotion_eligibility_checker_) {
+    OnPromotionEligibilityFetched(
+        callback_id,
+        enterprise_management::GetUserEligiblePromotionsResponse());
+    return;
+  }
   promotion_eligibility_checker_->MaybeCheckPromotionEligibility(
-      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin),
       base::BindOnce(&PolicyUIHandler::OnPromotionEligibilityFetched,
                      weak_factory_.GetWeakPtr(), callback_id));
   return;
@@ -593,7 +581,6 @@ void PolicyUIHandler::OnPromotionEligibilityFetched(
     const std::string& callback_id,
     enterprise_management::GetUserEligiblePromotionsResponse response) {
   AllowJavascript();
-
   bool should_show_promotion = response.promotions().policy_page_promotion() ==
                                enterprise_management::CHROME_ENTERPRISE_CORE;
   // Log the UMA metric for the promotion banner displayed.
@@ -601,6 +588,12 @@ void PolicyUIHandler::OnPromotionEligibilityFetched(
                             should_show_promotion);
 
   ResolveJavascriptCallback(base::Value(callback_id), should_show_promotion);
+
+  for (PolicyPromotionObserver& observer : promotion_eligibility_observers_) {
+    observer.OnPromotionEligibilityFetched(callback_id, response);
+  }
+
+  promotion_checked_ = true;
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 

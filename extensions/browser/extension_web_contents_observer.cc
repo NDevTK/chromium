@@ -27,7 +27,6 @@
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_features.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
@@ -185,7 +184,7 @@ void ExtensionWebContentsObserver::SetUpRenderFrameHost(
   // Note: Keep this logic in sync with related logic in
   // ChromeContentBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories.
   if (type == Manifest::TYPE_EXTENSION ||
-      type == Manifest::TYPE_LEGACY_PACKAGED_APP) {
+      type == Manifest::Type::kLegacyPackagedApp) {
     util::InitializeFileSchemeAccessForExtension(
         render_frame_host->GetProcess()->GetDeprecatedID(), extension->id(),
         browser_context_);
@@ -203,16 +202,6 @@ void ExtensionWebContentsObserver::SetUpRenderFrameHost(
       ->ActivateExtensionInProcess(*extension, render_frame_host->GetProcess());
 }
 
-void ExtensionWebContentsObserver::RenderFrameCreated(
-    content::RenderFrameHost* render_frame_host) {
-  if (base::FeatureList::IsEnabled(
-          extensions_features::kRemoveCoreSiteInstance)) {
-    // If the primordial SiteInstance in ProcessManager is not used, we need
-    // to wait until `ReadyToCommitNavigation()` to set up the render frame.
-    return;
-  }
-  SetUpRenderFrameHost(render_frame_host);
-}
 void ExtensionWebContentsObserver::RenderFrameDeleted(
     content::RenderFrameHost* render_frame_host) {
   DCHECK(initialized_);
@@ -224,10 +213,7 @@ void ExtensionWebContentsObserver::RenderFrameDeleted(
 
 void ExtensionWebContentsObserver::ReadyToCommitNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (base::FeatureList::IsEnabled(
-          extensions_features::kRemoveCoreSiteInstance)) {
-    SetUpRenderFrameHost(navigation_handle->GetRenderFrameHost());
-  }
+  SetUpRenderFrameHost(navigation_handle->GetRenderFrameHost());
 
   ScriptInjectionTracker::ReadyToCommitNavigation(PassKey(), navigation_handle);
 

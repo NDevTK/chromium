@@ -95,7 +95,13 @@ void UserTiming::AddMarkToPerformanceTimeline(
     v8::CpuProfiler::CollectSample(isolate, sample_trace_id);
   }
   const auto trace_event_details = [&](perfetto::EventContext ctx) {
-    ctx.event()->set_name(mark.name().Utf8().c_str());
+    if (ctx.ShouldFilterDynamicEventNames()) {
+      ctx.event()->set_name("performance.mark");
+      // Emit the dynamic name as debug annotation instead.
+      ctx.AddDebugAnnotation("markName", mark.name().Utf8());
+    } else {
+      ctx.event()->set_name(mark.name().Utf8());
+    }
     ctx.AddDebugAnnotation("data", [&](perfetto::TracedValue trace_context) {
       auto dict = std::move(trace_context).WriteDictionary();
       dict.Add("startTime", mark.startTime());
@@ -118,10 +124,6 @@ void UserTiming::AddMarkToPerformanceTimeline(
 
 void UserTiming::ClearMarks(const AtomicString& mark_name) {
   ClearPerformanceEntries(marks_map_, marks_buffer_, mark_name);
-  if (IsTracingEnabled()) {
-    TRACE_EVENT_INSTANT("blink.user_timing", "clearMarks", "name",
-                        mark_name.Utf8().c_str());
-  }
 }
 
 const PerformanceMark* UserTiming::FindExistingMark(
@@ -148,7 +150,7 @@ double UserTiming::FindExistingMarkStartTime(const AtomicString& mark_name,
   if (!PerformanceTiming::IsAttributeName(mark_name)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        "The mark '" + mark_name + "' does not exist.");
+        StrCat({"The mark '", mark_name, "' does not exist."}));
     return 0.0;
   }
 
@@ -157,10 +159,10 @@ double UserTiming::FindExistingMarkStartTime(const AtomicString& mark_name,
     // According to
     // https://w3c.github.io/user-timing/#convert-a-name-to-a-timestamp.
     exception_state.ThrowTypeError(
-        "When converting a mark name ('" + mark_name +
-        "') to a timestamp given a name that is a read only attribute in the "
-        "PerformanceTiming interface, the global object has to be a Window "
-        "object.");
+        StrCat({"When converting a mark name ('", mark_name,
+                "') to a timestamp given a name that is a read only attribute "
+                "in the PerformanceTiming interface, the global object has to "
+                "be a Window object."}));
     return 0.0;
   }
 
@@ -168,11 +170,11 @@ double UserTiming::FindExistingMarkStartTime(const AtomicString& mark_name,
   // (from above), we know calling |GetNamedAttribute| won't fail.
   double value = static_cast<double>(timing->GetNamedAttribute(mark_name));
   if (!value) {
-    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidAccessError,
-                                      "'" + mark_name +
-                                          "' is empty: either the event hasn't "
-                                          "happened yet, or it would provide "
-                                          "cross-origin timing information.");
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kInvalidAccessError,
+        StrCat({"'", mark_name,
+                "' is empty: either the event hasn't happened yet, or it would "
+                "provide cross-origin timing information."}));
     return 0.0;
   }
 
@@ -194,8 +196,8 @@ double UserTiming::GetTimeOrFindMarkTime(
     case V8UnionDoubleOrString::ContentType::kDouble: {
       const double time = mark_or_time->GetAsDouble();
       if (time < 0.0) {
-        exception_state.ThrowTypeError("'" + measure_name +
-                                       "' cannot have a negative time stamp.");
+        exception_state.ThrowTypeError(StrCat(
+            {"'", measure_name, "' cannot have a negative time stamp."}));
       }
       return time;
     }
@@ -227,7 +229,8 @@ PerformanceMeasure* UserTiming::Measure(ScriptState* script_state,
                                         const V8UnionDoubleOrString* end,
                                         const ScriptValue& detail,
                                         ExceptionState& exception_state,
-                                        DOMWindow* source) {
+                                        DOMWindow* source,
+                                        uint32_t navigation_id) {
   double start_time =
       start ? GetTimeOrFindMarkTime(measure_name, start, exception_state) : 0;
   if (exception_state.HadException())
@@ -260,9 +263,9 @@ PerformanceMeasure* UserTiming::Measure(ScriptState* script_state,
         end_time_is_now_time
             ? base::TimeTicks::Now()
             : GetPerformanceMarkUnsafeTimeForTraces(end_time, end);
-    unsigned hash = WTF::GetHash(measure_name);
-    WTF::AddFloatToHash(hash, start_time);
-    WTF::AddFloatToHash(hash, end_time);
+    unsigned hash = GetHash(measure_name);
+    AddFloatToHash(hash, start_time);
+    AddFloatToHash(hash, end_time);
     String serialized_detail = GetSerializedDetail(detail);
     v8::Isolate* isolate = script_state->GetIsolate();
     const base::TimeTicks callTime = base::TimeTicks::Now();
@@ -275,28 +278,28 @@ PerformanceMeasure* UserTiming::Measure(ScriptState* script_state,
     // call).
     TRACE_EVENT("devtools.timeline", "UserTiming::Measure", "sampleTraceId",
                 hash, "traceId", hash);
-    if (serialized_detail.length()) {
-      TRACE_EVENT_BEGIN("blink.user_timing", nullptr, perfetto::Track(hash),
-                        unsafe_start_time, "startTime", start_time, "callTime",
-                        callTime, "detail", serialized_detail, "traceId", hash,
-                        [&](perfetto::EventContext ctx) {
-                          ctx.event()->set_name(measure_name.Utf8().c_str());
-                        });
-    } else {
-      TRACE_EVENT_BEGIN("blink.user_timing", nullptr, perfetto::Track(hash),
-                        unsafe_start_time, "startTime", start_time, "callTime",
-                        callTime, "traceId", hash,
-                        [&](perfetto::EventContext ctx) {
-                          ctx.event()->set_name(measure_name.Utf8().c_str());
-                        });
-    }
+    TRACE_EVENT_BEGIN(
+        "blink.user_timing", nullptr, perfetto::Track(hash), unsafe_start_time,
+        "startTime", start_time, "callTime", callTime, "traceId", hash,
+        [&](perfetto::EventContext ctx) {
+          if (ctx.ShouldFilterDynamicEventNames()) {
+            ctx.event()->set_name("performance.measure");
+            // Emit the dynamic name as debug annotation instead.
+            ctx.AddDebugAnnotation("measureName", measure_name.Utf8());
+          } else {
+            ctx.event()->set_name(measure_name.Utf8());
+          }
+          if (serialized_detail.length()) {
+            ctx.AddDebugAnnotation("detail", serialized_detail);
+          }
+        });
     TRACE_EVENT_END("blink.user_timing", perfetto::Track(hash),
                     unsafe_end_time);
   }
 
-  PerformanceMeasure* measure =
-      PerformanceMeasure::Create(script_state, measure_name, start_time,
-                                 end_time, detail, exception_state, source);
+  PerformanceMeasure* measure = PerformanceMeasure::Create(
+      script_state, measure_name, start_time, end_time, detail, exception_state,
+      source, navigation_id);
   if (!measure)
     return nullptr;
   InsertPerformanceEntry(measures_map_, measures_buffer_, *measure);
@@ -305,10 +308,6 @@ PerformanceMeasure* UserTiming::Measure(ScriptState* script_state,
 
 void UserTiming::ClearMeasures(const AtomicString& measure_name) {
   ClearPerformanceEntries(measures_map_, measures_buffer_, measure_name);
-  if (IsTracingEnabled()) {
-    TRACE_EVENT_INSTANT("blink.user_timing", "clearMeasures", "name",
-                        measure_name.Utf8().c_str());
-  }
 }
 
 PerformanceEntryVector UserTiming::GetMarks() const {

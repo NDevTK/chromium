@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 
 namespace blink {
 
@@ -32,11 +31,10 @@ DOMException* AuthenticatorStatusToDOMException(
 
 class MODULES_EXPORT AuthenticationCredentialsContainer final
     : public CredentialsContainer,
-      public Supplement<Navigator> {
+      public GarbageCollectedMixin {
  public:
-  static const char kSupplementName[];
   static CredentialsContainer* credentials(Navigator&);
-  explicit AuthenticationCredentialsContainer(Navigator&);
+  AuthenticationCredentialsContainer() = default;
 
   // CredentialsContainer:
   ScriptPromise<IDLNullable<Credential>> get(ScriptState*,
@@ -58,6 +56,14 @@ class MODULES_EXPORT AuthenticationCredentialsContainer final
                       ScriptPromiseResolver<IDLNullable<Credential>>*,
                       const CredentialRequestOptions&,
                       const IdentityCredentialRequestOptions&);
+
+  // Forwards a get() request to the authenticator interface.
+  // Currently used for publicKey requests and password requests with immediate
+  // mediation.
+  void ForwardRequestToAuthenticator(
+      ScriptState*,
+      ScriptPromiseResolver<IDLNullable<Credential>>*,
+      const CredentialRequestOptions*);
 
   class OtpRequestAbortAlgorithm;
   class PublicKeyRequestAbortAlgorithm;

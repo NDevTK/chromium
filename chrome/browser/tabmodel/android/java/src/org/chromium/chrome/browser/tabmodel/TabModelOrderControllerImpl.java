@@ -7,9 +7,11 @@ package org.chromium.chrome.browser.tabmodel;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabAttributeKeys;
 import org.chromium.chrome.browser.tab.TabAttributes;
+import org.chromium.chrome.browser.tab.TabId;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 
 /**
@@ -31,8 +33,33 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
     @Override
     public int determineInsertionIndex(@TabLaunchType int type, int position, Tab newTab) {
         if (type == TabLaunchType.FROM_BROWSER_ACTIONS || type == TabLaunchType.FROM_RECENT_TABS) {
-            return -1;
+            return TabList.INVALID_TAB_INDEX;
         }
+        if (newTab.getIsPinned() && type != TabLaunchType.FROM_RESTORE) {
+            TabModel tabModel = mTabModelSelector.getCurrentModel();
+
+            if (type == TabLaunchType.FROM_TAB_LIST_INTERFACE) {
+                @TabId int parentId = newTab.getParentId();
+                @Nullable Tab parentTab = tabModel.getTabById(parentId);
+                int index = tabModel.indexOf(parentTab);
+                if (parentTab != null
+                        && index != TabList.INVALID_TAB_INDEX
+                        && parentTab.getIsPinned()) {
+                    return index + 1;
+                }
+            }
+
+            // Use the `position` when its in valid range; otherwise defer to TabModel
+            // implementation, which will place it at the first unpinned position.
+            int firstNonPinnedTabIndex = tabModel.findFirstNonPinnedTabIndex();
+            if (position <= firstNonPinnedTabIndex) {
+                return position;
+            }
+
+            // TabModel will handle the index.
+            return TabList.INVALID_TAB_INDEX;
+        }
+
         if (mightBeAdjacent(type)) {
             position = determineInsertionIndexIfMaybeAdjacent(type, newTab);
         }
@@ -65,6 +92,11 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
             }
             int currentId = currentTab.getId();
             int currentIndex = TabModelUtils.getTabIndexById(currentModel, currentId);
+
+            // If the current tab is a pinned tab, new tabs are inserted after the last pinned tab.
+            if (currentTab.getIsPinned()) {
+                return currentModel.findFirstNonPinnedTabIndex();
+            }
 
             if (willOpenInForeground(type, newTab.isIncognito())) {
                 // If the tab was opened in the foreground, insert it adjacent to its parent tab if
@@ -130,10 +162,8 @@ class TabModelOrderControllerImpl implements TabModelOrderController {
     /** Clear the opener attribute on all tabs in the model. */
     void forgetAllOpeners() {
         TabModel currentModel = mTabModelSelector.getCurrentModel();
-        int count = currentModel.getCount();
-        for (int i = 0; i < count; i++) {
-            TabAttributes.from(currentModel.getTabAtChecked(i))
-                    .set(TabAttributeKeys.GROUPED_WITH_PARENT, false);
+        for (Tab tab : currentModel) {
+            TabAttributes.from(tab).set(TabAttributeKeys.GROUPED_WITH_PARENT, false);
         }
     }
 

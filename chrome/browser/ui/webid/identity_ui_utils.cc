@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/grit/platform_locale_settings.h"
-#include "content/public/browser/identity_request_account.h"
+#include "content/public/browser/webid/identity_request_account.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/canvas.h"
@@ -161,10 +161,10 @@ void CircleCroppedImageSkiaSource::Draw(gfx::Canvas* canvas) {
   const int x = (canvas_edge_size - avatar_.width()) / 2;
   const int y = (canvas_edge_size - avatar_.height()) / 2;
 
-  SkPath circular_mask;
-  circular_mask.addCircle(SkIntToScalar(canvas_edge_size / 2),
-                          SkIntToScalar(canvas_edge_size / 2),
-                          SkIntToScalar(canvas_edge_size / 2));
+  const SkPath circular_mask =
+      SkPath::Circle(canvas_edge_size / 2,
+                     canvas_edge_size / 2,
+                     canvas_edge_size / 2);
   canvas->ClipPath(circular_mask, true);
   canvas->DrawImageInt(avatar_, x, y);
 }

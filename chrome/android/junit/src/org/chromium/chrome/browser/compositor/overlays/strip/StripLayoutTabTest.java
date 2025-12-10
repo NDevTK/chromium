@@ -25,11 +25,8 @@ import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutTabDelegate.VisualState;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.chrome.browser.ui.theme.ChromeSemanticColorUtils;
 import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
@@ -63,8 +60,7 @@ public class StripLayoutTabTest {
 
         // Normal active tab color.
         mNormalTab.setVisualState(VisualState.SELECTED);
-        expectedColor =
-                SurfaceColorUpdateUtils.getDefaultThemeColor(mContext, /* isIncognito= */ false);
+        expectedColor = ChromeColors.getDefaultThemeColor(mContext, /* isIncognito= */ false);
         assertEquals(
                 "Normal active folio should match the Surface-0 color.",
                 expectedColor,
@@ -129,15 +125,14 @@ public class StripLayoutTabTest {
 
         // Normal active tab color.
         mNormalTab.setVisualState(VisualState.SELECTED);
-        expectedColor =
-                SurfaceColorUpdateUtils.getDefaultThemeColor(mContext, /* isIncognito= */ false);
+        expectedColor = ChromeColors.getDefaultThemeColor(mContext, /* isIncognito= */ false);
         assertEquals(
                 "Normal active should match the regular foreground color.",
                 expectedColor,
                 mNormalTab.getTint());
 
         // Normal inactive tab color.
-        mNormalTab.setVisualState(VisualState.NORMAL);
+        mNormalTab.setVisualState(VisualState.PLACEHOLDER);
         expectedColor = mContext.getColor(R.color.bg_tabstrip_tab_folio_startup_tint);
         assertEquals(
                 "Normal inactive tab should match the placeholder color.",
@@ -153,32 +148,10 @@ public class StripLayoutTabTest {
                 mIncognitoTab.getTint());
 
         // Incognito inactive tab color.
-        mIncognitoTab.setVisualState(VisualState.NORMAL);
+        mIncognitoTab.setVisualState(VisualState.PLACEHOLDER);
         expectedColor = mContext.getColor(R.color.bg_tabstrip_tab_folio_startup_tint);
         assertEquals(
                 "Incognito inactive tab should match the placeholder color.",
-                expectedColor,
-                mIncognitoTab.getTint());
-    }
-
-    @Test
-    @Features.EnableFeatures(ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE)
-    public void testGetTint_SurfaceColorUpdate() {
-        @ColorInt int expectedColor;
-
-        // Normal active tab color.
-        mNormalTab.setVisualState(VisualState.SELECTED);
-        expectedColor = SemanticColorUtils.getColorSurfaceContainerHigh(mContext);
-        assertEquals(
-                "Normal active folio should match the Surface-0 color.",
-                expectedColor,
-                mNormalTab.getTint());
-
-        // Incognito active tab color.
-        mIncognitoTab.setVisualState(VisualState.SELECTED);
-        expectedColor = mContext.getColor(R.color.toolbar_background_primary_dark);
-        assertEquals(
-                "Incognito active folio should match the baseline color.",
                 expectedColor,
                 mIncognitoTab.getTint());
     }
@@ -296,6 +269,6 @@ public class StripLayoutTabTest {
     }
 
     private StripLayoutTab createStripLayoutTab(boolean incognito) {
-        return new StripLayoutTab(mContext, 0, null, null, null, null, incognito);
+        return new StripLayoutTab(mContext, 0, null, null, null, null, incognito, false);
     }
 }

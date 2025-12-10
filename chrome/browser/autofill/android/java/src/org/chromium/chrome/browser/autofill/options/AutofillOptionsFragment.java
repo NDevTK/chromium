@@ -10,13 +10,17 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 
 import androidx.annotation.IntDef;
+import androidx.fragment.app.Fragment;
 
+import org.chromium.base.Callback;
+import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.autofill.R;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
+import org.chromium.chrome.browser.settings.search.ChromeBaseSearchIndexProvider;
 import org.chromium.components.browser_ui.settings.SettingsFragment;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.settings.TextMessagePreference;
@@ -27,6 +31,8 @@ import java.lang.annotation.RetentionPolicy;
 /** Autofill options fragment, which allows the user to configure autofill. */
 @NullMarked
 public class AutofillOptionsFragment extends ChromeBaseSettingsFragment {
+    private static @Nullable Callback<Fragment> sObserverForTest;
+
     // Key for the argument with which the AutofillOptions fragment will be launched. The value for
     // this argument is part of the AutofillOptionsReferrer enum containing all entry points.
     public static final String AUTOFILL_OPTIONS_REFERRER = "autofill-options-referrer";
@@ -44,6 +50,8 @@ public class AutofillOptionsFragment extends ChromeBaseSettingsFragment {
     @IntDef({
         AutofillOptionsReferrer.SETTINGS,
         AutofillOptionsReferrer.DEEP_LINK_TO_SETTINGS,
+        AutofillOptionsReferrer.PAYMENT_METHODS_FRAGMENT,
+        AutofillOptionsReferrer.AUTOFILL_PROFILES_FRAGMENT,
         AutofillOptionsReferrer.COUNT
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -54,7 +62,13 @@ public class AutofillOptionsFragment extends ChromeBaseSettingsFragment {
         /** Corresponds to an external link opening Chrome. */
         int DEEP_LINK_TO_SETTINGS = 1;
 
-        int COUNT = 2;
+        /** Payment methods fragment in Chrome settings. */
+        int PAYMENT_METHODS_FRAGMENT = 2;
+
+        /** Profiles fragment in Chrome settings. */
+        int AUTOFILL_PROFILES_FRAGMENT = 3;
+
+        int COUNT = 4;
     }
 
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
@@ -91,6 +105,15 @@ public class AutofillOptionsFragment extends ChromeBaseSettingsFragment {
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mReferrer = getReferrerFromInstanceStateOrLaunchBundle(savedInstanceState);
+
+        if (sObserverForTest != null) {
+            sObserverForTest.onResult(this);
+        }
+    }
+
+    public static void setObserverForTest(Callback<Fragment> observerForTest) {
+        sObserverForTest = observerForTest;
+        ResettersForTesting.register(() -> sObserverForTest = null);
     }
 
     @Override
@@ -147,4 +170,13 @@ public class AutofillOptionsFragment extends ChromeBaseSettingsFragment {
     public @SettingsFragment.AnimationType int getAnimationType() {
         return SettingsFragment.AnimationType.PROPERTY;
     }
+
+    @Override
+    public @Nullable String getMainMenuKey() {
+        return "autofill_options";
+    }
+
+    public static final ChromeBaseSearchIndexProvider SEARCH_INDEX_DATA_PROVIDER =
+            new ChromeBaseSearchIndexProvider(
+                    AutofillOptionsFragment.class.getName(), R.xml.autofill_options_preferences);
 }

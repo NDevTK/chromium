@@ -13,7 +13,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
@@ -21,25 +21,25 @@ namespace blink {
 namespace {
 
 base::TimeTicks GetTimeOriginTimeTicks(V8TestingScope& v8_scope) {
-  return DOMWindowPerformance::performance(v8_scope.GetWindow())
+  return GlobalPerformance::performance(v8_scope.GetWindow())
       ->GetTimeOriginInternal();
 }
 
 DOMHighResTimeStamp GetTimeOriginNtp(V8TestingScope& v8_scope) {
-  return DOMWindowPerformance::performance(v8_scope.GetWindow())->timeOrigin() +
+  return GlobalPerformance::performance(v8_scope.GetWindow())->timeOrigin() +
          2208988800000.0;
 }
 
 }  // namespace
 
-TEST(PeerConnectionUtilTest, RTCEncodedFrameTimestampFromTimeTicks) {
+TEST(PeerConnectionUtilTest, RTCTimeStampFromTimeTicks) {
   test::TaskEnvironment task_environment;
   V8TestingScope v8_scope;
   // Use timestamps precise to 0.1ms, since that is the precision of
   // DOMHighResTimeStamp without cross-origin isolation.
   std::vector<double> timestamps_ms = {123.4, -123.4};
   for (double timestamp_ms : timestamps_ms) {
-    DOMHighResTimeStamp timestamp = RTCEncodedFrameTimestampFromTimeTicks(
+    DOMHighResTimeStamp timestamp = RTCTimeStampFromTimeTicks(
         v8_scope.GetExecutionContext(),
         GetTimeOriginTimeTicks(v8_scope) + base::Milliseconds(timestamp_ms));
     // Use 0.2ms as tolerance to account for the 0.1ms precision.

@@ -14,7 +14,7 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_error_event.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_provider_proxy.h"
@@ -87,7 +87,8 @@ Sensor::Sensor(ExecutionContext* execution_context,
              exception_state,
              sensor_type,
              features) {
-  use_screen_coords_ = (options->referenceFrame() == "screen");
+  use_screen_coords_ =
+      (options->referenceFrame() == V8LocalCoordinateSystem::Enum::kScreen);
 }
 
 Sensor::~Sensor() = default;
@@ -131,7 +132,7 @@ std::optional<DOMHighResTimeStamp> Sensor::timestamp(
     return std::nullopt;
   }
 
-  WindowPerformance* performance = DOMWindowPerformance::performance(*window);
+  WindowPerformance* performance = GlobalPerformance::performance(*window);
   DCHECK(performance);
   DCHECK(sensor_proxy_);
 
@@ -225,7 +226,7 @@ void Sensor::OnSensorReadingChanged() {
   // We also avoid scheduling if the elapsed time is slightly behind the
   // polling period.
   auto sensor_reading_changed =
-      WTF::BindOnce(&Sensor::NotifyReading, WrapWeakPersistent(this));
+      BindOnce(&Sensor::NotifyReading, WrapWeakPersistent(this));
   if (waitingTime < kWaitingIntervalThreshold) {
     // Invoke JS callbacks in a different callchain to obviate
     // possible modifications of SensorProxy::observers_ container
@@ -261,7 +262,7 @@ void Sensor::OnAddConfigurationRequestCompleted(bool result) {
 
   pending_activated_notification_ = PostCancellableTask(
       *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
-      WTF::BindOnce(&Sensor::NotifyActivated, WrapWeakPersistent(this)));
+      BindOnce(&Sensor::NotifyActivated, WrapWeakPersistent(this)));
 }
 
 void Sensor::Activate() {
@@ -312,8 +313,8 @@ void Sensor::RequestAddConfiguration() {
   DCHECK(sensor_proxy_);
   sensor_proxy_->AddConfiguration(
       configuration_->Clone(),
-      WTF::BindOnce(&Sensor::OnAddConfigurationRequestCompleted,
-                    WrapWeakPersistent(this)));
+      BindOnce(&Sensor::OnAddConfigurationRequestCompleted,
+               WrapWeakPersistent(this)));
 }
 
 void Sensor::HandleError(DOMExceptionCode code,
@@ -333,8 +334,8 @@ void Sensor::HandleError(DOMExceptionCode code,
                                                    unsanitized_message);
   pending_error_notification_ = PostCancellableTask(
       *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
-      WTF::BindOnce(&Sensor::NotifyError, WrapWeakPersistent(this),
-                    WrapPersistent(error)));
+      BindOnce(&Sensor::NotifyError, WrapWeakPersistent(this),
+               WrapPersistent(error)));
 }
 
 void Sensor::NotifyReading() {
@@ -354,8 +355,7 @@ void Sensor::NotifyActivated() {
     DCHECK(!pending_reading_notification_.IsActive());
     pending_reading_notification_ = PostCancellableTask(
         *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
-        WTF::BindOnce(&Sensor::OnSensorReadingChanged,
-                      WrapWeakPersistent(this)));
+        BindOnce(&Sensor::OnSensorReadingChanged, WrapWeakPersistent(this)));
   }
 
   DispatchEvent(*Event::Create(event_type_names::kActivate));

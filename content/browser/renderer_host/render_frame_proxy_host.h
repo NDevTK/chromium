@@ -19,7 +19,6 @@
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_process_host.h"
 #include "ipc/ipc_listener.h"
-#include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
@@ -84,7 +83,6 @@ class SiteInstanceGroup;
 // complete, the RenderFrameHost is deleted.
 class CONTENT_EXPORT RenderFrameProxyHost
     : public IPC::Listener,
-      public IPC::Sender,
       public blink::mojom::RemoteFrameHost,
       public blink::mojom::RemoteMainFrameHost {
  public:
@@ -166,11 +164,7 @@ class CONTENT_EXPORT RenderFrameProxyHost
 
   RenderViewHostImpl* GetRenderViewHost();
 
-  // IPC::Sender
-  bool Send(IPC::Message* msg) override;
-
   // IPC::Listener
-  bool OnMessageReceived(const IPC::Message& msg) override;
   std::string ToDebugString() override;
 
   CrossProcessFrameConnector* cross_process_frame_connector() {
@@ -231,7 +225,7 @@ class CONTENT_EXPORT RenderFrameProxyHost
   void RouteMessageEvent(
       const std::optional<blink::LocalFrameToken>& source_frame_token,
       const url::Origin& source_origin,
-      const std::u16string& target_origin,
+      const std::optional<url::Origin>& target_origin,
       blink::TransferableMessage message) override;
   void PrintCrossProcessSubframe(const gfx::Rect& rect,
                                  int document_cookie) override;
@@ -315,12 +309,6 @@ class CONTENT_EXPORT RenderFrameProxyHost
   // Helper to retrieve the |AgentSchedulingGroup| this proxy host is associated
   // with.
   AgentSchedulingGroupHost& GetAgentSchedulingGroup();
-
-  // Helper to compute the serialized source origin from an actual source origin
-  // for postMessage. This will ultimately be exposed to JavaScript via the
-  // message's event.origin field.
-  std::u16string SerializePostMessageSourceOrigin(
-      const url::Origin& source_origin);
 
   // Needed for tests to be able to swap the implementation and intercept calls.
   mojo::AssociatedReceiver<blink::mojom::RemoteFrameHost>&

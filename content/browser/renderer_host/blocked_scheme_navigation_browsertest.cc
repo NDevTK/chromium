@@ -22,6 +22,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
@@ -34,7 +35,6 @@
 #include "content/shell/browser/shell_download_manager_delegate.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "storage/common/file_system/file_system_mount_option.h"
 #include "storage/common/file_system/file_system_types.h"
@@ -137,22 +137,20 @@ void RegisterFakePlugin() {
   plugin_info.mime_types.emplace_back(kPdfMimeType, kPdfFileType,
                                       std::string());
   auto* plugin_service = PluginService::GetInstance();
-  plugin_service->RegisterInternalPlugin(plugin_info, false);
-  plugin_service->RefreshPlugins();
+  plugin_service->RegisterInternalPlugin(plugin_info);
+  plugin_service->GetPlugins();
 }
 
 void UnregisterFakePlugin() {
   auto* plugin_service = PluginService::GetInstance();
-  std::vector<WebPluginInfo> plugins;
-  plugin_service->GetInternalPlugins(&plugins);
-  EXPECT_EQ(1u, plugins.size());
+  const std::vector<WebPluginInfo> plugins =
+      plugin_service->GetInternalPluginsForTesting();
+  ASSERT_EQ(1u, plugins.size());
 
   plugin_service->UnregisterInternalPlugin(plugins[0].path);
-  plugin_service->RefreshPlugins();
+  plugin_service->GetPlugins();
 
-  plugins.clear();
-  plugin_service->GetInternalPlugins(&plugins);
-  EXPECT_TRUE(plugins.empty());
+  EXPECT_TRUE(plugin_service->GetInternalPluginsForTesting().empty());
 }
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 

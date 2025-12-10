@@ -5,14 +5,8 @@
 #include "content/browser/preloading/prefetch/prefetch_handle_impl.h"
 
 #include "base/functional/callback.h"
-#include "content/browser/browser_context_impl.h"
 #include "content/browser/preloading/prefetch/prefetch_response_reader.h"
 #include "content/browser/preloading/prefetch/prefetch_service.h"
-#include "content/browser/preloading/prefetch/prefetch_type.h"
-#include "content/public/browser/preloading_data.h"
-#include "content/public/browser/web_contents.h"
-#include "services/network/public/cpp/url_loader_completion_status.h"
-#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace content {
 
@@ -58,8 +52,14 @@ void PrefetchContainerObserver::OnDeterminedHead(
 }
 
 void PrefetchContainerObserver::OnPrefetchCompletedOrFailed(
+    PrefetchContainer& prefetch_container,
     const network::URLLoaderCompletionStatus& completion_status,
     const std::optional<int>& response_code) {
+  // `IsDecoy()` check is added to preserve the existing behavior.
+  // https://crbug.com/400761083
+  if (prefetch_container.IsDecoy()) {
+    return;
+  }
   if (on_prefetch_completed_or_failed_) {
     on_prefetch_completed_or_failed_.Run(completion_status, response_code);
   }
@@ -97,6 +97,10 @@ PrefetchHandleImpl::~PrefetchHandleImpl() {
         case PrefetchContainer::LoadState::kFailedHeldback:
           break;
         case PrefetchContainer::LoadState::kStarted:
+        case PrefetchContainer::LoadState::kDeterminedHead:
+        case PrefetchContainer::LoadState::kFailedDeterminedHead:
+        case PrefetchContainer::LoadState::kCompleted:
+        case PrefetchContainer::LoadState::kFailed:
           prefetch_container_->SetPrefetchStatus(
               *prefetch_status_on_release_started_prefetch_);
           break;

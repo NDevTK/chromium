@@ -169,6 +169,7 @@ Value::List ChromePolicyConversionsClient::GetExtensionPolicies(
     extension_policies_data.Set(policy::kNameKey, extension->name());
     extension_policies_data.Set(policy::kIdKey, extension->id());
     extension_policies_data.Set("forSigninScreen", for_signin_screen);
+    extension_policies_data.Set("isExtension", true);
     extension_policies_data.Set(policy::kPoliciesKey,
                                 std::move(extension_policies));
     policies.Append(std::move(extension_policies_data));
@@ -267,7 +268,8 @@ Value::Dict ChromePolicyConversionsClient::GetIdentityFields() {
   BrowserPolicyConnectorAsh* connector =
       g_browser_process->platform_part()->browser_policy_connector_ash();
   if (!connector) {
-    LOG(ERROR) << "Cannot dump identity fields, no policy connector";
+    LOG_POLICY(ERROR, POLICY_PROCESSING)
+        << "Cannot dump identity fields, no policy connector";
     return Value::Dict();
   }
   if (connector->IsDeviceEnterpriseManaged()) {

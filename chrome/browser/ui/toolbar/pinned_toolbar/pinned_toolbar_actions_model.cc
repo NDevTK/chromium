@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/functional/bind.h"
+#include "base/logging.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/notreached.h"
@@ -244,8 +245,7 @@ void PinnedToolbarActionsModel::MaybeMigrateExistingPinnedStates() {
     UpdatePinnedState(kActionTabSearch, true);
     pref_service_->SetBoolean(prefs::kTabSearchMigrationComplete, true);
   }
-  if (base::FeatureList::IsEnabled(features::kPinnedCastButton) &&
-      !pref_service_->GetBoolean(prefs::kPinnedCastMigrationComplete)) {
+  if (!pref_service_->GetBoolean(prefs::kPinnedCastMigrationComplete)) {
     bool previously_pinned =
         pref_service_->GetBoolean(prefs::kShowCastIconInToolbar);
     UpdatePinnedState(kActionRouteMedia, previously_pinned);

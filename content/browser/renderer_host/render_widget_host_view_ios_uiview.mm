@@ -389,21 +389,169 @@ static void* kObservingContext = &kObservingContext;
   return [[BlinkExtendedTextInputTraits alloc] init];
 }
 
+- (std::string)moveSelectionCommand:(UITextLayoutDirection)direction {
+  switch (direction) {
+    case UITextLayoutDirectionLeft:
+      return "moveLeft";
+    case UITextLayoutDirectionRight:
+      return "moveRight";
+    case UITextLayoutDirectionUp:
+      return "moveUp";
+    case UITextLayoutDirectionDown:
+      return "moveDown";
+  }
+  NOTREACHED() << "Unknown Text Layout Direction";
+}
+
 - (void)moveInLayoutDirection:(UITextLayoutDirection)direction {
+  CHECK(_view);
+  _view->ExecuteEditCommand([self moveSelectionCommand:direction]);
+}
+
+- (std::string)extendSelectionCommand:(UITextLayoutDirection)direction {
+  switch (direction) {
+    case UITextLayoutDirectionLeft:
+      return "moveLeftAndModifySelection";
+    case UITextLayoutDirectionRight:
+      return "moveRightAndModifySelection";
+    case UITextLayoutDirectionUp:
+      return "moveUpAndModifySelection";
+    case UITextLayoutDirectionDown:
+      return "moveDownAndModifySelection";
+  }
+  NOTREACHED() << "Unknown Text Layout Direction";
 }
 
 - (void)extendInLayoutDirection:(UITextLayoutDirection)direction {
+  CHECK(_view);
+  _view->ExecuteEditCommand([self extendSelectionCommand:direction]);
+}
+
+- (std::vector<std::string>)
+    moveSelectionCommands:(UITextStorageDirection)direction
+            byGranularity:(UITextGranularity)granularity {
+  if (granularity == UITextGranularityCharacter) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveForward"}
+               : std::vector<std::string>{"moveBackward"};
+  }
+  if (granularity == UITextGranularityWord) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveWordForward"}
+               : std::vector<std::string>{"moveWordBackward"};
+  }
+  if (granularity == UITextGranularitySentence) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveToEndOfSentence"}
+               : std::vector<std::string>{"moveToBeginningOfSentence"};
+  }
+  if (granularity == UITextGranularityParagraph) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveForward", "moveToEndOfParagraph"}
+               : std::vector<std::string>{"moveBackward",
+                                          "moveToBeginningOfParagraph"};
+  }
+  if (granularity == UITextGranularityLine) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveToEndOfLine"}
+               : std::vector<std::string>{"moveToBeginningOfLine"};
+  }
+  return direction == UITextStorageDirectionForward
+             ? std::vector<std::string>{"moveToEndOfDocument"}
+             : std::vector<std::string>{"moveToBeginningOfDocument"};
 }
 
 - (void)moveInStorageDirection:(UITextStorageDirection)direction
                  byGranularity:(UITextGranularity)granularity {
+  CHECK(_view);
+  for (const auto& command : [self moveSelectionCommands:direction
+                                           byGranularity:granularity]) {
+    _view->ExecuteEditCommand(command);
+  }
+}
+
+- (std::vector<std::string>)
+    extendSelectionCommands:(UITextStorageDirection)direction
+              byGranularity:(UITextGranularity)granularity {
+  if (granularity == UITextGranularityCharacter) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveBackwardAndModifySelection"}
+               : std::vector<std::string>{"moveForwardAndModifySelection"};
+  }
+  if (granularity == UITextGranularityWord) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveWordForwardAndModifySelection"}
+               : std::vector<std::string>{"moveWordBackwardAndModifySelection"};
+  }
+  if (granularity == UITextGranularitySentence) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<
+                     std::string>{"moveToEndOfSentenceAndModifySelection"}
+               : std::vector<std::string>{
+                     "moveToBeginningOfSentenceAndModifySelection"};
+  }
+  if (granularity == UITextGranularityParagraph) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<
+                     std::string>{"moveForwardAndModifySelection",
+                                  "moveToEndOfParagraphAndModifySelection"}
+               : std::vector<std::string>{
+                     "moveBackwardAndModifySelection",
+                     "moveToBeginningOfParagraphAndModifySelection"};
+  }
+  if (granularity == UITextGranularityLine) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"moveToEndOfLineAndModifySelection"}
+               : std::vector<std::string>{
+                     "moveToBeginningOfLineAndModifySelection"};
+  }
+  return direction == UITextStorageDirectionForward
+             ? std::vector<std::string>{"moveToEndOfDocumentAndModifySelection"}
+             : std::vector<std::string>{
+                   "moveToBeginningOfDocumentAndModifySelection"};
 }
 
 - (void)extendInStorageDirection:(UITextStorageDirection)direction
                    byGranularity:(UITextGranularity)granularity {
+  CHECK(_view);
+  for (const auto& command : [self extendSelectionCommands:direction
+                                             byGranularity:granularity]) {
+    _view->ExecuteEditCommand(command);
+  }
 }
 
 - (BOOL)canPerformAction:(SEL)action withSender:(nullable id)sender {
+  return YES;
+}
+
+- (BOOL)shouldInsertCharacter:(const blink::WebKeyboardEvent&)webKeyboardEvent {
+  size_t textLength =
+      std::char_traits<char16_t>::length(webKeyboardEvent.text.data());
+
+  // For inputting emojis (multiple characters)
+  if (textLength > 1) {
+    return YES;
+  }
+
+  if (textLength == 0) {
+    return NO;
+  }
+
+  // Check the first character if text is available
+  char16_t ch = webKeyboardEvent.text[0];
+  if (ch < ' ') {
+    return NO;
+  }
+
+  // Check for ASCII control characters with modifiers
+  if (ch < 0x80) {
+    int modifiers = webKeyboardEvent.GetModifiers();
+    if ((modifiers & blink::WebInputEvent::kControlKey) ||
+        (modifiers & blink::WebInputEvent::kMetaKey)) {
+      return NO;
+    }
+  }
+
   return YES;
 }
 
@@ -425,12 +573,20 @@ static void* kObservingContext = &kObservingContext;
   if (entry.state == BEKeyPressState::BEKeyPressStateDown) {
     BEKeyEntryContext* contextForKeyDown =
         [[BEKeyEntryContext alloc] initWithKeyEntry:entry];
-    [contextForKeyDown setDocumentEditable:YES];
-    [contextForKeyDown setShouldInsertCharacter:YES];
-    [[self asyncInputDelegate]
+    [contextForKeyDown setDocumentEditable:[self isEditable]];
+    // To trigger key commands correctly, e.g. trigger
+    // `transposeCharactersAroundSelection` on Ctrl+T, we need to set
+    // `shouldInsertCharacter` to NO when users are not inputing characters.
+    // Otherwise, the key commands will not be triggered.
+    blink::WebKeyboardEvent webKeyboardEvent =
+        input::WebKeyboardEventBuilder::Build(
+            base::apple::OwnedBEKeyEntry(entry));
+    [contextForKeyDown
+        setShouldInsertCharacter:[self shouldInsertCharacter:webKeyboardEvent]];
+    BOOL handled = [[self asyncInputDelegate]
         shouldDeferEventHandlingToSystemForTextInput:self
                                              context:contextForKeyDown];
-    completionHandler(entry, YES);
+    completionHandler(entry, handled);
   } else {
     completionHandler(entry, NO);
   }
@@ -440,14 +596,72 @@ static void* kObservingContext = &kObservingContext;
                               toState:(BEKeyModifierFlags)newState {
 }
 
+- (std::vector<std::string>)
+    deleteSelectionCommands:(UITextStorageDirection)direction
+              toGranularity:(UITextGranularity)granularity {
+  if (granularity == UITextGranularityCharacter) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"deleteForward"}
+               : std::vector<std::string>{"deleteBackward"};
+  }
+  if (granularity == UITextGranularityWord) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"deleteWordForward"}
+               : std::vector<std::string>{"deleteWordBackward"};
+  }
+  if (granularity == UITextGranularitySentence) {
+    return {direction == UITextStorageDirectionForward
+                ? "moveToEndOfSentenceAndModifySelection"
+                : "moveToBeginningOfSentenceAndModifySelection",
+            "deleteBackward"};
+  }
+  if (granularity == UITextGranularityParagraph) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"deleteToEndOfParagraph"}
+               : std::vector<std::string>{"deleteToBeginningOfParagraph"};
+  }
+  if (granularity == UITextGranularityLine) {
+    return direction == UITextStorageDirectionForward
+               ? std::vector<std::string>{"deleteToEndOfLine"}
+               : std::vector<std::string>{"deleteToBeginningOfLine"};
+  }
+  return {direction == UITextStorageDirectionForward
+              ? "moveToEndOfDocumentAndModifySelection"
+              : "moveToBeginningOfDocumentAndModifySelection",
+          "deleteBackward"};
+}
+
 - (void)deleteInDirection:(UITextStorageDirection)direction
             toGranularity:(UITextGranularity)granularity {
   CHECK(_view);
-  // TODO: bug 388320178 - support multi-emoji & direction
-  _view->DeleteSurroundingText(1, 0);
+  for (const auto& command : [self deleteSelectionCommands:direction
+                                             toGranularity:granularity]) {
+    _view->ExecuteEditCommand(command);
+  }
 }
 
 - (void)transposeCharactersAroundSelection {
+  CHECK(_view);
+  _view->ExecuteEditCommand("transpose");
+}
+
+- (BOOL)replaceText:(NSString*)originalText
+           withText:(NSString*)replacementText {
+  if (replacementText == originalText) {
+    return NO;
+  }
+
+  // If we call ExtendSelectionAndReplace with an empty replacementText,
+  // textarea will be broken, users cannot focus and input in textarea.
+  // TODO(crbug.com/428561251): Call ExtendSelectionAndReplace with an empty
+  // replacementText will make textarea broken
+  if (!replacementText.length) {
+    _view->ExtendSelectionAndDelete(originalText.length, 0);
+  } else {
+    _view->ExtendSelectionAndReplace(originalText.length, 0,
+                                     base::SysNSStringToUTF16(replacementText));
+  }
+  return YES;
 }
 
 - (void)replaceText:(NSString*)originalText
@@ -455,35 +669,10 @@ static void* kObservingContext = &kObservingContext;
               options:(BETextReplacementOptions)options
     completionHandler:
         (void (^)(NSArray<UITextSelectionRect*>* rects))completionHandler {
-  if (replacementText == originalText) {
+  if (![self replaceText:originalText withText:replacementText]) {
     completionHandler(@[]);
     return;
   }
-
-  auto* state = [self editState];
-  if (!state) {
-    completionHandler(@[]);
-    return;
-  }
-
-  auto originalRange = state->selection;
-  if (state->selection.is_empty()) {
-    auto pos = state->selection.start();
-    auto len = originalText.length;
-    auto start = pos > len ? pos - len : 0;
-    auto end = start + len;
-    originalRange = gfx::Range(start, end);
-  }
-
-  auto textForRange =
-      [[self editText] substringWithRange:originalRange.ToNSRange()];
-  if (textForRange != originalText) {
-    completionHandler(@[]);
-    return;
-  }
-
-  _view->ImeCommitText(base::SysNSStringToUTF16(replacementText), originalRange,
-                       0);
 
   // TODO: bug 388320178 - still don't know what to do with this.
   completionHandler(@[]);
@@ -731,6 +920,7 @@ static void* kObservingContext = &kObservingContext;
 }
 
 - (void)replaceDictatedText:(NSString*)oldText withText:(NSString*)newText {
+  [self replaceText:oldText withText:newText];
 }
 
 - (void)didInsertFinalDictationResult {
@@ -744,6 +934,8 @@ static void* kObservingContext = &kObservingContext;
 }
 
 - (void)insertTextAlternatives:(BETextAlternatives*)alternatives {
+  auto text = alternatives.primaryString;
+  [self insertText:text];
 }
 
 - (void)insertTextPlaceholderWithSize:(CGSize)size
@@ -806,8 +998,7 @@ static void* kObservingContext = &kObservingContext;
 
 - (void)deleteBackward {
   CHECK(_view);
-  // TODO: bug 388320178 - support multi-emoji
-  _view->DeleteSurroundingText(1, 0);
+  _view->ExecuteEditCommand("deleteBackward");
 }
 
 - (void)setSelectedTextRange:(UITextRange*)range {

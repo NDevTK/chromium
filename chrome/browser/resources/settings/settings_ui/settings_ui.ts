@@ -16,6 +16,7 @@ import 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar_search_field.js';
 import 'chrome://resources/cr_elements/cr_page_host_style.css.js';
 import 'chrome://resources/cr_elements/icons.html.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import '/shared/settings/prefs/prefs.js';
 import '../icons.html.js';
 import '../settings_main/settings_main.js';
 import '../settings_menu/settings_menu.js';
@@ -134,7 +135,7 @@ export class SettingsUiElement extends SettingsUiElementBase {
       controlledSettingParent:
           loadTimeData.getString('controlledSettingParent'),
 
-      // <if expr="chromeos_ash">
+      // <if expr="is_chromeos">
       controlledSettingShared:
           loadTimeData.getString('controlledSettingShared'),
       controlledSettingWithOwner:
@@ -143,14 +144,6 @@ export class SettingsUiElement extends SettingsUiElementBase {
           loadTimeData.getString('controlledSettingNoOwner'),
       // </if>
     };
-
-    this.addEventListener('show-container', () => {
-      this.$.container.style.visibility = 'visible';
-    });
-
-    this.addEventListener('hide-container', () => {
-      this.$.container.style.visibility = 'hidden';
-    });
 
     this.addEventListener('refresh-pref', this.onRefreshPref_.bind(this));
   }
@@ -269,8 +262,8 @@ export class SettingsUiElement extends SettingsUiElementBase {
    */
   private onMenuClose_() {
     if (!this.$.drawer.wasCanceled()) {
-      // If a navigation happened, MainPageMixin#currentRouteChanged
-      // handles focusing the corresponding section.
+      // If a navigation happened, SettingsMain handles focusing the
+      // corresponding section.
       return;
     }
 

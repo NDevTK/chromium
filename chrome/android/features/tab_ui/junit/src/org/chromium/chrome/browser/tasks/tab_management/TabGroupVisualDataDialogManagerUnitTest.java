@@ -92,6 +92,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
         TabGroupSyncFeaturesJni.setInstanceForTesting(mTabGroupSyncFeaturesJniMock);
         SyncServiceFactory.setInstanceForTesting(mSyncService);
 
+        doReturn(true).when(mTabGroupModelFilter).tabGroupExists(TAB_GROUP_ID);
         doReturn(mTabModel).when(mTabGroupModelFilter).getTabModel();
         doReturn(mProfile).when(mTabModel).getProfile();
         doReturn(true).when(mTabGroupSyncFeaturesJniMock).isTabGroupSyncEnabled(mProfile);
@@ -149,7 +150,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
         Assert.assertEquals(View.GONE, description.getVisibility());
         verify(mTracker, never()).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
 
-        mTabGroupVisualDataDialogManager.hideDialog();
+        mTabGroupVisualDataDialogManager.onHideDialog();
         verify(mTracker, never()).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 
@@ -177,7 +178,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                 description.getText());
         verify(mTracker).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
 
-        mTabGroupVisualDataDialogManager.hideDialog();
+        mTabGroupVisualDataDialogManager.onHideDialog();
         verify(mTracker).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 
@@ -206,7 +207,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                 description.getText());
         verify(mTracker).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
 
-        mTabGroupVisualDataDialogManager.hideDialog();
+        mTabGroupVisualDataDialogManager.onHideDialog();
         verify(mTracker).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 }

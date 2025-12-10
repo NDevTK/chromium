@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 
 #include "services/network/public/cpp/web_sandbox_flags.h"
+#include "skia/ext/font_utils.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
@@ -133,6 +134,7 @@ const HitTestResult::NodeSet& RenderingTest::RectBasedHitTest(
 
 void RenderingTest::SetUp() {
   GetChromeClient().SetUp();
+  skia::InitializeFontRendering();
   SetupPageWithClients(&GetChromeClient(), local_frame_client_,
                        SettingOverrider());
   EXPECT_TRUE(
@@ -161,7 +163,7 @@ void RenderingTest::TearDown() {
 
 void RenderingTest::SetChildFrameHTML(const String& html) {
   ChildDocument().SetBaseURLOverride(KURL("http://test.com"));
-  ChildDocument().body()->setInnerHTML(html, ASSERT_NO_EXCEPTION);
+  ChildDocument().body()->SetInnerHTMLWithoutTrustedTypes(html);
 
   // Setting HTML implies the frame loads contents, so we need to advance the
   // state machine to leave the initial empty document state.

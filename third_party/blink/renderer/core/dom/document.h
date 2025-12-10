@@ -39,6 +39,7 @@
 #include "base/dcheck_is_on.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/stack_allocated.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/uuid.h"
@@ -50,6 +51,7 @@
 #include "third_party/blink/public/common/metrics/document_update_reason.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/css/preferred_color_scheme.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/css/preferred_contrast.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/color_scheme.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/page/page.mojom-blink-forward.h"
@@ -83,6 +85,7 @@
 #include "third_party/blink/renderer/core/frame/widget_creation_observer.h"
 #include "third_party/blink/renderer/core/html/forms/listed_element.h"
 #include "third_party/blink/renderer/core/html/parser/parser_synchronization_policy.h"
+#include "third_party/blink/renderer/platform/forward_declared_member.h"
 #include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
@@ -91,11 +94,9 @@
 #include "third_party/blink/renderer/platform/heap_observer_list.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cancellable_task.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
-#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
@@ -150,6 +151,7 @@ class AnimationClock;
 class AriaNotificationOptions;
 class Attr;
 class BeforeUnloadEventListener;
+class ViewTransitionSupplement;
 class CaretPosition;
 class CaretPositionFromPointOptions;
 class CDATASection;
@@ -186,9 +188,9 @@ class Event;
 class EventFactoryBase;
 class EventListener;
 class ExceptionState;
+class FocusOptions;
 class FocusedElementChangeObserver;
 class FontFaceSet;
-class FontMatchingMetrics;
 class FormController;
 class FragmentDirective;
 class FrameCallback;
@@ -236,6 +238,7 @@ class ResizeObserver;
 class Resource;
 class ResourceFetcher;
 class RootScrollerController;
+class RouteMap;
 class SVGDocumentExtensions;
 class SVGUseElement;
 class ScriptElementBase;
@@ -270,6 +273,34 @@ class VisitedLinkState;
 class WebMouseEvent;
 class WorkletAnimationController;
 class V8VisibilityState;
+
+class AnchorElementMetricsSender;
+class AnchorElementViewportPositionTracker;
+class AnnotationAgentContainerImpl;
+class CSSSelectorWatch;
+class DisabledAccelerationCounterSupplement;
+class DocumentFencedFrames;
+class DocumentParserTiming;
+class DocumentSpeculationRules;
+class DocumentStorageAccess;
+class DocumentXPathEvaluator;
+class DocumentXSLT;
+class FontFaceSetDocument;
+class InteractiveDetector;
+class PaintTiming;
+class PatchSupplement;
+class PictureInPictureController;
+class RenderBlockingMetricsReporter;
+class RouteMap;
+class TransferToGPUTextureInvokedSupplement;
+class AIPageContentAgent;
+class BrowsingTopicsDocumentSupplement;
+class CredentialMetrics;
+class DocumentMetadataServer;
+class FrameMetadataObserverRegistry;
+class InnerHtmlAgent;
+class InnerTextAgent;
+class RTCPeerConnectionController;
 
 template <typename EventType>
 class EventWithHitTestResults;
@@ -356,8 +387,7 @@ struct UnloadEventTimingInfo {
 class CORE_EXPORT Document : public ContainerNode,
                              public TreeScope,
                              public UseCounter,
-                             public WidgetCreationObserver,
-                             public Supplementable<Document> {
+                             public WidgetCreationObserver {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -388,11 +418,6 @@ class CORE_EXPORT Document : public ContainerNode,
 
   void MediaQueryAffectingValueChanged(MediaValueChange change);
 
-  // SetMediaFeatureEvaluated and WasMediaFeatureEvaluated are used to prevent
-  // UKM sampling of CSS media features more than once per document.
-  void SetMediaFeatureEvaluated(int feature);
-  bool WasMediaFeatureEvaluated(int feature);
-
   using TreeScope::getElementById;
 
   bool IsInitialEmptyDocument() const { return is_initial_empty_document_; }
@@ -406,14 +431,6 @@ class CORE_EXPORT Document : public ContainerNode,
   bool IsPrerendering() const { return is_prerendering_; }
 
   bool HasDocumentPictureInPictureWindow() const;
-
-  void SetIsTrackingSoftNavigationHeuristics(bool value) {
-    is_tracking_soft_navigation_heuristics_ = value;
-  }
-
-  bool IsTrackingSoftNavigationHeuristics() const {
-    return is_tracking_soft_navigation_heuristics_;
-  }
 
   network::mojom::ReferrerPolicy GetReferrerPolicy() const;
 
@@ -437,6 +454,7 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // DOM methods & attributes for Document
 
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(autofill, kAutofill)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(beforecopy, kBeforecopy)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(beforecut, kBeforecut)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(beforepaste, kBeforepaste)
@@ -501,7 +519,8 @@ class CORE_EXPORT Document : public ContainerNode,
   // autonomous custom elements and customized built-in elements.
   Element* CreateElement(const QualifiedName&,
                          const CreateElementFlags,
-                         const AtomicString& is);
+                         const AtomicString& is,
+                         CustomElementRegistry*);
 
   Element* createElementNS(const AtomicString& namespace_uri,
                            const AtomicString& qualified_name,
@@ -511,8 +530,6 @@ class CORE_EXPORT Document : public ContainerNode,
       const AtomicString& qualified_name,
       const V8UnionElementCreationOptionsOrString* string_or_options,
       ExceptionState& exception_state);
-
-  CustomElementRegistry* customElementRegistry() const override;
 
   // Creates an element without custom element processing.
   Element* CreateRawElement(const QualifiedName&,
@@ -588,8 +605,6 @@ class CORE_EXPORT Document : public ContainerNode,
   void DidChangeVisibilityState();
 
   bool prerendering() const;
-
-  uint32_t softNavigations() const;
 
   bool wasDiscarded() const;
   void SetWasDiscarded(bool);
@@ -688,6 +703,15 @@ class CORE_EXPORT Document : public ContainerNode,
     return HaveScriptBlockingStylesheetsLoaded();
   }
 
+  // Returns true if the document is prerendering and its trigger asks it to
+  // block script execution until prerender activation, and turns false upon
+  // activation where we anyway no longer want to block script execution; see
+  // `UnblockScriptExecutionForPrerenderActivation`. Note that it never starts
+  // to block or unblock script execution in the middle of execution, since
+  // the field is set to true when initializing `this` instance and set to false
+  // only once (upon activation).
+  bool IsScriptBlockedUntilPrerenderActivation() const;
+
   bool IsForExternalHandler() const { return is_for_external_handler_; }
 
   StyleEngine& GetStyleEngine() const {
@@ -695,7 +719,12 @@ class CORE_EXPORT Document : public ContainerNode,
     return *style_engine_.Get();
   }
 
+  void UpdateForcedColors();
+  bool InForcedColorsMode() const;
+  bool InDarkMode();
+
   mojom::blink::PreferredColorScheme GetPreferredColorScheme() const;
+  mojom::blink::PreferredContrast GetPreferredContrast() const;
 
   void ScheduleUseShadowTreeUpdate(SVGUseElement&);
   void UnscheduleUseShadowTreeUpdate(SVGUseElement&);
@@ -1113,7 +1142,9 @@ class CORE_EXPORT Document : public ContainerNode,
   bool SetFocusedElement(Element*, const FocusParams&);
   void ClearFocusedElement(bool omit_blur_events = false);
   Element* FocusedElement() const { return focused_element_.Get(); }
+  const FocusOptions* GetFocusOptions() const { return focus_options_.Get(); }
   void ClearFocusedElementIfNeeded();
+  void UpdateFocusgroupLastFocused(Element& focused_element);
   UserActionElementSet& UserActionElements() { return user_action_elements_; }
   const UserActionElementSet& UserActionElements() const {
     return user_action_elements_;
@@ -1444,6 +1475,9 @@ class CORE_EXPORT Document : public ContainerNode,
   V8HTMLOrSVGScriptElement* currentScriptForBinding() const;
   void PushCurrentScript(ScriptElementBase*);
   void PopCurrentScript(ScriptElementBase*);
+  bool IsCurrentScriptStackEmpty() const {
+    return current_script_stack_.empty();
+  }
 
   void SetTransformSource(std::unique_ptr<TransformSource>);
   TransformSource* GetTransformSource() const {
@@ -1520,7 +1554,7 @@ class CORE_EXPORT Document : public ContainerNode,
   bool AllowInlineEventHandler(Node*,
                                EventListener*,
                                const String& context_url,
-                               const WTF::OrdinalNumber& context_line);
+                               const OrdinalNumber& context_line);
 
   void StatePopped(scoped_refptr<SerializedScriptValue>);
 
@@ -1705,19 +1739,34 @@ class CORE_EXPORT Document : public ContainerNode,
   HeapHashSet<Member<HTMLElement>>& PopoversWaitingToHide() {
     return popovers_waiting_to_hide_;
   }
+  // PopoverPointerdownTarget is used by the popover light dismiss system, to
+  // track pointer events that might light-dismiss popovers.
   const HTMLElement* PopoverPointerdownTarget() const {
     return popover_pointerdown_target_.Get();
   }
   void SetPopoverPointerdownTarget(const HTMLElement*);
-  std::optional<gfx::PointF> CustomizableSelectMousedownLocation() const {
-    return customizable_select_mousedown_location_;
-  }
-  void SetCustomizableSelectMousedownLocation(std::optional<gfx::PointF>);
+  // DialogPointerdownTarget is used by the dialog light dismiss (`closedby`)
+  // system, to track pointer events that might light-dismiss dialogs.
   const HTMLDialogElement* DialogPointerdownTarget() const;
   void SetDialogPointerdownTarget(const HTMLDialogElement*);
+  // PopoverPickerPointerdown* is used by both customizable-<select> and the
+  // <menuitem> element for mousedown-drag-mouseup type interactions. If the
+  // `target` member is nullptr, no pointerdown info is stored.
+  struct PopoverPickerPointerdownInfo {
+    DISALLOW_NEW();
+    Member<Node> target;
+    gfx::PointF location;
+    void Trace(Visitor* visitor) const { visitor->Trace(target); }
+  };
+  PopoverPickerPointerdownInfo PopoverPickerPointerdown() const;
+  void SetPopoverPickerPointerdown(PopoverPickerPointerdownInfo);
 
   HeapLinkedHashSet<Member<HTMLDialogElement>>& AllOpenDialogs() {
     return all_open_dialogs_;
+  }
+
+  HeapLinkedHashSet<Member<Element>>& ElementsWithInterest() {
+    return elements_with_interest_;
   }
 
   // https://crbug.com/1453291
@@ -1726,6 +1775,8 @@ class CORE_EXPORT Document : public ContainerNode,
   DocumentPartRoot& getPartRoot();
   DocumentPartRoot& EnsureDocumentPartRoot();
   bool DOMPartsInUse() const { return document_part_root_ != nullptr; }
+
+  RouteMap* routeMap();
 
   // A non-null template_document_host_ implies that |this| was created by
   // EnsureTemplateDocument().
@@ -1739,6 +1790,12 @@ class CORE_EXPORT Document : public ContainerNode,
   void DidChangeFormRelatedElementDynamically(HTMLElement*,
                                               WebFormRelatedChangeType);
 
+  // Please familiarize yourself with http://goo.gle/devtools-console-policy
+  // prior to adding new console messages, and make sure that you understand the
+  // implications on the developer experience. A good console message should be
+  // actionable and relevant to what the developer is currently doing. Using the
+  // DevTools Console panel as a means to advertise best practices or Chromium
+  // agendas has shown to be counterproductive.
   void AddConsoleMessage(ConsoleMessage* message,
                          bool discard_duplicates = false) const;
 
@@ -1859,11 +1916,6 @@ class CORE_EXPORT Document : public ContainerNode,
   ukm::UkmRecorder* UkmRecorder();
   ukm::SourceId UkmSourceID() const;
 
-  // Tracks and reports UKM metrics of the number of attempted font family match
-  // attempts (both successful and not successful) by the page. This will return
-  // null if the document is stopped.
-  FontMatchingMetrics* GetFontMatchingMetrics();
-
   void MaybeRecordSvgImageProcessingTime(
       int data_change_count,
       base::TimeDelta data_change_elapsed_time) const;
@@ -1956,9 +2008,12 @@ class CORE_EXPORT Document : public ContainerNode,
   // modified. Re-collect the META values.
   void SupportsReducedMotionMetaChanged();
 
+  void RequestResizeResponsiveIframe(ExceptionState* = nullptr);
+
   // A META element with name=responsive-embedded-sizing was added, removed, or
   // modified. Re-collect the META values.
   void ResponsiveEmbeddedSizingChanged();
+  void SetResponsiveEmbeddedSizing() { responsive_embedded_sizing_ = true; }
 
   // Use counter related functions.
   void CountUse(mojom::WebFeature feature) final;
@@ -1983,10 +2038,6 @@ class CORE_EXPORT Document : public ContainerNode,
   bool IsAnimatedPropertyCounted(CSSPropertyID property) const;
   void ClearUseCounterForTesting(mojom::WebFeature);
   void ClearWebDXFeatureCounterForTesting(mojom::blink::WebDXFeature);
-
-  void UpdateForcedColors();
-  bool InForcedColorsMode() const;
-  bool InDarkMode();
 
   const ui::ColorProvider* GetColorProviderForPainting(
       mojom::blink::ColorScheme color_scheme) const;
@@ -2161,7 +2212,7 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // https://github.com/whatwg/html/pull/9538
   static Document* parseHTMLUnsafe(ExecutionContext* context,
-                                   const String& html,
+                                   const V8UnionStringOrTrustedHTML* html,
                                    ExceptionState& exception_state);
 
   // https://wicg.github.io/sanitizer-api/#framework
@@ -2170,7 +2221,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // the |options| parameter. Long-term, the two parseHTMLUnsage methods
   // should be merged.
   static Document* parseHTMLUnsafe(ExecutionContext* context,
-                                   const String& html,
+                                   const V8UnionStringOrTrustedHTML* html,
                                    SetHTMLUnsafeOptions* options,
                                    ExceptionState& exception_state);
   static Document* parseHTML(ExecutionContext* context,
@@ -2249,6 +2300,236 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // WidgetCreationObserver implementation
   void OnLocalRootWidgetCreated() override;
+
+  // https://dom.spec.whatwg.org/#effective-global-custom-element-registry
+  // A document's effective global custom element registry is its own registry
+  // if the registry is global, otherwise the effective global registry is
+  // nullptr.
+  CustomElementRegistry* EffectiveGlobalCustomElementRegistry() const;
+
+  ViewTransitionSupplement* GetViewTransitionsIfExists() const {
+    return view_transitions_;
+  }
+
+  ViewTransitionSupplement& GetViewTransitions() {
+    if (view_transitions_) {
+      return *view_transitions_;
+    } else {
+      return CreateViewTransitions();
+    }
+  }
+
+  AnchorElementMetricsSender* GetAnchorElementMetricsSender() const {
+    return anchor_element_metrics_sender_;
+  }
+  void SetAnchorElementMetricsSender(
+      AnchorElementMetricsSender* anchor_element_metrics_sender) {
+    anchor_element_metrics_sender_ = anchor_element_metrics_sender;
+  }
+
+  AnchorElementViewportPositionTracker*
+  GetAnchorElementViewportPositionTracker() const {
+    return anchor_element_viewport_position_tracker_;
+  }
+  void SetAnchorElementViewportPositionTracker(
+      AnchorElementViewportPositionTracker*
+          anchor_element_viewport_position_tracker) {
+    anchor_element_viewport_position_tracker_ =
+        anchor_element_viewport_position_tracker;
+  }
+
+  AnnotationAgentContainerImpl* GetAnnotationAgentContainerImpl() const {
+    return annotation_agent_container_impl_;
+  }
+  void SetAnnotationAgentContainerImpl(
+      AnnotationAgentContainerImpl* annotation_agent_container_impl) {
+    annotation_agent_container_impl_ = annotation_agent_container_impl;
+  }
+
+  CSSSelectorWatch* GetCSSSelectorWatch() const { return css_selector_watch_; }
+  void SetCSSSelectorWatch(CSSSelectorWatch* css_selector_watch) {
+    css_selector_watch_ = css_selector_watch;
+  }
+
+  ForwardDeclaredMember<DisabledAccelerationCounterSupplement>
+  GetDisabledAccelerationCounterSupplement() const {
+    return disabled_acceleration_counter_supplement_;
+  }
+  void SetDisabledAccelerationCounterSupplement(
+      ForwardDeclaredMember<DisabledAccelerationCounterSupplement>
+          disabled_acceleration_counter_supplement) {
+    disabled_acceleration_counter_supplement_ =
+        disabled_acceleration_counter_supplement;
+  }
+
+  DocumentFencedFrames* GetDocumentFencedFrames() const {
+    return document_fenced_frames_;
+  }
+  void SetDocumentFencedFrames(DocumentFencedFrames* document_fenced_frames) {
+    document_fenced_frames_ = document_fenced_frames;
+  }
+
+  DocumentParserTiming* GetDocumentParserTiming() const {
+    return document_parser_timing_;
+  }
+  void SetDocumentParserTiming(DocumentParserTiming* document_parser_timing) {
+    document_parser_timing_ = document_parser_timing;
+  }
+
+  DocumentSpeculationRules* GetDocumentSpeculationRules() const {
+    return document_speculation_rules_;
+  }
+  void SetDocumentSpeculationRules(
+      DocumentSpeculationRules* document_speculation_rules) {
+    document_speculation_rules_ = document_speculation_rules;
+  }
+
+  ForwardDeclaredMember<DocumentStorageAccess> GetDocumentStorageAccess()
+      const {
+    return document_storage_access_;
+  }
+  void SetDocumentStorageAccess(
+      ForwardDeclaredMember<DocumentStorageAccess> document_storage_access) {
+    document_storage_access_ = document_storage_access;
+  }
+
+  DocumentXPathEvaluator* GetDocumentXPathEvaluator() const {
+    return document_xpath_evaluator_;
+  }
+  void SetDocumentXPathEvaluator(
+      DocumentXPathEvaluator* document_xpath_evaluator) {
+    document_xpath_evaluator_ = document_xpath_evaluator;
+  }
+
+  DocumentXSLT* GetDocumentXSLT() const { return document_xslt_; }
+  void SetDocumentXSLT(DocumentXSLT* document_xslt) {
+    document_xslt_ = document_xslt;
+  }
+
+  FontFaceSetDocument* GetFontFaceSetDocument() const {
+    return font_face_set_document_;
+  }
+  void SetFontFaceSetDocument(FontFaceSetDocument* font_face_set_document) {
+    font_face_set_document_ = font_face_set_document;
+  }
+
+  InteractiveDetector* GetInteractiveDetector() const {
+    return interactive_detector_;
+  }
+  void SetInteractiveDetector(InteractiveDetector* interactive_detector) {
+    interactive_detector_ = interactive_detector;
+  }
+
+  PaintTiming* GetPaintTiming() const { return paint_timing_; }
+  void SetPaintTiming(PaintTiming* paint_timing) {
+    paint_timing_ = paint_timing;
+  }
+
+  PatchSupplement* GetPatchSupplement() const { return patch_supplement_; }
+  void SetPatchSupplement(PatchSupplement* patch_supplement) {
+    patch_supplement_ = patch_supplement;
+  }
+
+  PictureInPictureController* GetPictureInPictureController() const {
+    return picture_in_picture_controller_;
+  }
+  void SetPictureInPictureController(
+      PictureInPictureController* picture_in_picture_controller) {
+    picture_in_picture_controller_ = picture_in_picture_controller;
+  }
+
+  RenderBlockingMetricsReporter* GetRenderBlockingMetricsReporter() const {
+    return render_blocking_metrics_reporter_;
+  }
+  void SetRenderBlockingMetricsReporter(
+      RenderBlockingMetricsReporter* render_blocking_metrics_reporter) {
+    render_blocking_metrics_reporter_ = render_blocking_metrics_reporter;
+  }
+
+  RouteMap* GetRouteMap() const { return route_map_; }
+  void SetRouteMap(RouteMap* route_map) { route_map_ = route_map; }
+
+  ForwardDeclaredMember<TransferToGPUTextureInvokedSupplement>
+  GetTransferToGPUTextureInvokedSupplement() const {
+    return transfer_to_gpu_texture_invoked_supplement_;
+  }
+  void SetTransferToGPUTextureInvokedSupplement(
+      ForwardDeclaredMember<TransferToGPUTextureInvokedSupplement>
+          transfer_to_gpu_texture_invoked_supplement) {
+    transfer_to_gpu_texture_invoked_supplement_ =
+        transfer_to_gpu_texture_invoked_supplement;
+  }
+
+  ForwardDeclaredMember<AIPageContentAgent> GetAIPageContentAgent() const {
+    return ai_page_content_agent_;
+  }
+  void SetAIPageContentAgent(
+      ForwardDeclaredMember<AIPageContentAgent> ai_page_content_agent) {
+    ai_page_content_agent_ = ai_page_content_agent;
+  }
+
+  ForwardDeclaredMember<BrowsingTopicsDocumentSupplement>
+  GetBrowsingTopicsDocumentSupplement() const {
+    return browsing_topics_document_supplement_;
+  }
+  void SetBrowsingTopicsDocumentSupplement(
+      ForwardDeclaredMember<BrowsingTopicsDocumentSupplement>
+          browsing_topics_document_supplement) {
+    browsing_topics_document_supplement_ = browsing_topics_document_supplement;
+  }
+
+  ForwardDeclaredMember<CredentialMetrics> GetCredentialMetrics() const {
+    return credential_metrics_;
+  }
+  void SetCredentialMetrics(
+      ForwardDeclaredMember<CredentialMetrics> credential_metrics) {
+    credential_metrics_ = credential_metrics;
+  }
+
+  ForwardDeclaredMember<DocumentMetadataServer> GetDocumentMetadataServer()
+      const {
+    return document_metadata_server_;
+  }
+  void SetDocumentMetadataServer(
+      ForwardDeclaredMember<DocumentMetadataServer> document_metadata_server) {
+    document_metadata_server_ = document_metadata_server;
+  }
+
+  ForwardDeclaredMember<FrameMetadataObserverRegistry>
+  GetFrameMetadataObserverRegistry() const {
+    return frame_metadata_observer_registry_;
+  }
+  void SetFrameMetadataObserverRegistry(
+      ForwardDeclaredMember<FrameMetadataObserverRegistry>
+          frame_metadata_observer_registry) {
+    frame_metadata_observer_registry_ = frame_metadata_observer_registry;
+  }
+
+  ForwardDeclaredMember<InnerHtmlAgent> GetInnerHtmlAgent() const {
+    return inner_html_agent_;
+  }
+  void SetInnerHtmlAgent(
+      ForwardDeclaredMember<InnerHtmlAgent> inner_html_agent) {
+    inner_html_agent_ = inner_html_agent;
+  }
+
+  ForwardDeclaredMember<InnerTextAgent> GetInnerTextAgent() const {
+    return inner_text_agent_;
+  }
+  void SetInnerTextAgent(
+      ForwardDeclaredMember<InnerTextAgent> inner_text_agent) {
+    inner_text_agent_ = inner_text_agent;
+  }
+
+  ForwardDeclaredMember<RTCPeerConnectionController>
+  GetRTCPeerConnectionController() const {
+    return rtc_peer_connection_controller_;
+  }
+  void SetRTCPeerConnectionController(
+      ForwardDeclaredMember<RTCPeerConnectionController>
+          rtc_peer_connection_controller) {
+    rtc_peer_connection_controller_ = rtc_peer_connection_controller;
+  }
 
  protected:
   void ClearXMLVersion() { xml_version_ = String(); }
@@ -2331,6 +2612,8 @@ class CORE_EXPORT Document : public ContainerNode,
     void Trace(Visitor*) const;
 
    private:
+    void LogSyntheticSelectMetrics(Document& owner) const;
+
     HeapVector<Member<HTMLFormElement>> list_;
     bool dirty_ = false;
   };
@@ -2445,6 +2728,7 @@ class CORE_EXPORT Document : public ContainerNode,
   Node* Clone(Document& factory,
               NodeCloningData& data,
               ContainerNode* append_to,
+              CustomElementRegistry* fallback_registry,
               ExceptionState& append_exception_state) const override;
   void CloneDataFromDocument(const Document&);
 
@@ -2551,13 +2835,18 @@ class CORE_EXPORT Document : public ContainerNode,
 
   bool CanThrottleFrameRate();
 
+  // Called upon prerender activation.
+  // Note that not all prerendering pages block script execution; prerendering
+  // pages' triggers can determine whether or not to block scripts.
+  void UnblockScriptExecutionForPrerenderActivation();
+
+  // Slow path for GetViewTransitions() when view_transitions_ does not already
+  // exist.
+  ViewTransitionSupplement& CreateViewTransitions();
+
   // Mutable because the token is lazily-generated on demand if no token is
   // explicitly set.
   mutable std::optional<DocumentToken> token_;
-
-  // Bitfield used for tracking UKM sampling of media features such that each
-  // media feature is sampled only once per document.
-  uint64_t evaluated_media_features_ = 0;
 
   DocumentLifecycle lifecycle_;
 
@@ -2610,8 +2899,6 @@ class CORE_EXPORT Document : public ContainerNode,
   Member<HttpRefreshScheduler> http_refresh_scheduler_;
 
   bool well_formed_ = false;
-
-  bool is_tracking_soft_navigation_heuristics_ = false;
 
   // Document URLs.
   KURL url_;  // Document.URL: The URL from which this document was retrieved.
@@ -2683,6 +2970,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // We implement this as a Vector because its maximum size is typically 1.
   HeapVector<Member<Element>> autofocus_candidates_;
   Member<Element> focused_element_;
+  Member<const FocusOptions> focus_options_;
   Member<Range> sequential_focus_navigation_starting_point_;
   Member<Element> hover_element_;
   Member<Element> active_element_;
@@ -2779,8 +3067,19 @@ class CORE_EXPORT Document : public ContainerNode,
 
   base::ElapsedTimer start_time_;
 
+  // The script runner is used to run scripts of the following scheduling types:
+  // - ScriptSchedulingType::kAsync
+  // - ScriptSchedulingType::kInOrder
+  // For other scheduling types, see ScriptLoader and HTMLParserScriptRunner.
   Member<ScriptRunner> script_runner_;
   Member<ScriptRunnerDelayer> script_runner_delayer_;
+
+  // Defers the script runner until prerender activation, triggered by
+  // prerender-until-script. See https://crbug.com/428500219 for details.
+  // There is another plan to allow other triggers to specify whether to delay
+  // async scripts during prerendering, so it is named as
+  // `prerender_script_runner_delayer_`.
+  Member<ScriptRunnerDelayer> prerender_script_runner_delayer_;
 
   HeapVector<Member<ScriptElementBase>> current_script_stack_;
 
@@ -2817,21 +3116,21 @@ class CORE_EXPORT Document : public ContainerNode,
   // the stack and cleared upon leaving its allocated scope. Hence it
   // is acceptable not to trace it -- should a conservative GC occur,
   // the cache object's references will be traced by a stack walk.
-  GC_PLUGIN_IGNORE("https://crbug.com/461878")
+  STACK_ALLOCATED_IGNORE("https://crbug.com/461878")
   NthIndexCache* nth_index_cache_ = nullptr;
 
   // This is an untraced pointer to the cache-scoped object that is first
   // allocated on the stack. It is set upon the first object being allocated
   // on the stack, and cleared upon leaving its allocated scope. The object's
   // references will be traced by a stack walk.
-  GC_PLUGIN_IGNORE("https://crbug.com/669058")
+  STACK_ALLOCATED_IGNORE("https://crbug.com/669058")
   CheckPseudoHasCacheScope* check_pseudo_has_cache_scope_ = nullptr;
 
   // This is an untraced pointer to the first stack-allocated scoping object
   // that defers invalidation of the node list caches. It is set upon the first
   // object being allocated on the stack, and cleared upon leaving its
   // allocated scope. The object's references will be traced by a stack walk.
-  GC_PLUGIN_IGNORE("https://crbug.com/40874584")
+  STACK_ALLOCATED_IGNORE("https://crbug.com/40874584")
   InvalidateNodeListCachesScope* invalidate_node_list_caches_scope_ = nullptr;
 
   bool in_pseudo_has_checking_ = false;
@@ -2882,14 +3181,14 @@ class CORE_EXPORT Document : public ContainerNode,
   HeapVector<Member<HTMLElement>> popover_hint_stack_;
   // The popover (if any) that received the most recent pointerdown event.
   Member<const HTMLElement> popover_pointerdown_target_;
-  // The mouse location for the mousedown that opened the select, if any.
-  std::optional<gfx::PointF> customizable_select_mousedown_location_;
   // The dialog (if any) that received the most recent pointerdown event. This
   // is distinct from popover_pointerdown_target_ because the same pointer
   // action could trigger light dismiss on a containing popover and not a
   // containing dialog, or vice versa. This will be nullptr for a click on
   // the ::backdrop pseudo-element for a dialog.
   Member<const HTMLDialogElement> dialog_pointerdown_target_;
+  // The mouse target information for the event that opened the picker, if any.
+  PopoverPickerPointerdownInfo popover_picker_pointerdown_info_;
   // A set of popovers for which hidePopover() has been called, but animations
   // are still running.
   HeapHashSet<Member<HTMLElement>> popovers_waiting_to_hide_;
@@ -2898,6 +3197,10 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // The ordered list of currently-open dialogs, in order they were opened.
   HeapLinkedHashSet<Member<HTMLDialogElement>> all_open_dialogs_;
+
+  // The ordered list of elements that currently have interest (via
+  // `interestfor`), in the order they were opened.
+  HeapLinkedHashSet<Member<Element>> elements_with_interest_;
 
   Member<DocumentPartRoot> document_part_root_;
 
@@ -2968,10 +3271,6 @@ class CORE_EXPORT Document : public ContainerNode,
   // the document to record UKM.
   std::unique_ptr<ukm::UkmRecorder> ukm_recorder_;
   const int64_t ukm_source_id_;
-
-  // Tracks and reports metrics of attempted font match attempts (both
-  // successful and not successful) by the page.
-  std::unique_ptr<FontMatchingMetrics> font_matching_metrics_;
 
 #if DCHECK_IS_ON()
   unsigned slot_assignment_recalc_forbidden_recursion_depth_ = 0;
@@ -3088,6 +3387,11 @@ class CORE_EXPORT Document : public ContainerNode,
   // link header so that they won't be incidentally GC-ed and cancelled.
   HeapHashSet<Member<const PendingLinkPreload>> pending_link_header_preloads_;
 
+  // Contains information about which view transitions exist for this document,
+  // and for any elements contained in it. Created dynamically on first call
+  // to GetViewTransitions().
+  Member<ViewTransitionSupplement> view_transitions_;
+
   // This is incremented when a module script is evaluated.
   // http://crbug.com/1079044
   unsigned ignore_destructive_write_module_script_count_ = 0;
@@ -3149,6 +3453,40 @@ class CORE_EXPORT Document : public ContainerNode,
 
   bool responsive_embedded_sizing_ = false;
 
+  Member<AnchorElementMetricsSender> anchor_element_metrics_sender_;
+  Member<AnchorElementViewportPositionTracker>
+      anchor_element_viewport_position_tracker_;
+  Member<AnnotationAgentContainerImpl> annotation_agent_container_impl_;
+  Member<CSSSelectorWatch> css_selector_watch_;
+  Member<DocumentFencedFrames> document_fenced_frames_;
+  Member<DocumentParserTiming> document_parser_timing_;
+  Member<DocumentSpeculationRules> document_speculation_rules_;
+  ForwardDeclaredMember<DocumentStorageAccess> document_storage_access_;
+  Member<DocumentXPathEvaluator> document_xpath_evaluator_;
+  Member<DocumentXSLT> document_xslt_;
+  Member<FontFaceSetDocument> font_face_set_document_;
+  Member<InteractiveDetector> interactive_detector_;
+  Member<PaintTiming> paint_timing_;
+  Member<PatchSupplement> patch_supplement_;
+  Member<PictureInPictureController> picture_in_picture_controller_;
+  Member<RenderBlockingMetricsReporter> render_blocking_metrics_reporter_;
+  Member<RouteMap> route_map_;
+  ForwardDeclaredMember<TransferToGPUTextureInvokedSupplement>
+      transfer_to_gpu_texture_invoked_supplement_;
+  ForwardDeclaredMember<AIPageContentAgent> ai_page_content_agent_;
+  ForwardDeclaredMember<BrowsingTopicsDocumentSupplement>
+      browsing_topics_document_supplement_;
+  ForwardDeclaredMember<CredentialMetrics> credential_metrics_;
+  ForwardDeclaredMember<DisabledAccelerationCounterSupplement>
+      disabled_acceleration_counter_supplement_;
+  ForwardDeclaredMember<DocumentMetadataServer> document_metadata_server_;
+  ForwardDeclaredMember<FrameMetadataObserverRegistry>
+      frame_metadata_observer_registry_;
+  ForwardDeclaredMember<InnerHtmlAgent> inner_html_agent_;
+  ForwardDeclaredMember<InnerTextAgent> inner_text_agent_;
+  ForwardDeclaredMember<RTCPeerConnectionController>
+      rtc_peer_connection_controller_;
+
   // If you want to add new data members to blink::Document, please reconsider
   // if the members really should be in blink::Document.  document.h is a very
   // popular header, and the size of document.h affects build time
@@ -3162,8 +3500,6 @@ class CORE_EXPORT Document : public ContainerNode,
   // If you need to add new data members to blink::Document and it requires new
   // #includes, add them to blink::DocumentData instead.
 };
-
-extern template class CORE_EXTERN_TEMPLATE_EXPORT Supplement<Document>;
 
 inline void Document::ScheduleLayoutTreeUpdateIfNeeded() {
   // Inline early out to avoid the function calls below.

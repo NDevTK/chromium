@@ -7,7 +7,11 @@ package org.chromium.components.browser_ui.media;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.app.Activity;
+import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.os.Build;
@@ -15,9 +19,13 @@ import android.os.Handler;
 import android.os.SystemClock;
 import android.text.TextUtils;
 
+import androidx.annotation.MainThread;
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.base.ContextUtils;
+import org.chromium.base.ObserverList;
 import org.chromium.base.SysUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.build.annotations.EnsuresNonNullIf;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -82,6 +90,72 @@ public class MediaSessionHelper implements MediaImageCallback {
     // Used to override the MediaSession object get from WebContents. This is to work around the
     // static getter {@link MediaSession#fromWebContents()}.
     @VisibleForTesting public static @Nullable MediaSession sOverriddenMediaSession;
+
+    private interface ScreenOffObserver {
+        void onScreenOff();
+    }
+
+    private final ScreenOffObserver mScreenOffObserver =
+            new ScreenOffObserver() {
+                @Override
+                public void onScreenOff() {
+                    if (mHideNotificationDelayedTask != null) {
+                        hideNotificationImmediately();
+                    }
+                }
+            };
+
+    /**
+     * Manages a single static BroadcastReceiver for ACTION_SCREEN_OFF and dispatches events to
+     * registered ScreenOffObservers.
+     *
+     * <p>The underlying ObserverList is not thread-safe and asserts that all its methods are called
+     * on the thread it was created on (i.e., the main thread).
+     */
+    private static class ScreenOffReceiverManager {
+        private static final ObserverList<ScreenOffObserver> sScreenOffObservers =
+                new ObserverList<>();
+
+        private static final BroadcastReceiver sScreenOffReceiver =
+                new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                            for (ScreenOffObserver observer : sScreenOffObservers) {
+                                observer.onScreenOff();
+                            }
+                        }
+                    }
+                };
+
+        /**
+         * Adds an observer to the list. The BroadcastReceiver will be registered when the first
+         * observer is added. Must be called on the main thread.
+         */
+        @MainThread
+        public static void addObserver(ScreenOffObserver observer) {
+            ThreadUtils.assertOnUiThread();
+            if (sScreenOffObservers.isEmpty()) {
+                ContextUtils.registerProtectedBroadcastReceiver(
+                        ContextUtils.getApplicationContext(),
+                        sScreenOffReceiver,
+                        new IntentFilter(Intent.ACTION_SCREEN_OFF));
+            }
+            sScreenOffObservers.addObserver(observer);
+        }
+
+        /**
+         * Removes an observer from the list. The BroadcastReceiver will be unregistered when the
+         * last observer is removed. Must be called on the main thread.
+         */
+        @MainThread
+        public static void removeObserver(ScreenOffObserver observer) {
+            ThreadUtils.assertOnUiThread();
+            if (sScreenOffObservers.removeObserver(observer) && sScreenOffObservers.isEmpty()) {
+                ContextUtils.getApplicationContext().unregisterReceiver(sScreenOffReceiver);
+            }
+        }
+    }
 
     private final MediaNotificationListener mControlsListener =
             new MediaNotificationListener() {
@@ -192,7 +266,11 @@ public class MediaSessionHelper implements MediaImageCallback {
             @Override
             public void mediaSessionStateChanged(boolean isControllable, boolean isPaused) {
                 if (!isControllable) {
-                    hideNotificationDelayed();
+                    if (isDeviceLocked()) {
+                        hideNotificationImmediately();
+                    } else {
+                        hideNotificationDelayed();
+                    }
                     return;
                 }
                 assumeNonNull(mWebContents);
@@ -266,18 +344,18 @@ public class MediaSessionHelper implements MediaImageCallback {
 
             /**
              * Adjust `mMediaPosition` so that it's unambiguous about what the current media time
-             * is.  Otherwise, when transitioning into the paused state, the platform won't know to
-             * adjust the time from the `getLastUpdatedTime()`.  This is especially bad since the
-             * playback rate in the MediaPosition and `isPaused` don't always agree immediately;
-             * we can find out about `isPaused` before being told of the final, playback rate = 0,
-             * MediaPosition.  To avoid this, we adjust the MediaPosition based on its current
+             * is. Otherwise, when transitioning into the paused state, the platform won't know to
+             * adjust the time from the `getLastUpdatedTime()`. This is especially bad since the
+             * playback rate in the MediaPosition and `isPaused` don't always agree immediately; we
+             * can find out about `isPaused` before being told of the final, playback rate = 0,
+             * MediaPosition. To avoid this, we adjust the MediaPosition based on its current
              * playback rate, and update the playback rate to zero so that it's unambiguous.
              */
             private void rebaseMediaPosition(boolean isPaused) {
                 if (mMediaPosition == null) return;
 
                 long now = SystemClock.elapsedRealtime();
-                long rebased_position =
+                long rebasedPosition =
                         mMediaPosition.getPosition()
                                 + (long)
                                         ((now - mMediaPosition.getLastUpdatedTime())
@@ -285,7 +363,7 @@ public class MediaSessionHelper implements MediaImageCallback {
                 mMediaPosition =
                         new MediaPosition(
                                 mMediaPosition.getDuration(),
-                                rebased_position,
+                                rebasedPosition,
                                 isPaused ? 0 : mMediaPosition.getPlaybackRate(),
                                 now);
             }
@@ -402,7 +480,7 @@ public class MediaSessionHelper implements MediaImageCallback {
          * Creates a {@link MediaNotificationInfo.Builder} with basic embedder-specific
          * initialization.
          */
-        public MediaNotificationInfo.Builder createMediaNotificationInfoBuilder();
+        MediaNotificationInfo.Builder createMediaNotificationInfoBuilder();
 
         /** Shows a notification with the given metadata. */
         void showMediaNotification(MediaNotificationInfo notificationInfo);
@@ -427,6 +505,8 @@ public class MediaSessionHelper implements MediaImageCallback {
         if (activity != null) {
             mPreviousVolumeControlStream = activity.getVolumeControlStream();
         }
+
+        ScreenOffReceiverManager.addObserver(mScreenOffObserver);
     }
 
     /**
@@ -440,6 +520,14 @@ public class MediaSessionHelper implements MediaImageCallback {
         mWebContentsObserver = null;
         if (mLargeIconBridge != null) mLargeIconBridge.destroy();
         mLargeIconBridge = null;
+        ScreenOffReceiverManager.removeObserver(mScreenOffObserver);
+    }
+
+    public static void simulateScreenOffForTesting() {
+        ThreadUtils.assertOnUiThread();
+        for (ScreenOffObserver observer : ScreenOffReceiverManager.sScreenOffObservers) {
+            observer.onScreenOff();
+        }
     }
 
     /**
@@ -484,6 +572,13 @@ public class MediaSessionHelper implements MediaImageCallback {
         return windowAndroid.getActivity().get();
     }
 
+    private boolean isDeviceLocked() {
+        Context context = ContextUtils.getApplicationContext();
+        KeyguardManager keyguardManager =
+                (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+        return keyguardManager != null && keyguardManager.isKeyguardLocked();
+    }
+
     /** Returns true if a large favicon might be found. */
     @RequiresNonNull("mWebContents")
     private boolean fetchLargeFaviconImage() {
@@ -515,7 +610,7 @@ public class MediaSessionHelper implements MediaImageCallback {
      * Updates the best favicon if the given icon is better and the favicon is shown in
      * notification.
      */
-    public void updateFavicon(Bitmap icon) {
+    public void updateFavicon(@Nullable Bitmap icon) {
         if (icon == null) return;
 
         mMaybeHasFavicon = true;

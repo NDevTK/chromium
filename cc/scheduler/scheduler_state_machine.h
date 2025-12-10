@@ -68,6 +68,7 @@ class CC_EXPORT SchedulerStateMachine {
   // The scheduler uses a deadline to wait for main thread updates before
   // submitting a compositor frame. BeginImplFrameDeadlineMode specifies when
   // the deadline should run.
+  // LINT.IfChange(BeginImplFrameDeadlineMode)
   enum class BeginImplFrameDeadlineMode {
     NONE = 0,       // No deadline should be scheduled e.g. for synchronous
                     // compositor.
@@ -82,6 +83,8 @@ class CC_EXPORT SchedulerStateMachine {
                   // frame arrives.
     kMaxValue = BLOCKED,
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/compositing/enums.xml:BeginImplFrameDeadlineMode)
+
   // TODO(nuskos): Update Scheduler::ScheduleBeginImplFrameDeadline event to
   // used typed macros so we can remove this ToString function.
   static const char* BeginImplFrameDeadlineModeToString(
@@ -113,6 +116,11 @@ class CC_EXPORT SchedulerStateMachine {
       MajorStateV2::ForcedRedrawOnTimeoutState
       ForcedRedrawOnTimeoutStateToProtozeroEnum(
           ForcedRedrawOnTimeoutState state);
+
+  // Public for testing.
+  // Semi-arbitrary delay, chosen to be similar to Android's platform behavior.
+  static constexpr base::TimeDelta kUrgentBoostDuration =
+      base::Milliseconds(1500);
 
   BeginMainFrameState begin_main_frame_state() const {
     return begin_main_frame_state_;
@@ -256,7 +264,8 @@ class CC_EXPORT SchedulerStateMachine {
   // Indicates whether to prioritize impl thread latency (i.e., animation
   // smoothness) over new content activation.
   void SetTreePrioritiesAndScrollState(TreePriority tree_priority,
-                                       ScrollHandlerState scroll_handler_state);
+                                       ScrollHandlerState scroll_handler_state,
+                                       bool is_current_scroll_main_painted);
 
   // Indicates if the main thread will likely respond within 1 vsync.
   void SetCriticalBeginMainFrameToActivateIsFast(bool is_fast);
@@ -351,6 +360,8 @@ class CC_EXPORT SchedulerStateMachine {
 
   void SetVideoNeedsBeginFrames(bool video_needs_begin_frames);
 
+  bool ShouldThrottleSendBeginMainFrame() const;
+
   bool did_submit_in_last_frame() const { return did_submit_in_last_frame_; }
   bool draw_succeeded_in_last_frame() const {
     return draw_succeeded_in_last_frame_;
@@ -386,6 +397,9 @@ class CC_EXPORT SchedulerStateMachine {
 
   void SetShouldThrottleFrameRate(bool flag);
 
+  // Virtual for testing.
+  virtual base::TimeTicks Now() const;
+
  protected:
   bool BeginFrameRequiredForAction() const;
   bool BeginFrameNeededForVideo() const;
@@ -416,7 +430,6 @@ class CC_EXPORT SchedulerStateMachine {
   bool ShouldDraw() const;
   bool ShouldActivateSyncTree() const;
   bool ShouldSendBeginMainFrame() const;
-  bool ShouldThrottleSendBeginMainFrame() const;
   bool ShouldCommit() const;
   bool ShouldRunPostCommit() const;
   bool ShouldPrepareTiles() const;
@@ -455,6 +468,7 @@ class CC_EXPORT SchedulerStateMachine {
   base::TimeTicks last_sent_begin_main_frame_time_;
   base::TimeDelta main_frame_throttled_interval_;
   base::TimeDelta unthrottled_frame_interval_;
+  base::TimeTicks last_urgent_main_frame_request_;
 
   // Inputs from the last impl frame that are required for decisions made in
   // this impl frame. The values from the last frame are cached before being
@@ -501,6 +515,7 @@ class CC_EXPORT SchedulerStateMachine {
   TreePriority tree_priority_ = NEW_CONTENT_TAKES_PRIORITY;
   ScrollHandlerState scroll_handler_state_ =
       ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER;
+  bool is_current_scroll_main_painted_ = false;
   bool critical_begin_main_frame_to_activate_is_fast_ = true;
   bool main_thread_missed_last_deadline_ = false;
   bool defer_begin_main_frame_ = false;

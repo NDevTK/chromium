@@ -54,12 +54,25 @@ class NET_EXPORT_PRIVATE HttpStreamPool
 
   // Specify when to start the TCP based attempt delay timer.
   enum class TcpBasedAttemptDelayBehavior {
+    // Starts the stream attempt delay timer on the first request or preconnect.
+    kStartTimerOnFirstJob,
     // Starts the stream attempt delay timer on the first service endpoint
     // update.
     kStartTimerOnFirstEndpointUpdate,
     // Start the stream attempt delay timer when the first QUIC endpoint is
     // attempted.
     kStartTimerOnFirstQuicAttempt,
+  };
+
+  // The type of a Job. A Job is a stream request or a preconnect.
+  enum class JobType {
+    // A stream request.
+    kRequest = 0,
+    // A normal preconnect.
+    kPreconnect = 1,
+    // A preconnect which is initiated when an alternative service is advertised
+    // via Alt-Svc but the current request is not using it.
+    kAltSvcQuicPreconnect = 2,
   };
 
   // Observes events on the HttpStreamPool and may intercept preconnects. Used
@@ -90,13 +103,17 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   static constexpr base::TimeDelta kDefaultConnectionAttemptDelay =
       base::Milliseconds(250);
 
+  // Sets of protocols for use in allowed ALPN fields of several classes.
+  // kProtoUnknown is not used, as it's an alias for all protocols, so causes
+  // issues when excluding one or more protocols.
+  static inline constexpr NextProtoSet kAllProtocols = {
+      NextProto::kProtoHTTP11, NextProto::kProtoHTTP2, NextProto::kProtoQUIC};
   static inline constexpr NextProtoSet kTcpBasedProtocols = {
-      NextProto::kProtoUnknown, NextProto::kProtoHTTP11,
-      NextProto::kProtoHTTP2};
+      NextProto::kProtoHTTP11, NextProto::kProtoHTTP2};
   static inline constexpr NextProtoSet kHttp11Protocols = {
-      NextProto::kProtoUnknown, NextProto::kProtoHTTP11};
+      NextProto::kProtoHTTP11};
   static inline constexpr NextProtoSet kQuicBasedProtocols = {
-      NextProto::kProtoUnknown, NextProto::kProtoQUIC};
+      NextProto::kProtoQUIC};
 
   // Reasons for closing streams.
   static constexpr std::string_view kIpAddressChanged = "IP address changed";
@@ -124,6 +141,8 @@ class NET_EXPORT_PRIVATE HttpStreamPool
       "max_stream_per_group";
   static constexpr std::string_view kConnectionAttemptDelayParamName =
       "connection_attempt_delay";
+  static constexpr std::string_view kEnablePriorityTaskRunnerParamName =
+      "enable_priority_task_runner";
   static constexpr std::string_view kTcpBasedAttemptDelayBehaviorParamName =
       "tcp_based_attempt_delay_behavior";
   static constexpr std::string_view kVerboseNetLogParamName = "verbose_netlog";
@@ -135,7 +154,8 @@ class NET_EXPORT_PRIVATE HttpStreamPool
           {{TcpBasedAttemptDelayBehavior::kStartTimerOnFirstEndpointUpdate,
             "first_endpoint_update"},
            {TcpBasedAttemptDelayBehavior::kStartTimerOnFirstQuicAttempt,
-            "first_quic_attempt"}});
+            "first_quic_attempt"},
+           {TcpBasedAttemptDelayBehavior::kStartTimerOnFirstJob, "first_job"}});
 
   class NET_EXPORT_PRIVATE Job;
   class NET_EXPORT_PRIVATE JobController;
@@ -143,6 +163,7 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   class NET_EXPORT_PRIVATE AttemptManager;
   class NET_EXPORT_PRIVATE IPEndPointStateTracker;
   class NET_EXPORT_PRIVATE TcpBasedAttempt;
+  class NET_EXPORT_PRIVATE TcpBasedAttemptSlot;
   class NET_EXPORT_PRIVATE QuicAttempt;
   struct NET_EXPORT_PRIVATE QuicAttemptOutcome {
     explicit QuicAttemptOutcome(int result) : result(result) {}
@@ -157,6 +178,9 @@ class NET_EXPORT_PRIVATE HttpStreamPool
     NetErrorDetails error_details;
     raw_ptr<QuicChromiumClientSession> session;
   };
+
+  static const scoped_refptr<base::SequencedTaskRunner> TaskRunner(
+      RequestPriority priority);
 
   // The time to wait between connection attempts.
   static base::TimeDelta GetConnectionAttemptDelay();
@@ -183,7 +207,7 @@ class NET_EXPORT_PRIVATE HttpStreamPool
       HttpStreamPoolRequestInfo request_info,
       RequestPriority priority,
       const std::vector<SSLConfig::CertAndStatus>& allowed_bad_certs,
-      bool enable_ip_based_pooling,
+      bool enable_ip_based_pooling_for_h2,
       bool enable_alternative_services);
 
   // Requests that enough connections/sessions for `num_streams` be opened.
@@ -231,7 +255,8 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   bool IsPoolStalled();
 
   // NetworkChangeNotifier::IPAddressObserver methods:
-  void OnIPAddressChanged() override;
+  void OnIPAddressChanged(
+      NetworkChangeNotifier::IPAddressChangeType change_type) override;
 
   // SSLClientContext::Observer methods.
   void OnSSLConfigChanged(
@@ -251,18 +276,19 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   void ProcessPendingRequestsInGroups();
 
   // Returns true when HTTP/1.1 is required for `destination`.
-  bool RequiresHTTP11(const url::SchemeHostPort& destination,
-                      const NetworkAnonymizationKey& network_anonymization_key);
+  bool RequiresHTTP11(
+      const url::SchemeHostPort& destination,
+      const NetworkAnonymizationKey& network_anonymization_key) const;
 
   // Returns true when QUIC is broken for `destination`.
-  bool IsQuicBroken(const url::SchemeHostPort& destination,
-                    const NetworkAnonymizationKey& network_anonymization_key);
+  bool IsQuicBroken(
+      const url::SchemeHostPort& destination,
+      const NetworkAnonymizationKey& network_anonymization_key) const;
 
   // Returns true when QUIC can be used for `destination`.
   bool CanUseQuic(const url::SchemeHostPort& destination,
                   const NetworkAnonymizationKey& network_anonymization_key,
-                  bool enable_ip_based_pooling,
-                  bool enable_alternative_services);
+                  bool enable_alternative_services) const;
 
   // Returns the first quic::ParsedQuicVersion that has been advertised in
   // `alternative_service_info` and is supported, following the order of
@@ -275,8 +301,9 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   // Returns true when there is an existing QUIC session for `quic_session_key`.
   bool CanUseExistingQuicSession(
       const QuicSessionAliasKey& quic_session_alias_key,
-      bool enable_ip_based_pooling,
       bool enable_alternative_services);
+
+  CompletionOnceCallback GetAltSvcQuicPreconnectCallback();
 
   // Retrieves information on the current state of the pool as a base::Value.
   base::Value::Dict GetInfoAsValue() const;
@@ -317,6 +344,11 @@ class NET_EXPORT_PRIVATE HttpStreamPool
     return job_controllers_.size();
   }
 
+  void SetAltSvcQuicPreconnectCallbackForTesting(
+      CompletionOnceCallback callback) {
+    alt_svc_quic_preconnect_callback_for_testing_ = std::move(callback);
+  }
+
  private:
   // Returns true when NetLog events should provide more fields.
   // TODO(crbug.com/346835898): Remove this when we stabilize the
@@ -328,9 +360,9 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   // JobControllers), always return true.
   bool EnsureTotalActiveStreamCountBelowLimit() const;
 
-  Group& GetOrCreateGroup(
-      const HttpStreamKey& stream_key,
-      std::optional<QuicSessionAliasKey> quic_session_alias_key = std::nullopt);
+  Group& GetOrCreateGroup(const HttpStreamKey& stream_key,
+                          const std::optional<QuicSessionAliasKey>&
+                              quic_session_alias_key = std::nullopt);
 
   Group* GetGroup(const HttpStreamKey& stream_key);
 
@@ -346,7 +378,7 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   base::WeakPtr<SpdySession> FindAvailableSpdySession(
       const HttpStreamKey& stream_key,
       const SpdySessionKey& spdy_session_key,
-      bool enable_ip_based_pooling,
+      bool enable_ip_based_pooling_for_h2,
       const NetLogWithSource& net_log = NetLogWithSource());
 
   void OnPreconnectComplete(JobController* job_controller,
@@ -384,13 +416,15 @@ class NET_EXPORT_PRIVATE HttpStreamPool
   // The total number of connecting streams in this pool.
   size_t total_connecting_stream_count_ = 0;
 
-  std::map<HttpStreamKey, std::unique_ptr<Group>> groups_;
+  std::map<HttpStreamKey, Group> groups_;
 
   std::set<std::unique_ptr<JobController>, base::UniquePtrComparator>
       job_controllers_;
   size_t limit_ignoring_job_controller_counts_ = 0;
 
   std::unique_ptr<TestDelegate> delegate_for_testing_;
+
+  CompletionOnceCallback alt_svc_quic_preconnect_callback_for_testing_;
 
   base::WeakPtrFactory<HttpStreamPool> weak_ptr_factory_{this};
 };

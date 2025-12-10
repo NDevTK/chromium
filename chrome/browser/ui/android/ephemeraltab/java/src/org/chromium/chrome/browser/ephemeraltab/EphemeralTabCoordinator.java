@@ -12,7 +12,6 @@ import android.view.View;
 
 import org.chromium.base.Callback;
 import org.chromium.base.SysUtils;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.version_info.VersionInfo;
 import org.chromium.build.annotations.EnsuresNonNull;
 import org.chromium.build.annotations.MonotonicNonNull;
@@ -20,6 +19,7 @@ import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.content.ContentUtils;
 import org.chromium.chrome.browser.content.WebContentsFactory;
+import org.chromium.chrome.browser.desktop_site.DesktopSiteUtils;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
@@ -44,6 +44,8 @@ import org.chromium.ui.base.PageTransition;
 import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.url.GURL;
 
+import java.util.function.Supplier;
+
 /**
  * Central class for ephemeral tab, responsible for spinning off other classes necessary to display
  * short-lived WebContents on bottom sheet UI.
@@ -57,7 +59,7 @@ public class EphemeralTabCoordinator implements View.OnLayoutChangeListener {
     private final Supplier<TabCreator> mTabCreator;
     private final BottomSheetController mBottomSheetController;
     private final EphemeralTabMediator mMediator;
-    private final boolean mCanPromoteToNewTab;
+    private boolean mCanPromoteToNewTab;
 
     private @Nullable WebContents mWebContents;
     private @Nullable ContentView mContentView;
@@ -79,7 +81,6 @@ public class EphemeralTabCoordinator implements View.OnLayoutChangeListener {
      * @param tabProvider Provider of the current activity tab.
      * @param tabCreator Supplier for {@link TabCreator} handling a new tab creation.
      * @param bottomSheetController {@link BottomSheetController} as the container of the tab.
-     * @param canPromoteToNewTab Whether the tab can be promoted to a normal tab.
      */
     public EphemeralTabCoordinator(
             Context context,
@@ -87,15 +88,13 @@ public class EphemeralTabCoordinator implements View.OnLayoutChangeListener {
             View layoutView,
             Supplier<Tab> tabProvider,
             Supplier<TabCreator> tabCreator,
-            BottomSheetController bottomSheetController,
-            boolean canPromoteToNewTab) {
+            BottomSheetController bottomSheetController) {
         mContext = context;
         mWindow = window;
         mLayoutView = layoutView;
         mTabProvider = tabProvider;
         mTabCreator = tabCreator;
         mBottomSheetController = bottomSheetController;
-        mCanPromoteToNewTab = canPromoteToNewTab;
 
         float topControlsHeight =
                 mContext.getResources().getDimensionPixelSize(R.dimen.toolbar_height_no_shadow)
@@ -120,18 +119,6 @@ public class EphemeralTabCoordinator implements View.OnLayoutChangeListener {
         return mPeeked || mFullyOpened;
     }
 
-    /**
-     * Entry point for ephemeral tab flow. This will create an ephemeral tab and show it in the
-     * bottom sheet.
-     *
-     * @param url The URL to be shown.
-     * @param title The title to be shown.
-     * @param profile Profile associated with the ephemeral tab.
-     */
-    public void requestOpenSheet(GURL url, String title, Profile profile) {
-        requestOpenSheetWithFullPageUrl(url, null, title, profile);
-    }
-
     /** Add observer to be notified of ephemeral tab events. */
     public void addObserver(EphemeralTabObserver ephemeralTabObserver) {
         mMediator.addObserver(ephemeralTabObserver);
@@ -143,19 +130,26 @@ public class EphemeralTabCoordinator implements View.OnLayoutChangeListener {
     }
 
     /**
-     * Alternative entry point for ephemeral tab flow. This will create an ephemeral tab and show it
-     * in the bottom sheet. When the tab is opened in a fullPage, an alternative URL is opened.
+     * Entry point for the ephemeral tab flow. This will create an ephemeral tab and show it in the
+     * bottom sheet. When the tab is opened in a fullPage, an alternative URL is opened.
      *
      * @param url The URL to be shown in the bottomsheet.
      * @param fullPageUrl The URL that will be opened when the bottomsheet is transformed to a full
      *     page.
      * @param title The title to be shown.
      * @param profile Profile associated with the ephemeral tab.
+     * @param canPromoteToNewTab Whether the tab can be promoted to a normal tab.
      */
-    public void requestOpenSheetWithFullPageUrl(
-            GURL url, @Nullable GURL fullPageUrl, String title, Profile profile) {
+    public void requestOpenSheet(
+            GURL url,
+            @Nullable GURL fullPageUrl,
+            String title,
+            Profile profile,
+            boolean canPromoteToNewTab) {
+        assert !isOpened() : "Avoid making new requests when an ephemeral tab is showing.";
         mUrl = url;
         mFullPageUrl = fullPageUrl;
+        mCanPromoteToNewTab = canPromoteToNewTab;
         if (mWebContents == null) {
             assert mSheetContent == null;
             createWebContents(profile);
@@ -235,7 +229,17 @@ public class EphemeralTabCoordinator implements View.OnLayoutChangeListener {
                 mContentView,
                 mWindow,
                 WebContents.createDefaultInternalsHolder());
+        // Set UA override in renderer preferences.
         ContentUtils.setUserAgentOverride(mWebContents, /* overrideInNewTabs= */ false);
+        // Set UA override in WebContents preferences.
+        boolean shouldUseDesktopUserAgent =
+                DesktopSiteUtils.shouldOverrideDesktopSite(profile, mUrl, mContext);
+        mWebContents
+                .getNavigationController()
+                .setUseDesktopUserAgent(
+                        shouldUseDesktopUserAgent,
+                        /* reloadOnChange= */ false,
+                        /* skipOnInitialNavigation= */ false);
     }
 
     private void destroyWebContents() {

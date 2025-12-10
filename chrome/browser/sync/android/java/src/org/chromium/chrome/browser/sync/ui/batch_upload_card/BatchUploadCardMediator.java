@@ -67,6 +67,7 @@ class BatchUploadCardMediator
     private final ReauthenticatorBridge mReauthenticatorBridge;
     private final Runnable mBatchUploadCardChangeAction;
     private final @EntryPoint int mEntryPoint;
+    private final IdentityManager mIdentityManager;
 
     private final ProfileDataCache mProfileDataCache;
     private final @Nullable SyncService mSyncService;
@@ -98,7 +99,10 @@ class BatchUploadCardMediator
         mSnackbarManagerSupplier = snackbarManagerSupplier;
         mBatchUploadCardChangeAction = batchUploadCardChangeAction;
         mEntryPoint = entryPoint;
-        mProfileDataCache = ProfileDataCache.createWithDefaultImageSizeAndNoBadge(mContext);
+        mIdentityManager =
+                assumeNonNull(IdentityServicesProvider.get().getIdentityManager(mProfile));
+        mProfileDataCache =
+                ProfileDataCache.createWithDefaultImageSizeAndNoBadge(mContext, mIdentityManager);
         mSyncService = SyncServiceFactory.getForProfile(mProfile);
         if (mSyncService != null) {
             mSyncService.addSyncStateChangedListener(this);
@@ -168,11 +172,8 @@ class BatchUploadCardMediator
         SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
         assumeNonNull(syncService);
         syncService.triggerLocalDataMigration(types);
-        IdentityManager identityManager =
-                IdentityServicesProvider.get().getIdentityManager(mProfile);
-        assumeNonNull(identityManager);
         CoreAccountInfo coreAccountInfo =
-                identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
+                mIdentityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
         assumeNonNull(coreAccountInfo);
         // TODO(crbug.com/354922852): Handle accounts with non-displayable email address.
         String snackbarMessage =
@@ -181,17 +182,16 @@ class BatchUploadCardMediator
                                 R.plurals.batch_upload_saved_snackbar_message,
                                 itemsCount,
                                 coreAccountInfo.getEmail());
-        mSnackbarManagerSupplier
-                .get()
-                .showSnackbar(
-                        Snackbar.make(
-                                        snackbarMessage,
-                                        /* controller= */ null,
-                                        Snackbar.TYPE_ACTION,
-                                        mEntryPoint == EntryPoint.BOOKMARK_MANAGER
-                                                ? Snackbar.UMA_BOOKMARK_BATCH_UPLOAD
-                                                : Snackbar.UMA_SETTINGS_BATCH_UPLOAD)
-                                .setSingleLine(false));
+        SnackbarManager snackbarManager = assumeNonNull(mSnackbarManagerSupplier.get());
+        snackbarManager.showSnackbar(
+                Snackbar.make(
+                                snackbarMessage,
+                                /* controller= */ null,
+                                Snackbar.TYPE_ACTION,
+                                mEntryPoint == EntryPoint.BOOKMARK_MANAGER
+                                        ? Snackbar.UMA_BOOKMARK_BATCH_UPLOAD
+                                        : Snackbar.UMA_SETTINGS_BATCH_UPLOAD)
+                        .setDefaultLines(false));
         immediatelyHideBatchUploadCardAndUpdateItsVisibility();
     }
 
@@ -239,10 +239,7 @@ class BatchUploadCardMediator
     }
 
     private void setupBatchUploadCardPropertyModel() {
-        IdentityManager identityManager =
-                IdentityServicesProvider.get().getIdentityManager(mProfile);
-        assumeNonNull(identityManager);
-        CoreAccountInfo accountInfo = identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
+        CoreAccountInfo accountInfo = mIdentityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN);
         // setupBatchUploadCardView() is called asynchronously through updateBatchUploadCard(), so
         // it could be called while there is no primary account.
         if (accountInfo == null) {

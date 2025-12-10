@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -20,6 +21,7 @@
 #include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
 #include "base/values.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-container.h"
@@ -225,18 +227,19 @@ v8::Local<v8::Value> V8ValueConverterImpl::ToV8Value(
     base::ValueView value,
     v8::Local<v8::Context> context) {
   v8::Context::Scope context_scope(context);
-  v8::EscapableHandleScope handle_scope(context->GetIsolate());
-  return handle_scope.Escape(
-      ToV8ValueImpl(context->GetIsolate(), context->Global(), value));
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::EscapableHandleScope handle_scope(isolate);
+  return handle_scope.Escape(ToV8ValueImpl(isolate, context->Global(), value));
 }
 
 std::unique_ptr<base::Value> V8ValueConverterImpl::FromV8Value(
     v8::Local<v8::Value> val,
     v8::Local<v8::Context> context) {
   v8::Context::Scope context_scope(context);
-  v8::HandleScope handle_scope(context->GetIsolate());
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
   FromV8ValueState state(avoid_identity_hash_for_testing_);
-  return FromV8ValueImpl(&state, val, context->GetIsolate());
+  return FromV8ValueImpl(&state, val, isolate);
 }
 
 v8::Local<v8::Value> V8ValueConverterImpl::ToV8ValueImpl(

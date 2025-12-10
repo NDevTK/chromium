@@ -67,9 +67,7 @@ struct CharacterRange;
 class Font;
 struct GlyphIndexResult;
 struct ShapeResultRun;
-template <typename TextContainerType>
-class PLATFORM_EXPORT ShapeResultSpacing;
-class TextRun;
+class ShapeResultSpacing;
 class ShapeResultView;
 struct TabSize;
 
@@ -104,19 +102,6 @@ struct ShapeResultCharacterData {
 struct PLATFORM_EXPORT OffsetWithSpacing {
   wtf_size_t offset;
   float spacing;
-};
-
-struct DeprecatedInkBounds : public GarbageCollected<DeprecatedInkBounds> {
-  void Trace(Visitor*) const {}
-  gfx::RectF ink_bounds;
-};
-
-// There are two options for how OffsetForPosition behaves:
-// IncludePartialGlyphs - decides what to do when the position hits more than
-// 50% of the glyph. If enabled, we count that glyph, if disable we don't.
-enum IncludePartialGlyphsOption {
-  kOnlyFullGlyphs,
-  kIncludePartialGlyphs,
 };
 
 // BreakGlyphsOption - allows OffsetForPosition to consider graphemes
@@ -226,30 +211,15 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
 
   // Returns the offset, relative to StartIndex, whose (origin,
   // origin+advance) contains |x|.
-  unsigned OffsetForPosition(float x, BreakGlyphsOption) const;
+  unsigned OffsetForPosition(float x) const;
   // Returns the offset whose glyph boundary is nearest to |x|. Depends on
   // whether |x| is on the left-half or the right-half of the glyph, it
   // determines the left-boundary or the right-boundary, then computes the
   // offset from the bidi direction.
-  unsigned CaretOffsetForHitTest(float x,
-                                 const StringView& text,
-                                 BreakGlyphsOption) const;
+  unsigned CaretOffsetForHitTest(float x, const StringView& text) const;
   // Returns the offset that can fit to between |x| and the left or the right
   // edge. The side of the edge is determined by |line_direction|.
   unsigned OffsetToFit(float x, TextDirection line_direction) const;
-  unsigned OffsetForPosition(float x,
-                             const StringView& text,
-                             IncludePartialGlyphsOption include_partial_glyphs,
-                             BreakGlyphsOption break_glyphs) const {
-    if (include_partial_glyphs == kOnlyFullGlyphs) {
-      // TODO(kojii): Consider prohibiting OnlyFullGlyphs +
-      // BreakGlyphsOption(true), sed only in tests.
-      if (break_glyphs)
-        EnsureGraphemes(text);
-      return OffsetForPosition(x, break_glyphs);
-    }
-    return CaretOffsetForHitTest(x, text, break_glyphs);
-  }
 
   // Returns the position for a given offset, relative to StartIndex.
   float PositionForOffset(unsigned offset,
@@ -292,11 +262,17 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
   // |text_start_offset| adjusts the character index in the ShapeResult before
   // giving it to |ShapeResultSpacing|. It can be negative if
   // |StartIndex()| is larger than the text in |ShapeResultSpacing|.
+  void ApplySpacing(ShapeResultSpacing&, int text_start_offset = 0);
+
+  // Apply expansion (justification) as configured to |ShapeResultSpacing|.
+  // |text_start_offset| adjusts the character index in the ShapeResult before
+  // giving it to |ShapeResultSpacing|. It can be negative if
+  // |StartIndex()| is larger than the text in |ShapeResultSpacing|.
   //
   // The function returns spacing amount on the right of the last glyph.
-  float ApplySpacing(ShapeResultSpacing<String>&, int text_start_offset = 0);
-  ShapeResult* ApplySpacingToCopy(ShapeResultSpacing<TextRun>&,
-                                  const TextRun&) const;
+  TextRunLayoutUnit ApplyExpansion(TextJustify method,
+                                   ShapeResultSpacing&,
+                                   int text_start_offset);
   // Add `expansion` space before the first glyph.
   void ApplyLeadingExpansion(LayoutUnit expansion);
   // Add `expansion` space after the last glyph.
@@ -395,22 +371,14 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
                                 GraphemeClusterCallback,
                                 void* context) const;
 
+  // Returns the first GlyphData for an emphasis mark.
+  // Returns an empty GlyphData if this ShapeResult contains no glyphs.
+  GlyphData EmphasisMarkGlyphData(
+      const FontDescription& font_description) const;
+
   // Computes and returns the ink bounds (or visual overflow rect). This is
   // quite expensive and involves measuring each glyph accumulating the bounds.
   gfx::RectF ComputeInkBounds() const;
-
-  // Only used by CachingWordShapeIterator
-  // TODO(eae): Remove once LayoutNG lands. https://crbug.com/591099
-  void SetDeprecatedInkBounds(gfx::RectF ink_bounds) {
-    if (!deprecated_ink_bounds_) {
-      deprecated_ink_bounds_ = MakeGarbageCollected<DeprecatedInkBounds>();
-    }
-    deprecated_ink_bounds_->ink_bounds = ink_bounds;
-  }
-  gfx::RectF GetDeprecatedInkBounds() const {
-    DCHECK(deprecated_ink_bounds_);
-    return deprecated_ink_bounds_->ink_bounds;
-  }
 
   String ToString() const;
   void ToString(StringBuilder*) const;
@@ -424,13 +392,15 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
 #endif
 
  protected:
+  friend class ShapeResultCursor;
+
   // Ensure |grapheme_| is computed. |BreakGlyphs| is valid only when
   // |grapheme_| is computed.
   void EnsureGraphemes(const StringView& text) const;
 
-  static unsigned CountGraphemesInCluster(base::span<const UChar>,
-                                          uint16_t start_index,
-                                          uint16_t end_index);
+  static unsigned CountGraphemesInClusterDeprecated(base::span<const UChar>,
+                                                    uint16_t start_index,
+                                                    uint16_t end_index);
 
   template <typename Iterator>
   void AddUnsafeToBreak(Iterator offsets_begin, const Iterator offsets_end);
@@ -454,9 +424,11 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
   void ComputePositionData() const;
   void RecalcCharacterPositions() const;
 
-  template <typename TextContainerType>
-  float ApplySpacingImpl(ShapeResultSpacing<TextContainerType>&,
-                         int text_start_offset = 0);
+  // if `method` is std::nullopt, this handles letter-spacing/word-spacing.
+  // Otherwise, this handles expansion.
+  TextRunLayoutUnit ApplySpacingOrExpansion(ShapeResultSpacing&,
+                                            std::optional<TextJustify> method,
+                                            int text_start_offset = 0);
   template <bool is_horizontal_run>
   void ComputeGlyphPositions(ShapeResultRun*,
                              unsigned start_glyph,
@@ -505,11 +477,6 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
 
   HeapVector<Member<ShapeResultRun>, 1> runs_;
 
-  // Only used by CachingWordShapeIterator and stored here for memory reduction
-  // reasons. See https://crbug.com/955776
-  // TODO(eae): Remove once LayoutNG lands. https://crbug.com/591099
-  Member<DeprecatedInkBounds> deprecated_ink_bounds_ = nullptr;
-
   // The total width. This is the sum of `ShapeResultRun::width_`.
   // It's mutable because `RecalcCharacterPositions()` recalculates this.
   // This should be in sync with `CharacterPositionData::width_`.
@@ -534,11 +501,15 @@ class PLATFORM_EXPORT ShapeResult : public GarbageCollected<ShapeResult> {
 
  private:
   friend class HarfBuzzShaper;
-  friend class ShapeResultBuffer;
   friend class ShapeResultBloberizer;
   friend class ShapeResultView;
   friend class ShapeResultTest;
   friend class StretchyOperatorShaper;
+  friend struct CharacterRangeContext;
+
+  static void AddRunInfoRanges(const ShapeResultRun& run_info,
+                               float offset,
+                               Vector<CharacterRange>* ranges);
 
   template <bool has_non_zero_glyph_offsets>
   float ForEachGlyphImpl(float initial_advance,

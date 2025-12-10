@@ -104,6 +104,10 @@ struct RendererPreferences {
   // over the value for webrtc_ip_handling_policy.
   array<WebRtcIpHandlingUrlEntry> webrtc_ip_handling_urls;
 
+  // If specified, controls whether post-quantum key agreement is allowed
+  // for WebRTC. If null, this is determined by the feature flag.
+  bool? webrtc_post_quantum_key_agreement;
+
   // This is the range of UDP ports allowed to be used by WebRTC. A value of
   // zero in both fields means all ports are allowed.
   uint16 webrtc_udp_min_port = 0;
@@ -193,6 +197,10 @@ struct RendererPreferences {
   [EnableIf=is_selection_clipboard_buffer_possible]
   bool selection_clipboard_buffer_available = false;
 
+  // Whether to allow pasting text on middle click mouse events.
+  [EnableIf=is_linux]
+  bool middle_click_paste_allowed = true;
+
   // Set to true if the renderer should assume that the embedder delegates all
   // Autofill activity and requests to the platform instead of providing its
   // own implementation.
@@ -201,10 +209,6 @@ struct RendererPreferences {
   bool uses_platform_autofill = false;
 
   array<uint16> explicitly_allowed_network_ports;
-
-  // A randomized 64 bit token that is generated per browser session,
-  // used for canvas noising.
-  uint64 canvas_noise_token = 0;
 
   // Whether line wrapping should be enabled by default in view source pages.
   bool view_source_line_wrap_enabled = false;

@@ -101,6 +101,9 @@ void SkiaImageDecoderBase::OnSetData(scoped_refptr<SegmentReader> data) {
           if (const skcms_ICCProfile* profile = codec_->getICCProfile()) {
             SetEmbeddedColorProfile(std::make_unique<ColorProfile>(*profile));
           }
+          if (codec_->getHdrMetadata() != skhdr::Metadata::MakeEmpty()) {
+            hdr_metadata_ = gfx::HDRMetadata(codec_->getHdrMetadata());
+          }
         }
         segment_stream_ = segment_stream_ptr;
         orientation_ = static_cast<ImageOrientationEnum>(codec_->getOrigin());
@@ -301,8 +304,11 @@ void SkiaImageDecoderBase::Decode(wtf_size_t index) {
       wtf_size_t required_previous_frame_index =
           frame.RequiredPreviousFrameIndex();
       if (required_previous_frame_index == kNotFound) {
-        frame.AllocatePixelData(Size().width(), Size().height(),
-                                ColorSpaceForSkImages());
+        if (!frame.AllocatePixelData(Size().width(), Size().height(),
+                                     ColorSpaceForSkImages())) {
+          SetFailedFrameIndex(current_frame_index);
+          continue;
+        }
         frame.ZeroFillPixelData();
         prior_frame_ = SkCodec::kNoFrame;
       } else {

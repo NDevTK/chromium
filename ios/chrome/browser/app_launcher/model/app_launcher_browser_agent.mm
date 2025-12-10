@@ -155,25 +155,40 @@ RequestCauseFromActionCause(AppLauncherAlertCause cause) {
 #pragma mark - AppLauncherBrowserAgent
 
 AppLauncherBrowserAgent::AppLauncherBrowserAgent(Browser* browser)
-    : BrowserUserData(browser),
-      tab_helper_delegate_(browser),
-      tab_helper_delegate_installer_(&tab_helper_delegate_, browser) {
-  browser->AddObserver(this);
+    : BrowserUserData(browser), tab_helper_delegate_(browser) {
+  StartObserving(browser_, Policy::kAccordingToFeature);
   app_launcher_scene_state_observer_ = [[AppLauncherSceneStateObserver alloc]
       initWithTransitionCallback:
           base::BindRepeating(&AppLauncherBrowserAgent::TabHelperDelegate::
                                   SceneActivationLevelChanged,
                               tab_helper_delegate_.AsWeakPtr())];
-  [browser->GetSceneState() addObserver:app_launcher_scene_state_observer_];
+  [browser_->GetSceneState() addObserver:app_launcher_scene_state_observer_];
 }
 
-AppLauncherBrowserAgent::~AppLauncherBrowserAgent() = default;
+AppLauncherBrowserAgent::~AppLauncherBrowserAgent() {
+  [browser_->GetSceneState() removeObserver:app_launcher_scene_state_observer_];
+  StopObserving();
+}
 
-#pragma mark - BrowserObserver
+#pragma mark - TabsDependencyInstaller
 
-void AppLauncherBrowserAgent::BrowserDestroyed(Browser* browser) {
-  [browser->GetSceneState() removeObserver:app_launcher_scene_state_observer_];
-  browser->RemoveObserver(this);
+void AppLauncherBrowserAgent::OnWebStateInserted(web::WebState* web_state) {
+  AppLauncherTabHelper::FromWebState(web_state)->SetDelegate(
+      &tab_helper_delegate_);
+}
+
+void AppLauncherBrowserAgent::OnWebStateRemoved(web::WebState* web_state) {
+  AppLauncherTabHelper::FromWebState(web_state)->SetDelegate(nullptr);
+}
+
+void AppLauncherBrowserAgent::OnWebStateDeleted(web::WebState* web_state) {
+  // Nothing to do.
+}
+
+void AppLauncherBrowserAgent::OnActiveWebStateChanged(
+    web::WebState* old_active,
+    web::WebState* new_active) {
+  // Nothing to do.
 }
 
 #pragma mark - AppLauncherBrowserAgent::TabHelperDelegate

@@ -8,15 +8,15 @@
 #include <cmath>
 #include <limits>
 
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/numerics/angle_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/events/android/motion_event_android_factory.h"
 #include "ui/events/android/motion_event_android_java.h"
-#include "ui/events/android/motion_event_android_native.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/test/motion_event_test_utils.h"
 #include "ui/events/test/scoped_event_test_tick_clock.h"
@@ -89,47 +89,70 @@ TEST(MotionEventAndroidTest, Constructor) {
   int pointer_count = 2;
   int history_size = 0;
   int action_index = -1;
-  MotionEventAndroidJava event(
-      base::android::AttachCurrentThread(), nullptr, kPixToDip, 0.f, 0.f, 0.f,
-      oldest_event_time, latest_event_time, down_time_ms, kAndroidActionDown,
-      pointer_count, history_size, action_index, kAndroidActionButton, 0,
-      kAndroidButtonPrimary, kAndroidAltKeyDown, 0, raw_offset, -raw_offset,
-      false, &p0, &p1, false);
 
-  EXPECT_EQ(MotionEvent::Action::DOWN, event.GetAction());
-  EXPECT_EQ(oldest_event_time, event.GetEventTime());
-  EXPECT_EQ(latest_event_time, event.GetLatestEventTime());
-  EXPECT_EQ(event.GetDownTime(), down_time_ms);
-  EXPECT_EQ(p0.pos_x_pixels * kPixToDip, event.GetX(0));
-  EXPECT_EQ(p0.pos_y_pixels * kPixToDip, event.GetY(0));
-  EXPECT_EQ(p1.pos_x_pixels * kPixToDip, event.GetX(1));
-  EXPECT_EQ(p1.pos_y_pixels * kPixToDip, event.GetY(1));
-  EXPECT_FLOAT_EQ((p0.pos_x_pixels + raw_offset) * kPixToDip, event.GetRawX(0));
-  EXPECT_FLOAT_EQ((p0.pos_y_pixels - raw_offset) * kPixToDip, event.GetRawY(0));
-  EXPECT_FLOAT_EQ((p1.pos_x_pixels + raw_offset) * kPixToDip, event.GetRawX(1));
-  EXPECT_FLOAT_EQ((p1.pos_y_pixels - raw_offset) * kPixToDip, event.GetRawY(1));
-  EXPECT_EQ(p0.touch_major_pixels * kPixToDip, event.GetTouchMajor(0));
-  EXPECT_EQ(p1.touch_major_pixels * kPixToDip, event.GetTouchMajor(1));
-  EXPECT_EQ(p0.touch_minor_pixels * kPixToDip, event.GetTouchMinor(0));
-  EXPECT_EQ(p1.touch_minor_pixels * kPixToDip, event.GetTouchMinor(1));
-  EXPECT_EQ(event.GetPressure(0), pressure_0);
-  EXPECT_EQ(event.GetPressure(1), pressure_1);
-  EXPECT_EQ(p0.orientation_rad, event.GetOrientation(0));
-  EXPECT_EQ(p1.orientation_rad, event.GetOrientation(1));
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/kAndroidAltKeyDown);
+
+  std::unique_ptr<MotionEventAndroid> event =
+      MotionEventAndroidFactory::CreateFromJava(
+          env, obj, kPixToDip,
+          /*ticks_x=*/0.f,
+          /*ticks_y=*/0.f,
+          /*tick_multiplier=*/0.f, oldest_event_time, latest_event_time,
+          down_time_ms,
+          /*android_action=*/kAndroidActionDown, pointer_count, history_size,
+          action_index,
+          /*android_action_button=*/kAndroidActionButton,
+          /*android_gesture_classification=*/0,
+          /*android_button_state=*/kAndroidButtonPrimary,
+          /*raw_offset_x_pixels=*/raw_offset,
+          /*raw_offset_y_pixels=*/-raw_offset,
+          /*for_touch_handle=*/false,
+          /*pointer0=*/&p0,
+          /*pointer1=*/&p1,
+          /*is_latest_event_time_resampled=*/false);
+
+  EXPECT_EQ(MotionEvent::Action::DOWN, event->GetAction());
+  EXPECT_EQ(oldest_event_time, event->GetEventTime());
+  EXPECT_EQ(latest_event_time, event->GetLatestEventTime());
+  EXPECT_EQ(event->GetRawDownTime(), down_time_ms);
+  EXPECT_EQ(p0.pos_x_pixels * kPixToDip, event->GetX(0));
+  EXPECT_EQ(p0.pos_y_pixels * kPixToDip, event->GetY(0));
+  EXPECT_EQ(p1.pos_x_pixels * kPixToDip, event->GetX(1));
+  EXPECT_EQ(p1.pos_y_pixels * kPixToDip, event->GetY(1));
+  EXPECT_FLOAT_EQ((p0.pos_x_pixels + raw_offset) * kPixToDip,
+                  event->GetRawX(0));
+  EXPECT_FLOAT_EQ((p0.pos_y_pixels - raw_offset) * kPixToDip,
+                  event->GetRawY(0));
+  EXPECT_FLOAT_EQ((p1.pos_x_pixels + raw_offset) * kPixToDip,
+                  event->GetRawX(1));
+  EXPECT_FLOAT_EQ((p1.pos_y_pixels - raw_offset) * kPixToDip,
+                  event->GetRawY(1));
+  EXPECT_EQ(p0.touch_major_pixels * kPixToDip, event->GetTouchMajor(0));
+  EXPECT_EQ(p1.touch_major_pixels * kPixToDip, event->GetTouchMajor(1));
+  EXPECT_EQ(p0.touch_minor_pixels * kPixToDip, event->GetTouchMinor(0));
+  EXPECT_EQ(p1.touch_minor_pixels * kPixToDip, event->GetTouchMinor(1));
+  EXPECT_EQ(event->GetPressure(0), pressure_0);
+  EXPECT_EQ(event->GetPressure(1), pressure_1);
+  EXPECT_EQ(p0.orientation_rad, event->GetOrientation(0));
+  EXPECT_EQ(p1.orientation_rad, event->GetOrientation(1));
   EXPECT_NEAR(p0.tilt_rad,
-              ConvertToTiltRad(event.GetTiltX(0), event.GetTiltY(0)),
+              ConvertToTiltRad(event->GetTiltX(0), event->GetTiltY(0)),
               float_error);
   EXPECT_NEAR(p1.tilt_rad,
-              ConvertToTiltRad(event.GetTiltX(1), event.GetTiltY(1)),
+              ConvertToTiltRad(event->GetTiltX(1), event->GetTiltY(1)),
               float_error);
-  EXPECT_EQ(p0.id, event.GetPointerId(0));
-  EXPECT_EQ(p1.id, event.GetPointerId(1));
-  EXPECT_EQ(MotionEvent::ToolType::FINGER, event.GetToolType(0));
-  EXPECT_EQ(MotionEvent::ToolType::FINGER, event.GetToolType(1));
-  EXPECT_EQ(MotionEvent::BUTTON_PRIMARY, event.GetButtonState());
-  EXPECT_EQ(ui::EF_ALT_DOWN | ui::EF_LEFT_MOUSE_BUTTON, event.GetFlags());
-  EXPECT_EQ(static_cast<size_t>(pointer_count), event.GetPointerCount());
-  EXPECT_EQ(static_cast<size_t>(history_size), event.GetHistorySize());
+  EXPECT_EQ(p0.id, event->GetPointerId(0));
+  EXPECT_EQ(p1.id, event->GetPointerId(1));
+  EXPECT_EQ(MotionEvent::ToolType::FINGER, event->GetToolType(0));
+  EXPECT_EQ(MotionEvent::ToolType::FINGER, event->GetToolType(1));
+  EXPECT_EQ(MotionEvent::BUTTON_PRIMARY, event->GetButtonState());
+  EXPECT_EQ(ui::EF_ALT_DOWN | ui::EF_LEFT_MOUSE_BUTTON, event->GetFlags());
+  EXPECT_EQ(static_cast<size_t>(pointer_count), event->GetPointerCount());
+  EXPECT_EQ(static_cast<size_t>(history_size), event->GetHistorySize());
 }
 
 TEST(MotionEventAndroidTest, ZeroPressureOnActionUpEvent) {
@@ -139,12 +162,32 @@ TEST(MotionEventAndroidTest, ZeroPressureOnActionUpEvent) {
   const float pressure = 0.4f;
   MotionEventAndroid::Pointer p0(1, 13.7f, -7.13f, 5.3f, 1.2f, pressure, 0.1f,
                                  0.2f, kAndroidToolTypeFinger);
-  MotionEventAndroidJava event(base::android::AttachCurrentThread(), nullptr,
-                               kPixToDip, 0, 0, 0, base::TimeTicks(),
-                               kAndroidActionUp, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                               false, &p0, nullptr);
 
-  EXPECT_EQ(event.GetPressure(0), 0.f);
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/base::TimeTicks(),
+      /*android_action=*/kAndroidActionUp,
+      /*pointer_count=*/1,
+      /*history_size=*/0,
+      /*action_index=*/0,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/nullptr);
+
+  EXPECT_EQ(event->GetPressure(0), 0.f);
 }
 
 TEST(MotionEventAndroidTest, Clone) {
@@ -154,13 +197,31 @@ TEST(MotionEventAndroidTest, Clone) {
   const int pointer_count = 1;
   MotionEventAndroid::Pointer p0(1, 13.7f, -7.13f, 5.3f, 1.2f, 0.4f, 0.1f, 0.2f,
                                  kAndroidToolTypeFinger);
-  MotionEventAndroidJava event(base::android::AttachCurrentThread(), nullptr,
-                               kPixToDip, 0, 0, 0, base::TimeTicks(),
-                               kAndroidActionDown, pointer_count, 0, 0, 0, 0, 0,
-                               0, 0, 0, 0, false, &p0, nullptr);
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/base::TimeTicks(),
+      /*android_action=*/kAndroidActionDown, pointer_count,
+      /*history_size=*/0,
+      /*action_index=*/0,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/nullptr);
 
-  std::unique_ptr<MotionEvent> clone = event.Clone();
-  EXPECT_EQ(ui::test::ToString(event), ui::test::ToString(*clone));
+  std::unique_ptr<MotionEvent> clone = event->Clone();
+  EXPECT_EQ(ui::test::ToString(*event), ui::test::ToString(*clone));
 }
 
 TEST(MotionEventAndroidTest, Cancel) {
@@ -173,12 +234,32 @@ TEST(MotionEventAndroidTest, Cancel) {
   const int pointer_count = 1;
   MotionEventAndroid::Pointer p0(1, 13.7f, -7.13f, 5.3f, 1.2f, 0.4f, 0.1f, 0.2f,
                                  kAndroidToolTypeFinger);
-  MotionEventAndroidJava event(
-      base::android::AttachCurrentThread(), nullptr, kPixToDip, 0, 0, 0,
-      base::TimeTicks() + base::Nanoseconds(kEventTimeNS), kAndroidActionDown,
-      pointer_count, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, &p0, nullptr);
 
-  std::unique_ptr<MotionEvent> cancel_event = event.Cancel();
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/
+      base::TimeTicks() + base::Nanoseconds(kEventTimeNS),
+      /*android_action=*/kAndroidActionDown, pointer_count,
+      /*history_size=*/0,
+      /*action_index=*/0,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/nullptr);
+
+  std::unique_ptr<MotionEvent> cancel_event = event->Cancel();
   EXPECT_EQ(MotionEvent::Action::CANCEL, cancel_event->GetAction());
   EXPECT_EQ(event_time, cancel_event->GetEventTime());
   EXPECT_EQ(p0.pos_x_pixels * kPixToDip, cancel_event->GetX(0));
@@ -197,13 +278,32 @@ TEST(MotionEventAndroidTest, InvalidOrientationsSanitized) {
   float orientation1 = std::numeric_limits<float>::quiet_NaN();
   MotionEventAndroid::Pointer p0(0, 0, 0, 0, 0, 0, orientation0, 0, 0);
   MotionEventAndroid::Pointer p1(1, 0, 0, 0, 0, 0, orientation1, 0, 0);
-  MotionEventAndroidJava event(base::android::AttachCurrentThread(), nullptr,
-                               kPixToDip, 0, 0, 0, base::TimeTicks(),
-                               kAndroidActionDown, pointer_count, 0, 0, 0, 0, 0,
-                               0, 0, 0, 0, false, &p0, &p1);
 
-  EXPECT_EQ(0.f, event.GetOrientation(0));
-  EXPECT_EQ(0.f, event.GetOrientation(1));
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/base::TimeTicks(),
+      /*android_action=*/kAndroidActionDown, pointer_count,
+      /*history_size=*/0,
+      /*action_index=*/0,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/&p1);
+
+  EXPECT_EQ(0.f, event->GetOrientation(0));
+  EXPECT_EQ(0.f, event->GetOrientation(1));
 }
 
 TEST(MotionEventAndroidTest, NonEmptyHistoryForNonMoveEventsSanitized) {
@@ -213,13 +313,33 @@ TEST(MotionEventAndroidTest, NonEmptyHistoryForNonMoveEventsSanitized) {
   int pointer_count = 1;
   size_t history_size = 5;
   MotionEventAndroid::Pointer p0(0, 0, 0, 0, 0, 0, 0, 0, 0);
-  MotionEventAndroidJava event(
-      base::android::AttachCurrentThread(), nullptr, kPixToDip, 0, 0, 0,
-      base::TimeTicks(), base::TimeTicks(), base::TimeTicks(),
-      kAndroidActionDown, pointer_count, history_size, 0, 0, 0, 0, 0, 0, 0, 0,
-      false, &p0, nullptr, false);
 
-  EXPECT_EQ(0U, event.GetHistorySize());
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/base::TimeTicks(),
+      /*latest_event_time=*/base::TimeTicks(),
+      /*down_time_ms=*/base::TimeTicks(),
+      /*android_action=*/kAndroidActionDown, pointer_count, history_size,
+      /*action_index=*/0,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/nullptr,
+      /*is_latest_event_time_resampled=*/false);
+
+  EXPECT_EQ(0U, event->GetHistorySize());
 }
 
 TEST(MotionEventAndroidTest, ActionIndexForPointerDown) {
@@ -233,18 +353,96 @@ TEST(MotionEventAndroidTest, ActionIndexForPointerDown) {
   int pointer_count = 2;
   int history_size = 0;
   int action_index = 1;
-  MotionEventAndroidJava event(
-      base::android::AttachCurrentThread(), nullptr, kPixToDip, 0, 0, 0,
-      base::TimeTicks(), kAndroidActionPointerDown, pointer_count, history_size,
-      action_index, 0, 0, 0, 0, 0, 0, 0, false, &p0, &p1);
 
-  EXPECT_EQ(MotionEvent::Action::POINTER_DOWN, event.GetAction());
-  EXPECT_EQ(action_index, event.GetActionIndex());
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(
+          env, /*downTime=*/0, /*eventTime=*/0, /*action=*/0, /*x=*/0, /*y=*/0,
+          /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/base::TimeTicks(),
+      /*android_action=*/kAndroidActionPointerDown, pointer_count, history_size,
+      action_index,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/&p1);
+
+  EXPECT_EQ(MotionEvent::Action::POINTER_DOWN, event->GetAction());
+  EXPECT_EQ(action_index, event->GetActionIndex());
+}
+
+TEST(MotionEventAndroidTest, CreateFor) {
+  ui::test::ScopedEventTestTickClock clock;
+  clock.SetNowTicks(base::TimeTicks());
+
+  MotionEventAndroid::Pointer p0(1, 13.7f, -7.13f, 5.3f, 1.2f, 0.4f, 0.1f, 0.2f,
+                                 kAndroidToolTypeFinger);
+  int pointer_count = 1;
+  int history_size = 0;
+  int action_index = 0;
+
+  const jlong down_time_ms = base::TimeTicks::Now().ToUptimeMillis();
+  const jlong event_time_ms = down_time_ms;
+
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jobject> obj =
+      JNI_MotionEvent::Java_MotionEvent_obtain(env, /*downTime=*/down_time_ms,
+                                               /*eventTime=*/event_time_ms,
+                                               /*action=*/0, /*x=*/0, /*y=*/0,
+                                               /*metaState=*/0);
+  auto event = MotionEventAndroidFactory::CreateFromJava(
+      env, obj, kPixToDip,
+      /*ticks_x=*/0,
+      /*ticks_y=*/0,
+      /*tick_multiplier=*/0,
+      /*oldest_event_time=*/base::TimeTicks::FromUptimeMillis(event_time_ms),
+      /*latest_event_time=*/base::TimeTicks::FromUptimeMillis(event_time_ms),
+      /*down_time_ms=*/base::TimeTicks::FromUptimeMillis(down_time_ms),
+      /*android_action=*/kAndroidActionDown, pointer_count, history_size,
+      action_index,
+      /*android_action_button=*/0,
+      /*android_gesture_classification=*/0,
+      /*android_button_state=*/0,
+      /*raw_offset_x_pixels=*/0,
+      /*raw_offset_y_pixels=*/0,
+      /*for_touch_handle=*/false,
+      /*pointer0=*/&p0,
+      /*pointer1=*/nullptr,
+      /*is_latest_event_time_resampled=*/false);
+
+  const gfx::PointF new_point(12.3f, 45.6f);
+  auto new_event =
+      static_cast<MotionEventAndroid*>(event.get())->CreateFor(new_point);
+
+  EXPECT_EQ(event->GetAction(), new_event->GetAction());
+  EXPECT_EQ(new_point.x(), new_event->GetX(0));
+  EXPECT_EQ(new_point.y(), new_event->GetY(0));
+  EXPECT_EQ(event->GetPointerId(0), new_event->GetPointerId(0));
+  EXPECT_EQ(event->GetPressure(0), new_event->GetPressure(0));
+  EXPECT_EQ(event->GetOrientation(0), new_event->GetOrientation(0));
+  EXPECT_EQ(event->GetToolType(0), new_event->GetToolType(0));
+  EXPECT_EQ(event->GetButtonState(), new_event->GetButtonState());
+  EXPECT_EQ(event->GetFlags(), new_event->GetFlags());
+  EXPECT_EQ(event->GetPointerCount(), new_event->GetPointerCount());
+  EXPECT_EQ(event->GetHistorySize(), new_event->GetHistorySize());
+  EXPECT_EQ(event->GetEventTime(), new_event->GetEventTime());
+  EXPECT_EQ(event->GetRawDownTime(), new_event->GetRawDownTime());
+  EXPECT_EQ(event->IsLatestEventTimeResampled(),
+            new_event->IsLatestEventTimeResampled());
 }
 
 TEST(MotionEventAndroidTest, NativeBackedConstructor) {
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_S) {
+  if (base::android::android_info::sdk_int() <
+      base::android::android_info::SDK_VERSION_S) {
     GTEST_SKIP()
         << "AMotionEvent_fromJava used in test is only available on S+";
   }
@@ -266,10 +464,11 @@ TEST(MotionEventAndroidTest, NativeBackedConstructor) {
   }
   CHECK(native_event != nullptr);
 
-  std::unique_ptr<MotionEventAndroid> event = MotionEventAndroidNative::Create(
-      base::android::ScopedInputEvent(native_event), kPixToDip,
-      /* y_offset_pix= */ 0,
-      /* event_times= */ std::nullopt);
+  std::unique_ptr<MotionEventAndroid> event =
+      MotionEventAndroidFactory::CreateFromNative(
+          base::android::ScopedInputEvent(native_event), kPixToDip,
+          /* y_offset_pix= */ 0,
+          /* event_times= */ std::nullopt);
 
   EXPECT_EQ(event->GetX(0), x * kPixToDip);
   EXPECT_EQ(event->GetY(0), y * kPixToDip);
@@ -278,7 +477,7 @@ TEST(MotionEventAndroidTest, NativeBackedConstructor) {
 
   EXPECT_EQ(event->GetEventTime(),
             base::TimeTicks::FromUptimeMillis(event_time_ms));
-  EXPECT_EQ(event->GetDownTime(),
+  EXPECT_EQ(event->GetRawDownTime(),
             base::TimeTicks::FromUptimeMillis(down_time_ms));
 }
 

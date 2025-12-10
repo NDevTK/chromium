@@ -36,7 +36,7 @@ class CONTENT_EXPORT GestureListenerManager
       public WebContentsObserver {
  public:
   GestureListenerManager(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& obj,
+                         const base::android::JavaRef<jobject>& obj,
                          WebContentsImpl* web_contents);
 
   GestureListenerManager(const GestureListenerManager&) = delete;
@@ -44,16 +44,9 @@ class CONTENT_EXPORT GestureListenerManager
 
   ~GestureListenerManager() override;
 
-  void ResetGestureDetection(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj);
-  void SetDoubleTapSupportEnabled(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jboolean enabled);
-  void SetMultiTouchZoomSupportEnabled(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jboolean enabled);
+  void ResetGestureDetection(JNIEnv* env);
+  void SetDoubleTapSupportEnabled(JNIEnv* env, jboolean enabled);
+  void SetMultiTouchZoomSupportEnabled(JNIEnv* env, jboolean enabled);
   cc::mojom::RootScrollOffsetUpdateFrequency
   root_scroll_offset_update_frequency() const {
     return root_scroll_offset_update_frequency_.value_or(
@@ -77,6 +70,7 @@ class CONTENT_EXPORT GestureListenerManager
                         const float top_shown_pix,
                         bool top_changed);
   void UpdateOnTouchDown();
+  void UpdateOnTouchUp();
   void OnRootScrollOffsetChanged(const gfx::PointF& root_scroll_offset);
 
   // RenderWidgetHostConnector implementation.

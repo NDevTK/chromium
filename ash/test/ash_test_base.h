@@ -20,6 +20,8 @@
 #include "ash/wm/desks/desks_util.h"
 #include "ash/wm/overview/overview_types.h"
 #include "base/compiler_specific.h"
+#include "base/memory/raw_ptr.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "base/traits_bag.h"
@@ -30,6 +32,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/client/window_types.h"
 #include "ui/aura/env.h"
+#include "ui/aura/test/test_windows.h"
 #include "ui/compositor/test/test_context_factories.h"
 #include "ui/display/display.h"
 #include "ui/events/event_constants.h"
@@ -38,7 +41,6 @@
 
 namespace aura {
 class Window;
-class WindowDelegate;
 }  // namespace aura
 
 namespace base {
@@ -96,6 +98,11 @@ class AshTestBase : public testing::Test {
   // Alternatively a subclass may pass a TaskEnvironment directly.
   explicit AshTestBase(
       std::unique_ptr<base::test::TaskEnvironment> task_environment);
+
+  // In addition, a subclass may pass a TestingPrefServiceSimple to be used in
+  // the shell. `local_state` must be non-null and outlive `this`.
+  AshTestBase(std::unique_ptr<base::test::TaskEnvironment> task_environment,
+              TestingPrefServiceSimple* local_state);
 
   AshTestBase(const AshTestBase&) = delete;
   AshTestBase& operator=(const AshTestBase&) = delete;
@@ -157,7 +164,8 @@ class AshTestBase : public testing::Test {
       const gfx::Rect& bounds_in_screen = gfx::Rect(),
       chromeos::AppType app_type = chromeos::AppType::SYSTEM_APP,
       int shell_window_id = kShellWindowId_Invalid,
-      views::WidgetDelegate* delegate = nullptr);
+      views::WidgetDelegate* delegate = nullptr,
+      bool show = true);
 
   // Creates a visible window in the appropriate container. If
   // |bounds_in_screen| is empty the window is added to the primary root
@@ -178,17 +186,7 @@ class AshTestBase : public testing::Test {
 
   // Versions of the functions in aura::test:: that go through our shell
   // StackingController instead of taking a parent.
-  aura::Window* CreateTestWindowInShellWithId(int id);
-  aura::Window* CreateTestWindowInShellWithBounds(const gfx::Rect& bounds);
-  aura::Window* CreateTestWindowInShellWithDelegate(
-      aura::WindowDelegate* delegate,
-      int id,
-      const gfx::Rect& bounds);
-  aura::Window* CreateTestWindowInShellWithDelegateAndType(
-      aura::WindowDelegate* delegate,
-      aura::client::WindowType type,
-      int id,
-      const gfx::Rect& bounds);
+  aura::Window* CreateTestWindowInShell(aura::test::WindowBuilderParams params);
 
   // Attach |window| to the current shell's root window.
   void ParentWindowInPrimaryRootWindow(aura::Window* window);
@@ -270,6 +268,7 @@ class AshTestBase : public testing::Test {
   // pixel tests.
   virtual std::optional<pixel_test::InitParams> CreatePixelTestInitParams()
       const;
+  virtual std::string GenerateScreenshotName(const std::string& title);
 
   void set_start_session(bool start_session) {
     CHECK(init_params_) << "start_session must set before calling SetUp()";
@@ -305,8 +304,12 @@ class AshTestBase : public testing::Test {
   base::test::TaskEnvironment* task_environment() {
     return task_environment_.get();
   }
-  TestingPrefServiceSimple* local_state() { return &local_state_; }
+
+  // Always returns a non-null pointer.
+  TestingPrefServiceSimple* local_state() { return local_state_.get(); }
+
   AshTestHelper* ash_test_helper() { return ash_test_helper_.get(); }
+  AshPixelTestHelper* pixel_test_helper() { return pixel_test_helper_.get(); }
 
   // Returns nullptr before SetUp() is called.
   ui::InProcessContextFactory* GetContextFactory() {
@@ -372,7 +375,6 @@ class AshTestBase : public testing::Test {
 
   // Methods to emulate blocking and unblocking user session with given
   // |block_reason|.
-  // TODO(crbug.com/383770001): Deprecate these methods.
   void BlockUserSession(UserSessionBlockReason block_reason);
   void UnblockUserSession();
 
@@ -406,8 +408,11 @@ class AshTestBase : public testing::Test {
   // subclasses may elect to provide their own.
   std::unique_ptr<base::test::TaskEnvironment> task_environment_;
 
+  // Used only if no TestingPrefServiceSimple is provided to ctor.
+  std::unique_ptr<TestingPrefServiceSimple> owned_local_state_;
+
   // A pref service used for local state.
-  TestingPrefServiceSimple local_state_;
+  raw_ptr<TestingPrefServiceSimple> local_state_;
 
   // A helper class to take screen shots then compare with benchmarks. Set by
   // `PrepareForPixelDiffTest()`.

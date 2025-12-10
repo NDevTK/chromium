@@ -30,6 +30,7 @@
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_structured_address_constants.h"
 #include "components/autofill/core/browser/data_model/payments/bank_account.h"
+#include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
 #include "components/autofill/core/browser/data_model/payments/ewallet.h"
 #include "components/autofill/core/browser/data_model/payments/payment_instrument.h"
 #include "components/autofill/core/browser/data_quality/autofill_data_util.h"
@@ -40,6 +41,7 @@
 #include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/studies/autofill_experiments.h"
 #include "components/autofill/core/browser/suggestions/payments/payments_suggestion_generator.h"
+#include "components/autofill/core/browser/ui/addresses/autofill_address_util.h"
 #include "components/autofill/core/browser/ui/autofill_resource_utils.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_constants.h"
@@ -55,6 +57,7 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/browser/autofill/android/jni_headers/PersonalDataManager_jni.h"
 #include "components/autofill/android/payments_jni_headers/BankAccount_jni.h"
+#include "components/autofill/android/payments_jni_headers/BnplIssuerForSettings_jni.h"
 #include "components/autofill/android/payments_jni_headers/Ewallet_jni.h"
 #include "components/autofill/android/payments_jni_headers/PaymentInstrument_jni.h"
 
@@ -65,7 +68,6 @@ using ::base::android::ConvertJavaStringToUTF16;
 using ::base::android::ConvertJavaStringToUTF8;
 using ::base::android::ConvertUTF16ToJavaString;
 using ::base::android::ConvertUTF8ToJavaString;
-using ::base::android::JavaParamRef;
 using ::base::android::JavaRef;
 using ::base::android::ScopedJavaGlobalRef;
 using ::base::android::ScopedJavaLocalRef;
@@ -143,7 +145,7 @@ PersonalDataManagerAndroid::CreateJavaCreditCardFromNative(
       static_cast<jint>(card.virtual_card_enrollment_state()),
       card.product_description(), card.CardNameForAutofillDisplay(),
       card.ObfuscatedNumberWithVisibleLastFourDigits(), card.cvc(),
-      card.issuer_id(),
+      card.issuer_id(), card.benefit_source(),
       url::GURLAndroid::FromNativeGURL(env, card.product_terms_url()));
 }
 
@@ -195,6 +197,11 @@ void PersonalDataManagerAndroid::PopulateNativeCreditCardFromJava(
   if (issuer_id) {
     card->set_issuer_id(ConvertJavaStringToUTF8(env, issuer_id));
   }
+  ScopedJavaLocalRef<jstring> benefit_source =
+      Java_CreditCard_getBenefitSource(env, jcard);
+  if (benefit_source) {
+    card->set_benefit_source(ConvertJavaStringToUTF8(env, benefit_source));
+  }
   ScopedJavaLocalRef<jobject> java_product_terms_url =
       Java_CreditCard_getProductTermsUrl(env, jcard);
   if (!java_product_terms_url.is_null()) {
@@ -240,7 +247,7 @@ std::string PersonalDataManagerAndroid::GetDefaultCountryCodeForNewAddress(
 
 std::string PersonalDataManagerAndroid::SetProfile(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jprofile,
+    const JavaRef<jobject>& jprofile,
     std::string& guid) {
   AutofillProfile profile = AutofillProfile::CreateFromJavaObject(
       jprofile, address_data_manager().GetProfileByGUID(guid),
@@ -265,7 +272,7 @@ std::string PersonalDataManagerAndroid::SetProfile(
 
 std::string PersonalDataManagerAndroid::SetProfileToLocal(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jprofile,
+    const JavaRef<jobject>& jprofile,
     std::string& guid) {
   const AutofillProfile* target_profile =
       address_data_manager().GetProfileByGUID(guid);
@@ -284,28 +291,30 @@ std::string PersonalDataManagerAndroid::SetProfileToLocal(
 ScopedJavaLocalRef<jobjectArray>
 PersonalDataManagerAndroid::GetProfileLabelsForSettings(JNIEnv* env) {
   return GetProfileLabels(env, false /* address_only */,
-                          false /* include_name_in_label */,
-                          true /* include_organization_in_label */,
-                          true /* include_country_in_label */,
                           address_data_manager().GetProfilesForSettings());
 }
 
-ScopedJavaLocalRef<jobjectArray>
-PersonalDataManagerAndroid::GetProfileLabelsToSuggest(
+std::u16string PersonalDataManagerAndroid::GetProfileDescriptionForEditor(
     JNIEnv* env,
-    jboolean include_name_in_label,
-    jboolean include_organization_in_label,
-    jboolean include_country_in_label) {
-  return GetProfileLabels(env, true /* address_only */, include_name_in_label,
-                          include_organization_in_label,
-                          include_country_in_label,
+    std::string& guid) {
+  const AutofillProfile* profile =
+      address_data_manager().GetProfileByGUID(guid);
+  return profile ? GetProfileDescription(
+                       *profile, g_browser_process->GetApplicationLocale(),
+                       /*include_address_and_contacts=*/true)
+                 : std::u16string();
+}
+
+ScopedJavaLocalRef<jobjectArray>
+PersonalDataManagerAndroid::GetProfileLabelsToSuggest(JNIEnv* env) {
+  return GetProfileLabels(env, true /* address_only */,
                           address_data_manager().GetProfilesToSuggest());
 }
 
 std::u16string
 PersonalDataManagerAndroid::GetShippingAddressLabelForPaymentRequest(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jprofile,
+    const JavaRef<jobject>& jprofile,
     std::string& guid,
     bool include_country_in_label) {
   // The full name is not included in the label for shipping address. It is
@@ -360,7 +369,7 @@ ScopedJavaLocalRef<jobject> PersonalDataManagerAndroid::GetCreditCardForNumber(
 
 std::string PersonalDataManagerAndroid::SetCreditCard(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jcard) {
+    const JavaRef<jobject>& jcard) {
   std::string guid = Java_CreditCard_getGUID(env, jcard);
 
   CreditCard card;
@@ -377,7 +386,7 @@ std::string PersonalDataManagerAndroid::SetCreditCard(
 
 void PersonalDataManagerAndroid::UpdateServerCardBillingAddress(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jcard) {
+    const JavaRef<jobject>& jcard) {
   CreditCard card;
   PopulateNativeCreditCardFromJava(jcard, env, &card);
 
@@ -424,24 +433,6 @@ void PersonalDataManagerAndroid::RecordAndLogCreditCardUse(JNIEnv* env,
   }
 }
 
-jboolean PersonalDataManagerAndroid::HasProfiles(JNIEnv* env) {
-  return !address_data_manager().GetProfiles().empty();
-}
-
-jboolean PersonalDataManagerAndroid::HasCreditCards(JNIEnv* env) {
-  return !payments_data_manager().GetCreditCards().empty();
-}
-
-jboolean PersonalDataManagerAndroid::IsFidoAuthenticationAvailable(
-    JNIEnv* env) {
-  // Don't show toggle switch if user is unable to downstream cards.
-  if (!payments_data_manager().IsPaymentsDownloadActive()) {
-    return false;
-  }
-  // Show the toggle switch only if FIDO authentication is available.
-  return IsCreditCardFidoAuthenticationEnabled();
-}
-
 // static
 ScopedJavaLocalRef<jobject>
 PersonalDataManagerAndroid::CreateJavaBankAccountFromNative(
@@ -482,7 +473,7 @@ PersonalDataManagerAndroid::CreateJavaBankAccountFromNative(
 // static
 BankAccount PersonalDataManagerAndroid::CreateNativeBankAccountFromJava(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jbank_account) {
+    const JavaRef<jobject>& jbank_account) {
   int64_t instrument_id = static_cast<int64_t>(
       Java_PaymentInstrument_getInstrumentId(env, jbank_account));
   const ScopedJavaLocalRef<jstring>& jnickname =
@@ -577,7 +568,7 @@ PersonalDataManagerAndroid::CreateJavaEwalletFromNative(
 // static
 Ewallet PersonalDataManagerAndroid::CreateNativeEwalletFromJava(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jewallet) {
+    const JavaRef<jobject>& jewallet) {
   int64_t instrument_id = static_cast<int64_t>(
       Java_PaymentInstrument_getInstrumentId(env, jewallet));
 
@@ -642,20 +633,12 @@ ScopedJavaLocalRef<jobjectArray> PersonalDataManagerAndroid::GetCreditCardGUIDs(
 ScopedJavaLocalRef<jobjectArray> PersonalDataManagerAndroid::GetProfileLabels(
     JNIEnv* env,
     bool address_only,
-    bool include_name_in_label,
-    bool include_organization_in_label,
-    bool include_country_in_label,
     std::vector<const AutofillProfile*> profiles) {
   FieldTypeSet suggested_fields;
   size_t minimal_fields_shown = 2;
   if (address_only) {
     suggested_fields = FieldTypeSet();
-    if (include_name_in_label) {
-      suggested_fields.insert(NAME_FULL);
-    }
-    if (include_organization_in_label) {
-      suggested_fields.insert(COMPANY_NAME);
-    }
+    suggested_fields.insert(COMPANY_NAME);
     suggested_fields.insert(ADDRESS_HOME_LINE1);
     suggested_fields.insert(ADDRESS_HOME_LINE2);
     suggested_fields.insert(ADDRESS_HOME_DEPENDENT_LOCALITY);
@@ -663,18 +646,14 @@ ScopedJavaLocalRef<jobjectArray> PersonalDataManagerAndroid::GetProfileLabels(
     suggested_fields.insert(ADDRESS_HOME_STATE);
     suggested_fields.insert(ADDRESS_HOME_ZIP);
     suggested_fields.insert(ADDRESS_HOME_SORTING_CODE);
-    if (include_country_in_label) {
-      suggested_fields.insert(ADDRESS_HOME_COUNTRY);
-    }
+    suggested_fields.insert(ADDRESS_HOME_COUNTRY);
     minimal_fields_shown = suggested_fields.size();
   }
-
-  FieldType excluded_field = include_name_in_label ? UNKNOWN_TYPE : NAME_FULL;
 
   std::vector<std::u16string> labels = AutofillProfile::CreateInferredLabels(
       profiles,
       address_only ? std::make_optional(suggested_fields) : std::nullopt,
-      /*triggering_field_type=*/std::nullopt, {excluded_field},
+      /*triggering_field_type=*/std::nullopt, /*excluded_fields=*/{NAME_FULL},
       minimal_fields_shown, g_browser_process->GetApplicationLocale());
 
   return base::android::ToJavaArrayOfStrings(env, labels);
@@ -740,7 +719,7 @@ void PersonalDataManagerAndroid::PopulateNativeIbanFromJava(
 // TODO(crbug.com/369626137): Move test functions to a new test helper file.
 void PersonalDataManagerAndroid::AddServerIbanForTest(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jiban) {
+    const JavaRef<jobject>& jiban) {
   std::unique_ptr<Iban> iban = std::make_unique<Iban>();
   iban->set_nickname(Java_Iban_getNickname(env, jiban));
   iban->set_identifier(
@@ -775,7 +754,7 @@ PersonalDataManagerAndroid::GetIbansForSettings(JNIEnv* env) {
 
 std::string PersonalDataManagerAndroid::AddOrUpdateLocalIban(
     JNIEnv* env,
-    const JavaParamRef<jobject>& jiban) {
+    const JavaRef<jobject>& jiban) {
   Iban iban;
   PopulateNativeIbanFromJava(jiban, env, &iban);
 
@@ -846,7 +825,7 @@ static std::string JNI_PersonalDataManager_ToCountryCode(
 }
 
 static jlong JNI_PersonalDataManager_Init(JNIEnv* env,
-                                          const JavaParamRef<jobject>& obj,
+                                          const JavaRef<jobject>& obj,
                                           Profile* profile) {
   CHECK(profile);
   PersonalDataManagerAndroid* personal_data_manager_android =
@@ -856,4 +835,56 @@ static jlong JNI_PersonalDataManager_Init(JNIEnv* env,
   return reinterpret_cast<intptr_t>(personal_data_manager_android);
 }
 
+jboolean PersonalDataManagerAndroid::IsCardEligibleForBenefits(
+    JNIEnv* env,
+    const std::string& guid) {
+  if (const CreditCard* card =
+          payments_data_manager().GetCreditCardByGUID(guid)) {
+    return payments_data_manager().IsCardEligibleForBenefits(*card);
+  }
+  return false;
+}
+
+jboolean PersonalDataManagerAndroid::ShouldShowBnplSettings(JNIEnv* env) {
+  return payments_data_manager().ShouldShowBnplSettings();
+}
+
+base::android::ScopedJavaLocalRef<jobjectArray>
+PersonalDataManagerAndroid::GetBnplIssuersForSettings(JNIEnv* env) {
+  std::vector<base::android::ScopedJavaLocalRef<jobject>> jbnpl_issuers_list;
+  std::ranges::transform(payments_data_manager().GetLinkedBnplIssuers(),
+                         std::back_inserter(jbnpl_issuers_list),
+                         [env](const BnplIssuer& bnpl_issuer) {
+                           return CreateBnplIssuerForSettingsFromNative(
+                               env, bnpl_issuer);
+                         });
+  ScopedJavaLocalRef<jclass> type = base::android::GetClass(
+      env, "org/chromium/components/autofill/payments/BnplIssuerForSettings");
+  return base::android::ToTypedJavaArrayOfObjects(env, jbnpl_issuers_list,
+                                                  type.obj());
+}
+
+// static
+ScopedJavaLocalRef<jobject>
+PersonalDataManagerAndroid::CreateBnplIssuerForSettingsFromNative(
+    JNIEnv* env,
+    const BnplIssuer& bnpl_issuer) {
+  // `light_mode_image_id` is used for both light and dark modes on Android.
+  const auto& [light_mode_image_id, _] = GetBnplIssuerIconIds(
+      bnpl_issuer.issuer_id(),
+      /*issuer_linked=*/bnpl_issuer.payment_instrument().has_value());
+
+  CHECK(bnpl_issuer.payment_instrument());
+  return Java_BnplIssuerForSettings_Constructor(
+      env, ResourceMapper::MapToJavaDrawableId(light_mode_image_id.value()),
+      bnpl_issuer.payment_instrument()->instrument_id(),
+      bnpl_issuer.GetDisplayName());
+}
+
 }  // namespace autofill
+
+DEFINE_JNI(PersonalDataManager)
+DEFINE_JNI(BankAccount)
+DEFINE_JNI(BnplIssuerForSettings)
+DEFINE_JNI(Ewallet)
+DEFINE_JNI(PaymentInstrument)

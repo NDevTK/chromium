@@ -9,24 +9,23 @@
 
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "ui/actions/action_id.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 
 class AppMenuButton;
 class AvatarToolbarButton;
 class PinnedToolbarActionsContainer;
 class ExtensionsToolbarContainer;
+class IconLabelBubbleView;
 class IntentChipButton;
 class PageActionIconView;
 class ReloadButton;
+class ReloadControl;
 class ToolbarButton;
 
 namespace gfx {
 class Rect;
 class Size;
 }  // namespace gfx
-
-namespace page_actions {
-class PageActionView;
-}  // namespace page_actions
 
 namespace views {
 class AccessiblePaneView;
@@ -50,14 +49,15 @@ class ToolbarButtonProvider {
   // ToolbarActionView is not visible or available.
   virtual views::View* GetDefaultExtensionDialogAnchorView() = 0;
 
-  // Gets the specified page action icon.
+  // Gets the specified page action icon. This function should only be used
+  // if you need functionality for the legacy page action icon view. This
+  // method will be removed after the migration is complete.
   virtual PageActionIconView* GetPageActionIconView(
       PageActionIconType type) = 0;
 
-  // Page actions are currently undergoing a migration. The following method
-  // should be used for the new path, and will eventually replace
-  // `GetPageActionIconView`.
-  virtual page_actions::PageActionView* GetPageActionView(
+  // Gets the specified page action icon. This function can be used to retrieve
+  // either the legacy page action icon view or the migrated page action view.
+  virtual IconLabelBubbleView* GetPageActionView(
       actions::ActionId action_id) = 0;
 
   // Gets the app menu button.
@@ -74,7 +74,18 @@ class ToolbarButtonProvider {
   virtual views::AccessiblePaneView* GetAsAccessiblePaneView() = 0;
 
   // Returns the appropriate anchor view for the action id.
+  //
+  // Prefer `GetBubbleAnchor()` for new call sites.
+  // `GetBubbleAnchor()` returns a `views::BubbleAnchor` which may contain
+  // either a `views::View*` or a `ui::TrackedElement*` (or `nullptr`). Use
+  // it when you need to support anchoring to WebUI DOM elements via
+  // `TrackedElement` while remaining compatible with existing View anchors.
+  // TODO(crbug.com/461070677): Replace GetAnchorView() with GetBubbleAnchor().
   virtual views::View* GetAnchorView(
+      std::optional<actions::ActionId> action_id) = 0;
+
+  // Returns the appropriate BubbleAnchor for the action id.
+  virtual views::BubbleAnchor GetBubbleAnchor(
       std::optional<actions::ActionId> action_id) = 0;
 
   // See comment in browser_window.h for more info.
@@ -86,8 +97,9 @@ class ToolbarButtonProvider {
   // Returns the back button.
   virtual ToolbarButton* GetBackButton() = 0;
 
-  // Returns the reload button.
-  virtual ReloadButton* GetReloadButton() = 0;
+  // Returns the reload button delegate, it can be either `ReloadButton` or
+  // `ReloadButtonWebView` depending on the enabled features.
+  virtual ReloadControl* GetReloadButton() = 0;
 
   // Returns the intent chip button, if present.
   virtual IntentChipButton* GetIntentChipButton() = 0;

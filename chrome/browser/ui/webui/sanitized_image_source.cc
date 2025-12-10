@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -26,7 +27,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/google_service_auth_error.h"
-#include "ipc/ipc_channel.h"
+#include "ipc/constants.mojom.h"
 #include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -45,7 +46,7 @@
 namespace {
 
 const int64_t kMaxImageSizeInBytes =
-    static_cast<int64_t>(IPC::Channel::kMaximumMessageSize);
+    static_cast<int64_t>(IPC::mojom::kChannelMaximumMessageSize);
 
 constexpr char kEncodeTypeKey[] = "encodeType";
 constexpr char kIsGooglePhotosKey[] = "isGooglePhotos";
@@ -77,7 +78,7 @@ bool IsGooglePhotosUrl(const GURL& url) {
   };
 
   for (const char* const suffix : kGooglePhotosHostSuffixes) {
-    if (base::EndsWith(url.host_piece(), suffix)) {
+    if (base::EndsWith(url.host(), suffix)) {
       return true;
     }
   }
@@ -132,7 +133,7 @@ void SanitizedImageSource::StartDataRequest(
     content::URLDataSource::GotDataCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  std::string image_url_or_params = url.query();
+  std::string image_url_or_params = url.GetQuery();
   if (url != GURL(base::StrCat(
                  {chrome::kChromeUIImageURL, "?", image_url_or_params}))) {
     std::move(callback).Run(nullptr);
@@ -189,8 +190,7 @@ void SanitizedImageSource::StartDataRequest(
 
   // Request an auth token for downloading the image body.
   auto fetcher = std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-      "sanitized_image_source", identity_manager_,
-      signin::ScopeSet({GaiaConstants::kPhotosModuleImageOAuth2Scope}),
+      signin::OAuthConsumerId::kSanitizedImageSource, identity_manager_,
       signin::PrimaryAccountAccessTokenFetcher::Mode::kImmediate,
       signin::ConsentLevel::kSignin);
   auto* fetcher_ptr = fetcher.get();
@@ -284,7 +284,7 @@ void SanitizedImageSource::OnImageLoaded(
     std::unique_ptr<network::SimpleURLLoader> loader,
     RequestAttributes request_attributes,
     content::URLDataSource::GotDataCallback callback,
-    std::unique_ptr<std::string> body) {
+    std::optional<std::string> body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (loader->NetError() != net::OK || !body) {

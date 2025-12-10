@@ -6,6 +6,7 @@
 #define BASE_FILES_FILE_H_
 
 #include <stdint.h>
+#include <sys/types.h>
 
 #include <optional>
 #include <string>
@@ -119,7 +120,7 @@ class BASE_EXPORT File {
   // If you add more fields to this structure (platform-specific fields are OK),
   // make sure to update all functions that use it in file_util_{win|posix}.cc,
   // too, and the ParamTraits<base::File::Info> implementation in
-  // ipc/ipc_message_utils.cc.
+  // ipc/param_traits_utils.cc.
   struct BASE_EXPORT Info {
     Info();
     ~Info();
@@ -232,12 +233,7 @@ class BASE_EXPORT File {
 
   // Reads the given number of bytes (or until EOF is reached) starting with the
   // given offset, but does not make any effort to read all data on all
-  // platforms. Returns the number of bytes read, or -1/std::nullopt on error.
-  // PRECONDITIONS: `size` must be non-negative and `data` must point to at
-  // least `size` valid bytes.
-  UNSAFE_BUFFER_USAGE int ReadNoBestEffort(int64_t offset,
-                                           char* data,
-                                           int size);
+  // platforms. Returns the number of bytes read, or std::nullopt on error.
   std::optional<size_t> ReadNoBestEffort(int64_t offset,
                                          base::span<uint8_t> data);
 
@@ -271,12 +267,8 @@ class BASE_EXPORT File {
   std::optional<size_t> WriteAtCurrentPos(base::span<const uint8_t> data);
 
   // Same as above but does not make any effort to write all data on all
-  // platforms. Returns the number of bytes written, or -1/std::nullopt
+  // platforms. Returns the number of bytes written, or std::nullopt
   // on error.
-  // PRECONDITIONS: `size` must be non-negative and `data` must point to at
-  // least `size` valid bytes.
-  UNSAFE_BUFFER_USAGE int WriteAtCurrentPosNoBestEffort(const char* data,
-                                                        int size);
   std::optional<size_t> WriteAtCurrentPosNoBestEffort(
       base::span<const uint8_t> data);
 
@@ -417,6 +409,8 @@ class BASE_EXPORT File {
   static int Fstat(int fd, stat_wrapper_t* sb);
   // Wrapper for lstat().
   static int Lstat(const FilePath& path, stat_wrapper_t* sb);
+  // Wrapper for mkdir().
+  static int Mkdir(const FilePath& path, mode_t mode);
 #endif
 
   // This function can be used to augment `flags` with the correct flags
@@ -454,6 +448,9 @@ class BASE_EXPORT File {
   // Platform path to `file_`. Set if `this` wraps a file from an Android
   // content provider (i.e. a content URI) or if tracing is enabled in
   // `Initialize()`.
+  // On Android it could be a content URI, but never a virtual document path.
+  // path_ will be empty if content URI cannot be opened making the file
+  // invalid.
   FilePath path_;
 
   // Object tied to the lifetime of |this| that enables/disables tracing.

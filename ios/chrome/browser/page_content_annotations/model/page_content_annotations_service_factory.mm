@@ -28,8 +28,7 @@
 namespace {
 
 std::unique_ptr<KeyedService> BuildPageContentAnnotationsService(
-    web::BrowserState* context) {
-  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
+    ProfileIOS* profile) {
   DCHECK(profile);
   DCHECK(!profile->IsOffTheRecord());
   if (!page_content_annotations::features::
@@ -62,6 +61,8 @@ std::unique_ptr<KeyedService> BuildPageContentAnnotationsService(
       proto_db_provider, profile_path,
       optimization_guide_keyed_service->GetOptimizationGuideLogger(),
       optimization_guide_keyed_service,
+      /*embedder_metadata_provider=*/nullptr,
+      /*embedder=*/nullptr,
       base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::BEST_EFFORT}));
 }
@@ -98,13 +99,13 @@ PageContentAnnotationsServiceFactory::~PageContentAnnotationsServiceFactory() =
     default;
 
 // static
-BrowserStateKeyedServiceFactory::TestingFactory
+PageContentAnnotationsServiceFactory::TestingFactory
 PageContentAnnotationsServiceFactory::GetDefaultFactory() {
-  return base::BindRepeating(&BuildPageContentAnnotationsService);
+  return base::BindOnce(&BuildPageContentAnnotationsService);
 }
 
 std::unique_ptr<KeyedService>
 PageContentAnnotationsServiceFactory::BuildServiceInstanceFor(
-    web::BrowserState* context) const {
-  return BuildPageContentAnnotationsService(context);
+    ProfileIOS* profile) const {
+  return BuildPageContentAnnotationsService(profile);
 }

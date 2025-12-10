@@ -13,6 +13,7 @@
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
@@ -24,6 +25,7 @@
 #include "content/shell/browser/shell.h"
 #include "net/base/features.h"
 #include "net/device_bound_sessions/test_support.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/net_buildflags.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/install_default_websocket_handlers.h"
@@ -2121,7 +2123,7 @@ class BackForwardCacheBrowserTestRestoreUnlessDeviceBoundSessionTerminated
     EnableFeatureAndSetParams(
         features::kDeviceBoundSessionTerminationEvictBackForwardCache, "", "");
     EnableFeatureAndSetParams(net::features::kDeviceBoundSessions,
-                              "ForceEnableForTesting", "true");
+                              "RequireOriginTrialTokens", "false");
     EnableFeatureAndSetParams(
         unexportable_keys::
             kEnableBoundSessionCredentialsSoftwareKeysForManualTesting,
@@ -2133,23 +2135,27 @@ class BackForwardCacheBrowserTestRestoreUnlessDeviceBoundSessionTerminated
 IN_PROC_BROWSER_TEST_F(
     BackForwardCacheBrowserTestRestoreUnlessDeviceBoundSessionTerminated,
     NoCacheControlNoStoreButSessionTerminated) {
-  EXPECT_TRUE(embedded_test_server()->InitializeAndListen());
-  embedded_test_server()->RegisterRequestHandler(
+  embedded_https_test_server().SetSSLConfig(
+      net::EmbeddedTestServer::CERT_TEST_NAMES);
+  EXPECT_TRUE(embedded_https_test_server().InitializeAndListen());
+  embedded_https_test_server().RegisterRequestHandler(
       net::device_bound_sessions::GetTestRequestHandler(
-          embedded_test_server()->base_url()));
-  embedded_test_server()->StartAcceptingConnections();
+          embedded_https_test_server().GetURL("a.test", "/")));
+  embedded_https_test_server().StartAcceptingConnections();
 
   Shell* tab_to_be_bfcached = shell();
   Shell* tab_to_create_session = CreateBrowser();
 
   // 1) Load the document without cache-control:no-store
-  EXPECT_TRUE(NavigateToURL(tab_to_be_bfcached,
-                            embedded_test_server()->GetURL("/set-header")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_be_bfcached,
+      embedded_https_test_server().GetURL("a.test", "/set-header")));
   RenderFrameHostImplWrapper cached_rfh(current_frame_host());
 
   // 2) Navigate away. `cached_rfh` should enter bfcache.
-  EXPECT_TRUE(NavigateToURL(tab_to_be_bfcached, embedded_test_server()->GetURL(
-                                                    "b.com", "/set-header")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_be_bfcached,
+      embedded_https_test_server().GetURL("b.test", "/set-header")));
   EXPECT_TRUE(cached_rfh->IsInBackForwardCache());
 
   // 3) Create a device bound session in another tab
@@ -2158,8 +2164,9 @@ IN_PROC_BROWSER_TEST_F(
       tab_to_create_session->web_contents(),
       future.GetRepeatingCallback<
           const net::device_bound_sessions::SessionAccess&>());
-  EXPECT_TRUE(NavigateToURL(tab_to_create_session,
-                            embedded_test_server()->GetURL("/dbsc_required")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_create_session,
+      embedded_https_test_server().GetURL("a.test", "/dbsc_required")));
   EXPECT_EQ(future.Take().access_type,
             net::device_bound_sessions::SessionAccess::AccessType::kCreation);
 
@@ -2170,7 +2177,7 @@ IN_PROC_BROWSER_TEST_F(
       tab_to_create_session->web_contents()
           ->GetBrowserContext()
           ->GetStoragePartitionForUrl(
-              embedded_test_server()->GetURL("/set-header"),
+              embedded_https_test_server().GetURL("/set-header"),
               /*can_create=*/true)
           ->GetDeviceBoundSessionManager();
   ASSERT_TRUE(device_bound_session_manager);
@@ -2191,25 +2198,29 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(
     BackForwardCacheBrowserTestRestoreUnlessDeviceBoundSessionTerminated,
     CacheControlNoStoreSessionTerminated) {
-  EXPECT_TRUE(embedded_test_server()->InitializeAndListen());
-  embedded_test_server()->RegisterRequestHandler(
+  embedded_https_test_server().SetSSLConfig(
+      net::EmbeddedTestServer::CERT_TEST_NAMES);
+  EXPECT_TRUE(embedded_https_test_server().InitializeAndListen());
+  embedded_https_test_server().RegisterRequestHandler(
       net::device_bound_sessions::GetTestRequestHandler(
-          embedded_test_server()->base_url()));
-  embedded_test_server()->StartAcceptingConnections();
+          embedded_https_test_server().GetURL("a.test", "/")));
+  embedded_https_test_server().StartAcceptingConnections();
 
   Shell* tab_to_be_bfcached = shell();
   Shell* tab_to_create_session = CreateBrowser();
 
   // 1) Load the document with cache-control:no-store
-  EXPECT_TRUE(NavigateToURL(
-      tab_to_be_bfcached,
-      embedded_test_server()->GetURL("/set-header?Cache-Control: no-store")));
+  EXPECT_TRUE(
+      NavigateToURL(tab_to_be_bfcached,
+                    embedded_https_test_server().GetURL(
+                        "a.test", "/set-header?Cache-Control: no-store")));
   RenderFrameHostImplWrapper cached_rfh(current_frame_host());
   cached_rfh->GetBackForwardCacheMetrics()->SetObserverForTesting(this);
 
   // 2) Navigate away. `cached_rfh` should enter bfcache.
-  EXPECT_TRUE(NavigateToURL(tab_to_be_bfcached, embedded_test_server()->GetURL(
-                                                    "b.com", "/set-header")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_be_bfcached,
+      embedded_https_test_server().GetURL("b.test", "/set-header")));
   EXPECT_TRUE(cached_rfh->IsInBackForwardCache());
 
   // 3) Create a device bound session in another tab
@@ -2218,8 +2229,9 @@ IN_PROC_BROWSER_TEST_F(
       tab_to_create_session->web_contents(),
       future.GetRepeatingCallback<
           const net::device_bound_sessions::SessionAccess&>());
-  EXPECT_TRUE(NavigateToURL(tab_to_create_session,
-                            embedded_test_server()->GetURL("/dbsc_required")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_create_session,
+      embedded_https_test_server().GetURL("a.test", "/dbsc_required")));
   EXPECT_EQ(future.Take().access_type,
             net::device_bound_sessions::SessionAccess::AccessType::kCreation);
 
@@ -2230,7 +2242,7 @@ IN_PROC_BROWSER_TEST_F(
       tab_to_create_session->web_contents()
           ->GetBrowserContext()
           ->GetStoragePartitionForUrl(
-              embedded_test_server()->GetURL("/set-header"),
+              embedded_https_test_server().GetURL("a.test", "/set-header"),
               /*can_create=*/true)
           ->GetDeviceBoundSessionManager();
   ASSERT_TRUE(device_bound_session_manager);
@@ -2269,14 +2281,16 @@ std::unique_ptr<net::test_server::HttpResponse> RedirectToUrl(
 IN_PROC_BROWSER_TEST_F(
     BackForwardCacheBrowserTestRestoreUnlessDeviceBoundSessionTerminated,
     CacheControlNoStoreSessionTerminatedOnRedirectedPage) {
-  EXPECT_TRUE(embedded_test_server()->InitializeAndListen());
-  embedded_test_server()->RegisterRequestHandler(
+  embedded_https_test_server().SetSSLConfig(
+      net::EmbeddedTestServer::CERT_TEST_NAMES);
+  EXPECT_TRUE(embedded_https_test_server().InitializeAndListen());
+  embedded_https_test_server().RegisterRequestHandler(
       net::device_bound_sessions::GetTestRequestHandler(
-          embedded_test_server()->base_url()));
-  embedded_test_server()->StartAcceptingConnections();
+          embedded_https_test_server().GetURL("a.test", "/")));
+  embedded_https_test_server().StartAcceptingConnections();
 
-  GURL redirected_url =
-      embedded_test_server()->GetURL("/set-header?Cache-Control: no-store");
+  GURL redirected_url = embedded_https_test_server().GetURL(
+      "a.test", "/set-header?Cache-Control: no-store");
   CreateHttpsServer();
   https_server()->RegisterRequestHandler(
       base::BindRepeating(&RedirectToUrl, redirected_url));
@@ -2292,8 +2306,9 @@ IN_PROC_BROWSER_TEST_F(
   cached_rfh->GetBackForwardCacheMetrics()->SetObserverForTesting(this);
 
   // 2) Navigate away. `cached_rfh` should enter bfcache.
-  EXPECT_TRUE(NavigateToURL(tab_to_be_bfcached, embedded_test_server()->GetURL(
-                                                    "b.com", "/set-header")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_be_bfcached,
+      embedded_https_test_server().GetURL("b.test", "/set-header")));
   EXPECT_TRUE(cached_rfh->IsInBackForwardCache());
 
   // 3) Create a device bound session in another tab
@@ -2302,8 +2317,9 @@ IN_PROC_BROWSER_TEST_F(
       tab_to_create_session->web_contents(),
       future.GetRepeatingCallback<
           const net::device_bound_sessions::SessionAccess&>());
-  EXPECT_TRUE(NavigateToURL(tab_to_create_session,
-                            embedded_test_server()->GetURL("/dbsc_required")));
+  EXPECT_TRUE(NavigateToURL(
+      tab_to_create_session,
+      embedded_https_test_server().GetURL("a.test", "/dbsc_required")));
   EXPECT_EQ(future.Take().access_type,
             net::device_bound_sessions::SessionAccess::AccessType::kCreation);
 
@@ -2314,7 +2330,7 @@ IN_PROC_BROWSER_TEST_F(
       tab_to_create_session->web_contents()
           ->GetBrowserContext()
           ->GetStoragePartitionForUrl(
-              embedded_test_server()->GetURL("/set-header"),
+              embedded_https_test_server().GetURL("a.test", "/set-header"),
               /*can_create=*/true)
           ->GetDeviceBoundSessionManager();
   ASSERT_TRUE(device_bound_session_manager);

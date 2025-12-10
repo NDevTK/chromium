@@ -54,7 +54,7 @@ source_set("flatland") {
 
   deps = [
     "//base",
-    "//gpu/ipc/common:vulkan_ycbcr_info",
+    "//components/viz/common/resources:shared_image_format",
     "//mojo/public/cpp/system",
     "//services/service_manager/public/cpp",
     "//skia",

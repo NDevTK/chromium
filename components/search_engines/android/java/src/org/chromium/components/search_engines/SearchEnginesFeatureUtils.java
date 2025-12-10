@@ -4,8 +4,6 @@
 
 package org.chromium.components.search_engines;
 
-import androidx.annotation.VisibleForTesting;
-
 import org.chromium.base.CommandLine;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.build.annotations.NullMarked;
@@ -59,36 +57,16 @@ public class SearchEnginesFeatureUtils {
      * <p>This can be controlled by starting chrome with the <code>
      * --enable-choice-apis-fake-backend</code> command line flag.
      *
-     * <p>In "fake backend" mode, if the "ClayBlocking" feature's "dialog_timeout_millis" param is
-     * set, it is also used to simulate a long-running backend query. It will respond that blocking
-     * is required after {@code min(3000, paramValue("dialog_timeout_millis"))} milliseconds.
+     * <p>The "fake backend" mode, simulates a long-running backend query. It will respond that
+     * blocking is required after `FakeSearchEngineCountryDelegate#CHOICE_REQUIRED_DELAY_MS`.
      */
     public boolean isChoiceApisFakeBackendEnabled() {
         return CommandLine.getInstance().hasSwitch(ENABLE_CHOICE_APIS_FAKE_BACKEND_SWITCH);
     }
 
-    /**
-     * Number of blocked Chrome sessions after which we suppress the blocking dialog. This is
-     * intended as an escape hatch for initial iterations of the feature, to mitigate potential
-     * bugs.
-     */
-    public int clayBlockingEscapeHatchBlockLimit() {
-        return clayBlockingFeatureParamAsInt("escape_hatch_block_limit", 10);
-    }
-
     /** Number of times a failed backend call will be retried. */
     public int choiceApisConnectionMaxRetries() {
         return CHOICE_APIS_CONNECTION_MAX_RETRIES;
-    }
-
-    @VisibleForTesting
-    static int clayBlockingFeatureParamAsInt(String param, int defaultValue) {
-        assert SearchEnginesFeatures.isEnabled(SearchEnginesFeatures.CLAY_BLOCKING)
-                : "Avoid accessing params on disabled features!";
-
-        return SearchEnginesFeatureMap.getInstance()
-                .getFieldTrialParamByFeatureAsInt(
-                        SearchEnginesFeatures.CLAY_BLOCKING, param, defaultValue);
     }
 
     // Do not instantiate this class.

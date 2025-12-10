@@ -10,6 +10,7 @@
 #include "base/strings/strcat.h"
 #include "base/syslog_logging.h"
 #include "build/chromeos_buildflags.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
@@ -54,6 +55,7 @@ WebContentsCaptureClient::CaptureResult WebContentsCaptureClient::CaptureAsync(
 
   image_format_ = kDefaultFormat;
   image_quality_ = kDefaultQuality;
+  gfx::Rect source_rect;
 
   if (image_details) {
     if (image_details->format != api::extension_types::ImageFormat::kNone) {
@@ -62,11 +64,25 @@ WebContentsCaptureClient::CaptureResult WebContentsCaptureClient::CaptureAsync(
     if (image_details->quality) {
       image_quality_ = *image_details->quality;
     }
+    // If `rect` parameter is set, use it to get the correct region to capture.
+    if (image_details->rect) {
+      const auto& rect = *image_details->rect;
+      source_rect.SetRect(rect.x, rect.y, rect.width, rect.height);
+      float scale = image_details->scale ? *image_details->scale
+                                         : view->GetDeviceScaleFactor();
+      // For extremely large scale values, this can result in an empty
+      // source_rect due to integer overflow clamping. In turn, this will cause
+      // `CopyFromSurface` to capture the entire visible surface.
+      source_rect = gfx::ScaleToEnclosingRect(source_rect, scale);
+    }
   }
 
-  view->CopyFromSurface(gfx::Rect(),  // Copy entire surface area.
-                        gfx::Size(),  // Result contains device-level detail.
-                        std::move(callback));
+  view->CopyFromSurface(
+      source_rect,  // An empty rect will capture the entire surface.
+      gfx::Size(),  // Result contains device-level detail.
+      base::BindOnce([](const viz::CopyOutputBitmapWithMetadata& result) {
+        return result.bitmap;
+      }).Then(std::move(callback)));
 
 #if BUILDFLAG(IS_CHROMEOS)
   SYSLOG(INFO) << "Screenshot taken";

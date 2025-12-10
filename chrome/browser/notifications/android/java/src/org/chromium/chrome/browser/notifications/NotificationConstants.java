@@ -59,6 +59,7 @@ public class NotificationConstants {
     static final String EXTRA_NOTIFICATION_BACKUP_OF_ORIGINAL = "notification_backup_of_original";
     static final String EXTRA_NOTIFICATION_BACKUP_FOR_SUSPICIOUS_VERDICT =
             "notification_backup_for_suspicious_verdict";
+    static final String EXTRA_SUSPICIOUS_NOTIFICATION_COUNT = "suspicious_notification_count";
 
     static final String EXTRA_ALLOW_REPORTING_AS_SPAM_IS_NOTIFICATION_WARNED =
             "notification_allow_reporting_as_spam_is_notification_warned";
@@ -190,4 +191,8 @@ public class NotificationConstants {
 
     // Default notificationId until it has been set.
     public static final int DEFAULT_NOTIFICATION_ID = -1;
+
+    // We always use the same request code for pending intents. We use other ways to force
+    // uniqueness of pending intents when necessary.
+    static final int PENDING_INTENT_REQUEST_CODE = 0;
 }

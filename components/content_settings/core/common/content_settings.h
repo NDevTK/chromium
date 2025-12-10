@@ -5,47 +5,60 @@
 #ifndef COMPONENTS_CONTENT_SETTINGS_CORE_COMMON_CONTENT_SETTINGS_H_
 #define COMPONENTS_CONTENT_SETTINGS_CORE_COMMON_CONTENT_SETTINGS_H_
 
-#include <stddef.h>
-
-#include <map>
-#include <string>
+#include <iosfwd>
+#include <optional>
 #include <variant>
 #include <vector>
 
-#include "base/time/time.h"
 #include "base/values.h"
-#include "components/content_settings/core/common/content_settings_constraints.h"
+#include "components/content_settings/core/common/content_settings_enums.mojom.h"
 #include "components/content_settings/core/common/content_settings_metadata.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_rules.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 
+class GURL;
+
 // Different settings that can be assigned for a particular content type.  We
 // give the user the ability to set these on a global and per-origin basis.
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.content_settings
-// GENERATED_JAVA_CLASS_NAME_OVERRIDE: ContentSettingValues
-//
-// TODO(nigeltao): migrate the Java users of this enum to the mojom-generated
-// enum.
 enum ContentSetting {
   CONTENT_SETTING_DEFAULT = 0,
   CONTENT_SETTING_ALLOW,
   CONTENT_SETTING_BLOCK,
   CONTENT_SETTING_ASK,
   CONTENT_SETTING_SESSION_ONLY,
-  CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
   CONTENT_SETTING_NUM_SETTINGS
 };
 
+// Commonly used setting values for options of permission settings
+// Do not modify this enum. If different/additional  states are required, the
+// permission should define its own enum.
+enum class PermissionOption {
+  kAllowed = 1,
+  kDenied = 2,
+  kAsk = 3,
+
+  kMinValue = kAllowed,
+  kMaxValue = kAsk
+};
+
+bool IsValidPermissionOption(PermissionOption setting);
+
 struct GeolocationSetting {
-  ContentSetting approximate = CONTENT_SETTING_DEFAULT;
-  ContentSetting precise = CONTENT_SETTING_DEFAULT;
+  PermissionOption approximate = PermissionOption::kAsk;
+  PermissionOption precise = PermissionOption::kAsk;
 
   auto operator<=>(const GeolocationSetting&) const = default;
 };
 
 using PermissionSetting = std::variant<ContentSetting, GeolocationSetting>;
+
+std::ostream& operator<<(std::ostream& os, const GeolocationSetting& it);
+std::ostream& operator<<(std::ostream& os, const PermissionSetting& it);
+std::ostream& operator<<(std::ostream& os,
+                         const std::optional<PermissionSetting>& it);
 
 // Range-checked conversion of an int to a ContentSetting, for use when reading
 // prefs off disk.

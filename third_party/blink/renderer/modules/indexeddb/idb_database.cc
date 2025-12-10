@@ -32,6 +32,7 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/feature_list.h"
+#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-blink.h"
@@ -60,6 +61,7 @@
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -117,8 +119,8 @@ IDBDatabase::IDBDatabase(
   // Invokes the callback immediately.
   scheduler_observer_ = context->GetScheduler()->AddLifecycleObserver(
       FrameOrWorkerScheduler::ObserverType::kWorkerScheduler,
-      WTF::BindRepeating(&IDBDatabase::OnSchedulerLifecycleStateChanged,
-                         WrapWeakPersistent(this)));
+      BindRepeating(&IDBDatabase::OnSchedulerLifecycleStateChanged,
+                    WrapWeakPersistent(this)));
 
   UpdateStateIfNeeded();
 }
@@ -149,9 +151,30 @@ void IDBDatabase::SetDatabaseMetadata(const IDBDatabaseMetadata& metadata) {
 }
 
 void IDBDatabase::TransactionCreated(IDBTransaction* transaction) {
+  TRACE_EVENT0("IndexedDB", "IDBDatabase::TransactionCreated");
   DCHECK(transaction);
   DCHECK(!transactions_.Contains(transaction->Id()));
   transactions_.insert(transaction->Id(), transaction);
+
+  // Log a histogram when the number of active transactions becomes unusually
+  // large, to help diagnose crbug.com/381086791.
+  //
+  // We plan to:
+  // - Set a trace recording *start* trigger when the 10001th transaction is
+  //   created.
+  // - Set a trace recording *stop* trigger when the 11000th transaction is
+  //   created. This will give us a timeline of events that occur between the
+  //   10001th and 11000th transactions are created.
+  //
+  // TODO(crbug.com/381086791): Remove this diagnostic code once the issue is
+  // understood and resolved.
+  constexpr size_t kHighTransactionCount = 10000;
+  if (transactions_.size() > kHighTransactionCount) {
+    base::UmaHistogramCounts100000(
+        "IndexedDB.NumTransactionsInIDBDatabaseOnTransactionCreated."
+        "10kTransactions",
+        transactions_.size());
+  }
 
   if (transaction->IsVersionChange()) {
     DCHECK(!version_change_transaction_);
@@ -211,7 +234,7 @@ void IDBDatabase::VersionChange(int64_t old_version, int64_t new_version) {
 
 void IDBDatabase::Abort(int64_t transaction_id,
                         mojom::blink::IDBException code,
-                        const WTF::String& message) {
+                        const String& message) {
   DCHECK(transactions_.Contains(transaction_id));
   DOMException* dom_exception;
   if (code == mojom::blink::IDBException::kQuotaError &&
@@ -293,9 +316,18 @@ IDBObjectStore* IDBDatabase::createObjectStore(
   version_change_transaction_->CreateObjectStore(object_store_id, name,
                                                  key_path, auto_increment);
 
-  scoped_refptr<IDBObjectStoreMetadata> store_metadata = base::AdoptRef(
-      new IDBObjectStoreMetadata(name, object_store_id, key_path,
-                                 auto_increment, IDBDatabase::kMinimumIndexId));
+  scoped_refptr<IDBObjectStoreMetadata> store_metadata =
+      base::AdoptRef(new IDBObjectStoreMetadata(name, object_store_id, key_path,
+                                                auto_increment));
+  // The LevelDB backing store needs the minimum index ID to be a specific value
+  // (indexed_db_leveldb_coding.cc:kMinimumIndexId). To maintain consistency
+  // between the metadata copies in blink and content, set the same value here.
+  //
+  // Note that the SQLite backing store does not have this requirement and does
+  // not persist `max_index_id` to disk, so indexes added to object stores after
+  // the database has been closed and reopened can have smaller IDs.
+  // TODO(crbug.com/40253999): Don't set this when the SQLite flag is enabled.
+  store_metadata->max_index_id = 30;
   auto* object_store = MakeGarbageCollected<IDBObjectStore>(
       store_metadata, version_change_transaction_.Get());
   version_change_transaction_->ObjectStoreCreated(name, object_store);
@@ -368,17 +400,18 @@ IDBTransaction* IDBDatabase::transaction(
   if (mode != mojom::blink::IDBTransactionMode::ReadOnly &&
       mode != mojom::blink::IDBTransactionMode::ReadWrite) {
     exception_state.ThrowTypeError(
-        "The mode provided ('" + v8_mode.AsString() +
-        "') is not one of 'readonly' or 'readwrite'.");
+        StrCat({"The mode provided ('", v8_mode.AsStringView(),
+                "') is not one of 'readonly' or 'readwrite'."}));
     return nullptr;
   }
 
   mojom::blink::IDBTransactionDurability durability =
       mojom::blink::IDBTransactionDurability::Default;
   DCHECK(options);
-  if (options->durability() == indexed_db_names::kRelaxed) {
+  if (options->durability() == V8IDBTransactionDurability::Enum::kRelaxed) {
     durability = mojom::blink::IDBTransactionDurability::Relaxed;
-  } else if (options->durability() == indexed_db_names::kStrict) {
+  } else if (options->durability() ==
+             V8IDBTransactionDurability::Enum::kStrict) {
     durability = mojom::blink::IDBTransactionDurability::Strict;
   }
 
@@ -566,8 +599,7 @@ void IDBDatabase::ContextLifecycleStateChanged(
     return;
   }
 
-  if (state == mojom::blink::FrameLifecycleState::kFrozen ||
-      state == mojom::blink::FrameLifecycleState::kFrozenAutoResumeMedia) {
+  if (state == mojom::blink::FrameLifecycleState::kFrozen) {
     DidBecomeInactive();
   }
 }
@@ -623,18 +655,18 @@ void IDBDatabase::GetAll(int64_t transaction_id,
                          int64_t index_id,
                          const IDBKeyRange* key_range,
                          mojom::blink::IDBGetAllResultType result_type,
-                         int64_t max_count,
+                         uint32_t max_count,
                          mojom::blink::IDBCursorDirection direction,
                          IDBRequest* request) {
   IDBCursor::ResetCursorPrefetchCaches(transaction_id, nullptr);
 
   mojom::blink::IDBKeyRangePtr key_range_ptr =
       mojom::blink::IDBKeyRange::From(key_range);
-  database_remote_->GetAll(
-      transaction_id, object_store_id, index_id, std::move(key_range_ptr),
-      result_type, max_count, direction,
-      WTF::BindOnce(&IDBRequest::OnGetAll, WrapWeakPersistent(request),
-                    result_type));
+  database_remote_->GetAll(transaction_id, object_store_id, index_id,
+                           std::move(key_range_ptr), result_type, max_count,
+                           direction,
+                           BindOnce(&IDBRequest::OnGetAll,
+                                    WrapWeakPersistent(request), result_type));
 }
 
 void IDBDatabase::OpenCursor(int64_t object_store_id,
@@ -651,7 +683,7 @@ void IDBDatabase::OpenCursor(int64_t object_store_id,
   database_remote_->OpenCursor(
       request->transaction()->Id(), object_store_id, index_id,
       std::move(key_range_ptr), direction, key_only, task_type,
-      WTF::BindOnce(&IDBRequest::OnOpenCursor, WrapWeakPersistent(request)));
+      BindOnce(&IDBRequest::OnOpenCursor, WrapWeakPersistent(request)));
 }
 
 void IDBDatabase::Count(int64_t transaction_id,

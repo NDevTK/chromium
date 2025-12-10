@@ -16,6 +16,8 @@
   }
 </style>
 
+<settings-subpage page-title="$i18n{historySearchSettingLabel}"
+    route-path$="[[routePath]]">
 <div class="settings-row first">
   <template is="dom-if" if="[[!isDisabledByPolicy_(enterprisePref_)]]"
       restamp>
@@ -132,3 +134,4 @@
     </ul>
   </div>
 </div>
+</settings-subpage>

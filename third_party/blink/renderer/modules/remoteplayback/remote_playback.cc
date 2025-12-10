@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/platform/instrumentation/memory_pressure_listener.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -120,7 +121,6 @@ RemotePlayback& RemotePlayback::From(HTMLMediaElement& element) {
 RemotePlayback::RemotePlayback(HTMLMediaElement& element)
     : ExecutionContextLifecycleObserver(element.GetExecutionContext()),
       ActiveScriptWrappable<RemotePlayback>({}),
-      RemotePlaybackController(element),
       state_(mojom::blink::PresentationConnectionState::CLOSED),
       availability_(mojom::ScreenAvailability::UNKNOWN),
       media_element_(&element),
@@ -289,15 +289,15 @@ void RemotePlayback::PromptInternal() {
   if (controller && !availability_urls_.empty()) {
     controller->GetPresentationService()->StartPresentation(
         availability_urls_,
-        WTF::BindOnce(&RemotePlayback::HandlePresentationResponse,
-                      WrapPersistent(this)));
+        BindOnce(&RemotePlayback::HandlePresentationResponse,
+                 WrapPersistent(this)));
   } else {
     // TODO(yuryu): Wrapping PromptCancelled with base::OnceClosure as
     // InspectorInstrumentation requires a globally unique pointer to track
     // tasks. We can remove the wrapper if InspectorInstrumentation returns a
     // task id.
     base::OnceClosure task =
-        WTF::BindOnce(&RemotePlayback::PromptCancelled, WrapPersistent(this));
+        BindOnce(&RemotePlayback::PromptCancelled, WrapPersistent(this));
 
     std::unique_ptr<probe::AsyncTaskContext> task_context =
         std::make_unique<probe::AsyncTaskContext>();
@@ -305,9 +305,9 @@ void RemotePlayback::PromptInternal() {
     GetExecutionContext()
         ->GetTaskRunner(TaskType::kMediaElementEvent)
         ->PostTask(FROM_HERE,
-                   WTF::BindOnce(RunRemotePlaybackTask,
-                                 WrapPersistent(GetExecutionContext()),
-                                 std::move(task), std::move(task_context)));
+                   blink::BindOnce(RunRemotePlaybackTask,
+                                   WrapPersistent(GetExecutionContext()),
+                                   std::move(task), std::move(task_context)));
   }
 }
 
@@ -330,17 +330,17 @@ int RemotePlayback::WatchAvailabilityInternal(
   // TODO(yuryu): Wrapping notifyInitialAvailability with base::OnceClosure as
   // InspectorInstrumentation requires a globally unique pointer to track tasks.
   // We can remove the wrapper if InspectorInstrumentation returns a task id.
-  base::OnceClosure task = WTF::BindOnce(
-      &RemotePlayback::NotifyInitialAvailability, WrapPersistent(this), id);
+  base::OnceClosure task = BindOnce(&RemotePlayback::NotifyInitialAvailability,
+                                    WrapPersistent(this), id);
   std::unique_ptr<probe::AsyncTaskContext> task_context =
       std::make_unique<probe::AsyncTaskContext>();
   task_context->Schedule(GetExecutionContext(), "watchAvailabilityCallback");
   GetExecutionContext()
       ->GetTaskRunner(TaskType::kMediaElementEvent)
       ->PostTask(FROM_HERE,
-                 WTF::BindOnce(RunRemotePlaybackTask,
-                               WrapPersistent(GetExecutionContext()),
-                               std::move(task), std::move(task_context)));
+                 blink::BindOnce(RunRemotePlaybackTask,
+                                 WrapPersistent(GetExecutionContext()),
+                                 std::move(task), std::move(task_context)));
 
   MaybeStartListeningForAvailability();
   return id;

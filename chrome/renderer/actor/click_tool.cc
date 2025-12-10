@@ -7,11 +7,13 @@
 #include <cstdint>
 #include <optional>
 
+#include "base/functional/bind.h"
 #include "base/strings/to_string.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "chrome/common/actor/action_result.h"
 #include "chrome/common/actor/actor_logging.h"
+#include "chrome/common/actor/journal_details_builder.h"
 #include "chrome/renderer/actor/tool_utils.h"
 #include "content/public/renderer/render_frame.h"
 #include "third_party/abseil-cpp/absl/strings/str_format.h"
@@ -38,20 +40,26 @@ using ::blink::WebMouseEvent;
 using ::blink::WebNode;
 
 ClickTool::ClickTool(content::RenderFrame& frame,
-                     Journal::TaskId task_id,
+                     TaskId task_id,
                      Journal& journal,
-                     mojom::ClickActionPtr action)
-    : ToolBase(frame, task_id, journal), action_(std::move(action)) {}
+                     mojom::ClickActionPtr action,
+                     mojom::ToolTargetPtr target,
+                     mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 ClickTool::~ClickTool() = default;
 
-mojom::ActionResultPtr ClickTool::Execute() {
+void ClickTool::Execute(ToolFinishedCallback callback) {
   ValidatedResult validated_result = Validate();
   if (!validated_result.has_value()) {
-    return std::move(validated_result.error());
+    std::move(callback).Run(std::move(validated_result.error()));
+    return;
   }
-
-  gfx::PointF click_point = validated_result.value();
 
   WebMouseEvent::Button button;
   switch (action_->type) {
@@ -76,53 +84,55 @@ mojom::ActionResultPtr ClickTool::Execute() {
     }
   }
 
-  return CreateAndDispatchClick(button, click_count, click_point,
-                                frame_->GetWebFrame()->FrameWidget());
+  ResolvedTarget target = validated_result.value();
+  journal_->Log(
+      task_id_, "ClickTool::Execute",
+      JournalDetailsBuilder().Add("point", target.widget_point).Build());
+
+  CreateAndDispatchClick(
+      button, click_count, target, weak_ptr_factory_.GetWeakPtr(),
+      base::BindOnce(&ClickTool::OnActionComplete,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void ClickTool::OnActionComplete(ToolFinishedCallback callback,
+                                 mojom::ActionResultPtr result) {
+  std::move(callback).Run(std::move(result));
 }
 
 std::string ClickTool::DebugString() const {
-  return absl::StrFormat(
-      "ClickTool[%s;type(%s);count(%s)]", ToDebugString(action_->target),
-      base::ToString(action_->type), base::ToString(action_->count));
+  return absl::StrFormat("ClickTool[%s;type(%s);count(%s)]",
+                         ToDebugString(target_), base::ToString(action_->type),
+                         base::ToString(action_->count));
+}
+
+bool ClickTool::SupportsPaintStability() const {
+  return true;
 }
 
 ClickTool::ValidatedResult ClickTool::Validate() const {
   CHECK(frame_->GetWebFrame());
   CHECK(frame_->GetWebFrame()->FrameWidget());
 
-  if (action_->target->is_coordinate()) {
-    gfx::PointF click_point(action_->target->get_coordinate());
+  auto resolved_target = ValidateAndResolveTarget();
+  if (!resolved_target.has_value()) {
+    return base::unexpected(std::move(resolved_target.error()));
+  }
 
-    if (!IsPointWithinViewport(click_point, frame_.get())) {
-      return base::unexpected(
-          MakeResult(mojom::ActionResultCode::kCoordinatesOutOfBounds));
+  // Perform click validation on the resolved node.
+  const WebNode& node = resolved_target->node;
+  if (!node.IsNull()) {
+    WebFormControlElement form_element =
+        node.DynamicTo<WebFormControlElement>();
+    if (!form_element.IsNull() && !form_element.IsEnabled()) {
+      return base::unexpected(MakeResult(
+          mojom::ActionResultCode::kElementDisabled,
+          /*requires_page_stabilization=*/false,
+          absl::StrFormat("[Element %s]", base::ToString(form_element))));
     }
-
-    return click_point;
   }
 
-  int32_t dom_node_id = action_->target->get_dom_node_id();
-  WebNode node = GetNodeFromId(frame_.get(), dom_node_id);
-  if (node.IsNull()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kInvalidDomNodeId));
-  }
-
-  WebFormControlElement form_element = node.DynamicTo<WebFormControlElement>();
-  if (!form_element.IsNull() && !form_element.IsEnabled()) {
-    return base::unexpected(MakeResult(
-        mojom::ActionResultCode::kElementDisabled,
-        absl::StrFormat("[Element %s]", base::ToString(form_element))));
-  }
-
-  std::optional<gfx::PointF> click_point = InteractionPointFromWebNode(node);
-  if (!click_point.has_value()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kElementOffscreen,
-                   absl::StrFormat("[Element %s]", base::ToString(node))));
-  }
-
-  return *click_point;
+  return resolved_target;
 }
 
 }  // namespace actor

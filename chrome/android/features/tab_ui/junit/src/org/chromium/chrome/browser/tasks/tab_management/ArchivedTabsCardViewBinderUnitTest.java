@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.tasks.tab_management;
 import static org.junit.Assert.assertEquals;
 
 import static org.chromium.chrome.browser.tasks.tab_management.ArchivedTabsCardViewProperties.ALL_KEYS;
-import static org.chromium.chrome.browser.tasks.tab_management.ArchivedTabsCardViewProperties.ARCHIVE_TIME_DELTA_DAYS;
 import static org.chromium.chrome.browser.tasks.tab_management.ArchivedTabsCardViewProperties.CLICK_HANDLER;
 import static org.chromium.chrome.browser.tasks.tab_management.ArchivedTabsCardViewProperties.NUMBER_OF_ARCHIVED_TABS;
 
@@ -28,6 +27,9 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
@@ -64,7 +66,6 @@ public class ArchivedTabsCardViewBinderUnitTest {
         mModel =
                 new PropertyModel.Builder(ALL_KEYS)
                         .with(NUMBER_OF_ARCHIVED_TABS, ARCHIVED_TABS)
-                        .with(ARCHIVE_TIME_DELTA_DAYS, TIME_DELTA)
                         .with(
                                 CLICK_HANDLER,
                                 () -> {
@@ -78,24 +79,50 @@ public class ArchivedTabsCardViewBinderUnitTest {
     }
 
     @Test
+    @DisableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_TAB_GROUPS)
     public void testSingular() {
         mModel.set(NUMBER_OF_ARCHIVED_TABS, 1);
-        mModel.set(ARCHIVE_TIME_DELTA_DAYS, 1);
 
         TextView titleView = mArchivedTabsCardView.findViewById(R.id.title);
         assertEquals("(1) inactive item", titleView.getText());
 
         TextView subtitleView = mArchivedTabsCardView.findViewById(R.id.subtitle);
-        assertEquals("Not used for 1 day or more", subtitleView.getText());
+        assertEquals("Unused or duplicate tabs", subtitleView.getText());
     }
 
     @Test
+    @DisableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_TAB_GROUPS)
     public void testPlural() throws TimeoutException {
         TextView titleView = mArchivedTabsCardView.findViewById(R.id.title);
         assertEquals("(10) inactive items", titleView.getText());
 
         TextView subtitleView = mArchivedTabsCardView.findViewById(R.id.subtitle);
-        assertEquals("Not used for 14 days or more", subtitleView.getText());
+        assertEquals("Unused or duplicate tabs", subtitleView.getText());
+
+        mArchivedTabsCardView.callOnClick();
+        mCallbackHelper.waitForOnly();
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_TAB_GROUPS)
+    public void testSingularWithGroups() {
+        mModel.set(NUMBER_OF_ARCHIVED_TABS, 1);
+
+        TextView titleView = mArchivedTabsCardView.findViewById(R.id.title);
+        assertEquals("(1) inactive item", titleView.getText());
+
+        TextView subtitleView = mArchivedTabsCardView.findViewById(R.id.subtitle);
+        assertEquals("Unused or duplicate tabs and groups", subtitleView.getText());
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_TAB_GROUPS)
+    public void testPluralWithGroups() throws TimeoutException {
+        TextView titleView = mArchivedTabsCardView.findViewById(R.id.title);
+        assertEquals("(10) inactive items", titleView.getText());
+
+        TextView subtitleView = mArchivedTabsCardView.findViewById(R.id.subtitle);
+        assertEquals("Unused or duplicate tabs and groups", subtitleView.getText());
 
         mArchivedTabsCardView.callOnClick();
         mCallbackHelper.waitForOnly();

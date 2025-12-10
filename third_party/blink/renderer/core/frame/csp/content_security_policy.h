@@ -33,6 +33,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/unguessable_token.h"
 #include "services/network/public/cpp/content_security_policy/content_security_policy.h"
+#include "services/network/public/cpp/integrity_metadata.h"
 #include "services/network/public/cpp/integrity_policy.h"
 #include "services/network/public/mojom/content_security_policy.mojom-blink.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink-forward.h"
@@ -57,10 +58,6 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
-namespace WTF {
-class OrdinalNumber;
-}
-
 namespace blink {
 
 class AuditsIssue;
@@ -79,6 +76,29 @@ using RedirectStatus = ResourceRequest::RedirectStatus;
 using network::mojom::blink::CSPDirectiveName;
 
 using CSPCheckResult = network::CSPCheckResult;
+
+inline constexpr char kSyntheticResponseBlockedResourceCountHistogramName[] =
+    "ServiceWorker.SyntheticResponse.BlockedResourceCount";
+inline constexpr char kSyntheticResponseBlockedSrcTypeHistogramName[] =
+    "ServiceWorker.SyntheticResponse.BlockedSrcType";
+inline constexpr char
+    kSyntheticResponseBlockedInlineResourceTypeHistogramName[] =
+        "ServiceWorker.SyntheticResponse.BlockedInlineResourceType";
+
+// The src type which is blocked due to the synthetic response. This is a subset
+// of `CSPDirectiveName`.
+//
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(SyntheticResponseBlockedSrcType)
+enum class SyntheticResponseBlockedSrcType {
+  kUnspecified = 0,
+  kScriptSrcElm = 1,
+  kWorkerSrc = 2,
+  kMaxValue = kWorkerSrc,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/service/enums.xml:SyntheticResponseBlockedSrcType)
 
 //  A delegate interface to implement violation reporting, support for some
 //  directives and other miscellaneous functionality.
@@ -129,7 +149,8 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
   virtual void ReportBlockedScriptExecutionToInspector(
       const String& directive_text) = 0;
   virtual void DidAddContentSecurityPolicies(
-      WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>) = 0;
+      Vector<network::mojom::blink::ContentSecurityPolicyPtr>) = 0;
+  virtual bool ScriptSrcExtendedHashesEnabled() = 0;
 };
 
 class CORE_EXPORT ContentSecurityPolicy final
@@ -141,14 +162,22 @@ class CORE_EXPORT ContentSecurityPolicy final
   // https://w3c.github.io/webappsec-csp/#should-block-inline
   // Its possible values are listed in:
   // https://w3c.github.io/webappsec-csp/#effective-directive-for-inline-check
+  //
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(InlineType)
   enum class InlineType {
-    kNavigation,
-    kScript,
-    kScriptAttribute,
-    kScriptSpeculationRules,  // TODO(https://crbug.com/1382361): Standardize.
-    kStyle,
-    kStyleAttribute
+    kNavigation = 0,
+    kScript = 1,
+    kScriptAttribute = 2,
+    kScriptSpeculationRules =
+        3,  // TODO(https://crbug.com/1382361): Standardize.
+    kStyle = 4,
+    kStyleAttribute = 5,
+    kMaxValue = kStyleAttribute,
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/service/enums.xml:ContentSecurityPolicyInlineType)
 
   // CheckHeaderType can be passed to Allow*FromSource methods to control which
   // types of CSP headers are checked.
@@ -258,7 +287,7 @@ class CORE_EXPORT ContentSecurityPolicy final
                    const String& content,
                    const String& nonce,
                    const String& context_url,
-                   const WTF::OrdinalNumber& context_line,
+                   const OrdinalNumber& context_line,
                    ReportingDisposition = ReportingDisposition::kReport);
 
   static bool IsScriptInlineType(InlineType);
@@ -325,7 +354,8 @@ class CORE_EXPORT ContentSecurityPolicy final
       Element* = nullptr,
       const String& source = g_empty_string,
       const String& source_prefix = g_empty_string,
-      std::optional<base::UnguessableToken> issue_id = std::nullopt);
+      std::optional<base::UnguessableToken> issue_id = std::nullopt,
+      std::optional<String> eval_hash = std::nullopt);
 
   // Strip a URL to make it safe to report it.
   static String StripURLForUseInReport(const SecurityOrigin* security_origin,
@@ -392,7 +422,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   void SetSupportsWasmEval(bool value) { supports_wasm_eval_ = value; }
 
   // Retrieve the parsed policies.
-  const WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr>&
+  const Vector<network::mojom::blink::ContentSecurityPolicyPtr>&
   GetParsedPolicies() const;
 
   // Retrieves the parsed sandbox flags. A lot of the time the execution
@@ -466,7 +496,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   // checks a vector of csp hashes against policy, probably a good idea
   // to use in tandem with FillInCSPHashValues.
   static bool CheckHashAgainstPolicy(
-      Vector<network::mojom::blink::CSPHashSourcePtr>&,
+      Vector<network::IntegrityMetadata>&,
       const network::mojom::blink::ContentSecurityPolicy&,
       InlineType);
 
@@ -490,7 +520,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   // We put the hash functions used on the policy object so that we only need
   // to calculate digests using those hashing algorithms which show up in the
   // policy.
-  WTF::HashSet<IntegrityAlgorithm> hash_algorithms_used_;
+  HashSet<IntegrityAlgorithm> hash_algorithms_used_;
 
   // State flags used to configure the environment after parsing a policy.
   network::mojom::blink::WebSandboxFlags sandbox_mask_;
@@ -507,6 +537,7 @@ class CORE_EXPORT ContentSecurityPolicy final
   // attribute are blocked. This is a special mode for the synthetic response
   // experiment.
   bool disallow_script_for_synthetic_response_ = false;
+  size_t blocked_count_for_synthetic_response_ = 0;
 };
 
 }  // namespace blink

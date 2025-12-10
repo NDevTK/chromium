@@ -11,6 +11,9 @@
 
 namespace blink {
 
+// This is similar to SummaryDescendantsObserver which fills a similar purpose
+// for <summary>.  They could in theory share a small amount of common code,
+// but such a refactoring would probably harm code readability too much.
 class SelectMutationObserver : public MutationObserver::Delegate {
  public:
   explicit SelectMutationObserver(HTMLSelectElement& select);
@@ -25,16 +28,7 @@ class SelectMutationObserver : public MutationObserver::Delegate {
   void CheckAddedNodes(MutationRecord* record);
   void CheckRemovedNodes(MutationRecord* record);
   void TraverseNodeDescendants(const Node* node);
-  void MaybeAddDescendantTextInput(Node* node);
-  void MaybeRemoveDescendantTextInput(Node* node);
   void AddDescendantDisallowedErrorToNode(Node& node);
-  String GetMessageForReason(ElementAccessibilityIssueReason issue_reason);
-  String FormatElementMessage(const String& element,
-                              const String& article,
-                              const String& example);
-  String FormatInteractiveElementMessage(const String& element,
-                                         const String& article,
-                                         const String& context);
   bool IsAllowedInteractiveElement(Node& node);
   bool IsInteractiveElement(const Node& node);
   void RecordIssueByType(ElementAccessibilityIssueReason issue_reason);

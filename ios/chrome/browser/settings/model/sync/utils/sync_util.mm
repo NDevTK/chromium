@@ -50,7 +50,8 @@ enum InfobarSyncError : uint8_t {
   SYNC_SYNC_SETTINGS_NOT_CONFIRMED = 5,
   SYNC_NEEDS_TRUSTED_VAULT_KEY = 6,
   SYNC_TRUSTED_VAULT_RECOVERABILITY_DEGRADED = 7,
-  kMaxValue = SYNC_TRUSTED_VAULT_RECOVERABILITY_DEGRADED,
+  SYNC_BOOKMARKS_LIMIT_EXCEEDED = 8,
+  kMaxValue = SYNC_BOOKMARKS_LIMIT_EXCEEDED,
 };
 // LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:SyncErrorInfobarTypes)
 
@@ -75,8 +76,13 @@ std::optional<InfobarSyncError> InfobarSyncErrorFromUserActionableError(
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
       return SYNC_TRUSTED_VAULT_RECOVERABILITY_DEGRADED;
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      return SYNC_BOOKMARKS_LIMIT_EXCEEDED;
+    // TODO(crbug.com/370026230): Update this case once GetAccountErrorUIInfo()
+    // returns a non-nil value for it.
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
+      NOTREACHED();
   }
-  NOTREACHED();
 }
 
 // Gets the the title of the identity error info bar for the given `error`.
@@ -105,7 +111,11 @@ std::u16string GetIdentityErrorInfoBarTitle(
         kTrustedVaultRecoverabilityDegradedForEverything:
       return l10n_util::GetStringUTF16(
           IDS_IOS_IDENTITY_ERROR_INFOBAR_VERIFY_ITS_YOU_TITLE);
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      // TODO(crbug.com/452968646): return the required string for the bookmarks
+      // limit exceeded error.
     case syncer::SyncService::UserActionableError::kNone:
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       NOTREACHED();
   }
 }
@@ -123,23 +133,13 @@ NSString* GetIdentityErrorInfoBarMessage(
           IDS_IOS_IDENTITY_ERROR_INFOBAR_KEEP_USING_YOUR_CHROME_DATA_MESSAGE);
     case syncer::SyncService::UserActionableError::
         kNeedsTrustedVaultKeyForPasswords: {
-      if (base::FeatureList::IsEnabled(
-              syncer::kSyncTrustedVaultInfobarImprovements)) {
-        return base::FeatureList::IsEnabled(
-                   syncer::kSyncTrustedVaultInfobarMessageImprovements)
-                   ? l10n_util::GetNSString(
-                         IDS_IOS_IDENTITY_ERROR_INFOBAR_GET_ALL_YOUR_PASSWORDS_ON_THIS_DEVICE)
-                   : l10n_util::GetNSStringF(
-                         IDS_IOS_IDENTITY_ERROR_INFOBAR_KEEP_USING_PASSWORDS_MESSAGE_WITH_EMAIL,
-                         email);
-      } else {
-        return base::FeatureList::IsEnabled(
-                   syncer::kSyncTrustedVaultInfobarMessageImprovements)
-                   ? l10n_util::GetNSString(
-                         IDS_IOS_IDENTITY_ERROR_INFOBAR_GET_ALL_YOUR_PASSWORDS_ON_THIS_DEVICE)
-                   : l10n_util::GetNSString(
-                         IDS_IOS_IDENTITY_ERROR_INFOBAR_KEEP_USING_PASSWORDS_MESSAGE);
-      }
+      return base::FeatureList::IsEnabled(
+                 syncer::kSyncTrustedVaultInfobarMessageImprovements)
+                 ? l10n_util::GetNSString(
+                       IDS_IOS_IDENTITY_ERROR_INFOBAR_GET_ALL_YOUR_PASSWORDS_ON_THIS_DEVICE)
+                 : l10n_util::GetNSStringF(
+                       IDS_IOS_IDENTITY_ERROR_INFOBAR_KEEP_USING_PASSWORDS_MESSAGE_WITH_EMAIL,
+                       email);
     }
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForPasswords:
@@ -149,7 +149,11 @@ NSString* GetIdentityErrorInfoBarMessage(
         kTrustedVaultRecoverabilityDegradedForEverything:
       return l10n_util::GetNSString(
           IDS_IOS_IDENTITY_ERROR_INFOBAR_MAKE_SURE_YOU_CAN_ALWAYS_USE_CHROME_DATA_MESSAGE);
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      // TODO(crbug.com/452968646): return the required string for the bookmarks
+      // limit exceeded error.
     case syncer::SyncService::UserActionableError::kNone:
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       NOTREACHED();
   }
 }
@@ -158,7 +162,8 @@ NSString* GetIdentityErrorInfoBarButtonLabel(
     syncer::SyncService::UserActionableError error) {
   switch (error) {
     case syncer::SyncService::UserActionableError::kSignInNeedsUpdate:
-      return l10n_util::GetNSString(IDS_IOS_SYNC_UPDATE_CREDENTIALS_BUTTON);
+      return l10n_util::GetNSString(
+          IDS_IOS_IDENTITY_ERROR_INFOBAR_VERIFY_BUTTON_LABEL);
     case syncer::SyncService::UserActionableError::kNeedsPassphrase:
       return l10n_util::GetNSString(
           IDS_IOS_IDENTITY_ERROR_INFOBAR_ENTER_BUTTON_LABEL);
@@ -178,7 +183,11 @@ NSString* GetIdentityErrorInfoBarButtonLabel(
         kTrustedVaultRecoverabilityDegradedForEverything:
       return l10n_util::GetNSString(
           IDS_IOS_IDENTITY_ERROR_INFOBAR_VERIFY_BUTTON_LABEL);
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      // TODO(crbug.com/452968646): return the required string for the bookmarks
+      // limit exceeded error.
     case syncer::SyncService::UserActionableError::kNone:
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       NOTREACHED();
   }
 }
@@ -224,6 +233,13 @@ NSString* GetSyncErrorDescriptionForSyncService(
       // syncer::AlwaysEncryptedUserTypes().
       return l10n_util::GetNSString(
           IDS_IOS_GOOGLE_SERVICES_SETTINGS_SYNC_FIX_RECOVERABILITY_DEGRADED_FOR_PASSWORDS);
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      // TODO(crbug.com/452968646): return the required string for the bookmarks
+      // limit exceeded error.
+      return nil;
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
+      // UI not implemented for this case.
+      return nil;
   }
 }
 
@@ -270,6 +286,13 @@ NSString* GetSyncErrorMessageForProfile(ProfileIOS* profile) {
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
       return GetSyncErrorDescriptionForSyncService(syncService);
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      // TODO(crbug.com/452968646): return the required string for the bookmarks
+      // limit exceeded error.
+      return nil;
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
+      // UI not implemented for this case.
+      return nil;
   }
 }
 
@@ -300,7 +323,13 @@ NSString* GetSyncErrorButtonTitleForProfile(ProfileIOS* profile) {
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
       return l10n_util::GetNSString(IDS_IOS_SYNC_VERIFY_ITS_YOU_BUTTON);
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+      // TODO(crbug.com/452968646): return the required string for the bookmarks
+      // limit exceeded error.
+      return nil;
     case syncer::SyncService::UserActionableError::kNone:
+    // UI not implemented for this case.
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       return nil;
   }
 }
@@ -319,6 +348,9 @@ bool ShouldShowSyncSettings(syncer::SyncService::UserActionableError error) {
         kTrustedVaultRecoverabilityDegradedForPasswords:
     case syncer::SyncService::UserActionableError::
         kTrustedVaultRecoverabilityDegradedForEverything:
+    case syncer::SyncService::UserActionableError::kBookmarksLimitExceeded:
+    // UI not implemented for this case.
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       return false;
   }
 }

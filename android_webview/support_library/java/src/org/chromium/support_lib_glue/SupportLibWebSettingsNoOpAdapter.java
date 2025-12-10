@@ -11,9 +11,9 @@ import android.webkit.WebSettings;
 import org.chromium.support_lib_boundary.WebSettingsBoundaryInterface;
 import org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.ApiCall;
 
+import java.lang.reflect.InvocationHandler;
 import java.util.Collections;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Mock adapter for WebSettings that doesn't do anything.
@@ -114,17 +114,6 @@ class SupportLibWebSettingsNoOpAdapter implements WebSettingsBoundaryInterface {
     }
 
     @Override
-    public void setRequestedWithHeaderOriginAllowList(Set<String> allowedOriginRules) {
-        recordApiCall(ApiCall.WEB_SETTINGS_SET_REQUESTED_WITH_HEADER_ORIGIN_ALLOWLIST);
-    }
-
-    @Override
-    public Set<String> getRequestedWithHeaderOriginAllowList() {
-        recordApiCall(ApiCall.WEB_SETTINGS_GET_REQUESTED_WITH_HEADER_ORIGIN_ALLOWLIST);
-        return Collections.emptySet();
-    }
-
-    @Override
     public void setEnterpriseAuthenticationAppLinkPolicyEnabled(boolean enabled) {
         recordApiCall(ApiCall.WEB_SETTINGS_SET_ENTERPRISE_AUTHENTICATION_APP_LINK_POLICY_ENABLED);
     }
@@ -201,6 +190,18 @@ class SupportLibWebSettingsNoOpAdapter implements WebSettingsBoundaryInterface {
     }
 
     @Override
+    public void setBackForwardCacheSettings(
+            /* BackForwardCacheSettings */ InvocationHandler backForwardCacheSettings) {
+        recordApiCall(ApiCall.SET_BACK_FORWARD_CACHE_SETTINGS);
+    }
+
+    @Override
+    public /* BackForwardCacheSettings */ InvocationHandler getBackForwardCacheSettings() {
+        recordApiCall(ApiCall.GET_BACK_FORWARD_CACHE_SETTINGS);
+        return null;
+    }
+
+    @Override
     public void setPaymentRequestEnabled(boolean enabled) {
         recordApiCall(ApiCall.SET_PAYMENT_REQUEST_ENABLED);
     }
@@ -231,5 +232,20 @@ class SupportLibWebSettingsNoOpAdapter implements WebSettingsBoundaryInterface {
     public boolean getIncludeCookiesOnIntercept() {
         recordApiCall(ApiCall.GET_INCLUDE_COOKIES_ON_INTERCEPT);
         return false;
+    }
+
+    @Override
+    public void setHyperlinkContextMenuItems(@HyperlinkContextMenuItems int items) {
+        recordApiCall(ApiCall.SET_HYPERLINK_CONTEXT_MENU_ITEMS);
+    }
+
+    @Override
+    public void setBackForwardCacheSettingsTimeout(int timeout) {
+        recordApiCall(ApiCall.BACK_FORWARD_CACHE_SETTINGS_SET_TIMEOUT_IN_SECONDS);
+    }
+
+    @Override
+    public void setBackForwardCacheSettingsMaxPagesInCache(int pagesInCache) {
+        recordApiCall(ApiCall.BACK_FORWARD_CACHE_SETTINGS_SET_MAX_PAGES_IN_CACHE);
     }
 }

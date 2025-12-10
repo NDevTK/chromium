@@ -8,6 +8,7 @@
 
 #include "base/check_op.h"
 #include "base/numerics/safe_conversions.h"
+#include "third_party/libgav1/src/src/obu_parser.h"
 
 namespace media {
 
@@ -82,12 +83,28 @@ AV1BitstreamBuilder AV1BitstreamBuilder::BuildSequenceHeaderOBU(
   ret.WriteBool(seq_hdr.enable_cdef);
   ret.WriteBool(seq_hdr.enable_restoration);
 
+  // AV1 spec section 5.5.2, color config syntax.
   ret.WriteBool(false);  // Disable high bitdepth.
+  if (seq_hdr.profile != libgav1::BitstreamProfile::kProfile1) {
+    ret.WriteBool(false);  // Disable monochrome.
+  }
 
-  ret.WriteBool(false);  // Disable monochrome.
-  ret.WriteBool(false);  // Disable color description present.
-  ret.WriteBool(false);  // No color range.
-  ret.Write(0, 2);       // Chroma sample position = 0.
+  if (seq_hdr.color_description_present_flag) {
+    ret.WriteBool(true);  // Color description present.
+    ret.Write(seq_hdr.color_primaries, 8);
+    ret.Write(seq_hdr.transfer_characteristics, 8);
+    ret.Write(seq_hdr.matrix_coefficients, 8);
+  } else {
+    ret.WriteBool(false);  // No color description present.
+  }
+
+  // We won't skip color range syntax unless the color primariy is
+  // Rec.709, transfer is sRGB and at the same time the identity
+  // matrix is used.
+  ret.WriteBool(seq_hdr.color_range);
+  if (seq_hdr.profile != libgav1::BitstreamProfile::kProfile1) {
+    ret.Write(0, 2);  // Chroma sample position = 0.
+  }
 
   ret.WriteBool(true);   // Separate uv delta q.
   ret.WriteBool(false);  // No film grain parameters present.
@@ -135,8 +152,13 @@ AV1BitstreamBuilder AV1BitstreamBuilder::BuildFrameHeaderOBU(
     }
     ret.WriteBool(false);  // Render and frame size are the same.
     ret.WriteBool(false);  // No allow high precision MV.
-    ret.WriteBool(false);  // Filter not switchable.
-    ret.Write(0, 2);       // Set interpolation filter to 0.
+    bool is_switchable_interp =
+        pic_hdr.interpolation_filter ==
+        libgav1::InterpolationFilter::kInterpolationFilterSwitchable;
+    ret.WriteBool(is_switchable_interp);
+    if (!is_switchable_interp) {
+      ret.Write(pic_hdr.interpolation_filter, 2);
+    }
     ret.WriteBool(false);  // Motion not switchable.
     if (seq_hdr.enable_ref_frame_mvs) {
       ret.WriteBool(false);  // Do not use ref frame MVs.
@@ -319,9 +341,8 @@ AV1BitstreamBuilder AV1BitstreamBuilder::BuildFrameHeaderOBU(
           ret.WriteBool(lr_unit_shift > 0);
         } else {
           ret.WriteBool(lr_unit_shift > 0);
-          lr_unit_shift--;
           if (lr_unit_shift) {
-            ret.WriteBool(lr_unit_shift);
+            ret.WriteBool(lr_unit_shift > 1);
           }
         }
 

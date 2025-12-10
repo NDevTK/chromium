@@ -35,26 +35,24 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/modules/speech/speech_grammar_list.h"
 #include "third_party/blink/renderer/modules/speech/speech_recognition.h"
+#include "third_party/blink/renderer/modules/speech/speech_recognition_phrase.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 
 namespace blink {
 
-const char SpeechRecognitionController::kSupplementName[] =
-    "SpeechRecognitionController";
-
 SpeechRecognitionController* SpeechRecognitionController::From(
     LocalDOMWindow& window) {
   SpeechRecognitionController* controller =
-      Supplement<LocalDOMWindow>::From<SpeechRecognitionController>(window);
+      window.GetSpeechRecognitionController();
   if (!controller) {
     controller = MakeGarbageCollected<SpeechRecognitionController>(window);
-    Supplement<LocalDOMWindow>::ProvideTo(window, controller);
+    window.SetSpeechRecognitionController(controller);
   }
   return controller;
 }
 
 SpeechRecognitionController::SpeechRecognitionController(LocalDOMWindow& window)
-    : Supplement<LocalDOMWindow>(window),
+    : local_dom_window_(window),
       speech_recognizer_(&window),
       on_device_speech_recognition_(&window) {}
 
@@ -69,7 +67,7 @@ SpeechRecognitionController::BuildStartSpeechRecognitionRequestParams(
     mojo::PendingRemote<media::mojom::blink::SpeechRecognitionSessionClient>
         session_client,
     const SpeechGrammarList& grammars,
-    const SpeechRecognitionPhraseList* phrases,
+    const V8ObservableArraySpeechRecognitionPhrase* phrases,
     const String& lang,
     bool continuous,
     bool interim_results,
@@ -87,11 +85,10 @@ SpeechRecognitionController::BuildStartSpeechRecognitionRequestParams(
         media::mojom::blink::SpeechRecognitionGrammar::New(grammar->src(),
                                                            grammar->weight()));
   }
-  if (phrases && phrases->length() > 0) {
+  if (!phrases->empty()) {
     params->recognition_context =
         media::mojom::blink::SpeechRecognitionRecognitionContext::New();
-    for (unsigned i = 0; i < phrases->length(); i++) {
-      SpeechRecognitionPhrase* phrase = phrases->item(i);
+    for (const auto& phrase : *phrases) {
       params->recognition_context->phrases.push_back(
           media::mojom::blink::SpeechRecognitionPhrase::New(phrase->phrase(),
                                                             phrase->boost()));
@@ -134,7 +131,7 @@ void SpeechRecognitionController::Install(
 }
 
 void SpeechRecognitionController::Trace(Visitor* visitor) const {
-  Supplement::Trace(visitor);
+  visitor->Trace(local_dom_window_);
   visitor->Trace(speech_recognizer_);
   visitor->Trace(on_device_speech_recognition_);
 }
@@ -142,9 +139,9 @@ void SpeechRecognitionController::Trace(Visitor* visitor) const {
 media::mojom::blink::SpeechRecognizer*
 SpeechRecognitionController::GetSpeechRecognizer() {
   if (!speech_recognizer_.is_bound()) {
-    GetSupplementable()->GetBrowserInterfaceBroker().GetInterface(
+    local_dom_window_->GetBrowserInterfaceBroker().GetInterface(
         speech_recognizer_.BindNewPipeAndPassReceiver(
-            GetSupplementable()->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+            local_dom_window_->GetTaskRunner(TaskType::kMiscPlatformAPI)));
   }
   return speech_recognizer_.get();
 }
@@ -152,9 +149,9 @@ SpeechRecognitionController::GetSpeechRecognizer() {
 media::mojom::blink::OnDeviceSpeechRecognition*
 SpeechRecognitionController::GetOnDeviceSpeechRecognition() {
   if (!on_device_speech_recognition_.is_bound()) {
-    GetSupplementable()->GetBrowserInterfaceBroker().GetInterface(
+    local_dom_window_->GetBrowserInterfaceBroker().GetInterface(
         on_device_speech_recognition_.BindNewPipeAndPassReceiver(
-            GetSupplementable()->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+            local_dom_window_->GetTaskRunner(TaskType::kMiscPlatformAPI)));
   }
   return on_device_speech_recognition_.get();
 }

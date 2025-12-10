@@ -69,7 +69,7 @@ class WebFormControlElementTest : public PageTestBase {
 
 // Tests that resetting a form clears the `user_has_edited_the_field_` state.
 TEST_F(WebFormControlElementTest, ResetDocumentClearsEditedState) {
-  GetDocument().documentElement()->setInnerHTML(R"(
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(R"(
     <body>
       <form id="f">
         <input id="text_id">
@@ -99,12 +99,131 @@ TEST_F(WebFormControlElementTest, ResetDocumentClearsEditedState) {
   EXPECT_FALSE(select.UserHasEditedTheField());
 }
 
+TEST_F(WebFormControlElementTest, TextControlPreviewDisabledInCanvas) {
+  if (!RuntimeEnabledFeatures::CanvasDrawElementEnabled()) {
+    return;
+  }
+
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(R"(
+    <form>
+      <canvas>
+        <input id="input_id">
+        <textarea id="textarea_id"></textarea>
+      </canvas>
+    </form>
+  )");
+
+  WebFormControlElement input(
+      DynamicTo<HTMLFormControlElement>(GetElementById("input_id")));
+  WebFormControlElement textarea(
+      DynamicTo<HTMLFormControlElement>(GetElementById("textarea_id")));
+
+  input.SetSuggestedValue("suggestion");
+  textarea.SetSuggestedValue("suggestion");
+
+  // Elements inside canvas should not show autofill suggestions, as this can
+  // leak the information to javascript.
+  EXPECT_TRUE(input.SuggestedValue().IsEmpty());
+  EXPECT_TRUE(textarea.SuggestedValue().IsEmpty());
+}
+
+TEST_F(WebFormControlElementTest,
+       TextControlPreviewDisabledWhenMovingToCanvas) {
+  if (!RuntimeEnabledFeatures::CanvasDrawElementEnabled()) {
+    return;
+  }
+
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(R"(
+    <form>
+      <input id="input_id">
+      <textarea id="textarea_id"></textarea>
+      <canvas id="canvas"></canvas>
+    </form>
+  )");
+
+  WebFormControlElement input(
+      DynamicTo<HTMLFormControlElement>(GetElementById("input_id")));
+  WebFormControlElement textarea(
+      DynamicTo<HTMLFormControlElement>(GetElementById("textarea_id")));
+
+  input.SetSuggestedValue("suggestion");
+  textarea.SetSuggestedValue("suggestion");
+
+  // Suggestions should work outside canvas.
+  EXPECT_EQ(input.SuggestedValue().Ascii(), "suggestion");
+  EXPECT_EQ(textarea.SuggestedValue().Ascii(), "suggestion");
+
+  // Moving the element into a canvas subtree should disable autofill
+  // suggestions, as these can leak the information to javascript.
+  GetElementById("canvas")->appendChild(GetElementById("input_id"));
+  EXPECT_TRUE(input.SuggestedValue().IsEmpty());
+  GetElementById("canvas")->appendChild(GetElementById("textarea_id"));
+  EXPECT_TRUE(textarea.SuggestedValue().IsEmpty());
+}
+
+TEST_F(WebFormControlElementTest, SelectPreviewDisabledInCanvas) {
+  if (!RuntimeEnabledFeatures::CanvasDrawElementEnabled()) {
+    return;
+  }
+
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(R"(
+    <form>
+      <canvas>
+        <select id="select_id">
+          <option value="Bar">Bar</option>
+          <option value="Foo">Foo</option>
+        </select>
+      </canvas>
+    </form>
+  )");
+
+  WebFormControlElement select(
+      DynamicTo<HTMLFormControlElement>(GetElementById("select_id")));
+
+  select.SetSuggestedValue("Foo");
+
+  // Elements inside canvas should not show autofill suggestions, as this can
+  // leak the information to javascript.
+  EXPECT_TRUE(select.SuggestedValue().IsEmpty());
+}
+
+TEST_F(WebFormControlElementTest,
+       SelectPreviewDisabledInCanvasWhenMovingToCanvas) {
+  if (!RuntimeEnabledFeatures::CanvasDrawElementEnabled()) {
+    return;
+  }
+
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(R"(
+    <form>
+        <select id="select_id">
+          <option value="Bar">Bar</option>
+          <option value="Foo">Foo</option>
+        </select>
+      <canvas id="canvas"></canvas>
+    </form>
+  )");
+
+  WebFormControlElement select(
+      DynamicTo<HTMLFormControlElement>(GetElementById("select_id")));
+
+  select.SetSuggestedValue("Foo");
+
+  // Suggestions should work outside canvas.
+  EXPECT_EQ(select.SuggestedValue().Ascii(), "Foo");
+
+  // Elements inside canvas should not show autofill suggestions, as this can
+  // leak the information to javascript.
+  GetElementById("canvas")->appendChild(GetElementById("select_id"));
+  EXPECT_TRUE(select.SuggestedValue().IsEmpty());
+}
+
 class WebFormControlElementSetAutofillValueTest
     : public WebFormControlElementTest,
       public testing::WithParamInterface<const char*> {
  protected:
   void InsertHTML() {
-    GetDocument().documentElement()->setInnerHTML(GetParam());
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+        GetParam());
   }
 
   WebFormControlElement TestElement() {
@@ -141,7 +260,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_F(WebFormControlElementTest,
        SetAutofillAndSuggestedValueMaxLengthForInput) {
-  GetDocument().documentElement()->setInnerHTML(
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<input type='text' id=testElement maxlength='5'>");
 
   auto element = WebFormControlElement(To<HTMLFormControlElement>(
@@ -156,7 +275,7 @@ TEST_F(WebFormControlElementTest,
 
 TEST_F(WebFormControlElementTest,
        SetAutofillAndSuggestedValueMaxLengthForTextarea) {
-  GetDocument().documentElement()->setInnerHTML(
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<textarea id=testElement maxlength='5'></textarea>");
 
   auto element = WebFormControlElement(To<HTMLFormControlElement>(
@@ -195,7 +314,7 @@ class WebFormControlElementGetOwningFormForAutofillTest
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInLightDom) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <form id=f>
       <input id=t1>
       <input id=t2>
@@ -216,7 +335,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInLightDomWithExplicitAssociation) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <div>
       <form id=f1>
         <input id=t1>
@@ -258,7 +377,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInShadowDomWithoutFormInShadowDom) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <form id=f1>
       <div id=host1>
         <template shadowrootmode="open">
@@ -292,7 +411,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInShadowDomWithFormInShadowDom) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <form id=f1>
       <div id=host1>
         <template shadowrootmode=open>
@@ -331,7 +450,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInShadowDomWithFormInShadowDomWithMultipleLevels) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <form id=f1>
       <div id=host1>
         <template shadowrootmode=open>
@@ -375,7 +494,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInShadowDomWithFormInShadowDomAndExplicitAssociation) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <form id=f1>
       <div id=host1>
         <template shadowrootmode=open>
@@ -424,7 +543,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
        GetOwningFormInLightDomWithSlots) {
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe(R"(
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes(R"(
     <form id=f>
       <div>
         <template shadowrootmode=open>
@@ -449,7 +568,7 @@ TEST_F(WebFormControlElementGetOwningFormForAutofillTest,
 TEST_F(WebFormControlElementTest, FormControlTypeForAutofill) {
   using enum FormControlType;
   const Document& document = GetDocument();
-  document.body()->setHTMLUnsafe("<input id=t>");
+  document.body()->SetHTMLUnsafeWithoutTrustedTypes("<input id=t>");
   HTMLInputElement* input = To<HTMLInputElement>(GetElementById("t"));
   WebFormControlElement control = input;
   ASSERT_TRUE(input);

@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "storage/common/database/database_identifier.h"
 
@@ -88,7 +84,7 @@ const DatabaseIdentifier DatabaseIdentifier::UniqueFileIdentifier() {
 // static
 DatabaseIdentifier DatabaseIdentifier::CreateFromOrigin(const GURL& origin) {
   if (!origin.is_valid() || origin.is_empty() || !origin.IsStandard() ||
-      SchemeIsUnique(origin.scheme())) {
+      SchemeIsUnique(origin.GetScheme())) {
     return DatabaseIdentifier();
   }
 
@@ -104,11 +100,8 @@ DatabaseIdentifier DatabaseIdentifier::CreateFromOrigin(const GURL& origin) {
   if (port == url::PORT_UNSPECIFIED)
     port = 0;
 
-  return DatabaseIdentifier(origin.scheme(),
-                            origin.host(),
-                            port,
-                            false /* unique */,
-                            false /* file */);
+  return DatabaseIdentifier(origin.GetScheme(), origin.GetHost(), port,
+                            false /* unique */, false /* file */);
 }
 
 // static
@@ -155,7 +148,8 @@ DatabaseIdentifier DatabaseIdentifier::Parse(std::string_view identifier) {
   GURL url(base::StrCat({scheme, "://", hostname, "/"}));
 
   // If a url doesn't parse cleanly or doesn't round trip, reject it.
-  if (!url.is_valid() || url.scheme() != scheme || url.host() != hostname) {
+  if (!url.is_valid() || url.GetScheme() != scheme ||
+      url.GetHost() != hostname) {
     return DatabaseIdentifier();
   }
   // Clear hostname for a non-special URL. This behavior existed before

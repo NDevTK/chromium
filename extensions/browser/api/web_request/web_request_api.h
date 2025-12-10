@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "base/containers/unique_ptr_adapters.h"
-#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
@@ -38,7 +37,6 @@
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
-#include "ipc/ipc_sender.h"
 #include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
 #include "net/http/http_request_headers.h"

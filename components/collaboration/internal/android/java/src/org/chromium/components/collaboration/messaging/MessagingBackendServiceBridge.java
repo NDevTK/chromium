@@ -17,8 +17,8 @@ import org.chromium.components.tab_group_sync.EitherId.EitherTabId;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 /** Implementation of {@link MessagingBackendService} that connects to the native counterpart. */
@@ -61,23 +61,14 @@ import java.util.Set;
     @Override
     public boolean isInitialized() {
         return MessagingBackendServiceBridgeJni.get()
-                .isInitialized(mNativeMessagingBackendServiceBridge, this);
+                .isInitialized(mNativeMessagingBackendServiceBridge);
     }
 
     @Override
-    @SuppressWarnings("NullableOptional")
     public List<PersistentMessage> getMessagesForTab(
-            @Nullable EitherTabId tabId,
-            @Nullable Optional</* @PersistentNotificationType */ Integer> type) {
+            @Nullable EitherTabId tabId, @PersistentNotificationType int type) {
         if (mNativeMessagingBackendServiceBridge == 0) {
             return new ArrayList<>();
-        }
-
-        Integer type_int;
-        if (type == null || !type.isPresent()) {
-            type_int = PersistentNotificationType.UNDEFINED;
-        } else {
-            type_int = type.get();
         }
 
         int localTabId;
@@ -90,27 +81,14 @@ import java.util.Set;
 
         return MessagingBackendServiceBridgeJni.get()
                 .getMessagesForTab(
-                        mNativeMessagingBackendServiceBridge,
-                        this,
-                        localTabId,
-                        syncTabId,
-                        type_int);
+                        mNativeMessagingBackendServiceBridge, localTabId, syncTabId, type);
     }
 
     @Override
-    @SuppressWarnings("NullableOptional")
     public List<PersistentMessage> getMessagesForGroup(
-            @Nullable EitherGroupId groupId,
-            @Nullable Optional</* @PersistentNotificationType */ Integer> type) {
+            @Nullable EitherGroupId groupId, @PersistentNotificationType int type) {
         if (mNativeMessagingBackendServiceBridge == 0) {
             return new ArrayList<>();
-        }
-
-        Integer type_int;
-        if (type == null || !type.isPresent()) {
-            type_int = PersistentNotificationType.UNDEFINED;
-        } else {
-            type_int = type.get();
         }
 
         LocalTabGroupId localGroupId;
@@ -123,30 +101,17 @@ import java.util.Set;
 
         return MessagingBackendServiceBridgeJni.get()
                 .getMessagesForGroup(
-                        mNativeMessagingBackendServiceBridge,
-                        this,
-                        localGroupId,
-                        syncGroupId,
-                        type_int);
+                        mNativeMessagingBackendServiceBridge, localGroupId, syncGroupId, type);
     }
 
     @Override
-    @SuppressWarnings("NullableOptional")
-    public List<PersistentMessage> getMessages(
-            @Nullable Optional</* @PersistentNotificationType */ Integer> type) {
+    public List<PersistentMessage> getMessages(@PersistentNotificationType int type) {
         if (mNativeMessagingBackendServiceBridge == 0) {
-            return new ArrayList<>();
-        }
-
-        Integer type_int;
-        if (type == null || !type.isPresent()) {
-            type_int = PersistentNotificationType.UNDEFINED;
-        } else {
-            type_int = type.get();
+            return Collections.emptyList();
         }
 
         return MessagingBackendServiceBridgeJni.get()
-                .getMessages(mNativeMessagingBackendServiceBridge, this, type_int);
+                .getMessages(mNativeMessagingBackendServiceBridge, type);
     }
 
     @Override
@@ -156,7 +121,7 @@ import java.util.Set;
         }
 
         return MessagingBackendServiceBridgeJni.get()
-                .getActivityLog(mNativeMessagingBackendServiceBridge, this, params.collaborationId);
+                .getActivityLog(mNativeMessagingBackendServiceBridge, params.collaborationId);
     }
 
     @Override
@@ -167,23 +132,13 @@ import java.util.Set;
 
         MessagingBackendServiceBridgeJni.get()
                 .clearDirtyTabMessagesForGroup(
-                        mNativeMessagingBackendServiceBridge, this, collaborationId);
+                        mNativeMessagingBackendServiceBridge, collaborationId);
     }
 
     @Override
-    @SuppressWarnings("NullableOptional")
-    public void clearPersistentMessage(
-            String messageId, @Nullable Optional</* @PersistentNotificationType */ Integer> type) {
-        Integer type_int;
-        if (type == null || !type.isPresent()) {
-            type_int = PersistentNotificationType.UNDEFINED;
-        } else {
-            type_int = type.get();
-        }
-
+    public void clearPersistentMessage(String messageId, @PersistentNotificationType int type) {
         MessagingBackendServiceBridgeJni.get()
-                .clearPersistentMessage(
-                        mNativeMessagingBackendServiceBridge, this, messageId, type_int);
+                .clearPersistentMessage(mNativeMessagingBackendServiceBridge, messageId, type);
     }
 
     @CalledByNative
@@ -222,7 +177,7 @@ import java.util.Set;
         if (mInstantMessageDelegate == null) {
             MessagingBackendServiceBridgeJni.get()
                     .runInstantaneousMessageSuccessCallback(
-                            mNativeMessagingBackendServiceBridge, this, nativeCallback, false);
+                            mNativeMessagingBackendServiceBridge, nativeCallback, false);
             return;
         }
 
@@ -232,10 +187,7 @@ import java.util.Set;
                     assert success != null;
                     MessagingBackendServiceBridgeJni.get()
                             .runInstantaneousMessageSuccessCallback(
-                                    mNativeMessagingBackendServiceBridge,
-                                    this,
-                                    nativeCallback,
-                                    success);
+                                    mNativeMessagingBackendServiceBridge, nativeCallback, success);
                 });
     }
 
@@ -249,47 +201,34 @@ import java.util.Set;
 
     @NativeMethods
     interface Natives {
-        boolean isInitialized(
-                long nativeMessagingBackendServiceBridge, MessagingBackendServiceBridge caller);
+        boolean isInitialized(long nativeMessagingBackendServiceBridge);
 
         List<PersistentMessage> getMessagesForTab(
                 long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
                 int localTabId,
                 @Nullable String syncTabId,
                 @PersistentNotificationType int type);
 
         List<PersistentMessage> getMessagesForGroup(
                 long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
                 @Nullable LocalTabGroupId localGroupId,
                 @Nullable String syncGroupId,
                 @PersistentNotificationType int type);
 
         List<PersistentMessage> getMessages(
-                long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
-                @PersistentNotificationType int type);
+                long nativeMessagingBackendServiceBridge, @PersistentNotificationType int type);
 
         List<ActivityLogItem> getActivityLog(
-                long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
-                String collaborationId);
+                long nativeMessagingBackendServiceBridge, String collaborationId);
 
         void clearDirtyTabMessagesForGroup(
-                long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
-                String collaborationId);
+                long nativeMessagingBackendServiceBridge, String collaborationId);
 
         void runInstantaneousMessageSuccessCallback(
-                long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
-                long callback,
-                boolean success);
+                long nativeMessagingBackendServiceBridge, long callback, boolean success);
 
         void clearPersistentMessage(
                 long nativeMessagingBackendServiceBridge,
-                MessagingBackendServiceBridge caller,
                 String messageId,
                 @PersistentNotificationType int type);
     }

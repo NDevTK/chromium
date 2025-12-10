@@ -63,7 +63,7 @@ message ServiceWorkerRegistrationData {
   enum IPAddressSpace {
     UNKNOWN = 0;
     LOOPBACK = 1;
-    PRIVATE = 2;
+    LOCAL = 2;
     PUBLIC = 3;
   }
 
@@ -169,6 +169,7 @@ message ServiceWorkerRegistrationData {
             kSpeculationRulesDestination = 25;
             kJsonDestination = 26;
             kSharedStorageWorkletDestination = 27;
+            kEmailVerificationDestination = 28;
           }
           optional Destination destination = 3;
         }

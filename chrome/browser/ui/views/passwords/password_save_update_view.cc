@@ -17,17 +17,21 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/signin/signin_ui_util.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/hats/hats_service.h"
 #include "chrome/browser/ui/hats/hats_service_factory.h"
 #include "chrome/browser/ui/passwords/password_dialog_prompts.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
 #include "chrome/browser/ui/signin/promos/bubble_signin_promo_view.h"
 #include "chrome/browser/ui/ui_features.h"
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/passwords/credentials_item_view.h"
 #include "chrome/browser/ui/views/passwords/views_utils.h"
+#include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
@@ -37,6 +41,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -54,7 +59,7 @@
 
 PasswordSaveUpdateView::PasswordSaveUpdateView(
     content::WebContents* web_contents,
-    views::View* anchor_view,
+    views::BubbleAnchor anchor_view,
     DisplayReason reason)
     : PasswordBubbleViewBase(web_contents,
                              anchor_view,
@@ -172,6 +177,8 @@ PasswordSaveUpdateView::PasswordSaveUpdateView(
       extra_view_->SetCallback(
           base::BindOnce(button_clicked, base::Unretained(this),
                          &Controller::OnNeverForThisSiteClicked));
+      extra_view_->SetStyle(
+          GetDialogButtonStyle(ui::mojom::DialogButton::kCancel));
 
       // The third button will usually stretch the bubble beyond its intended
       // width. Permit the bubble to use vertical buttons if this happens.
@@ -216,6 +223,7 @@ bool PasswordSaveUpdateView::CloseOrReplaceWithPromo() {
   }
 
   // Remove current elements.
+  reveal_password_pin_ = nullptr;
   username_dropdown_ = nullptr;
   password_dropdown_ = nullptr;
   accessibility_alert_ = nullptr;
@@ -288,7 +296,17 @@ ui::ImageModel PasswordSaveUpdateView::GetWindowIcon() {
 void PasswordSaveUpdateView::AddedToWidget() {
   static_cast<views::Label*>(GetBubbleFrameView()->title())
       ->SetAllowCharacterBreak(true);
-  SetBubbleHeaderLottie(IDR_SAVE_PASSWORD_LOTTIE);
+  SetBubbleHeaderLottie(IDR_AUTOFILL_SAVE_PASSWORD_LOTTIE);
+  if (BrowserUserEducationInterface* user_ed =
+          BrowserUserEducationInterface::MaybeGetForWebContentsInTab(
+              controller_.GetWebContents())) {
+    if (user_ed->IsFeaturePromoActive(
+            feature_engagement::kIPHPasswordsSaveRecoveryPromoFeature)) {
+      user_ed->NotifyFeaturePromoFeatureUsed(
+          feature_engagement::kIPHPasswordsSaveRecoveryPromoFeature,
+          FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+    }
+  }
 }
 
 void PasswordSaveUpdateView::UpdateUsernameAndPasswordInModel() {
@@ -429,25 +447,28 @@ void PasswordSaveUpdateView::TogglePasswordRevealed() {
 
   // Prevent the bubble from closing for the duration of the lifetime of the
   // `pin`. This is to keep it open while the user authentication is in action.
-  std::unique_ptr<CloseOnDeactivatePin> pin = PreventCloseOnDeactivate();
-
+  // Store pin as a class member so it can be destroyed early if needed.
+  reveal_password_pin_ = PreventCloseOnDeactivate();
   controller_.ShouldRevealPasswords(base::BindOnce(
-      [](PasswordSaveUpdateView* view,
-         std::unique_ptr<CloseOnDeactivatePin> pin, bool reveal) {
+      [](PasswordSaveUpdateView* view, bool reveal) {
+        auto pin = std::exchange(view->reveal_password_pin_, nullptr);
+        if (!view->password_dropdown_) {
+          return;
+        }
         view->password_dropdown_->RevealPasswords(reveal);
-        // This is necessary on Windows since the bubble isn't activated again
-        // after the conlusion of the auth flow.
+        // This is necessary on Windows since the bubble isn't activated
+        // again after the conlusion of the auth flow.
         view->GetWidget()->Activate();
-        // Delay the destruction of `pin` for 1 sec to make sure the bubble
-        // remains open till the OS closes the authentication dialog and
-        // reactivates the bubble.
+        // Delay the destruction of `pin` for 1 sec to make sure the
+        // bubble remains open till the OS closes the authentication
+        // dialog and reactivates the bubble.
         base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
             FROM_HERE,
             base::BindOnce([](std::unique_ptr<CloseOnDeactivatePin> pin) {},
                            std::move(pin)),
             base::Seconds(1));
       },
-      base::Unretained(this), std::move(pin)));
+      base::Unretained(this)));
 }
 
 BEGIN_METADATA(PasswordSaveUpdateView)

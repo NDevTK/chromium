@@ -22,7 +22,6 @@ using base::android::AttachCurrentThread;
 using base::android::CheckException;
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertUTF16ToJavaString;
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -89,7 +88,6 @@ void ChromeHttpAuthHandler::OnLoginModelDestroying() {
 }
 
 void ChromeHttpAuthHandler::SetAuth(JNIEnv* env,
-                                    const JavaParamRef<jobject>&,
                                     std::u16string& username,
                                     std::u16string& password) {
   // SetAuthSync can result in destruction of `this`. We post task to make
@@ -100,8 +98,7 @@ void ChromeHttpAuthHandler::SetAuth(JNIEnv* env,
                      weak_factory_.GetWeakPtr(), username, password));
 }
 
-void ChromeHttpAuthHandler::CancelAuth(JNIEnv* env,
-                                       const JavaParamRef<jobject>&) {
+void ChromeHttpAuthHandler::CancelAuth(JNIEnv* env) {
   // CancelAuthSync can result in destruction of `this`. We post task to make
   // destruction asynchronous and avoid re-entrancy.
   base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
@@ -109,9 +106,7 @@ void ChromeHttpAuthHandler::CancelAuth(JNIEnv* env,
                                 weak_factory_.GetWeakPtr()));
 }
 
-std::u16string ChromeHttpAuthHandler::GetMessageBody(
-    JNIEnv* env,
-    const JavaParamRef<jobject>&) {
+std::u16string ChromeHttpAuthHandler::GetMessageBody(JNIEnv* env) {
   if (explanation_.empty()) {
     return authority_;
   }
@@ -126,3 +121,5 @@ void ChromeHttpAuthHandler::SetAuthSync(const std::u16string& username,
 void ChromeHttpAuthHandler::CancelAuthSync() {
   observer_->CancelAuth(/*notify_others=*/true);
 }
+
+DEFINE_JNI(ChromeHttpAuthHandler)

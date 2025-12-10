@@ -92,6 +92,14 @@ int GetMaxTemporalLayer(
 
 }  // namespace
 
+bool SupportsSharedImageEncoding(
+    const gpu::GpuDriverBugWorkarounds& workarounds) {
+  if (workarounds.disable_nv12_upload) {
+    return false;
+  }
+  return base::FeatureList::IsEnabled(kMediaFoundationD3DVideoProcessing);
+}
+
 // static
 MediaFoundationVideoEncoderSharedState*
 MediaFoundationVideoEncoderSharedState::GetInstance(
@@ -142,8 +150,6 @@ void MediaFoundationVideoEncoderSharedState::GetSupportedProfilesInternal() {
   for (auto codec : supported_codecs) {
     auto activates = EnumerateHardwareEncoders(codec);
     if (activates.empty()) {
-      DVLOG(1) << "Hardware encode acceleration is not available for "
-               << GetCodecName(codec);
       continue;
     }
 
@@ -151,7 +157,8 @@ void MediaFoundationVideoEncoderSharedState::GetSupportedProfilesInternal() {
         GetMaxTemporalLayer(codec, activates, workarounds_);
     auto bitrate_mode = VideoEncodeAccelerator::kConstantMode |
                         VideoEncodeAccelerator::kVariableMode;
-    if (codec == VideoCodec::kH264 || codec == VideoCodec::kHEVC) {
+    if (codec == VideoCodec::kH264 || codec == VideoCodec::kHEVC ||
+        codec == VideoCodec::kAV1 || codec == VideoCodec::kVP9) {
       bitrate_mode |= VideoEncodeAccelerator::kExternalMode;
     }
 
@@ -209,8 +216,8 @@ void MediaFoundationVideoEncoderSharedState::GetSupportedProfilesInternal() {
         }
       }
 
-      if (base::FeatureList::IsEnabled(kMediaFoundationD3DVideoProcessing)) {
-        if (SupportsSharedImageEncoding(codec)) {
+      if (SupportsSharedImageEncoding(workarounds_)) {
+        if (base::FeatureList::IsEnabled(kMediaFoundationD3DVideoProcessing)) {
           std::ranges::copy(
               kSupportedPixelFormatsD3DVideoProcessing,
               std::back_inserter(profile.gpu_supported_pixel_formats));
@@ -220,10 +227,8 @@ void MediaFoundationVideoEncoderSharedState::GetSupportedProfilesInternal() {
       VideoEncodeAccelerator::SupportedProfile portrait_profile(profile);
       portrait_profile.max_resolution.Transpose();
 
-      if (base::FeatureList::IsEnabled(kMediaFoundationSharedImageEncode)) {
-        if (SupportsSharedImageEncoding(codec)) {
-          profile.supports_gpu_shared_images = true;
-        }
+      if (SupportsSharedImageEncoding(workarounds_)) {
+        profile.supports_gpu_shared_images = true;
       }
 
       std::vector<VideoCodecProfile> codec_profiles;
@@ -249,17 +254,6 @@ void MediaFoundationVideoEncoderSharedState::GetSupportedProfilesInternal() {
         std::move(max_framerate_and_resolutions);
     min_resolutions_[activate_hash] = std::move(min_resolution);
   }
-}
-
-bool MediaFoundationVideoEncoderSharedState::SupportsSharedImageEncoding(
-    VideoCodec codec) {
-  if (codec == VideoCodec::kVP9) {
-    return !workarounds_.disable_vp9_shared_image_encode;
-  } else if (codec == VideoCodec::kAV1) {
-    return !workarounds_.disable_av1_shared_image_encode;
-  }
-  // Other codecs without GPU workarounds are supported
-  return true;
 }
 
 }  // namespace media

@@ -10,6 +10,8 @@
 #include "base/dcheck_is_on.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
+#include "third_party/blink/renderer/core/layout/inline/fit_text_scale.h"
+#include "third_party/blink/renderer/core/layout/inline/inline_item_result.h"
 #include "third_party/blink/renderer/core/layout/inline/line_box_fragment_builder.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/fonts/font_height.h"
@@ -123,13 +125,15 @@ struct InlineBoxState {
   // The computed metrics is included into the line height of the current box.
   void ComputeTextMetrics(const ComputedStyle&,
                           const Font& fontref,
-                          FontBaseline ifc_baseline);
+                          FontBaseline ifc_baseline,
+                          const FitTextBlockScale* scale);
   void EnsureTextMetrics(const ComputedStyle&,
                          const Font& fontref,
-                         FontBaseline ifc_baseline);
+                         FontBaseline ifc_baseline,
+                         const FitTextBlockScale* scale);
   void ResetTextMetrics();
 
-  void AccumulateUsedFonts(const ShapeResultView*);
+  void AccumulateUsedFonts(const ShapeResultView*, float scale = 1.0f);
 
   // 'text-top' offset for 'vertical-align'.
   LayoutUnit TextTop(FontBaseline baseline_type) const;
@@ -146,6 +150,9 @@ struct InlineBoxState {
                           bool should_apply_over,
                           bool should_apply_under,
                           FontHeight& metrics);
+
+  static FontHeight ComputeEmphasisMarkOutsets(const ComputedStyle& style,
+                                               const Font& font);
 
 #if DCHECK_IS_ON()
   void CheckSame(const InlineBoxState&) const;
@@ -170,8 +177,10 @@ class CORE_EXPORT InlineLayoutStateStack {
   // @return The initial box state for the line.
   InlineBoxState* OnBeginPlaceItems(const InlineNode node,
                                     const ComputedStyle&,
+                                    const InlineItemResults& line_items,
                                     FontBaseline,
                                     bool line_height_quirk,
+                                    bool should_scale_line_height,
                                     LogicalLineItems* line_box);
 
   // Push a box state stack.
@@ -185,6 +194,7 @@ class CORE_EXPORT InlineLayoutStateStack {
                             const InlineItem&,
                             const InlineItemResult&,
                             FontBaseline baseline_type,
+                            const FitTextBlockScale& text_scale,
                             LogicalLineItems* line_box);
 
   // Pop a box state stack.
@@ -261,14 +271,17 @@ class CORE_EXPORT InlineLayoutStateStack {
   // End of a box state, either explicitly by close tag, or implicitly at the
   // end of a line.
   void EndBoxState(const ConstraintSpace&,
-                   InlineBoxState*,
+                   wtf_size_t stack_index,
                    LogicalLineItems*,
                    FontBaseline);
 
   void AddBoxFragmentPlaceholder(InlineBoxState*,
+                                 const FitTextBlockScale& text_scale,
                                  LogicalLineItems*,
                                  FontBaseline);
-  void AddBoxData(const ConstraintSpace&, InlineBoxState*, LogicalLineItems*);
+  void AddBoxData(const ConstraintSpace&,
+                  const InlineBoxState*,
+                  LogicalLineItems*);
 
   enum PositionPending { kPositionNotPending, kPositionPending };
 
@@ -278,14 +291,14 @@ class CORE_EXPORT InlineLayoutStateStack {
   // the line box was computed.
   // https://www.w3.org/TR/CSS22/visudet.html#propdef-vertical-align
   // https://www.w3.org/TR/css-inline-3/#propdef-vertical-align
-  PositionPending ApplyBaselineShift(InlineBoxState*,
+  PositionPending ApplyBaselineShift(wtf_size_t stack_index,
                                      LogicalLineItems*,
                                      FontBaseline);
 
   // Computes an offset that will align the |box| with its 'alignment-baseline'
   // relative to the baseline of the line box. This takes into account both the
   // 'dominant-baseline' and 'alignment-baseline' of |box| and its parent.
-  LayoutUnit ComputeAlignmentBaselineShift(const InlineBoxState* box);
+  LayoutUnit ComputeAlignmentBaselineShift(wtf_size_t stack_index);
 
   // Compute the metrics for when 'vertical-align' is 'top' and 'bottom' from
   // |pending_descendants|.
@@ -386,6 +399,8 @@ struct CORE_EXPORT LogicalRubyColumn
   std::pair<LayoutUnit, LayoutUnit> base_insets;
 
   Member<LogicalLineItems> annotation_items;
+
+  FontHeight annotation_metrics;
 
   // `ruby-position` property value.
   RubyPosition ruby_position = RubyPosition::kOver;

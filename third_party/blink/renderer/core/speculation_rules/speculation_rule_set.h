@@ -32,7 +32,9 @@ enum class SpeculationRuleSetErrorType {
   kSourceIsNotJsonObject,
   // An invalid or unsupported rule was ignored.
   kInvalidRulesSkipped,
-  kMaxValue = kInvalidRulesSkipped,
+  // An invalid ruleset-level tag was found.
+  kInvalidRulesetLevelTag,
+  kMaxValue = kInvalidRulesetLevelTag,
 };
 
 enum class BrowserInjectedSpeculationRuleOptOut { kRespect, kIgnore };
@@ -124,6 +126,10 @@ class CORE_EXPORT SpeculationRuleSet final
   const HeapVector<Member<SpeculationRule>>& prerender_rules() const {
     return prerender_rules_;
   }
+  const HeapVector<Member<SpeculationRule>>& prerender_until_script_rules()
+      const {
+    return prerender_until_script_rules_;
+  }
 
   bool has_document_rule() const { return has_document_rule_; }
   bool requires_unfiltered_input() const { return requires_unfiltered_input_; }
@@ -147,6 +153,8 @@ class CORE_EXPORT SpeculationRuleSet final
   bool HasWarnings() const;
   bool ShouldReportUMAForError() const;
 
+  const String& tag() const { return tag_; }
+
   void AddConsoleMessageForValidation(ScriptElementBase& script_element);
   void AddConsoleMessageForValidation(Document& element_document,
                                       SpeculationRulesResource& resource);
@@ -158,12 +166,14 @@ class CORE_EXPORT SpeculationRuleSet final
 
  private:
   void SetError(SpeculationRuleSetErrorType error_type, String error_message);
+  void SetTag(String tag);
   void AddWarnings(base::span<const String> warning_messages);
 
   SpeculationRuleSetId inspector_id_;
   HeapVector<Member<SpeculationRule>> prefetch_rules_;
   HeapVector<Member<SpeculationRule>> prefetch_with_subresources_rules_;
   HeapVector<Member<SpeculationRule>> prerender_rules_;
+  HeapVector<Member<SpeculationRule>> prerender_until_script_rules_;
   // The original source is reused to reparse speculation rule sets when the
   // document base URL changes.
   Member<Source> source_;
@@ -180,6 +190,8 @@ class CORE_EXPORT SpeculationRuleSet final
       SpeculationRuleSetErrorType::kNoError;
   String error_message_;
   Vector<String> warning_messages_;
+
+  String tag_;
 };
 
 }  // namespace blink

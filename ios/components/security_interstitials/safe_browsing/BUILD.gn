@@ -31,7 +31,6 @@ source_set("safe_browsing") {
     "//base",
     "//build:branding_buildflags",
     "//components/keyed_service/core",
-    "//components/keyed_service/ios",
     "//components/prefs",
     "//components/safe_browsing/core/browser",
     "//components/safe_browsing/core/browser:safe_browsing_metrics_collector",
@@ -90,6 +89,10 @@ source_set("test_support") {
     "//services/network/public/cpp",
     "//services/network/public/mojom",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("unit_tests") {
@@ -109,7 +112,6 @@ source_set("unit_tests") {
     "//base",
     "//base/test:test_support",
     "//components/content_settings/core/browser",
-    "//components/keyed_service/ios",
     "//components/prefs:test_support",
     "//components/safe_browsing/core/browser",
     "//components/safe_browsing/core/browser:token_fetcher",

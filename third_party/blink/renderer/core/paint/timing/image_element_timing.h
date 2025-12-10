@@ -14,7 +14,6 @@
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -28,11 +27,8 @@ struct DOMPaintTimingInfo;
 // ImageElementTiming is responsible for tracking the paint timings for <img>
 // elements for a given window.
 class CORE_EXPORT ImageElementTiming final
-    : public GarbageCollected<ImageElementTiming>,
-      public Supplement<LocalDOMWindow> {
+    : public GarbageCollected<ImageElementTiming> {
  public:
-  static const char kSupplementName[];
-
   // The maximum amount of characters included in Element Timing and Largest
   // Contentful Paint for inline images.
   static constexpr const unsigned kInlineImageMaxChars = 100;
@@ -66,7 +62,7 @@ class CORE_EXPORT ImageElementTiming final
   void NotifyImageRemoved(const LayoutObject*,
                           const ImageResourceContent* image);
 
-  void Trace(Visitor*) const override;
+  void Trace(Visitor*) const;
 
   std::optional<base::OnceCallback<void(const base::TimeTicks&,
                                         const DOMPaintTimingInfo&)>>
@@ -117,6 +113,8 @@ class CORE_EXPORT ImageElementTiming final
     Member<Element> element;
   };
 
+  Member<LocalDOMWindow> local_dom_window_;
+
   // Vector containing the element timing infos that will be reported during the
   // next presentation promise callback.
   Member<GCedHeapVector<Member<ElementTimingInfo>>> element_timings_;
@@ -133,7 +131,7 @@ class CORE_EXPORT ImageElementTiming final
   // background images whose paint has been observed. For background images,
   // only the |is_painted_| bit is used, as the timestamp needs to be tracked by
   // |background_image_timestamps_|.
-  WTF::HashMap<MediaRecordIdHash, ImageInfo> images_notified_;
+  HashMap<MediaRecordIdHash, ImageInfo> images_notified_;
 
   // Hashmap of background images which contain information about the load time
   // of the background image.

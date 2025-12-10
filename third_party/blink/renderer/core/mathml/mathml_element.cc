@@ -61,12 +61,12 @@ bool ParseScriptLevel(const AtomicString& attributeValue,
     value = value.Right(1);
   }
 
-  return WTF::VisitCharacters(value, [&](auto chars) {
-    WTF::NumberParsingResult result;
+  return VisitCharacters(value, [&](auto chars) {
+    NumberParsingResult result;
     constexpr auto kOptions =
-        WTF::NumberParsingOptions().SetAcceptMinusZeroForUnsigned();
+        NumberParsingOptions().SetAcceptMinusZeroForUnsigned();
     scriptLevel = CharactersToUInt(chars, kOptions, &result);
-    return result == WTF::NumberParsingResult::kSuccess;
+    return result == NumberParsingResult::kSuccess;
   });
 }
 
@@ -98,7 +98,7 @@ void MathMLElement::CollectStyleForPresentationAttribute(
     if (ParseScriptLevel(value, scriptLevel, add)) {
       if (add) {
         AddPropertyToPresentationAttributeStyle(
-            style, CSSPropertyID::kMathDepth, "add(" + value + ")");
+            style, CSSPropertyID::kMathDepth, StrCat({"add(", value, ")"}));
       } else {
         AddPropertyToPresentationAttributeStyle(
             style, CSSPropertyID::kMathDepth, scriptLevel,

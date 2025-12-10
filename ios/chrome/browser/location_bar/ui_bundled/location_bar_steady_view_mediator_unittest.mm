@@ -35,23 +35,27 @@ class LocationBarSteadyViewMediatorTest : public PlatformTest {
     profile_ = std::move(profile_builder).Build();
     browser_ = std::make_unique<TestBrowser>(profile_.get());
     // Set up the OverlayPresenter.
-    OverlayPresenter* overlay_presenter = OverlayPresenter::FromBrowser(
+    overlay_presenter_ = OverlayPresenter::FromBrowser(
         browser_.get(), OverlayModality::kWebContentArea);
-    overlay_presenter->SetPresentationContext(&presentation_context_);
+    overlay_presenter_->SetPresentationContext(&presentation_context_);
     // Set up the mediator.
     mediator_.webStateList = browser_->GetWebStateList();
-    mediator_.webContentAreaOverlayPresenter = overlay_presenter;
+    mediator_.webContentAreaOverlayPresenter = overlay_presenter_;
     mediator_.consumer = consumer_;
   }
-  ~LocationBarSteadyViewMediatorTest() override { [mediator_ disconnect]; }
+  ~LocationBarSteadyViewMediatorTest() override {
+    [mediator_ disconnect];
+    overlay_presenter_->SetPresentationContext(nullptr);
+  }
 
-  FakeOverlayPresentationContext presentation_context_;
   web::WebTaskEnvironment task_environment_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<Browser> browser_;
+  raw_ptr<OverlayPresenter> overlay_presenter_ = nullptr;
   TestLocationBarModel model_;
   LocationBarSteadyViewMediator* mediator_;
   FakeLocationBarSteadyViewConsumer* consumer_;
+  FakeOverlayPresentationContext presentation_context_;
 };
 
 // Tests that the share button is disabled while overlays are presented
@@ -158,7 +162,8 @@ TEST_F(LocationBarSteadyViewMediatorTest,
   // Disable dismissal callbacks in the presentation context so that the active
   // WebState can be reset to null before the dismisal callbacks are executed.
   presentation_context_.SetDismissalCallbacksEnabled(false);
-  CloseAllWebStates(*browser_->GetWebStateList(), WebStateList::CLOSE_NO_FLAGS);
+  CloseAllWebStates(*browser_->GetWebStateList(),
+                    WebStateList::ClosingReason::kDefault);
   EXPECT_FALSE(browser_->GetWebStateList()->GetActiveWebState());
 
   // Execute the dismissal callback and verify that the location text has been

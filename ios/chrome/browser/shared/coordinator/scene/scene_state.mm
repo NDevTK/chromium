@@ -11,16 +11,16 @@
 #import "base/notreached.h"
 #import "base/strings/sys_string_conversions.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
-#import "ios/chrome/app/chrome_overlay_window.h"
 #import "ios/chrome/app/profile/profile_state.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_in_progress.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_controller.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_util.h"
+#import "ios/chrome/browser/shared/ui/chrome_overlay_window/chrome_overlay_window.h"
 
 namespace {
 
 // Preference key used to store which profile is current.
-NSString* kIncognitoCurrentKey = @"IncognitoActive";
+NSString* const kIncognitoCurrentKey = @"IncognitoActive";
 
 // Represents the state of the -[SceneState incognitoContentVisible] property
 // that is saved in session storage (and thus unknown during app startup and
@@ -121,23 +121,6 @@ ContentVisibility ContentVisibilityForIncognito(BOOL isIncognito) {
   return _agents;
 }
 
-- (void)setRootViewController:(UIViewController*)rootViewController
-            makeKeyAndVisible:(BOOL)makeKeyAndVisible {
-  [self.window setRootViewController:rootViewController];
-  if (makeKeyAndVisible) {
-    [self.window makeKeyAndVisible];
-  }
-}
-
-- (void)setRootViewControllerKeyAndVisible {
-  [self.window makeKeyAndVisible];
-}
-
-- (void)setWindowUserInterfaceStyle:
-    (UIUserInterfaceStyle)windowUserInterfaceStyle {
-  self.window.overrideUserInterfaceStyle = windowUserInterfaceStyle;
-}
-
 - (std::unique_ptr<SigninInProgress>)createSigninInProgress {
   return std::make_unique<SigninInProgress>(self);
 }
@@ -152,18 +135,6 @@ ContentVisibility ContentVisibilityForIncognito(BOOL isIncognito) {
     }
   }
   return mainWindow;
-}
-
-- (NSString*)windowAccessibilityIdentifier {
-  return self.window.accessibilityIdentifier;
-}
-
-- (UIViewController*)rootViewController {
-  return [self.window rootViewController];
-}
-
-- (UIView*)rootView {
-  return self.rootViewController.view;
 }
 
 - (const std::string&)sceneSessionID {

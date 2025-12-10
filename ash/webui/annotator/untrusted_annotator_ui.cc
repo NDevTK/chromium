@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "ash/webui/annotator/untrusted_annotator_ui.h"
 
@@ -37,8 +33,6 @@ void CreateAndAddAnnotatorHTMLSource(content::WebUI* web_ui) {
       web_ui->GetWebContents()->GetBrowserContext(),
       kChromeUIUntrustedAnnotatorUrl);
 
-  // TODO(b/216523790): Split untrusted annotator resources into a separate
-  // bundle.
   source->AddResourcePaths(kAshAnnotatorUntrustedResources);
   source->AddResourcePaths(kChromeosProjectorAppBundleResources);
   source->AddResourcePaths(kAshProjectorCommonResources);

@@ -16,7 +16,7 @@
 #include "third_party/blink/renderer/core/paint/timing/element_timing_utils.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
 #include "third_party/blink/renderer/core/style/style_fetched_image.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/platform/graphics/paint/property_tree_state.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
@@ -30,8 +30,9 @@ namespace blink {
 namespace internal {
 
 bool IsExplicitlyRegisteredForElementTiming(const Element* element) {
-  if (!element)
+  if (!element) {
     return false;
+  }
 
   // If the element has no 'elementtiming' attribute, do not
   // generate timing entries for the element. See
@@ -67,9 +68,6 @@ bool NeededForTiming(const LayoutObject& layout_object) {
 
 }  // namespace internal
 
-// static
-const char ImageElementTiming::kSupplementName[] = "ImageElementTiming";
-
 AtomicString ImagePaintString() {
   DEFINE_STATIC_LOCAL(const AtomicString, kImagePaint, ("image-paint"));
   return kImagePaint;
@@ -77,17 +75,16 @@ AtomicString ImagePaintString() {
 
 // static
 ImageElementTiming& ImageElementTiming::From(LocalDOMWindow& window) {
-  ImageElementTiming* timing =
-      Supplement<LocalDOMWindow>::From<ImageElementTiming>(window);
+  ImageElementTiming* timing = window.GetImageElementTiming();
   if (!timing) {
     timing = MakeGarbageCollected<ImageElementTiming>(window);
-    ProvideTo(window, timing);
+    window.SetImageElementTiming(timing);
   }
   return *timing;
 }
 
 ImageElementTiming::ImageElementTiming(LocalDOMWindow& window)
-    : Supplement<LocalDOMWindow>(window) {}
+    : local_dom_window_(window) {}
 
 void ImageElementTiming::NotifyImageFinished(
     const LayoutObject& layout_object,
@@ -98,23 +95,26 @@ void ImageElementTiming::NotifyImageFinished(
 
   const auto& insertion_result = images_notified_.insert(
       MediaRecordId::GenerateHash(&layout_object, cached_image), ImageInfo());
-  if (insertion_result.is_new_entry)
+  if (insertion_result.is_new_entry) {
     insertion_result.stored_value->value.load_time_ = base::TimeTicks::Now();
+  }
 }
 
 void ImageElementTiming::NotifyBackgroundImageFinished(
     const StyleFetchedImage* style_image) {
   const auto& insertion_result =
       background_image_timestamps_.insert(style_image, base::TimeTicks());
-  if (insertion_result.is_new_entry)
+  if (insertion_result.is_new_entry) {
     insertion_result.stored_value->value = base::TimeTicks::Now();
+  }
 }
 
 base::TimeTicks ImageElementTiming::GetBackgroundImageLoadTime(
     const StyleImage* style_image) {
   const auto it = background_image_timestamps_.find(style_image);
-  if (it == background_image_timestamps_.end())
+  if (it == background_image_timestamps_.end()) {
     return base::TimeTicks();
+  }
   return it->value;
 }
 
@@ -147,27 +147,30 @@ void ImageElementTiming::NotifyImagePaintedInternal(
     const PropertyTreeStateOrAlias& current_paint_chunk_properties,
     base::TimeTicks load_time,
     const gfx::Rect& image_border) {
-  LocalFrame* frame = GetSupplementable()->GetFrame();
+  LocalFrame* frame = local_dom_window_->GetFrame();
   DCHECK(frame == layout_object.GetDocument().GetFrame());
   // Background images could cause |node| to not be an element. For example,
   // style applied to body causes this node to be a Document Node. Therefore,
   // bail out if that is the case.
   auto* element = DynamicTo<Element>(node);
-  if (!frame || !element)
+  if (!frame || !element) {
     return;
+  }
 
   // We do not expose elements in shadow trees, for now. We might expose
   // something once the discussions at
   // https://github.com/WICG/element-timing/issues/3 and
   // https://github.com/w3c/webcomponents/issues/816 have been resolved.
-  if (node.IsInShadowTree())
+  if (node.IsInShadowTree()) {
     return;
+  }
 
   // Do not expose elements which should have effective zero opacity.
   // We can afford to call this expensive method because this is only called
   // once per image annotated with the elementtiming attribute.
-  if (!layout_object.HasNonZeroEffectiveOpacity())
+  if (!layout_object.HasNonZeroEffectiveOpacity()) {
     return;
+  }
 
   RespectImageOrientationEnum respect_orientation =
       layout_object.StyleRef().ImageOrientation();
@@ -181,25 +184,8 @@ void ImageElementTiming::NotifyImagePaintedInternal(
 
   const KURL& url = cached_image.Url();
   ExecutionContext* context = layout_object.GetDocument().GetExecutionContext();
-  DCHECK(GetSupplementable()->document() == &layout_object.GetDocument());
+  DCHECK(local_dom_window_->document() == &layout_object.GetDocument());
   DCHECK(context->GetSecurityOrigin());
-  // It's ok to expose rendering timestamp for data URIs so exclude those from
-  // the Timing-Allow-Origin check.
-  if (!url.ProtocolIsData() &&
-      !cached_image.GetResponse().TimingAllowPassed() &&
-      !RuntimeEnabledFeatures::ExposeCoarsenedRenderTimeEnabled() &&
-      internal::IsExplicitlyRegisteredForElementTiming(element)) {
-    if (WindowPerformance* performance =
-            DOMWindowPerformance::performance(*GetSupplementable())) {
-      // Create an entry with a |startTime| of 0.
-      performance->AddElementTiming(
-          ImagePaintString(), url.GetString(), intersection_rect, {}, load_time,
-          attr, cached_image.IntrinsicSize(respect_orientation), id, element);
-    }
-    // Skip implementation for ContainerTiming: ExposeCoarsenedRenderTime is
-    // already enabled by default.
-    return;
-  }
 
   // If the image URL is a data URL ("data:image/..."), then the |name| of the
   // PerformanceElementTiming entry should be the URL trimmed to 100 characters.
@@ -231,7 +217,7 @@ OptionalPaintTimingCallback ImageElementTiming::TakePaintTimingCallback() {
           return;
         }
         WindowPerformance* performance =
-            DOMWindowPerformance::performance(*self->GetSupplementable());
+            GlobalPerformance::performance(*self->local_dom_window_);
         if (!performance) {
           return;
         }
@@ -260,16 +246,18 @@ void ImageElementTiming::NotifyBackgroundImagePainted(
     const PropertyTreeStateOrAlias& current_paint_chunk_properties,
     const gfx::Rect& image_border) {
   const LayoutObject* layout_object = node.GetLayoutObject();
-  if (!layout_object)
+  if (!layout_object) {
     return;
+  }
 
   if (!internal::NeededForTiming(*layout_object)) {
     return;
   }
 
   const ImageResourceContent* cached_image = background_image.CachedImage();
-  if (!cached_image || !cached_image->IsLoaded())
+  if (!cached_image || !cached_image->IsLoaded()) {
     return;
+  }
 
   auto it = background_image_timestamps_.find(&background_image);
   if (it == background_image_timestamps_.end()) {
@@ -302,7 +290,7 @@ void ImageElementTiming::EnsureContainerTiming() {
   if (container_timing_) {
     return;
   }
-  LocalDOMWindow* window = GetSupplementable();
+  LocalDOMWindow* window = local_dom_window_;
   DCHECK(window);
   container_timing_ = ContainerTiming::From(*window);
 }
@@ -310,7 +298,7 @@ void ImageElementTiming::EnsureContainerTiming() {
 void ImageElementTiming::Trace(Visitor* visitor) const {
   visitor->Trace(element_timings_);
   visitor->Trace(background_image_timestamps_);
-  Supplement<LocalDOMWindow>::Trace(visitor);
+  visitor->Trace(local_dom_window_);
   visitor->Trace(container_timing_);
 }
 

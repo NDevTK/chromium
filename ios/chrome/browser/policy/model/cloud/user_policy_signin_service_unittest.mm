@@ -29,6 +29,7 @@
 #import "google_apis/gaia/gaia_constants.h"
 #import "google_apis/gaia/gaia_urls.h"
 #import "google_apis/gaia/google_service_auth_error.h"
+#import "ios/chrome/browser/enterprise/identifiers/profile_id_service_factory_ios.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_constants.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_signin_service_factory.h"
@@ -72,7 +73,7 @@ std::unique_ptr<UserCloudPolicyManager> BuildCloudPolicyManager() {
   EXPECT_CALL(*store, Load()).Times(AnyNumber());
 
   return std::make_unique<UserCloudPolicyManager>(
-      std::move(store), base::FilePath(),
+      std::move(store), /*extension_install_store=*/nullptr, base::FilePath(),
       /*cloud_external_data_manager=*/nullptr,
       base::SingleThreadTaskRunner::GetCurrentDefault(),
       network::TestNetworkConnectionTracker::CreateGetter());
@@ -107,14 +108,16 @@ class UserPolicySigninServiceTest : public PlatformTest {
     AccountInfo account_info =
         identity_test_env()->MakeAccountAvailable(kManagedTestUser);
     service->RegisterForPolicyWithAccountId(
-        kManagedTestUser, account_info.account_id, std::move(callback));
+        kManagedTestUser, account_info.account_id,
+        /*is_registration_for_management_consistency_check=*/false,
+        std::move(callback));
     ASSERT_TRUE(IsRequestActive());
   }
 
   void SetUp() override {
     device_management_service_.ScheduleInitialization(0);
     base::RunLoop().RunUntilIdle();
-    UserPolicySigninServiceFactory::SetDeviceManagementServiceForTesting(
+    BrowserPolicyConnector::SetDeviceManagementServiceForTesting(
         &device_management_service_);
 
     pref_service_ = TestingApplicationContext::GetGlobal()->GetLocalState();
@@ -148,8 +151,7 @@ class UserPolicySigninServiceTest : public PlatformTest {
     user_policy_signin_service_.reset();
     manager_->Shutdown();
 
-    UserPolicySigninServiceFactory::SetDeviceManagementServiceForTesting(
-        nullptr);
+    BrowserPolicyConnector::SetDeviceManagementServiceForTesting(nullptr);
 
     profile_.reset();
     TestingApplicationContext::GetGlobal()
@@ -221,8 +223,9 @@ class UserPolicySigninServiceTest : public PlatformTest {
   // service that is hold by `user_policy_signin_service_`.
   void InitUserPolicySigninService() {
     user_policy_signin_service_ = std::make_unique<UserPolicySigninService>(
-        profile_->GetPrefs(), pref_service_, &device_management_service_,
-        profile_->GetUserCloudPolicyManager(),
+        profile_->GetPrefs(), pref_service_,
+        enterprise::ProfileIdServiceFactoryIOS::GetForProfile(profile_.get()),
+        &device_management_service_, profile_->GetUserCloudPolicyManager(),
         identity_test_env_.identity_manager(),
         profile_->GetSharedURLLoaderFactory());
   }
@@ -277,9 +280,11 @@ class UserPolicySigninServiceTest : public PlatformTest {
   raw_ptr<PrefService> pref_service_;
 
   std::unique_ptr<TestProfileIOS> profile_;
-  raw_ptr<MockUserCloudPolicyStore> mock_store_ = nullptr;  // Not owned.
+  raw_ptr<MockUserCloudPolicyStore, DanglingUntriaged> mock_store_ =
+      nullptr;  // Not owned.
   SchemaRegistry schema_registry_;
-  raw_ptr<UserCloudPolicyManager> manager_ = nullptr;  // Not owned.
+  raw_ptr<UserCloudPolicyManager, DanglingUntriaged> manager_ =
+      nullptr;  // Not owned.
 
   // Used in conjunction with OnRegisterCompleted() to test client registration
   // callbacks.

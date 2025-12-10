@@ -6,39 +6,41 @@
 
 #import "base/metrics/histogram_macros.h"
 #import "components/ui_metrics/sadtab_metrics_types.h"
+#import "ios/chrome/browser/context_menu/ui_bundled/context_menu_configuration_provider.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/chrome_coordinator+fullscreen_disabling.h"
 #import "ios/chrome/browser/overscroll_actions/ui_bundled/overscroll_actions_controller.h"
 #import "ios/chrome/browser/sad_tab/ui_bundled/sad_tab_view_controller.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
 #import "ios/chrome/browser/shared/ui/util/named_guide.h"
+#import "ios/chrome/browser/tabs/model/tabs_dependency_installer_bridge.h"
 #import "ios/chrome/browser/web/model/sad_tab_tab_helper.h"
 #import "ios/chrome/browser/web/model/web_navigation_browser_agent.h"
-#import "ios/chrome/browser/web_state_list/model/web_state_dependency_installer_bridge.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
+#import "ios/web/public/ui/context_menu_params.h"
 #import "ios/web/public/web_state.h"
 
 @interface SadTabCoordinator () <SadTabViewControllerDelegate,
-                                 DependencyInstalling> {
-  SadTabViewController* _viewController;
-  // Bridge to observe the web state list from Objective-C.
-  std::unique_ptr<WebStateDependencyInstallerBridge> _dependencyInstallerBridge;
-}
+                                 TabsDependencyInstalling>
 @end
 
-@implementation SadTabCoordinator
+@implementation SadTabCoordinator {
+  SadTabViewController* _viewController;
+  // Bridge to observe the web state list from Objective-C.
+  TabsDependencyInstallerBridge _dependencyInstallerBridge;
+}
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                                    browser:(Browser*)browser {
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
-    _dependencyInstallerBridge =
-        std::make_unique<WebStateDependencyInstallerBridge>(
-            self, self.browser->GetWebStateList());
+    _dependencyInstallerBridge.StartObserving(
+        self, browser, TabsDependencyInstaller::Policy::kOnlyRealized);
   }
   return self;
 }
@@ -92,9 +94,8 @@
 }
 
 - (void)disconnect {
-  // Deleting the installer bridge will cause all web states to have
-  // dependencies uninstalled.
-  _dependencyInstallerBridge.reset();
+  // Stop observing the WebStateList before destroying the bridge object.
+  _dependencyInstallerBridge.StopObserving();
 }
 
 - (void)setOverscrollDelegate:
@@ -124,6 +125,28 @@
   // clean up.
   [static_cast<id<ApplicationCommands>>(self.browser->GetCommandDispatcher())
       openURLInNewTab:command];
+}
+
+- (UIMenu*)sadTabViewController:(SadTabViewController*)sadTabViewController
+    contextMenuConfigurationForURL:(const GURL&)URL {
+  web::WebState* webState =
+      self.browser->GetWebStateList()->GetActiveWebState();
+  if (!webState) {
+    return nil;
+  }
+
+  web::ContextMenuParams params;
+  params.link_url = URL;
+  params.view = sadTabViewController.view;
+
+  UIMenu* menu = [self.contextMenuProvider
+      contextMenuForWebState:webState
+                      params:params
+                    scenario:kMenuScenarioHistogramSadTab];
+  if (menu) {
+    [self.contextMenuProvider recordMenuShown:kMenuScenarioHistogramSadTab];
+  }
+  return menu;
 }
 
 - (void)sadTabViewControllerReload:(SadTabViewController*)sadTabViewController {
@@ -157,10 +180,23 @@
   [self stop];
 }
 
-#pragma mark - DependencyInstalling
+#pragma mark - TabsDependencyInstalling
 
-- (void)installDependencyForWebState:(web::WebState*)webState {
+- (void)webStateInserted:(web::WebState*)webState {
   SadTabTabHelper::FromWebState(webState)->SetDelegate(self);
+}
+
+- (void)webStateRemoved:(web::WebState*)webState {
+  SadTabTabHelper::FromWebState(webState)->SetDelegate(nil);
+}
+
+- (void)webStateDeleted:(web::WebState*)webState {
+  // Nothing to do.
+}
+
+- (void)newWebStateActivated:(web::WebState*)newActive
+           oldActiveWebState:(web::WebState*)oldActive {
+  // Nothing to do.
 }
 
 @end

@@ -77,9 +77,20 @@ NSString* const kUserDefaultsCredentialProviderPasskeyPRFSetting =
     @"kUserDefaultsCredentialProviderPasskeyPRFSetting";
 
 // Used to generate the key for the app group user defaults containing whether
-// the passkeys M2 feature is currently enabled.
-NSString* const kUserDefaultsCredentialProviderPasskeysM2Enabled =
-    @"kUserDefaultsCredentialProviderPasskeysM2Enabled";
+// passkey Large Blob support is currently enabled.
+NSString* const kUserDefaultsCredentialProviderPasskeyLargeBlobSetting =
+    @"kUserDefaultsCredentialProviderPasskeyLargeBlobSetting";
+
+// Used to generate the key for the app group user defaults containing whether
+// signal API is currently enabled.
+NSString* const kUserDefaultsCredentialProviderSignalAPISetting =
+    @"kUserDefaultsCredentialProviderSignalAPISetting";
+
+// Used to generate the key for the app group user defaults containing whether
+// the button order in the confirmation alerts should be swapped.
+NSString* const
+    kUserDefaultsCredentialProviderConfirmationButtonSwapOrderSetting =
+        @"ConfirmationButtonSwapOrderKey";
 
 // Used to generate a unique AppGroupPrefix to differentiate between different
 // versions of Chrome running in the same device.
@@ -182,7 +193,20 @@ NSString* AppGroupUserDefaulsCredentialProviderPasskeyPRFEnabled() {
       stringByAppendingString:kUserDefaultsCredentialProviderPasskeyPRFSetting];
 }
 
-NSString* AppGroupUserDefaultsCredentialProviderPasskeysM2Enabled() {
+NSString* AppGroupUserDefaulsCredentialProviderPasskeyLargeBlobEnabled() {
   return [AppGroupPrefix()
-      stringByAppendingString:kUserDefaultsCredentialProviderPasskeysM2Enabled];
+      stringByAppendingString:
+          kUserDefaultsCredentialProviderPasskeyLargeBlobSetting];
+}
+
+NSString* AppGroupUserDefaulsCredentialProviderSignalAPIEnabled() {
+  return [AppGroupPrefix()
+      stringByAppendingString:kUserDefaultsCredentialProviderSignalAPISetting];
+}
+
+NSString*
+AppGroupUserDefaulsCredentialProviderConfirmationButtonSwapOrderEnabled() {
+  return [AppGroupPrefix()
+      stringByAppendingString:
+          kUserDefaultsCredentialProviderConfirmationButtonSwapOrderSetting];
 }

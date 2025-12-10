@@ -25,6 +25,10 @@ namespace content::indexed_db::level_db {
 
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kIdbInSessionDbCleanup);
 
+// Whether to run extra checks before/after in-session cleanup. Check results
+// are logged to histograms.
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kIdbVerifyInSessionDbCleanup);
+
 class LevelDbTombstoneSweeper;
 
 // Sweeps the IndexedDB LevelDB database looking for index tombstones, followed
@@ -55,20 +59,11 @@ class CONTENT_EXPORT LevelDBCleanupScheduler {
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/storage/enums.xml:LevelDBCleanupSchedulerPhase)
 
-  // Abstraction of backing store calls which are required
-  // by the scheduler.
+  // Implemented by the backing store.
   class Delegate {
    public:
-    // This function updates the next run timestamp for the
-    // tombstone sweeper in the database metadata.
-    // Virtual for testing.
-    // Returns `true`  if the update was successful.
-    virtual bool UpdateEarliestSweepTime() = 0;
-    // This function updates the next run timestamp for the
-    // level db compaction in the database metadata.
-    // Virtual for testing.
-    // Returns `true` if the update was successful.
-    virtual bool UpdateEarliestCompactionTime() = 0;
+    virtual void OnCleanupStarted() = 0;
+    virtual void OnCleanupDone() = 0;
     virtual Status GetCompleteMetadata(
         std::vector<std::unique_ptr<blink::IndexedDBDatabaseMetadata>>*
             output) = 0;
@@ -114,7 +109,8 @@ class CONTENT_EXPORT LevelDBCleanupScheduler {
     return running_state_;
   }
 
-  // Postpones any scheduled task unless `kMaximumTimeBetweenRuns` has passed.
+  // Stops any scheduled cleanup operations, which will be resumed once all
+  // active transactions are complete.
   void OnTransactionStart();
 
   // Schedules a cleanup task if `running_state_` is set and there are no other
@@ -122,15 +118,17 @@ class CONTENT_EXPORT LevelDBCleanupScheduler {
   void OnTransactionComplete();
 
   // To avoid interrupting active usage, defer runs until there has been no
-  // activity for a few seconds.
-  static constexpr base::TimeDelta kDeferTimeAfterLastTransaction =
-      base::Seconds(4);
-  static constexpr base::TimeDelta kDeferTimeOnNoTransactions =
-      base::Seconds(0.4);
+  // activity for 0.4 seconds.
+  static constexpr base::TimeDelta kDeferTime = base::Seconds(0.4);
+
+  // Threshold for the tombstones which were encountered during the
+  // lifetime of the cursor. Crossing it will cause scheduling of the
+  // `LevelDBCleanupScheduler`.
+  static constexpr int kTombstoneThreshold = 1000;
 
  private:
   // Starts the timer for the cleanup tasks.
-  void ScheduleNextCleanupTask(const base::TimeDelta& defer_time);
+  void ScheduleNextCleanupTask();
 
   // Logs the histograms for the current clean up tasks, resets the running
   // state and marks the last run time.

@@ -29,6 +29,8 @@ namespace autofill_metrics {
 
 class CreditCardFormEventLogger : public FormEventLoggerBase {
  public:
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
   enum class UnmaskAuthFlowEvent {
     // Authentication prompt is shown.
     kPromptShown = 0,
@@ -56,8 +58,6 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   virtual void OnBnplSuggestionShown();
 
   // Invoked when `suggestions` are successfully fetched.
-  // `with_offer` indicates whether an offer is attached to any of the
-  // suggestion in the list.
   // `with_cvc` indicates whether CVC is saved in any of the suggestion in
   // the list.
   // `with_card_info_retrieval_enrolled` indicates whether at least one of the
@@ -68,7 +68,6 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   // a non-empty product description or art image, and whether they are shown.
   void OnDidFetchSuggestion(
       const std::vector<Suggestion>& suggestions,
-      bool with_offer,
       bool with_cvc,
       bool with_card_info_retrieval_enrolled,
       bool is_virtual_card_standalone_cvc_field,
@@ -139,11 +138,18 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   // Logging when a BNPL suggestion was accepted.
   void OnDidAcceptBnplSuggestion();
 
+  // Called by BrowserAutofillManager after the Save and Fill suggestion is
+  // shown.
+  void OnSaveAndFillSuggestionShown();
+
+  // Called by AutofillExternalDelegate after the Save and Fill suggestion is
+  // accepted.
+  void OnDidAcceptSaveAndFillSuggestion();
+
   std::optional<CreditCard> GetFilledCreditCardForTesting();
 
  protected:
   // FormEventLoggerBase pure-virtual overrides.
-  void RecordPollSuggestions() override;
   void RecordParseForm() override;
   void RecordShowSuggestions() override;
 
@@ -153,9 +159,6 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   void LogUkmInteractedWithForm(FormSignature form_signature) override;
   void OnSuggestionsShownOnce(const FormStructure& form) override;
   void OnSuggestionsShownSubmittedOnce(const FormStructure& form) override;
-  void OnLog(const std::string& name,
-             FormEvent event,
-             const FormStructure& form) const override;
   bool HasLoggedDataToFillAvailable() const override;
   DenseSet<FormTypeNameForLogging> GetSupportedFormTypeNamesForLogging()
       const override;
@@ -172,9 +175,6 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   bool DoesCardHaveOffer(const CreditCard& credit_card);
   // Returns whether the shown suggestions included a virtual credit card.
   bool DoSuggestionsIncludeVirtualCard();
-  // Checks whether the current website is relevant for BNPL for any known BNPL
-  // provider, according to the optimization guide.
-  bool IsEligibleForBnpl();
 
   size_t server_record_type_count_ = 0;
   size_t local_record_type_count_ = 0;
@@ -209,8 +209,6 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   // was a masked server card. False for all other card types.
   bool latest_filled_card_was_masked_server_card_ = false;
   std::vector<Suggestion> suggestions_;
-  bool has_eligible_offer_ = false;
-  bool card_selected_has_offer_ = false;
   // If true, the selected server card was filled and it had an equivalent local
   // version on file.
   bool server_card_with_local_duplicate_filled_ = false;
@@ -237,6 +235,12 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
   // If true, the metrics for a form submitted with a BNPL issuer VCN were
   // already logged and should not log again.
   bool has_logged_form_submitted_with_bnpl_vcn_ = false;
+  // If true, the Save and Fill suggestion has already been logged as shown and
+  // should not be logged again.
+  bool has_logged_save_and_fill_suggestion_shown_ = false;
+  // If true, the Save and Fill suggestion has already been logged as accepted
+  // and should not be logged again.
+  bool has_logged_save_and_fill_suggestion_accepted_ = false;
 
   CardMetadataLoggingContext metadata_logging_context_;
 
@@ -245,6 +249,8 @@ class CreditCardFormEventLogger : public FormEventLoggerBase {
 
   AutofillMetrics::PaymentsSigninState signin_state_for_metrics_ =
       AutofillMetrics::PaymentsSigninState::kUnknown;
+
+  AutofillTriggerSource trigger_source_ = AutofillTriggerSource::kNone;
 
   // Weak references.
   raw_ptr<PersonalDataManager> personal_data_manager_;

@@ -30,7 +30,6 @@ import org.chromium.components.infobars.InfoBarLayout;
 import org.chromium.ui.UiUtils;
 
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 
 /** An infobar for saving credit card information. */
@@ -45,7 +44,7 @@ public class AutofillSaveCardInfoBar extends ConfirmInfoBar {
     private final String mTitleText;
     private @Nullable String mDescriptionText;
     private final boolean mIsGooglePayBrandingEnabled;
-    private final LinkedList<LegalMessageLine> mLegalMessageLines = new LinkedList<>();
+    private final List<LegalMessageLine> mLegalMessageLines = new ArrayList<>();
 
     /**
      * Creates a new instance of the infobar.
@@ -174,7 +173,10 @@ public class AutofillSaveCardInfoBar extends ConfirmInfoBar {
      */
     @CalledByNative
     private void addLinkToLastLegalMessageLine(int start, int end, String url) {
-        mLegalMessageLines.getLast().links.add(new LegalMessageLine.Link(start, end, url));
+        mLegalMessageLines
+                .get(mLegalMessageLines.size() - 1)
+                .links
+                .add(new LegalMessageLine.Link(start, end, url));
     }
 
     @Override
@@ -212,9 +214,7 @@ public class AutofillSaveCardInfoBar extends ConfirmInfoBar {
                             public void onClick(View view) {
                                 AutofillSaveCardInfoBarJni.get()
                                         .onLegalMessageLinkClicked(
-                                                mNativeAutofillSaveCardInfoBar,
-                                                AutofillSaveCardInfoBar.this,
-                                                link.url);
+                                                mNativeAutofillSaveCardInfoBar, link.url);
                             }
                         },
                         link.start,
@@ -251,7 +251,6 @@ public class AutofillSaveCardInfoBar extends ConfirmInfoBar {
 
     @NativeMethods
     interface Natives {
-        void onLegalMessageLinkClicked(
-                long nativeAutofillSaveCardInfoBar, AutofillSaveCardInfoBar caller, String url);
+        void onLegalMessageLinkClicked(long nativeAutofillSaveCardInfoBar, String url);
     }
 }

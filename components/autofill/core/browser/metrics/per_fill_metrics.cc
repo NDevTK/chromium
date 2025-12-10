@@ -5,7 +5,6 @@
 #include "components/autofill/core/browser/metrics/per_fill_metrics.h"
 
 #include "base/metrics/histogram_functions.h"
-#include "base/metrics/histogram_functions_internal_overloads.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "components/autofill/core/browser/filling/form_filler.h"
@@ -29,7 +28,7 @@ std::string RefillTriggerReasonToString(
 }  // namespace
 
 void LogNumberOfFieldsModifiedByAutofill(
-    base::span<const FormFieldData*> safe_filled_fields,
+    size_t modified_fields_count,
     const FillingPayload& filling_payload) {
   constexpr const char prefix[] = "Autofill.NumberOfFieldsPerAutofill";
   std::string_view suffix = std::visit(
@@ -37,11 +36,12 @@ void LogNumberOfFieldsModifiedByAutofill(
           [&](const AutofillProfile*) { return "AutofillProfile"; },
           [&](const CreditCard* credit_card) { return "CreditCard"; },
           [&](const EntityInstance* entity) { return "EntityInstance"; },
-          [&](const VerifiedProfile*) { return "VerifiedProfile"; }},
+          [&](const VerifiedProfile*) { return "VerifiedProfile"; },
+          [&](const OtpFillData*) { return "OtpFillData"; }},
       filling_payload);
-  base::UmaHistogramCounts1000(prefix, safe_filled_fields.size());
+  base::UmaHistogramCounts1000(prefix, modified_fields_count);
   base::UmaHistogramCounts1000(base::StrCat({prefix, ".", suffix}),
-                               safe_filled_fields.size());
+                               modified_fields_count);
 }
 
 void LogRefillTriggerReason(RefillTriggerReason refill_trigger_reason) {

@@ -30,6 +30,7 @@
 #include "cc/metrics/compositor_timing_history.h"
 #include "cc/paint/paint_image.h"
 #include "cc/paint/paint_worklet_layer_painter.h"
+#include "cc/scheduler/scheduler_state_machine.h"
 #include "cc/trees/commit_state.h"
 #include "cc/trees/compositor_commit_data.h"
 #include "cc/trees/layer_tree_frame_sink.h"
@@ -143,12 +144,17 @@ ProxyImpl::~ProxyImpl() {
   DCHECK(IsImplThread());
   DCHECK(IsMainThreadBlocked());
 
-  // Prevent the scheduler from performing actions while we're in an
+  // Prevent the scheduler from performing scheduled actions while we're in an
   // inconsistent state.
   scheduler_->Stop();
+
   // Take away the LayerTreeFrameSink before destroying things so it doesn't
   // try to call into its client mid-shutdown.
   host_impl_->ReleaseLayerTreeFrameSink();
+
+  // The `Scheduler` has a raw_ptr to the CompositorFrameReportingController
+  // that is owned by the LTHI.
+  scheduler_->TearDown();
 
   // It is important to destroy LTHI before the Scheduler since it can make
   // callbacks that access it during destruction cleanup.
@@ -457,7 +463,7 @@ void ProxyImpl::NotifyReadyToActivate() {
   TRACE_EVENT_INSTANT("cc,benchmark", "ProxyImpl::ReadyToActivate",
                       [&](perfetto::EventContext ctx) {
                         EmitMainFramePipelineStep(
-                            ctx, host_impl_->active_tree()->trace_id(),
+                            ctx, host_impl_->sync_tree()->trace_id(),
                             perfetto::protos::pbzero::MainFramePipeline::Step::
                                 READY_TO_ACTIVATE);
                       });
@@ -507,6 +513,12 @@ void ProxyImpl::SetVideoNeedsBeginFrames(bool needs_begin_frames) {
     scheduler_->SetVideoNeedsBeginFrames(needs_begin_frames);
 }
 
+void ProxyImpl::DidChangeBeginFrameSourcePaused(bool paused) {
+  MainThreadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&ProxyMain::DidChangeBeginFrameSourcePaused,
+                                proxy_main_weak_ptr_, paused));
+}
+
 bool ProxyImpl::IsInsideDraw() {
   return inside_draw_;
 }
@@ -514,19 +526,22 @@ bool ProxyImpl::IsInsideDraw() {
 void ProxyImpl::RenewTreePriority() {
   DCHECK(IsImplThread());
 
-  bool precise_scrolling_in_progress =
+  const bool precise_scrolling_in_progress =
       host_impl_->GetActivelyScrollingType() == ActivelyScrollingType::kPrecise;
 
-  bool avoid_entering_smoothness =
+  const bool avoid_entering_smoothness =
       (base::FeatureList::IsEnabled(
            features::kNewContentForCheckerboardedScrolls) &&
-       host_impl_->ScrollCheckerboardsIncompleteRecording()) ||
+       host_impl_->PrioritizeNewContentDueToCheckerboarding()) ||
       (precise_scrolling_in_progress &&
        host_impl_->IsCurrentScrollMainRepainted());
 
-  bool non_scroll_interaction_in_progress =
+  const bool non_scroll_interaction_in_progress =
       host_impl_->IsPinchGestureActive() ||
       host_impl_->page_scale_animation_active();
+
+  bool is_current_scroll_main_painted =
+      host_impl_->IsCurrentScrollMainRepainted();
 
   // Schedule expiration if smoothness currently takes priority.
   if ((non_scroll_interaction_in_progress || precise_scrolling_in_progress) &&
@@ -548,10 +563,7 @@ void ProxyImpl::RenewTreePriority() {
   // - When the active scroll gesture requires main-thread repainting for the
   //   scroll offset change to be visible.
   if (host_impl_->active_tree()->GetDeviceViewport().size().IsEmpty() ||
-      host_impl_->EvictedUIResourcesExist() ||
-      (host_impl_->IsCurrentScrollMainRepainted() &&
-       base::FeatureList::IsEnabled(
-           features::kMainRepaintScrollPrefersNewContent))) {
+      host_impl_->EvictedUIResourcesExist() || is_current_scroll_main_painted) {
     // Once we enter NEW_CONTENTS_TAKES_PRIORITY mode, visible tiles on active
     // tree might be freed. We need to set RequiresHighResToDraw to ensure that
     // high res tiles will be required to activate pending tree.
@@ -565,12 +577,17 @@ void ProxyImpl::RenewTreePriority() {
   // have a scroll listener. This gives the scroll listener a better chance of
   // handling scroll updates within the same frame. The tree itself is still
   // kept in prefer smoothness mode to allow checkerboarding.
+  //
+  // Note: `is_current_scroll_main_painted` does not imply
+  // SCROLL_AFFECTS_SCROLL_HANDLER, as on some platforms we don't attempt to
+  // synchronize non=passive scroll handlers. See `kSynchronizedScrolling`.
   ScrollHandlerState scroll_handler_state =
       host_impl_->ScrollAffectsScrollHandler()
           ? ScrollHandlerState::SCROLL_AFFECTS_SCROLL_HANDLER
           : ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER;
-  scheduler_->SetTreePrioritiesAndScrollState(tree_priority,
-                                              scroll_handler_state);
+
+  scheduler_->SetTreePrioritiesAndScrollState(
+      tree_priority, scroll_handler_state, is_current_scroll_main_painted);
 }
 
 void ProxyImpl::PostDelayedAnimationTaskOnImplThread(base::OnceClosure task,
@@ -622,9 +639,6 @@ void ProxyImpl::NotifyImageDecodeRequestFinished(int request_id,
   DCHECK(IsImplThread());
   if (base::FeatureList::IsEnabled(
           features::kSendExplicitDecodeRequestsImmediately)) {
-    if (speculative) {
-      SetSpeculativeDecodeRequestInFlight(false);
-    }
     MainThreadTaskRunner()->PostTask(
         FROM_HERE,
         base::BindOnce(&ProxyMain::NotifyImageDecodeRequestFinished,
@@ -917,7 +931,7 @@ DrawResult ProxyImpl::DrawInternal(bool forced_draw) {
   // DrawLayers() depends on the result of PrepareToDraw(), it is guarded on
   // CanDraw() as well.
 
-  LayerTreeHostImpl::FrameData frame;
+  FrameData frame;
   frame.begin_frame_ack = scheduler_->CurrentBeginFrameAckForActiveTree();
   frame.origin_begin_main_frame_args =
       scheduler_->last_activate_origin_frame_args();
@@ -948,7 +962,7 @@ DrawResult ProxyImpl::DrawInternal(bool forced_draw) {
     if (draw_frame) {
       if (std::optional<SubmitInfo> submit_info =
               host_impl_->DrawLayers(&frame)) {
-        DCHECK_NE(frame.frame_token, 0u);
+        DCHECK_NE(frame.frame_token, viz::kInvalidFrameToken);
         // Drawing implies we submitted a frame to the LayerTreeFrameSink.
         scheduler_->DidSubmitCompositorFrame(submit_info.value());
       }
@@ -1000,15 +1014,6 @@ void ProxyImpl::QueueImageDecodeOnImpl(int request_id,
                                        std::unique_ptr<DrawImage> image,
                                        bool speculative) {
   host_impl_->QueueImageDecode(request_id, *image, speculative);
-}
-
-bool ProxyImpl::SpeculativeDecodeRequestInFlight() const {
-  return speculative_decode_request_in_flight_.load();
-}
-
-void ProxyImpl::SetSpeculativeDecodeRequestInFlight(bool value) {
-  CHECK(value != speculative_decode_request_in_flight_.load());
-  speculative_decode_request_in_flight_.store(value);
 }
 
 void ProxyImpl::SetSourceURL(ukm::SourceId source_id, const GURL& url) {

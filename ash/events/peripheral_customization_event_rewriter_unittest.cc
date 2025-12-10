@@ -513,8 +513,7 @@ class PeripheralCustomizationEventRewriterTest : public AshTestBase {
 
   // testing::Test:
   void SetUp() override {
-    scoped_feature_list_.InitWithFeatures({features::kPeripheralCustomization,
-                                           features::kInputDeviceSettingsSplit},
+    scoped_feature_list_.InitWithFeatures({features::kPeripheralCustomization},
                                           {});
     AshTestBase::SetUp();
     controller_scoped_resetter_ = std::make_unique<
@@ -915,47 +914,6 @@ TEST_F(PeripheralCustomizationEventRewriterTest,
   // Press and release Ctrl on a different keyboard.
   EXPECT_EQ(KeyLControl::Typed(), RunRewriter(KeyLControl::Typed(), ui::EF_NONE,
                                               kRandomKeyboardDeviceId));
-
-  // Expect that when digit 0 is released it emits A without the Ctrl modifier
-  // flag.
-  EXPECT_EQ(
-      (std::vector<TestEventVariant>{
-          KeyA::Released(ui::EF_IS_CUSTOMIZED_FROM_BUTTON)}),
-      (RunRewriter(std::vector<TestEventVariant>{KeyDigit0::Released()})));
-}
-
-TEST_F(PeripheralCustomizationEventRewriterTest,
-       RemappedModifierReleasedDuringSequence) {
-  // This test is only relevant when the keyboard rewriter fix is disabled.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kEnableKeyboardRewriterFix);
-
-  keyboard_->settings->modifier_remappings[ui::mojom::ModifierKey::kAlt] =
-      ui::mojom::ModifierKey::kControl;
-
-  mouse_->settings->button_remappings.push_back(mojom::ButtonRemapping::New(
-      /*name=*/"", mojom::Button::NewVkey(ui::VKEY_0),
-      mojom::RemappingAction::NewKeyEvent(mojom::KeyEvent::New(
-          ui::VKEY_A, static_cast<int>(ui::DomCode::US_A),
-          static_cast<int>(ui::DomKey::FromCharacter('a')), ui::EF_CONTROL_DOWN,
-          /*key_display=*/""))));
-
-  // Press digit 0 -> Ctrl + A.
-  EXPECT_EQ((std::vector<TestEventVariant>{
-                KeyLControl::Pressed(ui::EF_IS_CUSTOMIZED_FROM_BUTTON),
-                KeyA::Pressed(ui::EF_CONTROL_DOWN |
-                              ui::EF_IS_CUSTOMIZED_FROM_BUTTON)}),
-            (RunRewriter(std::vector<TestEventVariant>{KeyDigit0::Pressed()})));
-
-  // Press and release Alt -> Ctrl on a different keyboard. Note that this still
-  // appears as alt to this rewriter. This is a little weird, but nothing that
-  // will break anything. We do not technically support modifier remappigns
-  // across multiple keyboards (this case is already broken in
-  // EventRewriterAsh). This change just makes it so we dont break anyone else.
-  EXPECT_EQ(
-      (std::vector<TestEventVariant>{KeyLAlt::Pressed(ui::EF_CONTROL_DOWN),
-                                     KeyLAlt::Released()}),
-      (RunRewriter(KeyLAlt::Typed(), ui::EF_NONE, kRandomKeyboardDeviceId)));
 
   // Expect that when digit 0 is released it emits A without the Ctrl modifier
   // flag.

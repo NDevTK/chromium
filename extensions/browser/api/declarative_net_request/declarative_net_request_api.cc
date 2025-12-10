@@ -36,6 +36,7 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/quota_service.h"
+#include "extensions/browser/safe_browsing_delegate.h"
 #include "extensions/common/api/declarative_net_request.h"
 #include "extensions/common/api/declarative_net_request/constants.h"
 #include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
@@ -136,8 +137,10 @@ DeclarativeNetRequestUpdateDynamicRulesFunction::Run() {
 
   // Collect rules to add in the Extension Telemetry Service.
   if (!rules_to_add.empty()) {
-    ExtensionsBrowserClient::Get()->NotifyExtensionApiDeclarativeNetRequest(
-        browser_context(), extension_id(), rules_to_add);
+    ExtensionsBrowserClient::Get()
+        ->GetSafeBrowsingDelegate()
+        ->NotifyExtensionApiDeclarativeNetRequest(browser_context(),
+                                                  extension_id(), rules_to_add);
   }
 
   auto* rules_monitor_service =
@@ -248,8 +251,10 @@ DeclarativeNetRequestUpdateSessionRulesFunction::Run() {
 
   // Collect rules to add in the Extension Telemetry Service.
   if (!rules_to_add.empty()) {
-    ExtensionsBrowserClient::Get()->NotifyExtensionApiDeclarativeNetRequest(
-        browser_context(), extension_id(), rules_to_add);
+    ExtensionsBrowserClient::Get()
+        ->GetSafeBrowsingDelegate()
+        ->NotifyExtensionApiDeclarativeNetRequest(browser_context(),
+                                                  extension_id(), rules_to_add);
   }
 
   auto* rules_monitor_service =
@@ -669,12 +674,10 @@ DeclarativeNetRequestIsRegexSupportedFunction::Run() {
   auto params = Params::Create(args());
   EXTENSION_FUNCTION_VALIDATE(params.has_value());
 
-  bool is_case_sensitive = params->regex_options.is_case_sensitive
-                               ? *params->regex_options.is_case_sensitive
-                               : true;
-  bool require_capturing = params->regex_options.require_capturing
-                               ? *params->regex_options.require_capturing
-                               : false;
+  bool is_case_sensitive =
+      params->regex_options.is_case_sensitive.value_or(true);
+  bool require_capturing =
+      params->regex_options.require_capturing.value_or(false);
   re2::RE2 regex(params->regex_options.regex,
                  declarative_net_request::CreateRE2Options(is_case_sensitive,
                                                            require_capturing));
@@ -780,6 +783,17 @@ DeclarativeNetRequestTestMatchOutcomeFunction::Run() {
     return RespondNow(Error(declarative_net_request::kInvalidTestTabIdError));
   }
 
+  url::Origin top_level_frame_origin;
+  if (params->request.top_url) {
+    GURL top_level_frame_url = GURL(*params->request.top_url);
+    if (!top_level_frame_url.is_valid()) {
+      return RespondNow(
+          Error(declarative_net_request::kInvalidTestTopURLError));
+    }
+    top_level_frame_origin =
+        url::Origin::Create(std::move(top_level_frame_url));
+  }
+
   auto method = params->request.method == dnr_api::RequestMethod::kNone
                     ? dnr_api::RequestMethod::kGet
                     : params->request.method;
@@ -802,7 +816,8 @@ DeclarativeNetRequestTestMatchOutcomeFunction::Run() {
   }
 
   declarative_net_request::RequestParams request_params(
-      url, initiator, params->request.type, method, tab_id, response_headers);
+      url, initiator, top_level_frame_origin, params->request.type, method,
+      tab_id, response_headers);
 
   // Set up the rule matcher.
 

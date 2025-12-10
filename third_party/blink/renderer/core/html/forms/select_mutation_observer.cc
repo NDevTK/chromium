@@ -27,7 +27,6 @@ namespace blink {
 
 SelectMutationObserver::SelectMutationObserver(HTMLSelectElement& select)
     : select_(select), observer_(MutationObserver::Create(this)) {
-  CHECK(HTMLSelectElement::CustomizableSelectEnabled(&select));
   DCHECK(select_->IsAppearanceBase());
 
   MutationObserverInit* init = MutationObserverInit::Create();
@@ -53,22 +52,6 @@ void SelectMutationObserver::Deliver(const MutationRecordVector& records,
       if (record->attributeName() == html_names::kTabindexAttr ||
           record->attributeName() == html_names::kContenteditableAttr) {
         AddDescendantDisallowedErrorToNode(*record->target());
-      } else if ((RuntimeEnabledFeatures::
-                     SelectAccessibilityReparentInputEnabled() ||
-                     RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled())
-          &&
-                 record->attributeName() == html_names::kTypeAttr) {
-        if (auto* input = DynamicTo<HTMLInputElement>(record->target())) {
-          if (input->IsTextField()) {
-            select_->AddDescendantTextInput(input);
-          } else {
-            select_->RemoveDescendantTextInput(input);
-            // If the type attribute was changed in a way that makes the
-            // <input> no longer an allowed descendant, then we should emit an
-            // error.
-            AddDescendantDisallowedErrorToNode(*input);
-          }
-        }
       }
     }
   }
@@ -93,7 +76,6 @@ void SelectMutationObserver::CheckAddedNodes(MutationRecord* record) {
     if (IsWhitespaceOrEmpty(*descendant)) {
       continue;
     }
-    MaybeAddDescendantTextInput(descendant);
     AddDescendantDisallowedErrorToNode(*descendant);
     // Check the added node's descendants, if any.
     TraverseNodeDescendants(descendant);
@@ -110,7 +92,6 @@ void SelectMutationObserver::CheckRemovedNodes(MutationRecord* record) {
     if (IsWhitespaceOrEmpty(*descendant)) {
       continue;
     }
-    MaybeRemoveDescendantTextInput(descendant);
     if (!IsAllowedInteractiveElement(*descendant)) {
       select_->DecreaseContentModelViolationCount();
     }
@@ -118,7 +99,6 @@ void SelectMutationObserver::CheckRemovedNodes(MutationRecord* record) {
     for (Node* nested_descendant = NodeTraversal::FirstWithin(*descendant);
          nested_descendant; nested_descendant = NodeTraversal::Next(
                                 *nested_descendant, descendant)) {
-      MaybeRemoveDescendantTextInput(descendant);
       if (!IsWhitespaceOrEmpty(*nested_descendant) &&
           !IsAllowedInteractiveElement(*nested_descendant)) {
         select_->DecreaseContentModelViolationCount();
@@ -131,26 +111,7 @@ void SelectMutationObserver::TraverseNodeDescendants(const Node* node) {
   for (Node* descendant = NodeTraversal::FirstWithin(*node); descendant;
        descendant = NodeTraversal::Next(*descendant, node)) {
     if (!IsWhitespaceOrEmpty(*descendant)) {
-      MaybeAddDescendantTextInput(descendant);
       AddDescendantDisallowedErrorToNode(*descendant);
-    }
-  }
-}
-
-void SelectMutationObserver::MaybeAddDescendantTextInput(Node* node) {
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    if (auto* input = DynamicTo<HTMLInputElement>(node);
-        input && input->IsTextField()) {
-      select_->AddDescendantTextInput(input);
-    }
-  }
-}
-
-void SelectMutationObserver::MaybeRemoveDescendantTextInput(Node* node) {
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    if (auto* input = DynamicTo<HTMLInputElement>(node);
-        input && input->IsTextField()) {
-      select_->RemoveDescendantTextInput(input);
     }
   }
 }
@@ -166,71 +127,8 @@ void SelectMutationObserver::AddDescendantDisallowedErrorToNode(Node& node) {
         &document, node.GetDomNodeId(), issue_reason,
         /* has_disallowed_attributes = */ HasTabIndexAttribute(node) ||
             IsContenteditable(node));
-    node.AddConsoleMessage(mojom::blink::ConsoleMessageSource::kRecommendation,
-                           mojom::blink::ConsoleMessageLevel::kError,
-                           GetMessageForReason(issue_reason));
     RecordIssueByType(issue_reason);
   }
-}
-
-String SelectMutationObserver::GetMessageForReason(
-    ElementAccessibilityIssueReason issue_reason) {
-  switch (issue_reason) {
-    case ElementAccessibilityIssueReason::kDisallowedSelectChild:
-      return FormatElementMessage(
-          "<select>", "a ",
-          "an <optgroup> with a <legend> element or <option> elements");
-    case ElementAccessibilityIssueReason::kDisallowedOptGroupChild:
-      return FormatElementMessage("<optgroup>", "an ",
-                                  "the <legend> or <option> elements");
-    case ElementAccessibilityIssueReason::kNonPhrasingContentOptionChild:
-      return "Non-phrasing content was found within an <option> element. The "
-             "<option> element allows only non-interactive phrasing content, "
-             "text, and <div> elements as its children. The semantics of "
-             "non-phrasing content elements do not make sense as children of "
-             "an <option>, and such semantics will largely be ignored by "
-             "assistive technology since they are inappropriate in this "
-             "context. Consider removing or changing such elements to one of "
-             "the allowed phrasing content elements.";
-    case ElementAccessibilityIssueReason::kInteractiveContentOptionChild:
-      return FormatInteractiveElementMessage("<option>", "an ", g_empty_string);
-    case ElementAccessibilityIssueReason::kInteractiveContentLegendChild:
-      return FormatInteractiveElementMessage(
-          "<legend>", "a ",
-          "Interactive elements are not allowed children of a <legend> "
-          "element when used within an <optgroup> element. ");
-    case ElementAccessibilityIssueReason::kValidChild:
-    default:
-      NOTREACHED();
-  }
-}
-
-String SelectMutationObserver::FormatElementMessage(const String& element,
-                                                    const String& article,
-                                                    const String& example) {
-  return "An element which is not allowed in the content model of the " +
-         element + " element was found within " + article + element +
-         " element. These elements will not consistently be accessible to "
-         "people navigating by keyboard or using assistive technology. If "
-         "using disallowed elements for layout structure and styling, "
-         "consider using the allowed <div> element instead. Any text "
-         "existing within the " +
-         element +
-         " element should either be removed or relocated to a valid element "
-         "that allows text descendants, e.g., " +
-         example + ".";
-}
-
-String SelectMutationObserver::FormatInteractiveElementMessage(
-    const String& element,
-    const String& article,
-    const String& context) {
-  return "An interactive element which is not allowed in the content model "
-         "of the " +
-         element + " element was found within " + article + element +
-         " element. " + context +
-         "These elements will not consistently be accessible to people "
-         "navigating by keyboard or using assistive technology.";
 }
 
 bool SelectMutationObserver::IsAllowedInteractiveElement(Node& node) {
@@ -241,20 +139,6 @@ bool SelectMutationObserver::IsAllowedInteractiveElement(Node& node) {
     const Node* parent = node.parentNode();
     return parent && IsA<HTMLSelectElement>(*parent) &&
            !ElementTraversal::PreviousSibling(node);
-  }
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    // <select>s are allowed to have one <input> before the options. We should
-    // probably find a way to figure out if the <input> is actually placed
-    // before the <option>s or not.
-
-    if (auto* input = DynamicTo<HTMLInputElement>(node)) {
-      if (input->IsTextField()) {
-        select_->AddDescendantTextInput(input);
-      }
-      if (input == select_->FirstDescendantTextInput()) {
-        return true;
-      }
-    }
   }
   // If the node isn't a <button> but it is an interactive element, we return
   // false as interactive elements are disallowed.
@@ -363,13 +247,6 @@ ElementAccessibilityIssueReason SelectMutationObserver::CheckForIssue(
 
 bool SelectMutationObserver::IsAllowedDescendantOfSelect(const Node& descendant,
                                                          const Node& parent) {
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    // <select>s are allowed to have one text <input>, although it should be
-    // placed before any of the <option>s.
-    if (select_->FirstDescendantTextInput() == descendant) {
-      return true;
-    }
-  }
   // <button> has to be the first direct descendant of the <select>.
   return (IsA<HTMLButtonElement>(descendant) &&
           IsA<HTMLSelectElement>(parent) &&

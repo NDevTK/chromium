@@ -11,6 +11,7 @@
 #include "base/types/pass_key.h"
 #include "components/shared_highlighting/core/common/disabled_sites.h"
 #include "components/shared_highlighting/core/common/shared_highlighting_features.h"
+#include "third_party/blink/public/web/web_plugin.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_generator.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
 #include "third_party/blink/renderer/core/annotation/annotation_selector.h"
@@ -19,6 +20,7 @@
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/visible_selection.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
 #include "third_party/blink/renderer/core/fragment_directive/text_fragment_handler.h"
 #include "third_party/blink/renderer/core/fragment_directive/text_fragment_selector.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -52,10 +54,6 @@ String ToString(const mojom::blink::Selector& selector) {
 }
 }  // namespace
 
-// static
-const char AnnotationAgentContainerImpl::kSupplementName[] =
-    "AnnotationAgentContainerImpl";
-
 void AnnotationAgentContainerImpl::AddObserver(Observer* observer) {
   observers_.insert(observer);
 }
@@ -75,7 +73,7 @@ AnnotationAgentContainerImpl* AnnotationAgentContainerImpl::CreateIfNeeded(
   if (!container) {
     container =
         MakeGarbageCollected<AnnotationAgentContainerImpl>(document, PassKey());
-    Supplement<Document>::ProvideTo(document, container);
+    document.SetAnnotationAgentContainerImpl(container);
   }
 
   return container;
@@ -84,7 +82,7 @@ AnnotationAgentContainerImpl* AnnotationAgentContainerImpl::CreateIfNeeded(
 // static
 AnnotationAgentContainerImpl* AnnotationAgentContainerImpl::FromIfExists(
     Document& document) {
-  return Supplement<Document>::From<AnnotationAgentContainerImpl>(document);
+  return document.GetAnnotationAgentContainerImpl();
 }
 
 // static
@@ -93,6 +91,22 @@ void AnnotationAgentContainerImpl::BindReceiver(
     mojo::PendingReceiver<mojom::blink::AnnotationAgentContainer> receiver) {
   DCHECK(frame);
   DCHECK(frame->GetDocument());
+
+  // If the current frame embeds a plugin, and that plugin supports annotation,
+  // allow the plugin to bind the receiver.
+  // TODO(crbug.com/427455182): Support embedded plugins.
+  if (frame->View()->Plugins().size() == 1u) {
+    WebPluginContainerImpl* web_plugin_container =
+        *frame->View()->Plugins().begin();
+    CHECK(web_plugin_container);
+    WebPlugin* plugin = web_plugin_container->Plugin();
+    CHECK(plugin);
+    if (plugin->SupportsAnnotation()) {
+      plugin->BindAnnotationAgentContainer(std::move(receiver));
+      return;
+    }
+  }
+
   Document& document = *frame->GetDocument();
 
   auto* container = AnnotationAgentContainerImpl::CreateIfNeeded(document);
@@ -104,8 +118,7 @@ void AnnotationAgentContainerImpl::BindReceiver(
 
 AnnotationAgentContainerImpl::AnnotationAgentContainerImpl(Document& document,
                                                            PassKey)
-    : Supplement<Document>(document),
-      receivers_(this, document.GetExecutionContext()) {
+    : document_(document), receivers_(this, document.GetExecutionContext()) {
   LocalFrame* frame = document.GetFrame();
   DCHECK(frame);
 
@@ -120,11 +133,11 @@ void AnnotationAgentContainerImpl::Bind(
 }
 
 void AnnotationAgentContainerImpl::Trace(Visitor* visitor) const {
+  visitor->Trace(document_);
   visitor->Trace(receivers_);
   visitor->Trace(agents_);
   visitor->Trace(annotation_agent_generator_);
   visitor->Trace(observers_);
-  Supplement<Document>::Trace(visitor);
 }
 
 void AnnotationAgentContainerImpl::PerformInitialAttachments() {
@@ -198,7 +211,7 @@ void AnnotationAgentContainerImpl::CreateAgent(
     std::optional<DOMNodeId> search_range_start_node_id) {
   TRACE_EVENT("blink", "AnnotationAgentContainerImpl::CreateAgent", "type",
               ToString(type), "selector", ToString(*selector));
-  DCHECK(GetSupplementable());
+  DCHECK(document_);
 
   AnnotationSelector* annotation_selector;
   switch (selector->which()) {
@@ -232,24 +245,31 @@ void AnnotationAgentContainerImpl::CreateAgentFromSelection(
               "type", ToString(type));
   DCHECK(annotation_agent_generator_);
   annotation_agent_generator_->GetForCurrentSelection(
-      type,
-      WTF::BindOnce(&AnnotationAgentContainerImpl::DidFinishSelectorGeneration,
-                    WrapWeakPersistent(this), std::move(callback)));
+      type, blink::BindOnce(
+                &AnnotationAgentContainerImpl::DidFinishSelectorGeneration,
+                WrapWeakPersistent(this), std::move(callback)));
 }
 
 void AnnotationAgentContainerImpl::RemoveAgentsOfType(
     mojom::blink::AnnotationType type) {
   TRACE_EVENT("blink", "AnnotationAgentContainerImpl::RemoveAgentsOfType",
               "type", ToString(type));
-  auto it = std::remove_if(agents_.begin(), agents_.end(),
-                           [type](AnnotationAgentImpl* agent) {
-                             if (agent->GetType() != type) {
-                               return false;
-                             }
-                             agent->Reset(PassKey());
-                             return true;
-                           });
-  agents_.erase(it, agents_.end());
+  HeapVector<Member<AnnotationAgentImpl>> agents_to_reset;
+  EraseIf(agents_, [type, &agents_to_reset](AnnotationAgentImpl* agent) {
+    if (agent->GetType() == type) {
+      agents_to_reset.push_back(agent);
+      return true;
+    }
+    return false;
+  });
+
+  // Note: We cannot call Reset() directly inside the EraseIf predicate above
+  // because Reset() can result in PerformInitialAttachments() being called,
+  // which will iterate over `agents_` in the middle of the EraseIf operation
+  // (which is not safe).
+  for (AnnotationAgentImpl* agent : agents_to_reset) {
+    agent->Reset(PassKey());
+  }
 }
 
 // TODO(cheickcisse@): Move shared highlighting enums, also used in user note to
@@ -273,7 +293,7 @@ void AnnotationAgentContainerImpl::DidFinishSelectorGeneration(
 
   // If the document was detached then selector generation must have returned
   // an error.
-  CHECK(GetSupplementable());
+  CHECK(document_);
 
   // TODO(bokan): Why doesn't this clear selection?
   GetFrame().Selection().Clear();
@@ -330,8 +350,15 @@ bool AnnotationAgentContainerImpl::ShouldPreemptivelyGenerate() {
     return false;
   }
 
-  if (GetFrame().Selection().SelectedText().empty()) {
-    return false;
+  if (RuntimeEnabledFeatures::
+          NonEmptyVisibleTextSelectionForTextFragmentEnabled()) {
+    if (!GetFrame().Selection().HasVisibleText()) {
+      return false;
+    }
+  } else {
+    if (GetFrame().Selection().SelectedText().empty()) {
+      return false;
+    }
   }
 
   if (GetFrame().IsOutermostMainFrame()) {
@@ -348,7 +375,7 @@ void AnnotationAgentContainerImpl::ScheduleBeginMainFrame() {
 }
 
 Document& AnnotationAgentContainerImpl::GetDocument() const {
-  Document* document = GetSupplementable();
+  Document* document = document_;
   CHECK(document);
   return *document;
 }

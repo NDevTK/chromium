@@ -17,7 +17,18 @@ class EventTiming;
 
 namespace blink {
 
+class EventTarget;
 class Frame;
+
+enum class FallbackReason {
+  kNone,
+  kUnexpectedFrameSource,
+  kVisibilityChange,
+  kModalDialog,
+  kSwapPromiseBroken,
+  kMacOSArtificialEvent,
+  kDoesNotNeedNextPaint,
+};
 
 class CORE_EXPORT PerformanceEventTiming final : public PerformanceEntry {
   DEFINE_WRAPPERTYPEINFO();
@@ -25,6 +36,9 @@ class CORE_EXPORT PerformanceEventTiming final : public PerformanceEntry {
  public:
   // Information used for event timing reporting purpose only.
   struct EventTimingReportingInfo {
+    // The reason(s) why fallback time was used.
+    FallbackReason fallback_reason = FallbackReason::kNone;
+
     // Presentation promise index in which the entry in |event_timing_| was
     // added.
     uint64_t presentation_index = 0;
@@ -78,20 +92,24 @@ class CORE_EXPORT PerformanceEventTiming final : public PerformanceEntry {
   };
 
   static PerformanceEventTiming* Create(const AtomicString& event_type,
-                                        EventTimingReportingInfo reporting_info,
+                                        EventTimingReportingInfo,
                                         bool cancelable,
-                                        Node* target,
-                                        DOMWindow* source);
+                                        EventTarget*,
+                                        DOMWindow*,
+                                        uint32_t navigation_id);
 
   static PerformanceEventTiming* CreateFirstInputTiming(
       PerformanceEventTiming* entry);
 
+  static String FallbackReasonToString(FallbackReason reason);
+
   PerformanceEventTiming(const AtomicString& event_type,
                          const AtomicString& entry_type,
-                         EventTimingReportingInfo repoerting_info,
+                         EventTimingReportingInfo,
                          bool cancelable,
-                         Node* target,
-                         DOMWindow* source);
+                         EventTarget*,
+                         DOMWindow*,
+                         uint32_t navigation_id);
 
   ~PerformanceEventTiming() override;
 
@@ -105,11 +123,13 @@ class CORE_EXPORT PerformanceEventTiming final : public PerformanceEntry {
 
   Node* target() const;
 
-  void SetTarget(Node* target);
+  void SetTarget(EventTarget* target);
 
   uint64_t interactionId() const;
 
   void SetInteractionId(uint64_t interaction_id);
+
+  const AtomicString& targetSelector() const;
 
   bool HasKnownInteractionID() const;
 
@@ -119,7 +139,7 @@ class CORE_EXPORT PerformanceEventTiming final : public PerformanceEntry {
 
   base::TimeTicks GetEndTime() const;
 
-  void UpdateFallbackTime(base::TimeTicks fallback_time);
+  void UpdateFallbackTime(base::TimeTicks fallback_time, FallbackReason reason);
 
   uint32_t interactionOffset() const;
 
@@ -152,6 +172,7 @@ class CORE_EXPORT PerformanceEventTiming final : public PerformanceEntry {
   mutable DOMHighResTimeStamp processing_end_ = 0;
   bool cancelable_;
   WeakMember<Node> target_;
+  AtomicString target_selector_;
   std::optional<uint64_t> interaction_id_ = std::nullopt;
   uint32_t interaction_offset_ = 0;
 

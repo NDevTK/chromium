@@ -20,6 +20,7 @@
 <translation id="2226276347425096477">Encurte este texto para <ph name="MAX_CHARACTERS" /> caracteres ou menos (está atualmente a utilizar <ph name="CURRENT_LENGTH" /> caracteres).</translation>
 <translation id="2247351761944213033">Semana <ph name="WEEKNUMBER" />, de <ph name="YEAR" /></translation>
 <translation id="2277199496770840904">Faixa <ph name="NUMBER" /></translation>
+<translation id="2500270406326775625">URL de dados</translation>
 <translation id="2507943997699731163">Preencha este campo.</translation>
 <translation id="2613802280814924224">Introduza um valor válido. O valor válido mais próximo é <ph name="VALID_VALUE" />.</translation>
 <translation id="2653659639078652383">Enviar</translation>
@@ -98,7 +99,6 @@
 <translation id="8668988909814782445">Moldar linhas</translation>
 <translation id="8750798805984357768">Selecione uma destas opções.</translation>
 <translation id="8845239796550121995">A transmitir na sua TV…</translation>
-<translation id="8853540031347711208">Prima <ph name="HOT_KEY" /> para ativar</translation>
 <translation id="8875657656876809964">Erro de reprodução de vídeo.</translation>
 <translation id="8901569739625249689"><ph name="QUANTITY" /> KB</translation>
 <translation id="9132465097189459683">Outra...</translation>

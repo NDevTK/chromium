@@ -27,10 +27,6 @@
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
 class CORE_EXPORT CSSValueList : public CSSValue {
@@ -77,7 +73,7 @@ class CORE_EXPORT CSSValueList : public CSSValue {
   bool HasValue(const CSSValue&) const;
   CSSValueList* Copy() const;
 
-  WTF::String CustomCSSText() const;
+  String CustomCSSText() const;
   bool Equals(const CSSValueList&) const;
   unsigned CustomHash() const;
 

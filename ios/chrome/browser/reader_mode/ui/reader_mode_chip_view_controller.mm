@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/reader_mode/ui/reader_mode_chip_view_controller.h"
 
+#import "ios/chrome/browser/location_bar/ui_bundled/location_bar_constants.h"
 #import "ios/chrome/browser/reader_mode/model/constants.h"
 #import "ios/chrome/browser/reader_mode/ui/constants.h"
 #import "ios/chrome/browser/shared/public/commands/reader_mode_options_commands.h"
@@ -12,6 +13,8 @@
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/ui/util/pointer_interaction_util.h"
+#import "ios/chrome/grit/ios_strings.h"
+#import "ui/base/l10n/l10n_util.h"
 
 namespace {
 
@@ -34,8 +37,6 @@ const CGFloat kChipSymbolPointSize = 15;
 
 - (void)viewDidLoad {
   [super viewDidLoad];
-  self.view.accessibilityIdentifier =
-      kReaderModeChipViewAccessibilityIdentifier;
   self.button = [self configuredButton];
   [self.view addSubview:self.button];
   [NSLayoutConstraint activateConstraints:@[
@@ -49,11 +50,6 @@ const CGFloat kChipSymbolPointSize = 15;
   ]];
 }
 
-- (void)viewDidLayoutSubviews {
-  [super viewDidLayoutSubviews];
-  self.button.layer.cornerRadius = self.button.bounds.size.height / 2.0;
-}
-
 #pragma mark - Private
 
 - (UIButton*)configuredButton {
@@ -61,23 +57,30 @@ const CGFloat kChipSymbolPointSize = 15;
   UIAction* buttonAction = [UIAction actionWithHandler:^(UIAction* action) {
     [weakSelf showReaderModeOptions];
   }];
-  UIButton* button =
-      [[ExtendedTouchTargetButton alloc] initWithFrame:CGRectZero
-                                         primaryAction:buttonAction];
-  button.translatesAutoresizingMaskIntoConstraints = NO;
-  button.backgroundColor = [UIColor colorNamed:kBlue600Color];
-  button.clipsToBounds = YES;
-  button.pointerInteractionEnabled = YES;
-  button.pointerStyleProvider = CreateLiftEffectCirclePointerStyleProvider();
+
+  UIButtonConfiguration* configuration =
+      [UIButtonConfiguration filledButtonConfiguration];
+  configuration.baseBackgroundColor = [UIColor colorNamed:kBlue600Color];
+  configuration.baseForegroundColor =
+      [UIColor colorNamed:kInvertedTextPrimaryColor];
+  configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
 
   UIImageSymbolConfiguration* symbolConfig = [UIImageSymbolConfiguration
       configurationWithPointSize:kChipSymbolPointSize
                           weight:UIImageSymbolWeightRegular
                            scale:UIImageSymbolScaleMedium];
-  UIImage* image =
+  configuration.image =
       DefaultSymbolWithConfiguration(GetReaderModeSymbolName(), symbolConfig);
-  [button setImage:image forState:UIControlStateNormal];
-  button.tintColor = [UIColor colorNamed:kInvertedTextPrimaryColor];
+
+  UIButton* button =
+      [ExtendedTouchTargetButton buttonWithConfiguration:configuration
+                                           primaryAction:buttonAction];
+  button.translatesAutoresizingMaskIntoConstraints = NO;
+  button.pointerInteractionEnabled = YES;
+  button.pointerStyleProvider = CreateLiftEffectCirclePointerStyleProvider();
+  button.accessibilityIdentifier = kReaderModeChipViewAccessibilityIdentifier;
+  button.accessibilityLabel =
+      l10n_util::GetNSString(IDS_IOS_READER_MODE_CHIP_ACCESSIBILITY_LABEL);
 
   return button;
 }
@@ -86,6 +89,16 @@ const CGFloat kChipSymbolPointSize = 15;
 
 - (void)showReaderModeOptions {
   [self.readerModeOptionsHandler showReaderModeOptions];
+}
+
+#pragma mark - FullscreenUIElement
+
+- (void)updateForFullscreenProgress:(CGFloat)progress {
+  // Fade in/out the entrypoint badge.
+  CGFloat alphaValue = fmax((progress - kFullscreenProgressThreshold) /
+                                (1 - kFullscreenProgressThreshold),
+                            0);
+  self.view.alpha = alphaValue;
 }
 
 @end

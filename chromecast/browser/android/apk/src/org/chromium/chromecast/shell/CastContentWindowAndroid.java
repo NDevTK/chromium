@@ -71,16 +71,14 @@ public class CastContentWindowAndroid
     @SuppressWarnings("unused")
     @CalledByNative
     private void createWindowForWebContents(
-            WebContents webContents, String appId, boolean shouldRequestAudioFocus) {
+            WebContents webContents, boolean shouldRequestAudioFocus) {
         Log.d(
                 TAG,
-                "Creating window for WebContents: sessionId=%s, appId=%s, audioFocus=%b",
+                "Creating window for WebContents: sessionId=%s, audioFocus=%b",
                 mSessionId,
-                appId,
                 shouldRequestAudioFocus);
         mStartParams =
-                new CastWebContentsComponent.StartParams(
-                        webContents, appId, shouldRequestAudioFocus);
+                new CastWebContentsComponent.StartParams(webContents, shouldRequestAudioFocus);
         maybeStartComponent();
     }
 
@@ -113,17 +111,6 @@ public class CastContentWindowAndroid
 
     @SuppressWarnings("unused")
     @CalledByNative
-    private void setAllowPictureInPicture(boolean allowPictureInPicture) {
-        mComponent.setAllowPictureInPicture(allowPictureInPicture);
-    }
-
-    @CalledByNative
-    private void setMediaPlaying(boolean mediaPlaying) {
-        mComponent.setMediaPlaying(mediaPlaying);
-    }
-
-    @SuppressWarnings("unused")
-    @CalledByNative
     private void onNativeDestroyed() {
         assert mNativeCastContentWindowAndroid != 0;
         mNativeCastContentWindowAndroid = 0;
@@ -142,9 +129,7 @@ public class CastContentWindowAndroid
     public void onComponentClosed() {
         Log.d(TAG, "Component closed: sessionId=" + mSessionId);
         if (mNativeCastContentWindowAndroid != 0) {
-            CastContentWindowAndroidJni.get()
-                    .onActivityStopped(
-                            mNativeCastContentWindowAndroid, CastContentWindowAndroid.this);
+            CastContentWindowAndroidJni.get().onActivityStopped(mNativeCastContentWindowAndroid);
         }
     }
 
@@ -153,21 +138,14 @@ public class CastContentWindowAndroid
         Log.d(TAG, "Visiblity changed: sessionId=%s, visibility=%d", mSessionId, visibilityType);
         if (mNativeCastContentWindowAndroid != 0) {
             CastContentWindowAndroidJni.get()
-                    .onVisibilityChange(
-                            mNativeCastContentWindowAndroid,
-                            CastContentWindowAndroid.this,
-                            visibilityType);
+                    .onVisibilityChange(mNativeCastContentWindowAndroid, visibilityType);
         }
     }
 
     @NativeMethods
     interface Natives {
-        void onActivityStopped(
-                long nativeCastContentWindowAndroid, CastContentWindowAndroid caller);
+        void onActivityStopped(long nativeCastContentWindowAndroid);
 
-        void onVisibilityChange(
-                long nativeCastContentWindowAndroid,
-                CastContentWindowAndroid caller,
-                int visibilityType);
+        void onVisibilityChange(long nativeCastContentWindowAndroid, int visibilityType);
     }
 }

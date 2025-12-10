@@ -20,6 +20,10 @@ class CSSValue;
 
 class CORE_EXPORT CSSSyntaxDefinition {
  public:
+  // Leaves an undefined state; only exists so that we can store it in
+  // a hash table (in MixinParameterBindings).
+  CSSSyntaxDefinition() = default;
+
   // https://drafts.csswg.org/css-values-5/#css-syntax
   static std::optional<CSSSyntaxDefinition> Consume(CSSParserTokenStream&);
   // https://drafts.csswg.org/css-values-5/#typedef-syntax-component
@@ -47,11 +51,7 @@ class CORE_EXPORT CSSSyntaxDefinition {
   bool operator==(const CSSSyntaxDefinition& a) const {
     return Components() == a.Components();
   }
-  bool operator!=(const CSSSyntaxDefinition& a) const {
-    return Components() != a.Components();
-  }
 
-  CSSSyntaxDefinition IsolatedCopy() const;
   String ToString() const;
 
   // https://drafts.css-houdini.org/css-properties-values-api-1/#universal-syntax-descriptor
@@ -74,23 +74,5 @@ class CORE_EXPORT CSSSyntaxDefinition {
 };
 
 }  // namespace blink
-
-namespace WTF {
-
-template <wtf_size_t inlineCapacity, typename Allocator>
-struct CrossThreadCopier<
-    Vector<blink::CSSSyntaxDefinition, inlineCapacity, Allocator>> {
-  using Type = Vector<blink::CSSSyntaxDefinition, inlineCapacity, Allocator>;
-  static Type Copy(const Type& value) {
-    Type result;
-    result.ReserveInitialCapacity(value.size());
-    for (const auto& element : value) {
-      result.push_back(element.IsolatedCopy());
-    }
-    return result;
-  }
-};
-
-}  // namespace WTF
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SYNTAX_DEFINITION_H_

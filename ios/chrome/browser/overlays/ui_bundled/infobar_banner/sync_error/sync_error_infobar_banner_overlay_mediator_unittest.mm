@@ -12,7 +12,6 @@
 #import "components/infobars/core/infobar.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/base/signin_switches.h"
-#import "components/sync/base/features.h"
 #import "ios/chrome/browser/infobars/model/infobar_ios.h"
 #import "ios/chrome/browser/infobars/model/infobar_type.h"
 #import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_consumer.h"
@@ -24,6 +23,7 @@
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
+#import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/web_task_environment.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
@@ -78,8 +78,9 @@ class SyncErrorInfobarBannerOverlayMediatorTest : public PlatformTest {
 
  protected:
   id<SyncPresenter> presenter_;
-  raw_ptr<MockSyncErrorInfoBarDelegate> delegate_ = nil;
+  raw_ptr<MockSyncErrorInfoBarDelegate, DanglingUntriaged> delegate_ = nil;
   web::WebTaskEnvironment task_environment_;
+  IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<InfoBarIOS> infobar_;
   std::unique_ptr<OverlayRequest> request_;
@@ -138,9 +139,7 @@ TEST_F(SyncErrorInfobarBannerOverlayMediatorTest,
 TEST_F(SyncErrorInfobarBannerOverlayMediatorTest,
        BannerDismissAfterTimeoutSetsInfobarTimeoutPref) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures({syncer::kSyncTrustedVaultInfobarImprovements,
-                                 switches::kEnableIdentityInAuthError},
-                                {});
+  feature_list.InitAndEnableFeature(switches::kEnableIdentityInAuthError);
   base::Time startTime = base::Time::Now();
 
   [mediator_ dismissInfobarBannerForUserInteraction:false];

@@ -4,19 +4,11 @@
 
 #include "content/browser/preloading/prerender/prerender_features.h"
 
+#include "content/public/browser/content_browser_client.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 
 namespace features {
-
-// Allows activation in background tab. For now, this is used only on web
-// platform tests on macOS to run activation with target hint tests that have
-// race conditions between visibility change and activation start on a prerender
-// WebContents. Note that this issue does not happen on browser_tests, so this
-// could be specific to WPT setup.
-// TODO(crbug.com/40249964): Allow activation in background by default.
-BASE_FEATURE(kPrerender2AllowActivationInBackground,
-             "Prerender2AllowActivationInBackground",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables fallback from prerender to prefetch for Speculation Rules.
 // See https://crbug.com/342089123 for more details.
@@ -27,27 +19,7 @@ BASE_FEATURE(kPrerender2AllowActivationInBackground,
 //   `kPrefetchPrerenderIntegration`).
 // - Trigger prefetch ahead of prerender.
 BASE_FEATURE(kPrerender2FallbackPrefetchSpecRules,
-             "Prerender2FallbackPrefetchSpecRules",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-constexpr base::FeatureParam<Prerender2FallbackPrefetchReusablePolicy>::Option
-    kPrerender2FallbackPrefetchReusablePolicyOptions[] = {
-        {Prerender2FallbackPrefetchReusablePolicy::kNotUse, "NotUse"},
-        {Prerender2FallbackPrefetchReusablePolicy::
-             kUseIfIsLikelyAheadOfPrerender,
-         "UseIfIsLikelyAheadOfPrerender"},
-        {Prerender2FallbackPrefetchReusablePolicy::kUseAlways, "UseAlways"},
-};
-const base::FeatureParam<Prerender2FallbackPrefetchReusablePolicy>
-    kPrerender2FallbackPrefetchReusablePolicy{
-        &kPrerender2FallbackPrefetchSpecRules,
-        "kPrerender2FallbackPrefetchReusablePolicy",
-        Prerender2FallbackPrefetchReusablePolicy::kNotUse,
-        &kPrerender2FallbackPrefetchReusablePolicyOptions};
-
-const base::FeatureParam<size_t> kPrerender2FallbackBodySizeLimit{
-    &kPrerender2FallbackPrefetchSpecRules, "kPrerender2FallbackBodySizeLimit",
-    65536};
 
 const base::FeatureParam<bool>
     kPrerender2FallbackPrefetchUseBlockUntilHeadTimetout{
@@ -67,9 +39,11 @@ const base::FeatureParam<Prerender2FallbackPrefetchSchedulerPolicy>
         Prerender2FallbackPrefetchSchedulerPolicy::kNotUse,
         &kPrerender2FallbackPrefetchSchedulerPolicyOptios};
 
-BASE_FEATURE(kPrerender2NoVarySearch,
-             "Prerender2NoVarySearch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+const base::FeatureParam<bool> kPrerender2FallbackUsePreloadServingMetrics{
+    &kPrerender2FallbackPrefetchSpecRules,
+    "kPrerender2FallbackUsePreloadServingMetrics", false};
+
+BASE_FEATURE(kPrerender2NoVarySearch, base::FEATURE_ENABLED_BY_DEFAULT);
 
 const base::FeatureParam<int>
     kPrerender2NoVarySearchWaitForHeadersTimeoutEagerPrerender{
@@ -92,7 +66,6 @@ const base::FeatureParam<int>
 
 // If enabled, suppresses prerendering on slow network.
 BASE_FEATURE(kSuppressesPrerenderingOnSlowNetwork,
-             "SuppressesPrerenderingOnSlowNetwork",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Regarding how this number was chosen, see the design doc linked from
@@ -105,20 +78,21 @@ const base::FeatureParam<base::TimeDelta>
 // If enabled, disallows non-trustworthy plaintext HTTP prerendering.
 // See https://crbug.com/340895233 for more details.
 BASE_FEATURE(kPrerender2DisallowNonTrustworthyHttp,
-             "Prerender2DisallowNonTrustworthyHttp",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kPrerender2WarmUpCompositorForImmediate,
-             "Prerender2WarmUpCompositorForImmediate",
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kPrerender2WarmUpCompositorForNonImmediate,
-             "Prerender2WarmUpCompositorForNonImmediate",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool UsePrefetchPrerenderIntegration() {
   return base::FeatureList::IsEnabled(
              features::kPrerender2FallbackPrefetchSpecRules) ||
-         base::FeatureList::IsEnabled(features::kPrefetchPrerenderIntegration);
+         base::FeatureList::IsEnabled(
+             features::kPrefetchPrerenderIntegration) ||
+         content::GetContentClient()
+             ->browser()
+             ->UsePrefetchPrerenderIntegration();
 }
 
 }  // namespace features

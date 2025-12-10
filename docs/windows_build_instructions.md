@@ -52,7 +52,7 @@ $ PATH_TO_INSTALLER.EXE ^
 Required
 
 * [Windows 11 SDK](https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/)
-version 10.0.26100.3323. This can be installed separately or by checking the
+version 10.0.26100.4654. This can be installed separately or by checking the
 appropriate box in the Visual Studio Installer.
 * (Windows 11) SDK Debugging Tools 10.0.26100.3323 or higher. This version of the
 Debugging tools is needed in order to support reading the large-page PDBs that
@@ -155,6 +155,11 @@ with the code, including msysgit and python.
   may not get installed correctly.
 * If you see strange errors with the file system on the first run of gclient,
   you may want to [disable Windows Indexing](https://tortoisesvn.net/faq.html#cantmove2).
+* If you use WSL to build for Linux on the same machine, do **not** use the same
+  depot_tools directory for both. depot_tools caches platform-specific state, so
+  running `gclient sync` from inside one system will break the other. Use a
+  WSL-specific depot_tools dir inside WSL (and put it first in your PATH when you
+  log in there, e.g. via your WSL .bashrc) instead.
 
 ## Check python install
 
@@ -235,8 +240,8 @@ development and testing purposes.
 
 ## Setting up the build
 
-Chromium uses [Ninja](https://ninja-build.org) as its main build tool along with
-a tool called [GN](https://gn.googlesource.com/gn/+/main/docs/quick_start.md)
+Chromium uses [Siso](https://pkg.go.dev/go.chromium.org/build/siso#section-readme)
+ as its main build tool along with a tool called [GN](https://gn.googlesource.com/gn/+/main/docs/quick_start.md)
 to generate `.ninja` files. You can create any number of *build directories*
 with different configurations. To create a build directory:
 
@@ -244,7 +249,7 @@ with different configurations. To create a build directory:
 $ gn gen out\Default
 ```
 
-* You only have to run this once for each new build directory, Ninja will
+* You only have to run this once for each new build directory, Siso will
   update the build files as needed.
 * You can replace `Default` with another name, but
   it should be a subdirectory of `out`.
@@ -271,11 +276,7 @@ in the editor that appears when you create your output directory
 Some helpful settings to consider using include:
 * `is_component_build = true` - this uses more, smaller DLLs, and may avoid
 having to relink chrome.dll after every change.
-* `enable_nacl = false` - this disables Native Client which is usually not
-needed for local builds.
-* `target_cpu = "x86"` - x86 builds may be slightly faster than x64 builds. Note
-that if you set this but don't set `enable_nacl = false` then build times may
-get worse.
+* `target_cpu = "x86"` - x86 builds may be slightly faster than x64 builds.
 * `blink_symbol_level = 0` - turn off source-level debugging for
 blink to reduce build times, appropriate if you don't plan to debug blink.
 * `v8_symbol_level = 0` - turn off source-level debugging for v8 to reduce
@@ -289,19 +290,22 @@ local variable or type information. With `symbol_level = 0` there is no
 source-level debugging but call stacks still have function names. Changing
 `symbol_level` requires recompiling everything.
 
-When invoking ninja, specify 'chrome' as the target to avoid building all test
+When you build, specify `chrome` as the target to avoid building all test
 binaries as well.
 
-#### Use Reclient
+#### Use Remote Execution
 
-In addition, Google employees should use Reclient, a distributed compilation
-system. Detailed information is available internally but the relevant gn arg is:
+In addition, Google employees should use RBE, a remote execution system. Detailed information is available internally but the relevant gn arg is:
 * `use_remoteexec = true`
 
 Google employees can visit
 [go/building-chrome-win#setup-remote-execution](https://goto.google.com/building-chrome-win#setup-remote-execution)
-for more information. For external contributors, Reclient does not support
-Windows builds.
+Note: Don't set `DEPOT_TOOLS_WIN_TOOLCHAIN` environment variable.
+Need to use `third_party/depot_tools/win_toolchain/vs_files` for
+remote execution.
+
+For external contributors, Siso's remote execution with rbe-chromium-untrusted
+does not support Windows builds.
 
 #### Use SCCACHE
 
@@ -324,19 +328,17 @@ If you suspect that Defender is slowing your build then you can try Microsoft's
 [Performance analyzer for Microsoft Defender Antivirus](https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/tune-performance-defender-antivirus?view=o365-worldwide)
 to investigate in detail.
 
-The next step is to gather some data. If you set the ``NINJA_SUMMARIZE_BUILD``
-environment variable to 1 then ``autoninja`` will do three things. First, it
-will set the [NINJA_STATUS](https://ninja-build.org/manual.html#_environment_variables)
-environment variable so that ninja will print additional information while
-building Chrome. It will show how many build processes are running at any given
-time, how many build steps have completed, how many build steps have completed
-per second, and how long the build has been running, as shown here:
+Siso prints progress while building Chrome. It shows how many build processes
+are running at any given time, how many build steps have completed, how many
+ build steps have completed per second, and how long the entire build and
+ the longest build step has been running, as shown here:
 
 ```shell
-$ set NINJA_SUMMARIZE_BUILD=1
 $ autoninja -C out\Default base
 ninja: Entering directory `out\Default'
-[1 processes, 86/86 @ 2.7/s : 31.785s ] LINK(DLL) base.dll base.dll.lib base.dll.pdb
+...
+pre:0 local:0 remote:6461 15.6/s cache: 0.00% fallback:0
+[3829/64499] 4m47.48s 4m00.35s[remote]: LINK(DLL) base.dll base.dll.lib base.dll.pdb
 ```
 
 This makes slow process creation immediately obvious and lets you tell quickly
@@ -379,36 +381,9 @@ build:
 $ python depot_tools\post_build_ninja_summary.py -C out\Default
 ```
 
-Finally, setting ``NINJA_SUMMARIZE_BUILD=1`` tells autoninja to tell Ninja to
-report on its own overhead by passing "-d stats". This can be helpful if, for
-instance, process creation (which shows up in the StartEdge metric) is making
-builds slow, perhaps due to antivirus interference due to clang-cl not being in
-an excluded directory:
-
-```shell
-$ set NINJA_SUMMARIZE_BUILD=1
-$ autoninja -C out\Default base
-metric                  count   avg (us)        total (ms)
-.ninja parse            3555    1539.4          5472.6
-canonicalize str        1383032 0.0             12.7
-canonicalize path       1402349 0.0             11.2
-lookup node             1398245 0.0             8.1
-.ninja_log load         2       118.0           0.2
-.ninja_deps load        2       67.5            0.1
-node stat               2516    29.6            74.4
-depfile load            2       1132.0          2.3
-StartEdge               88      3508.1          308.7
-FinishCommand           87      1670.9          145.4
-CLParser::Parse         45      1889.1          85.0
-```
-
 You can also get a visual report of the build performance with
-[ninjatracing](https://github.com/nico/ninjatracing). This converts the
-.ninja_log file into a .json file which can be loaded into [chrome://tracing](chrome://tracing):
-
-```shell
-$ python ninjatracing out\Default\.ninja_log >build.json
-```
+[perfetto](https://ui.perfetto.dev/) by uploading `.ninja_log` or
+ `siso_trace.json`.
 
 ## Build Chromium
 
@@ -426,45 +401,7 @@ You can get a list of all of the other build targets from GN by running
 the GN label with no preceding "//" (so for `//chrome/test:unit_tests`
 use `autoninja -C out\Default chrome/test:unit_tests`).
 
-## Compile a single file
-
-Ninja supports a special [syntax `^`][ninja hat syntax] to compile a single
-object file specifying the source file. For example, `ninja -C
-out/Default ../../base/logging.cc^` compiles `obj/base/base/logging.o`.
-
-[ninja hat syntax]: https://ninja-build.org/manual.html#:~:text=There%20is%20also%20a%20special%20syntax%20target%5E%20for%20specifying%20a%20target%20as%20the%20first%20output%20of%20some%20rule%20containing%20the%20source%20you%20put%20in%20the%20command%20line%2C%20if%20one%20exists.%20For%20example%2C%20if%20you%20specify%20target%20as%20foo.c%5E%20then%20foo.o%20will%20get%20built%20(assuming%20you%20have%20those%20targets%20in%20your%20build%20files)
-
-With autoninja, you need to add  `^^` to preserve the trailing `^`.
-
-```shell
-$ autoninja -C out\Default ..\..\base\logging.cc^^
-```
-
-In addition to `foo.cc^^`, Siso also supports `foo.h^^` syntax to compile
-the corresponding `foo.o` if it exists.
-
-If you run a `bash` shell, you can use the following script to ease invocation:
-
-```shell
-#!/bin/sh
-files=("${@/#/..\/..\/}")
-autoninja -C out/Default ${files[@]/%/^^}
-```
-
-This script assumes it is run from `src` and your output dir is `out/Default`;
-it invokes `autoninja` to compile all given files. If you place it in your
-`$PATH` and name it e.g. `compile`, you can invoke like this:
-
-```shell
-$ pwd  # Just to illustrate where this is run from
-/c/src
-$ compile base/time/time.cc base/time/time_unittest.cc
-...
-[0/47] 5.56s S CXX obj/base/base/time.obj
-...
-[2/3] 9.27s S CXX obj/base/base_unittests/time_unittest.obj
-...
-```
+Tips: See [Siso tips](../siso_tips.md).
 
 ## Run Chromium
 
@@ -548,7 +485,7 @@ page). This is an example when your checkout is `C:\src\chromium` and your
 output directory is `out\Default`:
 
 ```shell
-$ gn gen --ide=vs --ninja-executable=C:\src\chromium\src\third_party\ninja\ninja.exe out\Default
+$ gn gen --ide=vs --ninja-executable=autoninja out\Default
 $ devenv out\Default\all.sln
 ```
 
@@ -567,7 +504,7 @@ let you compile and run Chrome in the IDE but will not show any source files
 is:
 
 ```
-$ gn gen --ide=vs --ninja-executable=C:\src\chromium\src\third_party\ninja\ninja.exe --filters=//chrome --no-deps out\Default
+$ gn gen --ide=vs --ninja-executable=autoninja --filters=//chrome --no-deps out\Default
 ```
 
 You can selectively add other directories you care about to the filter like so:

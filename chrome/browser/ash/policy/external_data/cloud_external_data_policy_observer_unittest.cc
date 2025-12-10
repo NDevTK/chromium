@@ -24,7 +24,6 @@
 #include "chrome/browser/ash/policy/core/device_local_account_policy_service.h"
 #include "chrome/browser/ash/policy/external_data/cloud_external_data_manager_base_test_util.h"
 #include "chrome/browser/ash/policy/external_data/device_local_account_external_data_manager.h"
-#include "chrome/browser/ash/policy/invalidation/fake_affiliated_invalidation_service_provider.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/settings/cros_settings_holder.h"
 #include "chrome/browser/ash/settings/device_settings_test_helper.h"
@@ -36,6 +35,7 @@
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
 #include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
+#include "components/invalidation/test_support/fake_invalidation_listener.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/mock_cloud_external_data_manager.h"
@@ -49,6 +49,7 @@
 #include "components/policy/policy_constants.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/policy/proto/cloud_policy.pb.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_utils.h"
@@ -85,8 +86,9 @@ void ConstructAvatarPolicy(const std::string& file_name,
   ASSERT_TRUE(base::ReadFileToString(
       test_data_dir.Append("chromeos").Append("avatars").Append(file_name),
       policy_data));
-  base::JSONWriter::Write(
-      test::ConstructExternalDataReference(url, *policy_data), policy);
+  *policy =
+      base::WriteJson(test::ConstructExternalDataReference(url, *policy_data))
+          .value_or("");
 }
 
 class TestDelegate : public CloudExternalDataPolicyObserver::Delegate {
@@ -184,8 +186,7 @@ class CloudExternalDataPolicyObserverTest : public ash::DeviceSettingsTestBase {
   std::unique_ptr<ash::CrosSettingsHolder> cros_settings_holder_;
   std::unique_ptr<DeviceLocalAccountPolicyService>
       device_local_account_policy_service_;
-  FakeAffiliatedInvalidationServiceProvider
-      affiliated_invalidation_service_provider_;
+  invalidation::FakeInvalidationListener invalidation_listener_;
   network::TestURLLoaderFactory url_loader_factory_;
   std::unique_ptr<ash::ScopedStubInstallAttributes> install_attributes_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
@@ -207,7 +208,8 @@ class CloudExternalDataPolicyObserverTest : public ash::DeviceSettingsTestBase {
       user_manager_{std::make_unique<ash::FakeChromeUserManager>()};
 
   TestingProfileManager profile_manager_;
-  session_manager::SessionManager session_manager_;
+  session_manager::SessionManager session_manager_{
+      std::make_unique<session_manager::FakeSessionManagerDelegate>()};
 };
 
 CloudExternalDataPolicyObserverTest::CloudExternalDataPolicyObserverTest()
@@ -234,7 +236,7 @@ void CloudExternalDataPolicyObserverTest::SetUp() {
   device_local_account_policy_service_ =
       std::make_unique<DeviceLocalAccountPolicyService>(
           &session_manager_client_, device_settings_service_.get(),
-          ash::CrosSettings::Get(), &affiliated_invalidation_service_provider_,
+          ash::CrosSettings::Get(), &invalidation_listener_,
           base::SingleThreadTaskRunner::GetCurrentDefault(),
           base::SingleThreadTaskRunner::GetCurrentDefault(),
           base::SingleThreadTaskRunner::GetCurrentDefault(),

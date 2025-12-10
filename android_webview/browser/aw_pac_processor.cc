@@ -38,7 +38,6 @@
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
@@ -189,8 +188,7 @@ class HostResolver : public proxy_resolver::ProxyHostResolver {
     }
 
     bool DnsResolveImpl(const std::string& host) {
-      struct addrinfo hints;
-      UNSAFE_TODO(memset(&hints, 0, sizeof hints));
+      struct addrinfo hints = {};
       hints.ai_family = AF_INET;
 
       struct addrinfo* res = nullptr;
@@ -399,9 +397,7 @@ void AwPacProcessor::Destroy(base::WaitableEvent* event) {
   event->Signal();
 }
 
-void AwPacProcessor::DestroyNative(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj) {
+void AwPacProcessor::DestroyNative(JNIEnv* env) {
   delete this;
 }
 
@@ -439,7 +435,6 @@ bool AwPacProcessor::SetProxyScript(std::string script) {
 }
 
 jboolean AwPacProcessor::SetProxyScript(JNIEnv* env,
-                                        const JavaParamRef<jobject>& obj,
                                         std::string& script) {
   return SetProxyScript(script);
 }
@@ -460,8 +455,7 @@ bool AwPacProcessor::MakeProxyRequest(std::string url, std::string* result) {
 
 ScopedJavaLocalRef<jstring> AwPacProcessor::MakeProxyRequest(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jstring>& jurl) {
+    const JavaRef<jstring>& jurl) {
   std::string url = ConvertJavaStringToUTF8(env, jurl);
   std::string result;
   if (MakeProxyRequest(url, &result)) {
@@ -501,3 +495,5 @@ static void JNI_AwPacProcessor_InitializeEnvironment(JNIEnv* env) {
 }
 
 }  // namespace android_webview
+
+DEFINE_JNI(AwPacProcessor)

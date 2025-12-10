@@ -8,14 +8,13 @@
 #include <stddef.h>
 
 #include <functional>
-#include <map>
 #include <set>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -97,12 +96,8 @@ class InMemoryURLIndex : public KeyedService,
   ScoredHistoryMatches HistoryItemsForTerms(
       const std::u16string& term_string,
       size_t cursor_position,
-      const std::string& host_filter,
       size_t max_matches,
       OmniboxTriggeredFeatureService* triggered_feature_service);
-
-  // Returns URL hosts that have been visited more than a threshold.
-  const std::vector<std::string>& HighlyVisitedHosts() const;
 
   // Deletes the index entry, if any, for the given |url|.
   void DeleteURL(const GURL& url);
@@ -116,6 +111,7 @@ class InMemoryURLIndex : public KeyedService,
   friend class history::HQPPerfTestOnePopularURL;
   friend class InMemoryURLIndexTest;
   FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, ExpireRow);
+  FRIEND_TEST_ALL_PREFIXES(InMemoryURLIndexTest, OnURLVisited);
   FRIEND_TEST_ALL_PREFIXES(LimitedInMemoryURLIndexTest, Initialization);
 
   // HistoryDBTask used to rebuild our private data from the history database.
@@ -163,8 +159,7 @@ class InMemoryURLIndex : public KeyedService,
 
   // HistoryServiceObserver:
   void OnURLVisited(history::HistoryService* history_service,
-                    const history::URLRow& url_row,
-                    const history::VisitRow& new_visit) override;
+                    const history::VisitedURLInfo& visited_url_info) override;
   void OnURLsModified(history::HistoryService* history_service,
                       const history::URLRows& changed_urls) override;
   void OnHistoryDeletions(history::HistoryService* history_service,

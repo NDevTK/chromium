@@ -20,8 +20,8 @@ class MODULES_EXPORT MediaRecorderEncoderWrapper final
     : public VideoTrackRecorder::Encoder {
  public:
   using CreateEncoderCB =
-      WTF::CrossThreadFunction<std::unique_ptr<media::VideoEncoder>()>;
-  using OnErrorCB = WTF::CrossThreadOnceFunction<void(media::EncoderStatus)>;
+      CrossThreadFunction<std::unique_ptr<media::VideoEncoder>()>;
+  using OnErrorCB = CrossThreadOnceFunction<void(media::EncoderStatus)>;
 
   MediaRecorderEncoderWrapper(
       scoped_refptr<base::SequencedTaskRunner> encoding_task_runner,
@@ -101,8 +101,8 @@ class MODULES_EXPORT MediaRecorderEncoderWrapper final
   media::VideoEncoder::Options options_;
   bool encode_alpha_ = false;
   State state_ = State::kEncoding;
-  WTF::Deque<EncodeTask> pending_encode_tasks_;
-  WTF::Deque<VideoParamsAndTimestamp> params_in_encode_;
+  Deque<EncodeTask> pending_encode_tasks_;
+  Deque<VideoParamsAndTimestamp> params_in_encode_;
 
   std::unique_ptr<media::VideoEncoder> encoder_;
 

@@ -80,10 +80,11 @@ void ImagePainter::PaintAreaElementFocusRing(const PaintInfo& paint_info) {
   // We use EnsureComputedStyle() instead of GetComputedStyle() here because
   // <area> is used and its style applied even if it has display:none.
   const ComputedStyle* area_element_style = area_element->EnsureComputedStyle();
-  // If the outline width is 0 we want to avoid drawing anything even if we
+  // If the outline is hidden we want to avoid drawing anything even if we
   // don't use the value directly.
-  if (!area_element_style->OutlineWidth())
+  if (!area_element_style->HasOutline()) {
     return;
+  }
 
   ScopedPaintState paint_state(layout_image_, paint_info);
   const auto paint_offset = paint_state.PaintOffset();
@@ -116,10 +117,13 @@ void ImagePainter::PaintReplaced(const PaintInfo& paint_info,
                                  const PhysicalOffset& paint_offset) {
   const PhysicalSize content_size = layout_image_.PhysicalContentBoxSize();
   bool has_image = layout_image_.ImageResource()->HasImage();
-
   if (has_image) {
     if (content_size.IsEmpty())
       return;
+    if (paint_info.IsPrivacyPreserving() &&
+        !layout_image_.ImageResource()->IsAccessAllowed()) {
+      return;
+    }
   } else {
     if (paint_info.phase == PaintPhase::kSelectionDragImage)
       return;
@@ -164,16 +168,18 @@ void ImagePainter::PaintReplaced(const PaintInfo& paint_info,
 
   GraphicsContext& context = paint_info.context;
   if (DrawingRecorder::UseCachedDrawingIfPossible(context, layout_image_,
-                                                  paint_info.phase))
+                                                  paint_info.phase)) {
     return;
+  }
 
   // Disable cache in under-invalidation checking mode for animated image
   // because it may change before it's actually invalidated.
   std::optional<DisplayItemCacheSkipper> cache_skipper;
   if (RuntimeEnabledFeatures::PaintUnderInvalidationCheckingEnabled() &&
       layout_image_.ImageResource() &&
-      layout_image_.ImageResource()->MaybeAnimated())
+      layout_image_.ImageResource()->MaybeAnimated()) {
     cache_skipper.emplace(context);
+  }
 
   if (!has_image) {
     // Draw an outline rect where the image should be.

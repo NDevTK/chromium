@@ -8,6 +8,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+enum class ComposeboxEntrypoint;
 namespace base {
 class ScopedClosureRunner;
 }
@@ -17,6 +18,9 @@ enum class NotificationOptInAccessPoint;
 namespace signin_metrics {
 enum class AccessPoint;
 }  // namespace signin_metrics
+namespace trusted_vault {
+enum class TrustedVaultUserActionTriggerForUMA;
+}
 
 // Protocol for commands that will be handled by the BrowserCoordinator.
 // TODO(crbug.com/41427057) : Rename this protocol to one that is more
@@ -33,14 +37,14 @@ enum class AccessPoint;
                  title:(NSString*)title
     baseViewController:(UIViewController*)baseViewController;
 
-// Shows the downloads folder.
-- (void)showDownloadsFolder;
-
 // Shows the Reading List UI.
 - (void)showReadingList;
 
 // Shows bookmarks manager.
 - (void)showBookmarksManager;
+
+// Shows the downloads folder.
+- (void)showDownloadsFolder;
 
 // Shows recent tabs.
 - (void)showRecentTabs;
@@ -48,22 +52,27 @@ enum class AccessPoint;
 // Shows the translate infobar.
 - (void)showTranslate;
 
+// Shows the online help page in a tab.
+- (void)showHelpPage;
+
+// Shows the composebox.
+- (void)showComposeboxFromEntrypoint:(ComposeboxEntrypoint)entryPoint
+                           withQuery:(NSString*)query;
+
+// Hides the composebox. If not `immediately`, the prototype will be stopped
+// on the next run loop.
+- (void)hideComposeboxImmediately:(BOOL)immediately;
+
+// Shows the activity indicator overlay that appears over the view to prevent
+// interaction with the web page until the returned value is destructed.
+- (base::ScopedClosureRunner)showActivityOverlay;
+
 // Shows the AddCreditCard UI.
 - (void)showAddCreditCard;
 
 // Shows the dialog for sending the page with `url` and `title` between a user's
 // devices.
 - (void)showSendTabToSelfUI:(const GURL&)url title:(NSString*)title;
-
-// Hides the dialog shown by -showSendTabToSelfUI:.
-- (void)hideSendTabToSelfUI;
-
-// Shows the online help page in a tab.
-- (void)showHelpPage;
-
-// Shows the activity indicator overlay that appears over the view to prevent
-// interaction with the web page until the returned value is destructed.
-- (base::ScopedClosureRunner)showActivityOverlay;
 
 #if !defined(NDEBUG)
 // Inserts a new tab showing the HTML source of the current page.
@@ -85,11 +94,11 @@ enum class AccessPoint;
 // Preloads voice search in the current BVC.
 - (void)preloadVoiceSearch;
 
-// Dismiss the payments suggestions.
-- (void)dismissPaymentSuggestions;
-
 // Dismiss the password suggestions.
 - (void)dismissPasswordSuggestions;
+
+// Dismiss the payments suggestions.
+- (void)dismissPaymentSuggestions;
 
 // Dismiss the card unmask authentication prompt.
 - (void)dismissCardUnmaskAuthentication;
@@ -128,7 +137,16 @@ enum class AccessPoint;
 - (void)dismissNotificationsOptIn;
 
 // Show the add account view
-- (void)showAddAccountWithAccessPoint:(signin_metrics::AccessPoint)accessPoint;
+- (void)showAddAccountWithAccessPoint:(signin_metrics::AccessPoint)accessPoint
+                       prefilledEmail:(NSString*)email;
+
+// Presents the Trusted Vault reauthentication dialog. `trigger` indicates an
+// entry point from which the trusted vault reauth has been triggered.
+- (void)performReauthToRetrieveTrustedVaultKey:
+    (trusted_vault::TrustedVaultUserActionTriggerForUMA)trigger;
+
+// Forces fullscreen mode which means that toolbars are collapsed.
+- (void)forceFullscreenMode;
 
 @end
 

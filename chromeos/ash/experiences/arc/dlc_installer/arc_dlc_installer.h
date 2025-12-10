@@ -12,32 +12,28 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chromeos/ash/components/dbus/dlcservice/dlcservice_client.h"
+#include "chromeos/ash/experiences/arc/dlc_installer/arc_dlc_install_notification_manager.h"
 
-class AccountId;
-
-namespace ash {
-class CrosSettings;
+namespace base {
+class TimeTicks;
 }
 
 namespace arc {
 
-class ArcDlcInstallHardwareChecker;
-class ArcDlcInstallNotificationManager;
-class ArcDlcNotificationManagerFactory;
-
-enum class NotificationType;
-
 // The ArcDlcInstaller class manages the installation process for ARC DLC
-// (Android Runtime for Chrome). It handles hardware compatibility checks,
-// manages notifications related to the installation, and facilitates
-// enabling ARC on devices.
+// (Android Runtime for Chrome). It manages notifications related to the
+// installation, and facilitates enabling ARC on devices.
 class ArcDlcInstaller {
  public:
-  ArcDlcInstaller(
-      std::unique_ptr<ArcDlcNotificationManagerFactory>
-          notification_manager_factory,
-      std::unique_ptr<ArcDlcInstallHardwareChecker> hardware_checker,
-      ash::CrosSettings* cros_settings);
+  // Represents the installation state of the ARCVM DLC.
+  enum class DlcState {
+    kNotRequired,
+    kInstalled,
+    kNotInstalled,
+    kError,
+  };
+
+  ArcDlcInstaller();
 
   ArcDlcInstaller(const ArcDlcInstaller&) = delete;
   ArcDlcInstaller& operator=(const ArcDlcInstaller&) = delete;
@@ -45,21 +41,11 @@ class ArcDlcInstaller {
   ~ArcDlcInstaller();
 
   // Checks if ARC should be enabled on a device. If the device needs the
-  // DLC, it performs a hardware compatibility check.
+  // DLC.
   void PrepareArc(base::OnceCallback<void(bool)> callback);
 
-  // ArcServiceLauncher will invoke this function when the profile is set up,
-  // and it will create the notification manager and process any pending DLC
-  // installation notifications that need to be shown.
-  void OnPrimaryUserSessionStarted(const AccountId& account_id);
-
-  // Determines if the DLC installation is necessary based on
-  // board, management, and feature flag conditions.
-  bool IsDlcRequired();
-
-  // Returns dlc_install_pending_notifications_ for testing.
-  const std::vector<NotificationType>&
-  GetDlcInstallPendingNotificationsForTesting() const;
+  // Checks the current state of the ARCVM DLC.
+  void CheckInstallationState(base::OnceCallback<void(DlcState)> callback);
 
  private:
   // Callback invoked after ARC DLC preparation is complete.
@@ -70,18 +56,9 @@ class ArcDlcInstaller {
   // up the ARC environment.
   void OnPrepareArcDlc(base::OnceCallback<void(bool)> callback, bool result);
 
-  // Handles the completion of the hardware compatibility check for ARC on
-  // devices. If compatible, logs the compatibility, displays a preload
-  // notification, and initiates the installation of the ARCVM DLC. If not
-  // compatible, logs the incompatibility and invokes the callback with a
-  // failure status.
-  void OnHardwareCheckComplete(base::OnceCallback<void(bool)> callback,
-                               bool is_compatible);
-
-  // Displays a DLC installation notification of the specified type if the
-  // Notification Manager is initialized. If not initialized, queues the
-  // notification to be shown later once the manager is ready.
-  void MaybeShowDlcInstallNotification(NotificationType type);
+  // Called when the availability of the DLC service is determined. If
+  // available, this function initiates the installation of the ARCVM DLC.
+  void OnDlcServiceAvailable(bool service_available);
 
   // Handles the result of the ARCVM DLC installation. If successful, shows a
   // success notification, configures and starts necessary Upstart jobs, and
@@ -99,13 +76,7 @@ class ArcDlcInstaller {
   // determine whether the DLC image was installed.
   void OnDlcProgress(bool* installation_triggered, double progress);
 
-  std::unique_ptr<ArcDlcNotificationManagerFactory>
-      notification_manager_factory_;
-  std::unique_ptr<ArcDlcInstallNotificationManager>
-      arc_dlc_install_notification_manager_;
-  std::unique_ptr<ArcDlcInstallHardwareChecker> hardware_checker_;
-  raw_ptr<ash::CrosSettings> cros_settings_;
-  std::vector<NotificationType> dlc_install_pending_notifications_;
+  base::OnceCallback<void(bool)> prepare_arc_callback_;
   base::WeakPtrFactory<ArcDlcInstaller> weak_ptr_factory_{this};
 };
 

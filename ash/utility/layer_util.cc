@@ -27,19 +27,12 @@ void CopyCopyOutputResultToLayer(
   scoped_refptr<gpu::ClientSharedImage> shared_image =
       copy_result->GetSharedImage();
   viz::TransferableResource transferable_resource =
-      viz::TransferableResource::MakeGpu(
-          shared_image->mailbox(), GL_TEXTURE_2D, gpu::SyncToken(),
-          copy_result->size(), viz::SinglePlaneFormat::kRGBA_8888,
-          /*is_overlay_candidate=*/false,
-          viz::TransferableResource::ResourceSource::kUI);
-  viz::CopyOutputResult::ReleaseCallbacks release_callbacks =
+      viz::TransferableResource::Make(
+          shared_image, viz::TransferableResource::ResourceSource::kUI,
+          gpu::SyncToken(), /*override=*/{.color_space = gfx::ColorSpace()});
+  viz::ReleaseCallback release_callback =
       copy_result->TakeSharedImageOwnership();
-
-  // CopyOutputResults carrying RGBA format contain a single texture, there
-  // should be only one release callback when a result is not empty:
-  DCHECK_EQ(1u, release_callbacks.size());
-  viz::ReleaseCallback release_callback = std::move(release_callbacks[0]);
-
+  DCHECK(release_callback);
   target_layer->SetTransferableResource(
       transferable_resource, std::move(release_callback), target_layer->size());
 }

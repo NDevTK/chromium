@@ -14,9 +14,8 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "base/functional/callback_helpers.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/metrics/field_trial_params.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/types/pass_key.h"
@@ -24,9 +23,7 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
-#include "mojo/public/cpp/bindings/remote.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -92,6 +89,10 @@ class WeakDocumentPtr;
 // The lifetime of an instance is roughly equal to the lifetime of a keepalive
 // request, which may surpass the initiator renderer's lifetime.
 //
+// TODO(crbug.com/447954811): Consider if connection allowlists feature
+// requires special handling in this class or is the check for subresource
+// fetch in the URLLoaderFactory sufficient.
+//
 // * Design Doc:
 // https://docs.google.com/document/d/1ZzxMMBvpqn8VZBZKnb7Go8TWjnrGcXuLS_USwVVRUvY
 // * Mojo Connections:
@@ -110,7 +111,6 @@ class CONTENT_EXPORT KeepAliveURLLoader
   using URLLoaderThrottlesGetter = base::RepeatingCallback<
       std::vector<std::unique_ptr<blink::URLLoaderThrottle>>(void)>;
 
-  static constexpr char kRetryGuidHeader[] = "Retry-GUID";
   static constexpr char kRetryAttemptsHeader[] = "Retry-Attempts";
 
   // Must only be constructed by a `KeepAliveURLLoaderService`.
@@ -181,7 +181,7 @@ class CONTENT_EXPORT KeepAliveURLLoader
   void DidObserveNewlyActiveDocumentWithNIK(
       const net::NetworkIsolationKey& nik);
 
-  bool IsAttemptingRetry() const;
+  bool IsAttemptingRetry(bool include_failed_retry) const;
 
   int32_t request_id() const { return request_id_; }
 
@@ -310,9 +310,24 @@ class CONTENT_EXPORT KeepAliveURLLoader
   base::TimeDelta UpdateNextRetryDelay();
 
   void StartInternal(bool is_retry);
+  void OnCompleteInternal(
+      const network::URLLoaderCompletionStatus& completion_status);
+  void CancelWithStatusInternal(
+      const network::URLLoaderCompletionStatus& completion_status);
 
   void NotifyOnCompleteForTestAndDevTools(
       const network::URLLoaderCompletionStatus& completion_status);
+
+  // Tries to schedule a retry, and/or delays an error notification to the
+  // renderer side, if needed. This should only apply when the fetch retry
+  // options is set. If a retry is attempted, we won't need to process the
+  // error. If a retry is not attempted, we should notify errors when we reach
+  // the max age specified in the retry options (even if the error happened
+  // earlier). This is to avoid exposing information about the errors and
+  // whether a retry is attempted or not via the timing.
+  bool RetryOrDelayErrorIfNeeded(
+      const network::URLLoaderCompletionStatus& status,
+      base::OnceClosure callback);
 
   void DeleteSelf();
 
@@ -347,6 +362,8 @@ class CONTENT_EXPORT KeepAliveURLLoader
                            RetryAttemptedOnDisconnect);
   FRIEND_TEST_ALL_PREFIXES(KeepAliveURLLoaderServiceRetryTest,
                            CookiesClearingWillDeleteRetryingLoader);
+  FRIEND_TEST_ALL_PREFIXES(KeepAliveURLLoaderServiceRetryTest,
+                           FailedMaxAttemptWillForwardLastError);
 
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -478,9 +495,8 @@ class CONTENT_EXPORT KeepAliveURLLoader
   // The number of retries already scheduled for this request .
   size_t retry_count_ = 0;
 
-  // The timestamp where we initially decided that we're going to retry this
-  // load. Only set once, when `retry_timer_` is initially set.
-  base::TimeTicks first_retry_initiated_time_;
+  // The timestamp when we started the request initially.
+  base::TimeTicks first_request_start_time_;
 
   // The state of retry being attempted (if applicable).
   enum RetryState {
@@ -493,6 +509,8 @@ class CONTENT_EXPORT KeepAliveURLLoader
     kWaitingForSameNetworkIsolationKeyDocument,
     // A retry is in progress.
     kRetryInProgress,
+    // A retry failed.
+    kRetryFailed,
   };
   RetryState retry_state_ = RetryState::kNotAttemptingRetry;
 
@@ -502,10 +520,9 @@ class CONTENT_EXPORT KeepAliveURLLoader
   // Timer to schedule the next retry.
   base::OneShotTimer retry_timer_;
 
-  // Timer to schedule self deletion, if we planned to do a retry but a
-  // same-NetworkIsolationKey document never becomes active and we reach the max
-  // age.
-  base::OneShotTimer self_deletion_timer_;
+  // Timer to schedule self deletion, or error processing, for fetch with
+  // retry options. See `RetryOrDelayErrorIfNeeded()` for more details.
+  base::OneShotTimer max_age_handler_timer_;
 
   // A callback to obtain URLLoaderThrottle for this loader to start loading.
   URLLoaderThrottlesGetter throttles_getter_;

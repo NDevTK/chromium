@@ -35,7 +35,6 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chromeos/ash/components/audio/cras_audio_handler.h"
-#include "chromeos/crosapi/mojom/video_conference.mojom-forward.h"
 #include "chromeos/crosapi/mojom/video_conference.mojom.h"
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/session_manager_types.h"
@@ -508,7 +507,7 @@ void VideoConferenceTrayController::OnCameraHWPrivacySwitchStateChanged(
   if (video_conference_manager_) {
     video_conference_manager_->SetSystemMediaDeviceStatus(
         crosapi::mojom::VideoConferenceMediaDevice::kCamera,
-        /*disabled=*/GetCameraMuted());
+        /*enabled=*/!GetCameraMuted());
   }
 
   // Attempt recording "Use while disabled" nudge action when camera is unmuted.
@@ -535,7 +534,7 @@ void VideoConferenceTrayController::OnCameraSWPrivacySwitchStateChanged(
   if (video_conference_manager_) {
     video_conference_manager_->SetSystemMediaDeviceStatus(
         crosapi::mojom::VideoConferenceMediaDevice::kCamera,
-        /*disabled=*/GetCameraMuted());
+        /*enabled=*/!GetCameraMuted());
   }
 
   // Attempt recording "Use while disabled" nudge action when camera is unmuted.
@@ -571,7 +570,7 @@ void VideoConferenceTrayController::OnInputMuteChanged(
   if (video_conference_manager_) {
     video_conference_manager_->SetSystemMediaDeviceStatus(
         crosapi::mojom::VideoConferenceMediaDevice::kMicrophone,
-        /*disabled=*/mute_on);
+        /*enabled=*/!mute_on);
   }
 
   microphone_muted_by_hardware_switch_ =

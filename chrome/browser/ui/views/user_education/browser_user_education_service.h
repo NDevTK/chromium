@@ -7,41 +7,35 @@
 
 #include <memory>
 
-#include "chrome/browser/profiles/profile.h"
-#include "components/user_education/common/feature_promo/feature_promo_controller.h"
-
 namespace user_education {
 class FeaturePromoControllerCommon;
 class FeaturePromoRegistry;
 class HelpBubbleDelegate;
 class HelpBubbleFactoryRegistry;
 class NewBadgeRegistry;
-class NtpPromoRegistry;
 class TutorialRegistry;
 }  // namespace user_education
 
-class BrowserView;
+class Profile;
+class UserEducationService;
 
 // These do low-level initialization of data structures required for user
 // education; most code should not call them directly.
-extern user_education::HelpBubbleDelegate* GetHelpBubbleDelegate();
-extern void RegisterChromeHelpBubbleFactories(
+user_education::HelpBubbleDelegate* GetHelpBubbleDelegate();
+void RegisterChromeHelpBubbleFactories(
     user_education::HelpBubbleFactoryRegistry& registry);
-extern void MaybeRegisterChromeFeaturePromos(
+void MaybeRegisterChromeFeaturePromos(
     user_education::FeaturePromoRegistry& registry);
-extern void MaybeRegisterChromeNewBadges(
-    user_education::NewBadgeRegistry& registry);
-extern void MaybeRegisterChromeTutorials(
-    user_education::TutorialRegistry& registry);
-extern void MaybeRegisterNtpPromos(user_education::NtpPromoRegistry& registry);
+void MaybeRegisterChromeNewBadges(user_education::NewBadgeRegistry& registry);
+void MaybeRegisterChromeTutorials(user_education::TutorialRegistry& registry);
 
 // Creates (or doesn't create) a FeaturePromoController for the specified
-// `browser_view`. Not all browser windows can do promos; specifically,
+// `service`. Not all browser windows can do promos; specifically,
 // headless, kiosk, guest, incognito, and other off-the-record browsers do
 // _not_ show IPH. Initializes all other User Education data associated with the
 // browser as well.
-extern std::unique_ptr<user_education::FeaturePromoControllerCommon>
-CreateUserEducationResources(BrowserView* browser_view);
+std::unique_ptr<user_education::FeaturePromoControllerCommon>
+CreateUserEducationResources(UserEducationService& user_education_service);
 
 // Adds (or doesn't add) high priority notices (usually legal and privacy
 // related) to the product messaging queue for the specified `profile`. The
@@ -49,6 +43,6 @@ CreateUserEducationResources(BrowserView* browser_view);
 // each notice is queued. These lists are often defined within services used in
 // this method. Notices are queued in this frame and the queue begins processing
 // in the next frame.
-extern void QueueLegalAndPrivacyNotices(Profile* profile);
+void QueueLegalAndPrivacyNotices(Profile* profile);
 
 #endif  // CHROME_BROWSER_UI_VIEWS_USER_EDUCATION_BROWSER_USER_EDUCATION_SERVICE_H_

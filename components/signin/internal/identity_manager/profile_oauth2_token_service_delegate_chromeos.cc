@@ -8,10 +8,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_deref.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "build/build_config.h"
+#include "chromeos/ash/components/account_manager/account_manager_factory.h"
 #include "components/account_manager_core/account.h"
 #include "components/signin/internal/identity_manager/account_tracker_service.h"
 #include "components/signin/public/base/signin_client.h"
@@ -138,6 +140,23 @@ ProfileOAuth2TokenServiceDelegateChromeOS::
       is_regular_profile_(is_regular_profile),
       weak_factory_(this) {
   network_connection_tracker_->AddNetworkConnectionObserver(this);
+
+  // In production, AccountManagerFactory should always outlive `this`, but in
+  // tests, it may be destroyed before `this` and `account_manager_facade_` may
+  // dangle. So, observe AccountManagerFactory and reset the raw_ptr on its
+  // destruction.
+  // TODO(crbug.com/421058020): Fix tests to properly mimic the production
+  // construction/destruction order, and remove the observer.
+  account_manager_factory_cb_subscription_ =
+      CHECK_DEREF(ash::AccountManagerFactory::Get())
+          .AddOnDestructionCallback(base::BindOnce(
+              [](base::WeakPtr<ProfileOAuth2TokenServiceDelegateChromeOS>
+                     self) {
+                if (self) {
+                  self->account_manager_facade_ = nullptr;
+                }
+              },
+              weak_factory_.GetWeakPtr()));
 }
 
 ProfileOAuth2TokenServiceDelegateChromeOS::
@@ -256,7 +275,8 @@ void ProfileOAuth2TokenServiceDelegateChromeOS::LoadCredentialsInternal(
 
 void ProfileOAuth2TokenServiceDelegateChromeOS::UpdateCredentialsInternal(
     const CoreAccountId& account_id,
-    const std::string& refresh_token) {
+    const std::string& refresh_token,
+    const std::vector<uint8_t>& wrapped_binding_key) {
   // UpdateCredentials should not be called on Chrome OS. Credentials should be
   // updated through Chrome OS Account Manager.
   NOTREACHED();
@@ -363,18 +383,14 @@ void ProfileOAuth2TokenServiceDelegateChromeOS::FinishAddingPendingAccount(
 
   // Call the parent method - which will not report the error back to
   // `AccountManagerFacade` and result in this instance getting notified again -
-  // unlike `ProfileOAuth2TokenServiceDelegateChromeOS::UpdateAuthError`.
+  // unlike `ProfileOAuth2TokenServiceDelegateChromeOS::UpdateAuthError()`.
   // Additionally, don't call `FireAuthErrorChanged`
-  // (/*fire_auth_error_changed=*/false), since we call it at the end of this
-  // function.
+  // (/*fire_auth_error_changed=*/false), since `FireRefreshTokenAvailable()` is
+  // going to call it at the end of this function.
   ProfileOAuth2TokenServiceDelegate::UpdateAuthError(
       account_id, error, /*fire_auth_error_changed=*/false);
 
   FireRefreshTokenAvailable(account_id);
-  // See |ProfileOAuth2TokenServiceObserver::OnAuthErrorChanged|.
-  // |OnAuthErrorChanged| must be always called after
-  // |OnRefreshTokenAvailable|, when refresh token is updated.
-  FireAuthErrorChanged(account_id, error);
 }
 
 void ProfileOAuth2TokenServiceDelegateChromeOS::OnAccountUpserted(

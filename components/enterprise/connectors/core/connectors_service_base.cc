@@ -15,6 +15,17 @@
 
 namespace enterprise_connectors {
 
+ConnectorsServiceBase::ConnectorsServiceBase(
+    std::unique_ptr<ConnectorsManagerBase> manager)
+    : connectors_manager_base_(std::move(manager)) {
+  DCHECK(connectors_manager_base_);
+}
+
+ConnectorsServiceBase::ConnectorsServiceBase(ConnectorsServiceBase&&) = default;
+ConnectorsServiceBase& ConnectorsServiceBase::operator=(
+    ConnectorsServiceBase&&) = default;
+ConnectorsServiceBase::~ConnectorsServiceBase() = default;
+
 ConnectorsServiceBase::DmToken::DmToken(const std::string& value,
                                         policy::PolicyScope scope)
     : value(value), scope(scope) {}
@@ -80,7 +91,7 @@ ConnectorsServiceBase::GetReportingServiceProviderNames() {
     return {};
   }
 
-  return GetConnectorsManagerBase()->GetReportingServiceProviderNames();
+  return connectors_manager_base_->GetReportingServiceProviderNames();
 }
 
 std::optional<ReportingSettings> ConnectorsServiceBase::GetReportingSettings() {
@@ -89,7 +100,7 @@ std::optional<ReportingSettings> ConnectorsServiceBase::GetReportingSettings() {
   }
 
   std::optional<ReportingSettings> settings =
-      GetConnectorsManagerBase()->GetReportingSettings();
+      connectors_manager_base_->GetReportingSettings();
   if (!settings.has_value()) {
     return std::nullopt;
   }
@@ -136,11 +147,11 @@ void ConnectorsServiceBase::PopulateBrowserMetadata(
 }
 
 void ConnectorsServiceBase::PopulateDeviceMetadata(
-    const ReportingSettings& reporting_settings,
     const std::string& client_id,
     ClientMetadata::Device* device_proto) {
-  if (!reporting_settings.per_profile && !device_proto->has_dm_token()) {
-    device_proto->set_dm_token(reporting_settings.dm_token);
+  std::optional<std::string> browser_dm_token = GetBrowserDmToken();
+  if (browser_dm_token.has_value() && !device_proto->has_dm_token()) {
+    device_proto->set_dm_token(*browser_dm_token);
   }
   device_proto->set_client_id(client_id);
   device_proto->set_os_version(policy::GetOSVersion());
@@ -150,6 +161,92 @@ void ConnectorsServiceBase::PopulateDeviceMetadata(
     device_proto->set_device_fqdn(policy::GetDeviceFqdn());
     device_proto->set_network_name(policy::GetNetworkName());
   }
+}
+
+bool ConnectorsServiceBase::HasExtraUiToDisplay(AnalysisConnector connector,
+                                                const std::string& tag) {
+  return GetCustomMessage(connector, tag) || GetLearnMoreUrl(connector, tag) ||
+         GetBypassJustificationRequired(connector, tag);
+}
+
+bool ConnectorsServiceBase::IsConnectorEnabled(
+    AnalysisConnector connector) const {
+  if (!ConnectorsEnabled()) {
+    return false;
+  }
+
+  return connectors_manager_base_->IsAnalysisConnectorEnabled(connector);
+}
+
+std::vector<const AnalysisConfig*>
+ConnectorsServiceBase::GetAnalysisServiceConfigs(AnalysisConnector connector) {
+  if (!ConnectorsEnabled()) {
+    return {};
+  }
+
+  return connectors_manager_base_->GetAnalysisServiceConfigs(connector);
+}
+
+bool ConnectorsServiceBase::DelayUntilVerdict(AnalysisConnector connector) {
+  if (!ConnectorsEnabled()) {
+    return false;
+  }
+
+  return connectors_manager_base_->DelayUntilVerdict(connector);
+}
+
+std::optional<std::u16string> ConnectorsServiceBase::GetCustomMessage(
+    AnalysisConnector connector,
+    const std::string& tag) {
+  if (!ConnectorsEnabled()) {
+    return std::nullopt;
+  }
+
+  return connectors_manager_base_->GetCustomMessage(connector, tag);
+}
+
+std::optional<GURL> ConnectorsServiceBase::GetLearnMoreUrl(
+    AnalysisConnector connector,
+    const std::string& tag) {
+  if (!ConnectorsEnabled()) {
+    return std::nullopt;
+  }
+
+  return connectors_manager_base_->GetLearnMoreUrl(connector, tag);
+}
+
+bool ConnectorsServiceBase::GetBypassJustificationRequired(
+    AnalysisConnector connector,
+    const std::string& tag) {
+  if (!ConnectorsEnabled()) {
+    return false;
+  }
+
+  return connectors_manager_base_->GetBypassJustificationRequired(connector,
+                                                                  tag);
+}
+
+void ConnectorsServiceBase::ObserveTelemetryReporting(
+    base::RepeatingCallback<void()> callback) {
+  connectors_manager_base_->SetTelemetryObserverCallback(callback);
+}
+
+std::vector<std::string> ConnectorsServiceBase::GetAnalysisServiceProviderNames(
+    AnalysisConnector connector) {
+  if (!ConnectorsEnabled()) {
+    return {};
+  }
+
+  if (!GetDmToken(AnalysisConnectorScopePref(connector)).has_value()) {
+    return {};
+  }
+
+  return connectors_manager_base_->GetAnalysisServiceProviderNames(connector);
+}
+
+ConnectorsManagerBase*
+ConnectorsServiceBase::ConnectorsManagerBaseForTesting() {
+  return connectors_manager_base_.get();
 }
 
 }  // namespace enterprise_connectors

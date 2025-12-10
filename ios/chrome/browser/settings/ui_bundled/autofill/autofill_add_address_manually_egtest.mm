@@ -6,8 +6,8 @@
 #import "components/autofill/core/browser/field_types.h"
 #import "components/autofill/ios/common/features.h"
 #import "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/bottom_sheet_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
@@ -95,16 +95,6 @@ UIViewController* TopPresentedViewController() {
 
 @implementation AutofillAddAddressManuallyTestCase
 
-- (AppLaunchConfiguration)appConfigurationForTestCase {
-  AppLaunchConfiguration config;
-
-  config.features_enabled.push_back(kAddAddressManually);
-  config.features_enabled.push_back(
-      kAutofillDynamicallyLoadsFieldsForAddressInput);
-
-  return config;
-}
-
 - (void)setUp {
   [super setUp];
   [AutofillAppInterface clearProfilesStore];
@@ -191,6 +181,11 @@ UIViewController* TopPresentedViewController() {
 
   // Fill the required fields.
   [self fillRequiredFields];
+
+  // Scroll to bottom, this is needed in some cases because the "Save" button is
+  // not always visible.
+  [[EarlGrey selectElementWithMatcher:EditProfileBottomSheet()]
+      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
 
   // Save the profile.
   [[EarlGrey selectElementWithMatcher:SaveAddressButton()]

@@ -2,7 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/features.gni")
 import("//chrome/common/features.gni")
 import("//pdf/features.gni")
 
@@ -16,7 +15,11 @@ schema_sources_ = [
   "bookmarks.json",
   "cookies.json",
   "context_menus.json",
+  "debugger.json",
+  "desktop_capture.json",
   "developer_private.idl",
+  "downloads.idl",
+  "downloads_internal.idl",
   "enterprise_hardware_platform.idl",
   "font_settings.json",
   "gcm.json",
@@ -24,18 +27,29 @@ schema_sources_ = [
   "identity.idl",
   "instance_id.json",
   "notifications.idl",
+  "omnibox.json",
+  "page_capture.json",
   "permissions.json",
   "processes.idl",
-  "reading_list.idl",
+  "reading_list.webidl",
+  "search.idl",
   "scripting.idl",
+  "tab_capture.idl",
   "tabs.json",
+  "web_authentication_proxy.webidl",
+  "web_navigation.json",
 
   # Despite the name, these APIs do not rely on any WebRTC-specific bits and
   # as such do not belong in a conditional.
+  "webrtc_audio_private.idl",
   "webrtc_logging_private.idl",
   "webstore_private.json",
   "windows.json",
 ]
+
+if (enable_service_discovery) {
+  schema_sources_ += [ "mdns.idl" ]
+}
 
 # Schemas that should be used only to auto-generate the C++ types.
 # In many cases, this includes schemas used to generate types used in manifest
@@ -62,32 +76,21 @@ if (enable_extensions) {
     "chrome_web_view_internal.json",
     "command_line_private.json",
     "content_settings.json",
-    "debugger.json",
-    "desktop_capture.json",
     "crash_report_private.idl",
-    "downloads.idl",
-    "downloads_internal.idl",
     "enterprise_reporting_private.idl",
     "image_writer_private.idl",
     "language_settings_private.idl",
-    "omnibox.json",
-    "page_capture.json",
     "passwords_private.idl",
     "resources_private.idl",
     "safe_browsing_private.idl",
-    "search.idl",
     "sessions.json",
     "settings_private.idl",
     "side_panel.idl",
     "system_private.json",
-    "tab_capture.idl",
     "tab_groups.json",
-    "web_authentication_proxy.idl",
-    "web_navigation.json",
 
     # Despite the name, these APIs do not rely on any WebRTC-specific bits and
     # as such do not belong in a conditional.
-    "webrtc_audio_private.idl",
     "webrtc_desktop_capture_private.idl",
   ]
 
@@ -142,10 +145,6 @@ if (enable_extensions) {
     schema_sources_ += [ "input_ime.json" ]
   }
 
-  if (enable_service_discovery) {
-    schema_sources_ += [ "mdns.idl" ]
-  }
-
   if (enable_pdf) {
     schema_sources_ += [ "pdf_viewer_private.idl" ]
   }
@@ -170,11 +169,7 @@ chrome_extensions_types_only_schema_sources =
     get_path_info(types_only_schema_sources_, "abspath")
 
 chrome_extensions_manifest_only_schema_sources =
-    get_path_info([
-                    "manifest_types.json",
-                    "chrome_url_overrides.idl",
-                  ],
-                  "abspath")
+    get_path_info([ "manifest_types.json" ], "abspath")
 
 chrome_extensions_api_uncompiled_sources =
     get_path_info(uncompiled_sources_, "abspath")

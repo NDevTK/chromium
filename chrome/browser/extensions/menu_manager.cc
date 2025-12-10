@@ -22,10 +22,10 @@
 #include "chrome/browser/extensions/extension_menu_icon_loader.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/menu_manager_factory.h"
-#include "chrome/browser/extensions/permissions/active_tab_permission_granter.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/context_menus.h"
 #include "components/guest_view/buildflags/buildflags.h"
+#include "extensions/browser/permissions/active_tab_permission_granter.h"
 // Intentionally outside if BUILDFLAG(ENABLE_GUEST_VIEW) so we can use
 // kInstanceIDNone constant.
 #include "components/guest_view/common/guest_view_constants.h"
@@ -35,10 +35,11 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/state_store.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/mojom/event_dispatcher.mojom.h"
-#include "ipc/ipc_message.h"
+#include "ipc/constants.mojom.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/text_elider.h"
@@ -48,6 +49,8 @@
 #include "components/guest_view/browser/guest_view_base.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #endif  // BUILDFLAG(ENABLE_GUEST_VIEW)
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::ChildProcessHost;
 using content::WebContents;
@@ -1040,7 +1043,7 @@ MenuItem::ExtensionKey::ExtensionKey()
 MenuItem::ExtensionKey::ExtensionKey(const std::string& extension_id)
     : extension_id(extension_id),
       webview_embedder_process_id(ChildProcessHost::kInvalidUniqueID),
-      webview_embedder_frame_id(MSG_ROUTING_NONE),
+      webview_embedder_frame_id(IPC::mojom::kRoutingIdNone),
       webview_instance_id(kInstanceIDNone) {
   DCHECK(!extension_id.empty());
 }

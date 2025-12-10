@@ -51,7 +51,7 @@ class ColorProvider;
 
 namespace blink {
 class CalculationValue;
-class CSSLengthResolver;
+class CSSToLengthConversionData;
 class CSSValue;
 
 class CORE_EXPORT StyleColor {
@@ -156,10 +156,6 @@ class CORE_EXPORT StyleColor {
                                                     color2_type_);
     }
 
-    bool operator!=(const UnresolvedColorMix& other) const {
-      return !(*this == other);
-    }
-
    private:
     Color::ColorSpace color_interpolation_space_ = Color::ColorSpace::kNone;
     Color::HueInterpolationMethod hue_interpolation_method_ =
@@ -180,7 +176,7 @@ class CORE_EXPORT StyleColor {
                             const CSSValue& channel1,
                             const CSSValue& channel2,
                             const CSSValue* alpha,
-                            const CSSLengthResolver& length_resolver);
+                            const CSSToLengthConversionData& conversion_data);
     virtual ~UnresolvedRelativeColor() = default;
     void Trace(Visitor* visitor) const override;
     CSSValue* ToCSSValue() const override;
@@ -289,10 +285,6 @@ class CORE_EXPORT StyleColor {
 
     return color_or_unresolved_color_function_.color ==
            other.color_or_unresolved_color_function_.color;
-  }
-
-  inline bool operator!=(const StyleColor& other) const {
-    return !(*this == other);
   }
 
  protected:

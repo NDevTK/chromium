@@ -8,14 +8,7 @@
 
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/socket_permission_entry.h"
-#include "ipc/ipc_param_traits.h"
-
-namespace ipc_fuzzer {
-template <class T>
-struct FuzzTraits;
-template <class T>
-struct GenerateTraits;
-}  // namespace ipc_fuzzer
+#include "ipc/param_traits.h"
 
 namespace extensions {
 
@@ -75,8 +68,6 @@ class SocketPermissionData {
  private:
   // Friend so ParamTraits can serialize us.
   friend struct IPC::ParamTraits<SocketPermissionData>;
-  friend struct ipc_fuzzer::FuzzTraits<SocketPermissionData>;
-  friend struct ipc_fuzzer::GenerateTraits<SocketPermissionData>;
 
   SocketPermissionEntry& entry();
 

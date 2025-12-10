@@ -14,10 +14,6 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
 
 class Document;
@@ -196,7 +192,7 @@ class ExternalSVGResourceImageContent final : public SVGResource,
 
   // ImageResourceObserver overrides
   void ImageNotifyFinished(ImageResourceContent*) override;
-  WTF::String DebugName() const override;
+  String DebugName() const override;
 
   Member<ImageResourceContent> image_content_;
   AtomicString fragment_;

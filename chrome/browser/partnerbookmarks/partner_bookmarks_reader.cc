@@ -35,7 +35,6 @@ using base::android::CheckException;
 using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
 using bookmarks::BookmarkNode;
@@ -107,22 +106,18 @@ PartnerBookmarksReader::PartnerBookmarksReader(
 
 PartnerBookmarksReader::~PartnerBookmarksReader() = default;
 
-void PartnerBookmarksReader::PartnerBookmarksCreationComplete(
-    JNIEnv*,
-    const JavaParamRef<jobject>&) {
+void PartnerBookmarksReader::PartnerBookmarksCreationComplete(JNIEnv* env) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   partner_bookmarks_shim_->SetPartnerBookmarksRoot(
       std::move(wip_partner_bookmarks_root_));
   wip_next_available_id_ = 0;
 }
 
-void PartnerBookmarksReader::Destroy(JNIEnv* env,
-                                     const JavaParamRef<jobject>& obj) {
+void PartnerBookmarksReader::Destroy(JNIEnv* env) {
   delete this;
 }
 
-void PartnerBookmarksReader::Reset(JNIEnv* env,
-                                   const JavaParamRef<jobject>& obj) {
+void PartnerBookmarksReader::Reset(JNIEnv* env) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   wip_partner_bookmarks_root_.reset();
   wip_next_available_id_ = 0;
@@ -130,16 +125,15 @@ void PartnerBookmarksReader::Reset(JNIEnv* env,
 
 jlong PartnerBookmarksReader::AddPartnerBookmark(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jstring>& jurl,
-    const JavaParamRef<jstring>& jtitle,
+    const JavaRef<jstring>& jurl,
+    const JavaRef<jstring>& jtitle,
     jboolean is_folder,
     jlong parent_id,
-    const JavaParamRef<jbyteArray>& favicon,
-    const JavaParamRef<jbyteArray>& touchicon,
+    const JavaRef<jbyteArray>& favicon,
+    const JavaRef<jbyteArray>& touchicon,
     jboolean fetch_uncached_favicons_from_server,
     jint desired_favicon_size_px,
-    const JavaParamRef<jobject>& j_callback) {
+    const JavaRef<jobject>& j_callback) {
   std::u16string url;
   std::u16string title;
   if (jurl) {
@@ -158,8 +152,9 @@ jlong PartnerBookmarksReader::AddPartnerBookmark(
 
     // Handle favicon and touchicon
     if (profile_ != nullptr) {
-      if (favicon != nullptr || touchicon != nullptr) {
-        jbyteArray icon = (touchicon != nullptr) ? touchicon : favicon;
+      if (!favicon.is_null() || !touchicon.is_null()) {
+        jbyteArray icon =
+            (!touchicon.is_null()) ? touchicon.obj() : favicon.obj();
         const favicon_base::IconType icon_type =
             touchicon ? favicon_base::IconType::kTouchIcon
                       : favicon_base::IconType::kFavicon;
@@ -408,6 +403,10 @@ static void JNI_PartnerBookmarksReader_DisablePartnerBookmarksEditing(
 static jlong JNI_PartnerBookmarksReader_Init(JNIEnv* env, Profile* profile) {
   PartnerBookmarksShim* partner_bookmarks_shim =
       PartnerBookmarksShim::BuildForBrowserContext(profile);
+  if (!partner_bookmarks_shim) {
+    return 0;
+  }
+
   PartnerBookmarksReader* reader =
       new PartnerBookmarksReader(partner_bookmarks_shim, profile);
   return reinterpret_cast<intptr_t>(reader);
@@ -418,3 +417,5 @@ static std::string JNI_PartnerBookmarksReader_GetNativeUrlString(
     std::string& url) {
   return GURL(url).spec();
 }
+
+DEFINE_JNI(PartnerBookmarksReader)

@@ -46,8 +46,6 @@
 
 namespace blink {
 
-const char NavigatorContentUtils::kSupplementName[] = "NavigatorContentUtils";
-
 namespace {
 
 constexpr char kIsolatedAppError[] =
@@ -91,7 +89,7 @@ static bool VerifyCustomHandlerURL(
   String error_message;
 
   if (!VerifyCustomHandlerURLSyntax(full_url, base_url, user_url,
-                                    error_message)) {
+                                    security_level, error_message)) {
     exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
                                       error_message);
     return false;
@@ -112,8 +110,8 @@ bool VerifyCustomHandlerScheme(const String& scheme,
                                String& error_string,
                                ProtocolHandlerSecurityLevel security_level) {
   if (!IsValidProtocol(scheme)) {
-    error_string = "The scheme name '" + scheme +
-                   "' is not allowed by URI syntax (RFC3986).";
+    error_string = StrCat({"The scheme name '", scheme,
+                           "' is not allowed by URI syntax (RFC3986)."});
     return false;
   }
 
@@ -122,14 +120,15 @@ bool VerifyCustomHandlerScheme(const String& scheme,
   if (!IsValidCustomHandlerScheme(scheme_adaptor.AsStringView(), security_level,
                                   &has_custom_scheme_prefix)) {
     if (has_custom_scheme_prefix) {
-      error_string = "The scheme name '" + scheme +
-                     "' is not allowed. Schemes starting with '" + scheme +
-                     "' must be followed by one or more ASCII letters.";
+      error_string =
+          StrCat({"The scheme name '", scheme,
+                  "' is not allowed. Schemes starting with '", scheme,
+                  "' must be followed by one or more ASCII letters."});
     } else {
-      error_string = "The scheme '" + scheme +
-                     "' doesn't belong to the scheme allowlist. "
-                     "Please prefix non-allowlisted schemes "
-                     "with the string 'web+'.";
+      error_string =
+          StrCat({"The scheme '", scheme,
+                  "' doesn't belong to the scheme allowlist. Please prefix "
+                  "non-allowlisted schemes with the string 'web+'."});
     }
     return false;
   }
@@ -140,21 +139,22 @@ bool VerifyCustomHandlerScheme(const String& scheme,
 bool VerifyCustomHandlerURLSyntax(const KURL& full_url,
                                   const KURL& base_url,
                                   const String& user_url,
+                                  ProtocolHandlerSecurityLevel security_level,
                                   String& error_message) {
   StringUtf8Adaptor url_adaptor(user_url);
-  URLSyntaxErrorCode code =
-      IsValidCustomHandlerURLSyntax(GURL(full_url), url_adaptor.AsStringView());
+  URLSyntaxErrorCode code = IsValidCustomHandlerURLSyntax(
+      GURL(full_url), url_adaptor.AsStringView(), security_level);
   switch (code) {
     case URLSyntaxErrorCode::kNoError:
       return true;
     case URLSyntaxErrorCode::kMissingToken:
-      error_message =
-          "The url provided ('" + user_url + "') does not contain '%s'.";
+      error_message = StrCat(
+          {"The url provided ('", user_url, "') does not contain '%s'."});
       break;
     case URLSyntaxErrorCode::kInvalidUrl:
-      error_message =
-          "The custom handler URL created by removing '%s' and prepending '" +
-          base_url.GetString() + "' is invalid.";
+      error_message = StrCat(
+          {"The custom handler URL created by removing '%s' and prepending '",
+           base_url.GetString(), "' is invalid."});
       break;
   }
 
@@ -164,11 +164,11 @@ bool VerifyCustomHandlerURLSyntax(const KURL& full_url,
 NavigatorContentUtils& NavigatorContentUtils::From(Navigator& navigator,
                                                    LocalFrame& frame) {
   NavigatorContentUtils* navigator_content_utils =
-      Supplement<Navigator>::From<NavigatorContentUtils>(navigator);
+      navigator.GetNavigatorContentUtils();
   if (!navigator_content_utils) {
     navigator_content_utils = MakeGarbageCollected<NavigatorContentUtils>(
-        navigator, MakeGarbageCollected<NavigatorContentUtilsClient>(&frame));
-    ProvideTo(navigator, navigator_content_utils);
+        MakeGarbageCollected<NavigatorContentUtilsClient>(&frame));
+    navigator.SetNavigatorContentUtils(navigator_content_utils);
   }
   return *navigator_content_utils;
 }
@@ -226,9 +226,9 @@ void NavigatorContentUtils::registerProtocolHandler(
   if (!document->IsPrerendering()) {
     client->RegisterProtocolHandler(scheme, window->CompleteURL(url));
   } else {
-    document->AddPostPrerenderingActivationStep(WTF::BindOnce(
-        &NavigatorContentUtilsClient::RegisterProtocolHandler,
-        WrapWeakPersistent(client), scheme, window->CompleteURL(url)));
+    document->AddPostPrerenderingActivationStep(
+        BindOnce(&NavigatorContentUtilsClient::RegisterProtocolHandler,
+                 WrapWeakPersistent(client), scheme, window->CompleteURL(url)));
   }
 }
 
@@ -268,15 +268,14 @@ void NavigatorContentUtils::unregisterProtocolHandler(
   if (!document->IsPrerendering()) {
     client->UnregisterProtocolHandler(scheme, window->CompleteURL(url));
   } else {
-    document->AddPostPrerenderingActivationStep(WTF::BindOnce(
-        &NavigatorContentUtilsClient::UnregisterProtocolHandler,
-        WrapWeakPersistent(client), scheme, window->CompleteURL(url)));
+    document->AddPostPrerenderingActivationStep(
+        BindOnce(&NavigatorContentUtilsClient::UnregisterProtocolHandler,
+                 WrapWeakPersistent(client), scheme, window->CompleteURL(url)));
   }
 }
 
 void NavigatorContentUtils::Trace(Visitor* visitor) const {
   visitor->Trace(client_);
-  Supplement<Navigator>::Trace(visitor);
 }
 
 }  // namespace blink

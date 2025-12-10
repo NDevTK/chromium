@@ -15,6 +15,7 @@
 
 namespace net::device_bound_sessions {
 
+// LINT.IfChange(SessionParams)
 // Struct to contain the parameters from the session instruction JSON.
 // https://github.com/WICG/dbsc/blob/main/README.md#session-registration-instructions-json
 // This is sent on session creation and session refresh
@@ -48,12 +49,14 @@ struct NET_EXPORT SessionParams final {
     std::string attributes;
   };
 
+  SessionParams();
   SessionParams(std::string id,
                 GURL fetcher_url,
                 std::string refresh_url,
                 Scope scope,
                 std::vector<Credential> creds,
-                unexportable_keys::UnexportableKeyId key_id);
+                unexportable_keys::UnexportableKeyId key_id,
+                std::vector<std::string> allowed_refresh_initiators);
   SessionParams(SessionParams&& other) noexcept;
   SessionParams& operator=(SessionParams&& other) noexcept;
 
@@ -67,6 +70,20 @@ struct NET_EXPORT SessionParams final {
   Scope scope;
   std::vector<Credential> credentials;
   unexportable_keys::UnexportableKeyId key_id;
+  std::vector<std::string> allowed_refresh_initiators;
+};
+// LINT.ThenChange(//services/network/public/mojom/device_bound_sessions.mojom:DeviceBoundSessionParams)
+
+// Struct to contain the parameters from the .well-known JSON.
+struct NET_EXPORT WellKnownParams {
+  WellKnownParams();
+  ~WellKnownParams();
+  WellKnownParams(WellKnownParams&& other) noexcept;
+  WellKnownParams& operator=(WellKnownParams&& other) noexcept;
+
+  std::optional<std::vector<std::string>> registering_origins;
+  std::optional<std::vector<std::string>> relying_origins;
+  std::optional<std::string> provider_origin;
 };
 
 }  // namespace net::device_bound_sessions

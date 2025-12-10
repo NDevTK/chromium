@@ -593,6 +593,9 @@ class VIEWS_EXPORT MenuItemView : public View, public LayoutDelegate {
   // could interact with model state.
   bool IsScheduledForDeletion() const;
 
+  // Calculates the X coordinate of the icon.
+  int CalculateIconX(const ImageView* icon_view) const;
+
   void SetForegroundColorId(std::optional<ui::ColorId> foreground_color_id) {
     foreground_color_id_ = foreground_color_id;
   }
@@ -665,6 +668,7 @@ class VIEWS_EXPORT MenuItemView : public View, public LayoutDelegate {
 
   // Pointer to a view with a menu icon.
   raw_ptr<ImageView> icon_view_ = nullptr;
+  std::optional<ui::ColorVariant> icon_color_;
 
   // The tooltip to show on hover for this menu item.
   std::u16string custom_tooltip_;

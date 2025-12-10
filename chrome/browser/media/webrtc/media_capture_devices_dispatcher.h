@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_MEDIA_WEBRTC_MEDIA_CAPTURE_DEVICES_DISPATCHER_H_
 #define CHROME_BROWSER_MEDIA_WEBRTC_MEDIA_CAPTURE_DEVICES_DISPATCHER_H_
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -90,7 +89,7 @@ class MediaCaptureDevicesDispatcher
                                  content::MediaResponseCallback callback,
                                  const extensions::Extension* extension);
 
-#if defined(TOOLKIT_VIEWS) && !BUILDFLAG(IS_FUCHSIA)
+#if defined(TOOLKIT_VIEWS)
   void ProcessSelectAudioOutputRequest(
       Browser* browser,
       const content::SelectAudioOutputRequest& request,

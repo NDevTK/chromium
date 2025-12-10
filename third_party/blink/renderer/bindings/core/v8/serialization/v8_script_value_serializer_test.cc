@@ -9,6 +9,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "gin/public/wrappable_pointer_tags.h"
 #include "gin/wrappable.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -73,10 +74,10 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
-#include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSurface.h"
+#include "v8/include/v8-cppgc.h"
 
 namespace blink {
 namespace {
@@ -774,7 +775,6 @@ TEST(V8ScriptValueSerializerTest, DecodeDOMMatrixReadOnly) {
       0x10, 0x40, 0xcd, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0x10, 0x40, 0x33, 0x33,
       0x33, 0x33, 0x33, 0x33, 0x11, 0x40, 0x9a, 0x99, 0x99, 0x99, 0x99, 0x99,
       0x11, 0x40,
-
   });
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializer(script_state, input).Deserialize();
@@ -849,8 +849,9 @@ TEST(V8ScriptValueSerializerTest, RoundTripImageDataWithColorSpaceInfo) {
   // deserialize correctly.
   V8TestingScope scope;
   ImageDataSettings* image_data_settings = ImageDataSettings::Create();
-  image_data_settings->setColorSpace("display-p3");
-  image_data_settings->setPixelFormat("rgba-float16");
+  image_data_settings->setColorSpace(V8PredefinedColorSpace::Enum::kDisplayP3);
+  image_data_settings->setPixelFormat(
+      V8ImageDataPixelFormat::Enum::kRgbaFloat16);
   ImageData* image_data = ImageData::ValidateAndCreate(
       2, 1, std::nullopt, image_data_settings,
       ImageData::ValidateAndCreateParams(), ASSERT_NO_EXCEPTION);
@@ -868,8 +869,10 @@ TEST(V8ScriptValueSerializerTest, RoundTripImageDataWithColorSpaceInfo) {
   EXPECT_NE(image_data, new_image_data);
   EXPECT_EQ(image_data->Size(), new_image_data->Size());
   ImageDataSettings* new_image_data_settings = new_image_data->getSettings();
-  EXPECT_EQ("display-p3", new_image_data_settings->colorSpace());
-  EXPECT_EQ("rgba-float16", new_image_data_settings->pixelFormat());
+  EXPECT_EQ(V8PredefinedColorSpace::Enum::kDisplayP3,
+            new_image_data_settings->colorSpace());
+  EXPECT_EQ(V8ImageDataPixelFormat::Enum::kRgbaFloat16,
+            new_image_data_settings->pixelFormat());
   SkPixmap new_pm = new_image_data->GetSkPixmap();
   EXPECT_EQ(kRGBA_F16_SkColorType, new_pm.info().colorType());
   EXPECT_EQ(200.f, reinterpret_cast<const float*>(new_pm.addr(0, 0))[0]);
@@ -931,8 +934,10 @@ TEST(V8ScriptValueSerializerTest, DecodeImageDataV18) {
   ASSERT_NE(new_image_data, nullptr);
   EXPECT_EQ(gfx::Size(2, 1), new_image_data->Size());
   ImageDataSettings* new_image_data_settings = new_image_data->getSettings();
-  EXPECT_EQ("display-p3", new_image_data_settings->colorSpace());
-  EXPECT_EQ("rgba-float32", new_image_data_settings->pixelFormat());
+  EXPECT_EQ(V8PredefinedColorSpace::Enum::kDisplayP3,
+            new_image_data_settings->colorSpace());
+  EXPECT_EQ(V8ImageDataPixelFormat::Enum::kRgbaFloat32,
+            new_image_data_settings->pixelFormat());
   SkPixmap new_pm = new_image_data->GetSkPixmap();
   EXPECT_EQ(kRGBA_F32_SkColorType, new_pm.info().colorType());
   EXPECT_EQ(200u, static_cast<const uint8_t*>(new_pm.addr(0, 0))[0]);
@@ -2272,19 +2277,22 @@ namespace {
 
 class GinWrappable : public gin::Wrappable<GinWrappable> {
  public:
+  GinWrappable() = default;
   static v8::Local<v8::Object> Create(v8::Isolate* isolate) {
-    auto* instance = new GinWrappable();
+    auto* instance = cppgc::MakeGarbageCollected<GinWrappable>(
+        isolate->GetCppHeap()->GetAllocationHandle());
     return instance->GetWrapper(isolate).ToLocalChecked();
   }
-  ~GinWrappable() override = default;
 
-  static gin::WrapperInfo kWrapperInfo;
+  static constexpr gin::WrapperInfo kWrapperInfo = {{gin::kEmbedderNativeGin},
+                                                    gin::kTestGinWrappable};
+
+  const gin::WrapperInfo* wrapper_info() const override {
+    return &kWrapperInfo;
+  }
 
  private:
-  GinWrappable() = default;
 };
-
-gin::WrapperInfo GinWrappable::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 }  // namespace
 

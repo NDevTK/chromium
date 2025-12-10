@@ -8,11 +8,10 @@
  */
 
 import '/shared/settings/prefs/prefs.js';
-// <if expr="not chromeos_ash">
+// <if expr="not is_chromeos">
 import '../relaunch_confirmation_dialog.js';
 // </if>
 import '../settings_page/settings_section.js';
-import '../settings_page_styles.css.js';
 import '../settings_shared.css.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
@@ -32,6 +31,7 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 
 import {loadTimeData} from '../i18n_setup.js';
 import {RelaunchMixin, RestartType} from '../relaunch_mixin.js';
+import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
 
 import {getTemplate} from './about_page.html.js';
 import type {AboutPageBrowserProxy, UpdateStatusChangedEvent} from './about_page_browser_proxy.js';
@@ -50,7 +50,8 @@ export const ABOUT_PAGE_PRIVACY_POLICY_URL: string =
 const SettingsAboutPageElementBase =
     RelaunchMixin(WebUiListenerMixin(I18nMixin(PolymerElement)));
 
-export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
+export class SettingsAboutPageElement extends SettingsAboutPageElementBase
+    implements SettingsPlugin {
   static get is() {
     return 'settings-about-page';
   }
@@ -97,7 +98,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
       promoteUpdaterStatus_: Object,
       // </if>
 
-      // <if expr="not chromeos_ash">
+      // <if expr="not is_chromeos">
       obsoleteSystemInfo_: {
         type: Object,
         value() {
@@ -123,7 +124,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
     };
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   static get observers() {
     return [
       'updateShowUpdateStatus_(' +
@@ -142,7 +143,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
   declare private promoteUpdaterStatus_: PromoteUpdaterStatus;
   // </if>
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   declare private obsoleteSystemInfo_: {obsolete: boolean, endOfLine: boolean};
   declare private showUpdateStatus_: boolean;
   declare private showButtonContainer_: boolean;
@@ -157,7 +158,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
 
     this.aboutBrowserProxy_.pageReady();
 
-    // <if expr="not chromeos_ash">
+    // <if expr="not is_chromeos">
     this.startListening_();
     // </if>
   }
@@ -172,7 +173,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
     return '';
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   private startListening_() {
     this.addWebUiListener(
         'update-status-changed', this.onUpdateStatusChanged_.bind(this));
@@ -221,7 +222,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
     this.performRestart(RestartType.RELAUNCH);
   }
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   private updateShowUpdateStatus_() {
     if (this.obsoleteSystemInfo_.endOfLine) {
       this.showUpdateStatus_ = false;
@@ -350,7 +351,7 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
   }
   // </if>
 
-  // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
   private shouldShowIcons_(): boolean {
     if (this.obsoleteSystemInfo_.endOfLine) {
       return true;
@@ -358,6 +359,16 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase {
     return this.showUpdateStatus_;
   }
   // </if>
+
+  // SettingsPlugin implementation
+  searchContents(query: string) {
+    // settings-about-page is intentionally not included in search.
+    return Promise.resolve({
+      canceled: false,
+      matchCount: 0,
+      wasClearSearch: query === '',
+    });
+  }
 }
 
 declare global {

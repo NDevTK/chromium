@@ -33,11 +33,12 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNullableObservableSupplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.UserActionTester;
-import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -52,7 +53,7 @@ import org.chromium.chrome.browser.share.share_sheet.ShareSheetLinkToggleCoordin
 import org.chromium.chrome.browser.share.share_sheet.ShareSheetLinkToggleMetricsHelper.LinkToggleMetricsDetails;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
 import org.chromium.components.browser_ui.share.ShareParams;
@@ -79,7 +80,7 @@ public class ChromeProvidedSharingOptionsProviderTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
-    public AutomotiveContextWrapperTestRule mAutoTestRule = new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mAutoTestRule = new OverrideContextWrapperTestRule();
 
     private static final String URL = JUnitTestGURLs.EXAMPLE_URL.getSpec();
 
@@ -100,7 +101,8 @@ public class ChromeProvidedSharingOptionsProviderTest {
     private TestActivity mActivity;
     private ChromeProvidedSharingOptionsProvider mChromeProvidedSharingOptionsProvider;
     private UserActionTester mActionTester;
-    private final ObservableSupplierImpl<Tab> mTabProvider = new ObservableSupplierImpl<>();
+    private final SettableNullableObservableSupplier<Tab> mTabProvider =
+            ObservableSuppliers.createNullable();
 
     @Before
     public void setUp() {
@@ -187,7 +189,7 @@ public class ChromeProvidedSharingOptionsProviderTest {
                         DetailedContentType.NOT_SPECIFIED,
                         /* isMultiWindow= */ false);
 
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             assertFalse(
                     "Property models should not contain printing for desktop.",
                     propertyModelsContain(propertyModels, R.string.print_share_activity_title));
@@ -208,7 +210,7 @@ public class ChromeProvidedSharingOptionsProviderTest {
                         DetailedContentType.NOT_SPECIFIED,
                         /* isMultiWindow= */ false);
 
-        if (BuildConfig.IS_DESKTOP_ANDROID) {
+        if (DeviceInfo.isDesktop()) {
             assertFalse(
                     "Property models should not contain printing for desktop.",
                     propertyModelsContain(propertyModels, R.string.print_share_activity_title));

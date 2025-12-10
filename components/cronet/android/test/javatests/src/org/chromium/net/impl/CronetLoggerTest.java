@@ -30,8 +30,8 @@ import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.net.ConnectionCloseSource;
 import org.chromium.net.CronetEngine;
 import org.chromium.net.CronetLoggerTestRule;
+import org.chromium.net.CronetTestFramework.CronetImplementation;
 import org.chromium.net.CronetTestRule;
-import org.chromium.net.CronetTestRule.CronetImplementation;
 import org.chromium.net.CronetTestRule.IgnoreFor;
 import org.chromium.net.CronetTestRule.RequiresMinAndroidApi;
 import org.chromium.net.ExperimentalCronetEngine;
@@ -46,6 +46,7 @@ import org.chromium.net.impl.CronetLogger.CronetEngineBuilderInfo;
 import org.chromium.net.impl.CronetLogger.CronetSource;
 import org.chromium.net.impl.CronetLogger.CronetTrafficInfo;
 import org.chromium.net.impl.CronetLogger.CronetVersion;
+import org.chromium.net.test.ServerCertificate;
 
 import java.time.Duration;
 import java.util.AbstractMap;
@@ -74,18 +75,22 @@ public final class CronetLoggerTest {
 
     private TestLogger mTestLogger;
     private Context mContext;
+    private NativeTestServer mNativeTestServer;
 
     @Before
     public void setUp() {
         mContext = mTestRule.getTestFramework().getContext();
         mTestLogger = mLoggerTestRule.mTestLogger;
-        assertThat(NativeTestServer.startNativeTestServer(mContext)).isTrue();
+        mNativeTestServer =
+                NativeTestServer.createNativeTestServerWithHTTPS(
+                        mContext, ServerCertificate.CERT_OK);
+        mNativeTestServer.start();
     }
 
     @After
     public void tearDown() {
         mTestLogger = null;
-        NativeTestServer.shutdownNativeTestServer();
+        mNativeTestServer.close();
     }
 
     @Test
@@ -159,7 +164,7 @@ public final class CronetLoggerTest {
     @Test
     @SmallTest
     public void testTelemetryDefaultEnabled() throws JSONException {
-        final String url = NativeTestServer.getEchoBodyURL();
+        final String url = mNativeTestServer.getEchoBodyURL();
 
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
         CronetEngine engine = mTestRule.getTestFramework().startEngine();
@@ -435,7 +440,7 @@ public final class CronetLoggerTest {
     @Test
     @SmallTest
     public void testSuccessfulRequestNative() throws Exception {
-        final String url = NativeTestServer.getEchoMethodURL();
+        final String url = mNativeTestServer.getEchoMethodURL();
         CronetEngine engine = mTestRule.getTestFramework().startEngine();
 
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
@@ -465,7 +470,10 @@ public final class CronetLoggerTest {
         assertThat(trafficInfo.getReadCount()).isGreaterThan(0);
         assertThat(trafficInfo.getOnUploadReadCount()).isEqualTo(0);
         assertThat(trafficInfo.getIsBidiStream()).isFalse();
-        assertThat(trafficInfo.getFinalUserCallbackThrew()).isFalse();
+        assertThat(trafficInfo.getTimeToEstablishDNSMicros()).isGreaterThan(-1);
+        assertThat(trafficInfo.getTimeToEstablishSSLMicros()).isGreaterThan(0);
+        assertThat(trafficInfo.getTimeToConnectMicros()).isGreaterThan(0);
+        assertThat(trafficInfo.getTimeToSendFirstByteMicros()).isGreaterThan(0);
 
         assertThat(mTestLogger.callsToLogCronetEngineCreation()).isEqualTo(1);
         assertThat(mTestLogger.callsToLogCronetTrafficInfo()).isEqualTo(1);
@@ -511,6 +519,11 @@ public final class CronetLoggerTest {
         assertThat(trafficInfo.getNetworkInternalErrorCode()).isEqualTo(-300);
         assertThat(trafficInfo.getFailureReason())
                 .isEqualTo(CronetTrafficInfo.RequestFailureReason.NETWORK);
+        assertThat(trafficInfo.getTimeToEstablishDNSMicros()).isEqualTo(-1);
+        assertThat(trafficInfo.getTimeToEstablishSSLMicros()).isEqualTo(-1);
+        assertThat(trafficInfo.getTimeToConnectMicros()).isEqualTo(-1);
+        assertThat(trafficInfo.getTimeToSendFirstByteMicros()).isEqualTo(-1);
+
         assertThat(mTestLogger.callsToLogCronetEngineCreation()).isEqualTo(1);
         assertThat(mTestLogger.callsToLogCronetTrafficInfo()).isEqualTo(1);
     }
@@ -526,7 +539,7 @@ public final class CronetLoggerTest {
                 .getTestFramework()
                 .startEngine()
                 .newUrlRequestBuilder(
-                        NativeTestServer.getEchoMethodURL(), callback, callback.getExecutor())
+                        mNativeTestServer.getEchoMethodURL(), callback, callback.getExecutor())
                 .build()
                 .start();
         callback.blockForDone();
@@ -552,7 +565,7 @@ public final class CronetLoggerTest {
                 .getTestFramework()
                 .startEngine()
                 .newUrlRequestBuilder(
-                        NativeTestServer.getEchoMethodURL(), callback, callback.getExecutor())
+                        mNativeTestServer.getEchoMethodURL(), callback, callback.getExecutor())
                 .build()
                 .start();
         callback.blockForDone();
@@ -566,7 +579,7 @@ public final class CronetLoggerTest {
     @Test
     @SmallTest
     public void testCanceledRequestNative() throws Exception {
-        final String url = NativeTestServer.getEchoBodyURL();
+        final String url = mNativeTestServer.getEchoBodyURL();
         CronetEngine engine = mTestRule.getTestFramework().startEngine();
 
         TestUrlRequestCallback callback = new TestUrlRequestCallback();
@@ -620,7 +633,7 @@ public final class CronetLoggerTest {
                 .getTestFramework()
                 .startEngine()
                 .newUrlRequestBuilder(
-                        NativeTestServer.getEchoBodyURL(), callback, callback.getExecutor())
+                        mNativeTestServer.getEchoBodyURL(), callback, callback.getExecutor())
                 .setUploadDataProvider(dataProvider, callback.getExecutor())
                 .addHeader("Content-Type", "useless/string")
                 .build()
@@ -681,6 +694,10 @@ public final class CronetLoggerTest {
             assertThat(trafficInfo.getNetworkInternalErrorCode()).isEqualTo(0);
             assertThat(trafficInfo.getFailureReason())
                     .isEqualTo(CronetTrafficInfo.RequestFailureReason.UNKNOWN);
+            assertThat(trafficInfo.getTimeToEstablishDNSMicros()).isGreaterThan(-1);
+            assertThat(trafficInfo.getTimeToEstablishSSLMicros()).isGreaterThan(0);
+            assertThat(trafficInfo.getTimeToConnectMicros()).isGreaterThan(0);
+            assertThat(trafficInfo.getTimeToSendFirstByteMicros()).isGreaterThan(0);
             assertThat(mTestLogger.callsToLogCronetEngineCreation()).isEqualTo(1);
             assertThat(mTestLogger.callsToLogCronetTrafficInfo()).isEqualTo(1);
         } finally {

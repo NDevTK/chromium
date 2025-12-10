@@ -9,8 +9,8 @@
 #include <memory>
 
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_sync_util.h"
 #include "chrome/browser/extensions/extension_util.h"
+#include "chrome/browser/extensions/sync/extension_sync_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/extensions_helper.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
@@ -41,7 +41,7 @@ struct AppState {
 
   syncer::StringOrdinal app_launch_ordinal;
   syncer::StringOrdinal page_ordinal;
-  extensions::LaunchType launch_type = extensions::LAUNCH_TYPE_INVALID;
+  extensions::LaunchType launch_type = extensions::LaunchType::kInvalid;
   GURL launch_web_url;
   std::string description;
   std::string name;

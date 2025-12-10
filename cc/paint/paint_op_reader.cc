@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -326,11 +327,17 @@ void PaintOpReader::Read(SkPath* path) {
         return;
 
       auto* scratch = CopyScratchSpace(path_bytes);
-      size_t bytes_read = path->readFromMemory(scratch, path_bytes);
-      if (bytes_read == 0u) {
+      size_t bytes_read = 0;
+      std::optional<SkPath> deserialized_path =
+          SkPath::ReadFromMemory(scratch, path_bytes, &bytes_read);
+
+      if (bytes_read == 0u || !deserialized_path) {
         SetInvalid(DeserializationError::kSkPathReadFromMemoryFailure);
         return;
       }
+
+      *path = *deserialized_path;
+
       if (entry_state == PaintCacheEntryState::kInlined) {
         options_.paint_cache->PutPath(path_id, *path);
       } else {
@@ -351,6 +358,7 @@ void PaintOpReader::Read(PaintFlags* flags) {
   Read(&flags->miter_limit_);
 
   ReadSimple(&flags->bitfields_uint_);
+  ReadSimple(&flags->targeted_hdr_headroom_);
 
   Read(&flags->path_effect_);
   Read(&flags->color_filter_);
@@ -377,9 +385,7 @@ void PaintOpReader::Read(CorePaintFlags* flags) {
   ReadSimple(&flags->bitfields_uint_);
 }
 
-void PaintOpReader::Read(
-    PaintImage* image,
-    PaintFlags::DynamicRangeLimitMixture dynamic_range_limit) {
+void PaintOpReader::Read(PaintImage* image) {
   uint8_t serialized_type_int = 0u;
   Read(&serialized_type_int);
   if (serialized_type_int >
@@ -392,10 +398,6 @@ void PaintOpReader::Read(
       static_cast<PaintOp::SerializedImageType>(serialized_type_int);
   if (serialized_type == PaintOp::SerializedImageType::kNoImage)
     return;
-
-  // Compute the HDR headroom for tone mapping.
-  const float hdr_headroom =
-      dynamic_range_limit.ComputeHdrHeadroom(options_.hdr_headroom);
 
   if (enable_security_constraints_) {
     switch (serialized_type) {
@@ -440,7 +442,6 @@ void PaintOpReader::Read(
                      .set_id(PaintImage::GetNextId())
                      .set_texture_image(SkImages::RasterFromPixmapCopy(pixmap),
                                         PaintImage::kNonLazyStableId)
-                     .set_target_hdr_headroom(hdr_headroom)
                      .TakePaintImage();
       }
         return;
@@ -496,7 +497,6 @@ void PaintOpReader::Read(
                  .set_id(PaintImage::GetNextId())
                  .set_texture_image(std::move(sk_image),
                                     PaintImage::kNonLazyStableId)
-                 .set_target_hdr_headroom(hdr_headroom)
                  .set_reinterpret_as_srgb(reinterpret_as_srgb)
                  .TakePaintImage();
     return;
@@ -533,15 +533,12 @@ void PaintOpReader::Read(
     PaintImageBuilder builder =
         PaintImageBuilder::WithDefault()
             .set_id(PaintImage::GetNextId())
-            .set_texture_image(entry->image(), PaintImage::kNonLazyStableId)
-            .set_target_hdr_headroom(hdr_headroom);
+            .set_texture_image(entry->image(), PaintImage::kNonLazyStableId);
     if (entry->HasGainmap()) {
       builder = std::move(builder).set_gainmap_texture_image(
           entry->gainmap_image(), entry->gainmap_info());
     }
-    if (entry->hdr_metadata().has_value()) {
-      builder = std::move(builder).set_hdr_metadata(entry->hdr_metadata());
-    }
+    builder = std::move(builder).set_hdr_metadata(entry->hdr_metadata());
     *image = builder.TakePaintImage();
   }
 }
@@ -720,8 +717,7 @@ void PaintOpReader::Read(sk_sp<PaintShader>* shader) {
   ReadSimple(&ref.start_degrees_);
   ReadSimple(&ref.end_degrees_);
   Read(&ref.gradient_interpolation_);
-  Read(&ref.image_, PaintFlags::DynamicRangeLimitMixture(
-                        PaintFlags::DynamicRangeLimit::kHigh));
+  Read(&ref.image_);
   bool has_record = false;
   Read(&has_record);
   uint32_t shader_id = PaintShader::kInvalidRecordShaderId;
@@ -1431,8 +1427,7 @@ void PaintOpReader::ReadImagePaintFilter(
     sk_sp<PaintFilter>* filter,
     const std::optional<PaintFilter::CropRect>& crop_rect) {
   PaintImage image;
-  Read(&image, PaintFlags::DynamicRangeLimitMixture(
-                   PaintFlags::DynamicRangeLimit::kHigh));
+  Read(&image);
   if (!image) {
     SetInvalid(DeserializationError::kReadImageFailure);
     return;

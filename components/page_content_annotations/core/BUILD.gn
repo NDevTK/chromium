@@ -31,9 +31,23 @@ static_library("core") {
     "page_content_annotations_validator.cc",
     "page_content_annotations_validator.h",
     "page_content_annotator.h",
+    "page_content_cache.cc",
+    "page_content_cache.h",
+    "page_content_cache_handler.cc",
+    "page_content_cache_handler.h",
+    "page_content_store.cc",
+    "page_content_store.h",
+    "web_state_wrapper.cc",
+    "web_state_wrapper.h",
   ]
   if (build_with_tflite_lib) {
     sources += [
+      "edu_classifier_model_executor.cc",
+      "edu_classifier_model_executor.h",
+      "edu_classifier_model_handler.cc",
+      "edu_classifier_model_handler.h",
+      "on_device_category_classifier.cc",
+      "on_device_category_classifier.h",
       "page_content_annotation_job_executor.cc",
       "page_content_annotation_job_executor.h",
       "page_content_annotations_model_manager.cc",
@@ -56,14 +70,20 @@ static_library("core") {
     "//components/omnibox/common",
     "//components/optimization_guide/core",
     "//components/optimization_guide/core:features",
+    "//components/passage_embeddings:passage_embeddings_types",
     "//components/search",
     "//components/search_engines",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
   ]
+  deps = [
+    "//components/database_utils",
+    "//components/os_crypt/async/browser",
+    "//sql",
+  ]
 
   if (build_with_tflite_lib) {
-    deps = [ "//third_party/tensorflow_models:tflite_custom_ops" ]
+    deps += [ "//third_party/tensorflow_models:tflite_custom_ops" ]
   }
 }
 
@@ -88,11 +108,15 @@ source_set("unit_tests") {
   testonly = true
   sources = [
     "page_content_annotation_job_unittest.cc",
+    "page_content_annotations_features_unittest.cc",
     "page_content_annotations_service_unittest.cc",
     "page_content_annotations_validator_unittest.cc",
+    "page_content_cache_unittest.cc",
+    "page_content_store_unittest.cc",
   ]
   if (build_with_tflite_lib) {
     sources += [
+      "edu_classifier_model_handler_unittest.cc",
       "page_content_annotation_job_executor_unittest.cc",
       "page_visibility_model_handler_unittest.cc",
     ]
@@ -112,6 +136,9 @@ source_set("unit_tests") {
     "//testing/gmock",
     "//testing/gtest",
   ]
+  if (is_ios) {
+    deps += [ "//components/test:page_content_annotations_test_bundle_data" ]
+  }
 }
 
 if (build_with_tflite_lib) {
@@ -119,7 +146,7 @@ if (build_with_tflite_lib) {
     sources = [ "page_visibility_model_fuzzer.cc" ]
     deps = [
       ":core",
-      "//base:base",
+      "//base",
       "//base/test:test_support",
     ]
   }

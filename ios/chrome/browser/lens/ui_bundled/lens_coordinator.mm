@@ -14,7 +14,6 @@
 #import "components/segmentation_platform/embedder/home_modules/tips_manager/signal_constants.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/first_run/public/best_features_item.h"
-#import "ios/chrome/browser/first_run/public/features.h"
 #import "ios/chrome/browser/intents/model/intents_donation_helper.h"
 #import "ios/chrome/browser/lens/ui_bundled/features.h"
 #import "ios/chrome/browser/lens/ui_bundled/lens_availability.h"
@@ -40,12 +39,13 @@
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/tabs/model/tabs_dependency_installer_bridge.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios_factory.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
 #import "ios/chrome/browser/web/model/web_navigation_util.h"
-#import "ios/chrome/browser/web_state_list/model/web_state_dependency_installer_bridge.h"
+#import "ios/chrome/browser/welcome_back/model/features.h"
 #import "ios/chrome/common/NSString+Chromium.h"
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -260,9 +260,11 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
     DCHECK(featureTracker);
     featureTracker->NotifyEvent(
         feature_engagement::events::kLensButtonKeyboardUsed);
-  } else if (entrypoint == LensEntrypoint::NewTabPage) {
-    GetApplicationContext()->GetLocalState()->SetInteger(
-        prefs::kNTPLensEntryPointNewBadgeShownCount, INT_MAX);
+  } else if (entrypoint == LensEntrypoint::Composebox) {
+    feature_engagement::Tracker* featureTracker = self.tracker;
+    DCHECK(featureTracker);
+    featureTracker->NotifyEvent(
+        feature_engagement::events::kIOSLensButtonComposeboxUsed);
   }
 
   if (!isIncognito) {
@@ -326,6 +328,9 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
     case LensEntrypoint::Keyboard:
       RecordCameraOpen(CameraOpenEntryPoint::KEYBOARD);
       break;
+    case LensEntrypoint::Composebox:
+      RecordCameraOpen(CameraOpenEntryPoint::COMPOSE_BOX);
+      break;
     case LensEntrypoint::Spotlight:
       RecordCameraOpen(CameraOpenEntryPoint::SPOTLIGHT);
       break;
@@ -341,7 +346,7 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
   }
 
   // Notify Welcome Back to remove Lens from the eligible features.
-  if (IsWelcomeBackInFirstRunEnabled()) {
+  if (IsWelcomeBackEnabled()) {
     MarkWelcomeBackFeatureUsed(BestFeaturesItemType::kLensSearch);
   }
 }
@@ -360,7 +365,7 @@ const base::TimeDelta kCloseLensViewTimeout = base::Seconds(10);
     self.loadingWebState = nil;
     if (index != WebStateList::kInvalidIndex) {
       self.browser->GetWebStateList()->CloseWebStateAt(
-          index, WebStateList::CLOSE_USER_ACTION);
+          index, WebStateList::ClosingReason::kUserAction);
     }
   }
 

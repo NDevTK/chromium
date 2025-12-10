@@ -26,11 +26,6 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/audio/hrtf_elevation.h"
 
 #include <math.h>
@@ -40,8 +35,10 @@
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "base/synchronization/lock.h"
+#include "media/base/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/hrtf_database.h"
 #include "third_party/blink/renderer/platform/audio/hrtf_panner.h"
@@ -222,9 +219,9 @@ bool HRTFElevation::CalculateKernelsForAzimuthElevation(
         AudioBus::Create(response->NumberOfChannels(), fft_size / 2));
     for (unsigned channel = 0; channel < response->NumberOfChannels();
          ++channel) {
-      memcpy(padded_response->Channel(channel)->MutableData(),
-             response->Channel(channel)->Data(),
-             response->length() * sizeof(float));
+      UNSAFE_TODO(memcpy(padded_response->Channel(channel)->MutableData(),
+                         response->Channel(channel)->Data(),
+                         response->length() * sizeof(float)));
     }
     response = padded_response;
   }

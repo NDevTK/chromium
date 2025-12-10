@@ -12,7 +12,6 @@
 #include "third_party/blink/renderer/core/highlight/highlight_registry_map_entry.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 
@@ -32,12 +31,11 @@ class LocalFrame;
 class Text;
 
 class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
-                                      public Supplement<LocalDOMWindow>,
                                       public HighlightRegistryMapIterable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static const char kSupplementName[];
+  static const unsigned kSupplementIndex;
   static HighlightRegistry* From(LocalDOMWindow&);
 
   explicit HighlightRegistry(LocalDOMWindow&);
@@ -83,8 +81,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
 
     bool FetchNextItem(ScriptState* script_state,
                        String& key,
-                       Highlight*& value,
-                       ExceptionState& exception_state) override;
+                       Highlight*& value) override;
 
     void Trace(blink::Visitor*) const override;
 
@@ -120,8 +117,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
 
   bool GetMapEntry(ScriptState*,
                    const String& key,
-                   Highlight*& value,
-                   ExceptionState&) override {
+                   Highlight*& value) override {
     auto iterator = GetMapIterator(AtomicString(key));
     if (iterator == highlights_.end())
       return false;
@@ -131,8 +127,7 @@ class CORE_EXPORT HighlightRegistry : public ScriptWrappable,
   }
 
   HighlightRegistryMapIterable::IterationSource* CreateIterationSource(
-      ScriptState*,
-      ExceptionState&) override;
+      ScriptState*) override;
 };
 
 }  // namespace blink

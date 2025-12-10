@@ -19,7 +19,8 @@ import org.chromium.base.test.transit.ViewElement;
 import org.chromium.chrome.browser.history.HistoryItemView;
 import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.transit.page.PageStation;
+import org.chromium.chrome.test.transit.SoftKeyboardFacility;
+import org.chromium.chrome.test.transit.page.CtaPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 
 /** The History pane station. */
@@ -38,34 +39,43 @@ public class HistoryPaneStation extends HubBaseStation {
     }
 
     /** Expect history entries to be displayed in the history pane. */
-    public HistoryWithEntriesFacility expectEntries() {
-        return enterFacilitySync(new HistoryWithEntriesFacility(), /* trigger= */ null);
+    public HistoryWithEntriesFacility expectEntries(boolean isLLFDevice) {
+        return noopTo().enterFacility(new HistoryWithEntriesFacility(isLLFDevice));
     }
 
     /** Expect no history to be displayed in the history pane. */
-    public void expectEmptyState() {
+    public void expectEmptyState(boolean isLLFDevice) {
         var emptyHistory = new Facility<>("EmptyState");
+
         emptyHistory.declareView(withText("You’ll find your history here"));
         emptyHistory.declareView(
-                withText("You can see the pages you’ve visited or delete them from your history"));
-        emptyHistory.declareNoView(withId(R.id.history_page_recycler_view));
-        enterFacilitySync(emptyHistory, /* trigger= */ null);
+                withText(
+                        "You can see the pages you’ve visited or delete them from your"
+                                + " history"));
+
+        if (!isLLFDevice) emptyHistory.declareNoView(withId(R.id.history_page_recycler_view));
+        else emptyHistory.declareView(withId(R.id.history_page_recycler_view));
+        noopTo().enterFacility(emptyHistory);
     }
 
     /** Non-empty state of the history pane. */
-    public class HistoryWithEntriesFacility extends Facility<HistoryPaneStation> {
+    public static class HistoryWithEntriesFacility extends Facility<HistoryPaneStation> {
         public final ViewElement<View> recyclerViewElement;
         public final ViewElement<View> searchButtonElement;
 
-        public HistoryWithEntriesFacility() {
+        public HistoryWithEntriesFacility(boolean isLLFDevice) {
             recyclerViewElement = declareView(withId(R.id.history_page_recycler_view));
+            if (isLLFDevice) {
+                searchButtonElement = null;
+                declareNoView(withId(R.id.search_menu_id));
+                return;
+            }
             searchButtonElement = declareView(withId(R.id.search_menu_id));
         }
 
         /** Expect an entry to be displayed in the history pane. */
         public HistoryEntryFacility expectEntry(String text) {
-            return mHostStation.enterFacilitySync(
-                    new HistoryEntryFacility(this, text), /* trigger= */ null);
+            return noopTo().enterFacility(new HistoryEntryFacility(this, text));
         }
 
         /** Expect an entry to be not displayed in the history pane. */
@@ -74,9 +84,16 @@ public class HistoryPaneStation extends HubBaseStation {
         }
 
         /** Open the history search. */
-        public HistorySearchFacility openSearch() {
-            return enterFacilitySync(
-                    new HistorySearchFacility(), searchButtonElement.getClickTrigger());
+        public HistorySearchFacility openSearch(boolean isLLFDevice) {
+            if (isLLFDevice) {
+                return noopTo().enterFacility(new HistorySearchFacility());
+            } else {
+                SoftKeyboardFacility softKeyboard = new SoftKeyboardFacility();
+                HistorySearchFacility historySearch = new HistorySearchFacility();
+                searchButtonElement.clickTo().enterFacilities(softKeyboard, historySearch);
+                softKeyboard.close();
+                return historySearch;
+            }
         }
     }
 
@@ -101,7 +118,7 @@ public class HistoryPaneStation extends HubBaseStation {
         }
 
         /** Select the entry to open. */
-        public WebPageStation selectToOpenWebPage(PageStation previousPage, String url) {
+        public WebPageStation selectToOpenWebPage(CtaPageStation previousPage, String url) {
             return itemElement
                     .clickTo()
                     .arriveAt(
@@ -121,7 +138,7 @@ public class HistoryPaneStation extends HubBaseStation {
         }
 
         public void typeSearchTerm(String text) {
-            editTextElement.getTypeTextTrigger(text).triggerTransition();
+            editTextElement.typeTextTo(text).executeTriggerWithoutTransition();
         }
     }
 }

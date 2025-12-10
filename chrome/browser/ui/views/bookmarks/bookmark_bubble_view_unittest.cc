@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/test/with_feature_override.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
@@ -35,6 +36,7 @@
 #include "components/feature_engagement/test/mock_tracker.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/base/features.h"
 #include "components/sync/test/test_sync_service.h"
 #include "components/tabs/public/tab_interface.h"
 #include "components/ukm/test_ukm_recorder.h"
@@ -279,7 +281,7 @@ class PriceTrackingViewFeatureFlagTest
       public testing::WithParamInterface<bool> {
  public:
   PriceTrackingViewFeatureFlagTest() {
-    MockCommerceUiTabHelper::ReplaceFactory();
+    commerce_ui_override_ = MockCommerceUiTabHelper::ReplaceFactory();
     const bool is_feature_enabled = GetParam();
     if (is_feature_enabled) {
       test_features_.InitAndEnableFeature(commerce::kShoppingList);
@@ -291,6 +293,9 @@ class PriceTrackingViewFeatureFlagTest
       const ::testing::TestParamInfo<ParamType>& info) {
     return info.param ? "ShoppingListEnabled" : "ShoppingListDisabled";
   }
+
+ private:
+  ui::UserDataFactory::ScopedOverride commerce_ui_override_;
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
@@ -331,14 +336,23 @@ TEST_P(PriceTrackingViewFeatureFlagTest, PriceTrackingViewCreation) {
 }
 
 class BookmarkBubbleViewShoppingCollectionTest
-    : public BookmarkBubbleViewTestBase {
+    : public base::test::WithFeatureOverride,
+      public BookmarkBubbleViewTestBase {
  public:
+  BookmarkBubbleViewShoppingCollectionTest()
+      : base::test::WithFeatureOverride(
+            syncer::kReplaceSyncPromosWithSignInPromos) {}
+
   void SetUp() override {
     BookmarkBubbleViewTestBase::SetUp();
 
     signin::MakePrimaryAccountAvailable(
         IdentityManagerFactory::GetForProfile(profile()), "test@example.com",
-        signin::ConsentLevel::kSync);
+        IsParamFeatureEnabled() ? signin::ConsentLevel::kSignin
+                                : signin::ConsentLevel::kSync);
+    if (IsParamFeatureEnabled()) {
+      GetBookmarkModel()->CreateAccountPermanentFolders();
+    }
   }
 
   TestingProfile::TestingFactories GetTestingFactories() override {
@@ -376,7 +390,7 @@ class BookmarkBubbleViewShoppingCollectionTest
   }
 };
 
-TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHShown) {
+TEST_P(BookmarkBubbleViewShoppingCollectionTest, IPHShown) {
   AddProductInfoToBookmark();
   MoveBookmarkToShoppingCollection();
 
@@ -395,7 +409,7 @@ TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHShown) {
       BookmarkBubbleView::bookmark_bubble()->GetFootnoteViewForTesting());
 }
 
-TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotInCollection) {
+TEST_P(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotInCollection) {
   AddProductInfoToBookmark();
 
   CreateBubbleView();
@@ -413,7 +427,7 @@ TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotInCollection) {
       BookmarkBubbleView::bookmark_bubble()->GetFootnoteViewForTesting());
 }
 
-TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotAProduct) {
+TEST_P(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotAProduct) {
   MoveBookmarkToShoppingCollection();
 
   CreateBubbleView();
@@ -430,6 +444,17 @@ TEST_F(BookmarkBubbleViewShoppingCollectionTest, IPHNotShown_NotAProduct) {
   EXPECT_FALSE(
       BookmarkBubbleView::bookmark_bubble()->GetFootnoteViewForTesting());
 }
+
+#if BUILDFLAG(IS_CHROMEOS)
+// The feature `switches::kSyncEnableBookmarksInTransportMode`, prerequisite of
+// `syncer::kReplaceSyncPromosWithSignInPromos`, is disabled for ChromeOS.
+INSTANTIATE_TEST_SUITE_P(All,
+                         BookmarkBubbleViewShoppingCollectionTest,
+                         testing::Values(false));
+#else
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(
+    BookmarkBubbleViewShoppingCollectionTest);
+#endif
 
 class BookmarkBubbleViewWithAccountBookmarksTest
     : public BookmarkBubbleViewTestBase {

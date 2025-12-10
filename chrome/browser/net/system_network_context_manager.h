@@ -9,11 +9,12 @@
 #include <optional>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "chrome/browser/enterprise/encryption/cache_encryption_provider_impl.h"
 #include "chrome/browser/net/cert_verifier_service_time_updater.h"
-#include "chrome/browser/net/cookie_encryption_provider_impl.h"
 #include "chrome/browser/net/proxy_config_monitor.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/ssl/ssl_config_service_manager.h"
@@ -23,6 +24,7 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom-forward.h"
+#include "services/network/public/cpp/cookie_encryption_provider_impl.h"
 #include "services/network/public/mojom/host_resolver.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
@@ -44,6 +46,10 @@ namespace net_log {
 class NetExportFileWriter;
 class NetLogProxySource;
 }
+
+namespace features {
+BASE_DECLARE_FEATURE(kPersistFailedLaunchState);
+}  // namespace features
 
 // Responsible for creating and managing access to the system NetworkContext.
 // Lives on the UI thread. The NetworkContext this owns is intended for requests
@@ -124,6 +130,11 @@ class SystemNetworkContextManager {
   void AddCookieEncryptionManagerToNetworkContextParams(
       network::mojom::NetworkContextParams* network_context_params);
 
+  // Adds a CacheEncryptionProvider mojo remote to the specified
+  // `network_context_params`.
+  void AddCacheEncryptionProviderToNetworkContextParams(
+      network::mojom::NetworkContextParams* network_context_params);
+
   // Populates |initial_ssl_config| and |ssl_config_client_receiver| members of
   // |network_context_params|. As long as the SystemNetworkContextManager
   // exists, any NetworkContext created with the params will continue to get
@@ -148,9 +159,12 @@ class SystemNetworkContextManager {
   // or destroyed, and so that it's destroyed before Mojo is shut down.
   net_log::NetExportFileWriter* GetNetExportFileWriter();
 
-  // Updates the network service with the given list of |trust_anchor_ids| (a
-  // list of TLS Trust Anchor IDs in binary representation).
-  void UpdateTrustAnchorIDs(std::vector<std::vector<uint8_t>> trust_anchor_ids);
+  // Updates the network service with the given list of |trust_anchor_ids|
+  // and |mtc_trust_anchor_ids| (lists of TLS Trust Anchor IDs in binary
+  // representation).
+  void UpdateTrustAnchorIDs(
+      std::vector<std::vector<uint8_t>> trust_anchor_ids,
+      std::vector<std::vector<uint8_t>> mtc_trust_anchor_ids);
 
   // Returns whether the network sandbox is enabled. This depends on policy but
   // also feature status from sandbox. Called before there is an instance of
@@ -193,6 +207,11 @@ class SystemNetworkContextManager {
       StubResolverConfigReader* reader) {
     stub_resolver_config_reader_for_testing_ = reader;
   }
+
+  // Returns true if a previous launch of the network service with the current
+  // major version (milestone) has failed to fully reach mojo and IPC startup
+  // successfully.
+  bool HasFailedPreviousRecentLaunch();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(
@@ -289,7 +308,10 @@ class SystemNetworkContextManager {
   GssapiLibraryLoadObserver gssapi_library_loader_observer_{this};
 #endif  // BUILDFLAG(IS_LINUX)
 
-  CookieEncryptionProviderImpl cookie_encryption_provider_;
+  std::unique_ptr<CookieEncryptionProviderImpl> cookie_encryption_provider_;
+
+  std::unique_ptr<enterprise_encryption::CacheEncryptionProviderImpl>
+      cache_encryption_provider_;
 
   std::unique_ptr<CertVerifierServiceTimeUpdater> cert_verifier_time_updater_;
 };

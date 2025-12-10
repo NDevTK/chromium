@@ -13,7 +13,7 @@
 #include "android_webview/browser_jni_headers/AwPermissionRequest_jni.h"
 
 using base::android::ConvertUTF8ToJavaString;
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using jni_zero::AttachCurrentThread;
 
@@ -48,7 +48,6 @@ AwPermissionRequest::~AwPermissionRequest() {
 }
 
 void AwPermissionRequest::OnAccept(JNIEnv* env,
-                                   const JavaParamRef<jobject>& jcaller,
                                    jboolean accept) {
   OnAcceptInternal(accept);
 }
@@ -89,3 +88,5 @@ void AwPermissionRequest::CancelAndDelete() {
 }
 
 }  // namespace android_webview
+
+DEFINE_JNI(AwPermissionRequest)

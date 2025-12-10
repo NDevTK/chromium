@@ -19,6 +19,7 @@
 #include "components/safe_browsing/content/browser/notification_content_detection/notification_content_detection_constants.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/site_engagement/content/site_engagement_service.h"
+#include "third_party/blink/public/mojom/notifications/notification.mojom.h"
 
 namespace safe_browsing {
 
@@ -55,7 +56,7 @@ std::string NotificationContentDetectionModel::GetSerializedMetadata(
           .Set(kMetadataIsOriginOnGlobalCacheListKey, is_on_global_cache_list)
           .Set(kMetadataIsOriginAllowlistedByUserKey, is_allowlisted_by_user);
   if (suspicious_score.has_value()) {
-    metadata_dict.Set(kMetadataSuspiciousKey, suspicious_score.value());
+    metadata_dict.Set(kMetadataSuspiciousScoreKey, suspicious_score.value());
   }
   std::string serialized_metadata;
   JSONStringValueSerializer serializer(&serialized_metadata);

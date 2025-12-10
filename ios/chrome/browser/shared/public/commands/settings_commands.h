@@ -31,6 +31,9 @@ enum class PushNotificationClientId;
             (UIViewController*)baseViewController
                           skipIfUINotAvailable:(BOOL)skipIfUINotAvailable;
 
+// Shows the BWG settings UI.
+- (void)showBWGSettings;
+
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the Google services settings UI, presenting from `baseViewController`.
 // If `baseViewController` is nil BVC will be used as presenterViewController.
@@ -53,6 +56,11 @@ enum class PushNotificationClientId;
 // Shows the list of saved passwords in the settings.
 - (void)showSavedPasswordsSettingsFromViewController:
     (UIViewController*)baseViewController;
+
+// Shows password manager on main page with a purpose to run the credential
+// exchange import flow. `UUID` is a token received from the OS during app
+// launch needed to receive credentials from an OS library.
+- (void)showPasswordManagerForCredentialImport:(NSUUID*)UUID;
 
 // Shows the password details page for a credential. `editMode` indicates
 // whether the details page should be opened in edit mode.
@@ -86,9 +94,6 @@ enum class PushNotificationClientId;
                                         sourceForUMA:
                                             (DefaultBrowserSettingsPageSource)
                                                 source;
-
-// Shows the settings page allowing the user to clear their browsing data.
-- (void)showClearBrowsingDataSettings;
 
 // Shows the Safety Check page and starts the Safety Check for `referrer`.
 - (void)showAndStartSafetyCheckForReferrer:

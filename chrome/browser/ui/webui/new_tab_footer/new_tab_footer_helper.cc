@@ -13,6 +13,7 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/search/ntp_features.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "extensions/common/constants.h"
 
@@ -30,7 +31,7 @@ bool IsExtensionNtp(const GURL& url, Profile* profile) {
     return false;
   }
 
-  return extension_managing_ntp->id() == url.host();
+  return extension_managing_ntp->id() == url.GetHost();
 }
 
 bool IsNtp(const GURL& url,
@@ -45,12 +46,5 @@ bool IsNtp(const GURL& url,
          NewTabPageThirdPartyUI::IsNewTabPageOrigin(url) ||
          search::NavEntryIsInstantNTP(web_contents, entry) ||
          ntp_footer::IsExtensionNtp(url, profile);
-}
-
-bool WillShowManagementNotice(const GURL& url,
-                              content::WebContents* web_contents,
-                              Profile* profile) {
-  return IsNtp(url, web_contents, profile) &&
-         enterprise_util::CanShowEnterpriseBadgingForNTPFooter(profile);
 }
 }  // namespace ntp_footer

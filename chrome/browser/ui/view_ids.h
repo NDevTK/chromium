@@ -95,14 +95,17 @@ enum ViewID {
   // Lens overlay.
   VIEW_ID_LENS_OVERLAY,
 
+  // The view that hosts the immersive Reading Mode.
+  VIEW_ID_READ_ANYTHING_OVERLAY,
+
+  // Glic Actor Overlay
+  VIEW_ID_ACTOR_OVERLAY,
+
   // The contents split.
   VIEW_ID_CONTENTS_SPLIT,
 
   // The Infobar container.
   VIEW_ID_INFO_BAR_CONTAINER,
-
-  // The Download shelf.
-  VIEW_ID_DOWNLOAD_SHELF,
 
   // The header in the App Identity Update dialog.
   VIEW_ID_APP_IDENTITY_UPDATE_HEADER,

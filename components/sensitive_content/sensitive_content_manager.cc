@@ -7,6 +7,7 @@
 #include "base/check_deref.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_structure.h"
@@ -48,8 +49,9 @@ SensitiveContentManager::SensitiveContentManager(
     SensitiveContentClient* client)
     : client_(CHECK_DEREF(client)) {
   autofill_managers_observation_.Observe(
-      web_contents, autofill::ScopedAutofillManagersObservation::
-                        InitializationPolicy::kObservePreexistingManagers);
+      autofill::ContentAutofillClient::FromWebContents(web_contents),
+      autofill::ScopedAutofillManagersObservation::InitializationPolicy::
+          kObservePreexistingManagers);
 }
 
 SensitiveContentManager::~SensitiveContentManager() = default;
@@ -84,8 +86,8 @@ void SensitiveContentManager::OnFieldTypesDetermined(AutofillManager& manager,
   if (const autofill::FormStructure* form =
           manager.FindCachedFormById(form_id)) {
     for (const std::unique_ptr<AutofillField>& field : form->fields()) {
-      const bool field_is_sensitive =
-          IsSensitiveAutofillType(field->Type().GetStorableType());
+      const bool field_is_sensitive = std::ranges::any_of(
+          field->Type().GetTypes(), &IsSensitiveAutofillType);
       // The feature param check is done first because reparsing by password
       // manager (calling `ClassifyAsPasswordForm`) can take long. Moreover,
       // this feature param exists only to check whether reparsing has a
@@ -168,7 +170,8 @@ void SensitiveContentManager::OnAutofillManagerStateChanged(
       const std::vector<std::unique_ptr<AutofillField>>& fields =
           form_structure->fields();
       for (const std::unique_ptr<AutofillField>& field : fields) {
-        if (IsSensitiveAutofillType(field->Type().GetStorableType())) {
+        if (std::ranges::any_of(field->Type().GetTypes(),
+                                &IsSensitiveAutofillType)) {
           sensitive_fields_.insert(field->global_id());
         }
       }

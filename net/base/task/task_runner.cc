@@ -4,16 +4,32 @@
 
 #include "net/base/task/task_runner.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
+#include "base/rand_util.h"
 
 namespace net {
 
+namespace {
+base::MetricsSubSampler& GetMetricsSubSampler() {
+  static base::MetricsSubSampler sampler;
+  return sampler;
+}
+
+}  // namespace
+
 const scoped_refptr<base::SingleThreadTaskRunner>& GetTaskRunner(
     RequestPriority priority) {
-  if (priority == RequestPriority::HIGHEST &&
-      internal::GetTaskRunnerGlobals().high_priority_task_runner) {
-    return internal::GetTaskRunnerGlobals().high_priority_task_runner;
+  // Sample with a 0.001 probability to reduce metrics overhead.
+  if (GetMetricsSubSampler().ShouldSample(0.001)) {
+    base::UmaHistogramEnumeration("Net.TaskRunner.RequestPriority", priority);
   }
+
+  if (internal::GetTaskRunnerGlobals().task_runners[priority]) {
+    return internal::GetTaskRunnerGlobals().task_runners[priority];
+  }
+  // Fall back to the default task runner if the embedder does not inject one,
+  // for example, when the NetworkServiceTaskScheduler feature is disabled.
   return base::SingleThreadTaskRunner::GetCurrentDefault();
 }
 

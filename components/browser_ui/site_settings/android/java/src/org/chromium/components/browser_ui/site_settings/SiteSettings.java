@@ -21,8 +21,9 @@ import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.CustomDividerFragment;
 import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
+import org.chromium.components.browser_ui.settings.search.BaseSearchIndexProvider;
 import org.chromium.components.browser_ui.site_settings.SiteSettingsCategory.Type;
-import org.chromium.components.content_settings.ContentSettingValues;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.content_settings.CookieControlsMode;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.BrowserContextHandle;
@@ -47,8 +48,6 @@ public class SiteSettings extends BaseSiteSettingsFragment
     @VisibleForTesting
     public static final String PERMISSION_AUTOREVOCATION_HISTOGRAM_NAME =
             "Settings.SafetyHub.AutorevokeUnusedSitePermissions.Changed";
-
-    private static final String DIVIDER_PREF = "divider";
 
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
@@ -76,12 +75,18 @@ public class SiteSettings extends BaseSiteSettingsFragment
     }
 
     private void configurePreferences() {
+        // TODO(crbug.com/439911511): Remove the divider directly form the layout.
+        if (getSiteSettingsDelegate().isSettingsContainmentEnabled()) {
+            Preference divider = findPreference("divider");
+            if (divider != null) {
+                getPreferenceScreen().removePreference(divider);
+            }
+        }
+
         if (getSiteSettingsDelegate().shouldShowTrackingProtectionUi()) {
-            Preference thirdPartyCookiesPref =
-                    findPreference(Type.THIRD_PARTY_COOKIES);
+            Preference thirdPartyCookiesPref = findPreference(Type.THIRD_PARTY_COOKIES);
             thirdPartyCookiesPref.setVisible(false);
-            Preference trackingProtectionPref =
-                    findPreference(Type.TRACKING_PROTECTION);
+            Preference trackingProtectionPref = findPreference(Type.TRACKING_PROTECTION);
             trackingProtectionPref.setVisible(true);
         }
 
@@ -93,15 +98,6 @@ public class SiteSettings extends BaseSiteSettingsFragment
                 Preference pref = findPreference(type);
                 getPreferenceScreen().removePreference(pref);
             }
-        }
-
-        // Remove the permission autorevocation preference if Safety Hub is not enabled.
-        if (!getSiteSettingsDelegate().isSafetyHubEnabled()) {
-            Preference autorevocationPref =
-                    findPreference(PERMISSION_AUTOREVOCATION_PREF);
-            getPreferenceScreen().removePreference(autorevocationPref);
-            Preference dividerPref = findPreference(DIVIDER_PREF);
-            getPreferenceScreen().removePreference(dividerPref);
         }
     }
 
@@ -124,8 +120,7 @@ public class SiteSettings extends BaseSiteSettingsFragment
                     WebsitePreferenceBridge.requiresTriStateContentSetting(contentType);
 
             boolean checked = false; // Used for binary settings
-            @ContentSettingValues
-            int setting = ContentSettingValues.DEFAULT; // Used for tri-state settings.
+            @ContentSetting int setting = ContentSetting.DEFAULT; // Used for tri-state settings.
 
             if (prefCategory == Type.DEVICE_LOCATION) {
                 checked =
@@ -156,7 +151,7 @@ public class SiteSettings extends BaseSiteSettingsFragment
                                     prefCategory)
                             .showPermissionBlockedMessage(getContext())) {
                 // Show 'disabled' message when permission is not granted in Android.
-                @ContentSettingValues
+                @ContentSetting
                 Integer defaultDisabledValue =
                         assumeNonNull(
                                 ContentSettingsResources.getDefaultDisabledValue(contentType));
@@ -167,11 +162,8 @@ public class SiteSettings extends BaseSiteSettingsFragment
                 p.setSummary(ContentSettingsResources.getSiteDataListSummary(checked));
             } else if (Type.THIRD_PARTY_COOKIES == prefCategory) {
                 p.setSummary(
-                        getSiteSettingsDelegate().isAlwaysBlock3pcsIncognitoEnabled()
-                                        && cookieControlsMode == CookieControlsMode.INCOGNITO_ONLY
-                                ? R.string.third_party_cookies_link_row_sub_label_enabled
-                                : ContentSettingsResources.getThirdPartyCookieListSummary(
-                                        cookieControlsMode));
+                        ContentSettingsResources.getThirdPartyCookieListSummary(
+                                cookieControlsMode));
             } else if (Type.DEVICE_LOCATION == prefCategory
                     && checked
                     && WebsitePreferenceBridge.isLocationAllowedByPolicy(browserContextHandle)) {
@@ -196,7 +188,7 @@ public class SiteSettings extends BaseSiteSettingsFragment
                         ContentSettingsResources.getCategorySummary(
                                 setting, /* isOneTime= */ false));
             } else {
-                @ContentSettingValues
+                @ContentSetting
                 Integer defaultForToggle =
                         checked
                                 ? ContentSettingsResources.getDefaultEnabledValue(contentType)
@@ -274,4 +266,14 @@ public class SiteSettings extends BaseSiteSettingsFragment
     public @AnimationType int getAnimationType() {
         return AnimationType.PROPERTY;
     }
+
+    @Override
+    public @Nullable String getMainMenuKey() {
+        return "content_settings";
+    }
+
+    // TODO(crbug.com/444470792): Determine what pieces of logic are dynamic and need handling.
+    public static final BaseSearchIndexProvider SEARCH_INDEX_DATA_PROVIDER =
+            new BaseSearchIndexProvider(
+                    SiteSettings.class.getName(), R.xml.site_settings_preferences);
 }

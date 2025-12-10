@@ -34,15 +34,10 @@ const char kFeaturePolicyBlocked[] =
     "Access to the feature \"local-fonts\" is disallowed by Permissions Policy";
 }
 
-// static
-const char FontAccess::kSupplementName[] = "FontAccess";
-
-FontAccess::FontAccess(LocalDOMWindow* window)
-    : Supplement<LocalDOMWindow>(*window), remote_(window) {}
+FontAccess::FontAccess(LocalDOMWindow* window) : remote_(window) {}
 
 void FontAccess::Trace(blink::Visitor* visitor) const {
   visitor->Trace(remote_);
-  Supplement<LocalDOMWindow>::Trace(visitor);
 }
 
 // static
@@ -58,10 +53,10 @@ ScriptPromise<IDLSequence<FontMetadata>> FontAccess::queryLocalFonts(
 
 // static
 FontAccess* FontAccess::From(LocalDOMWindow* window) {
-  auto* supplement = Supplement<LocalDOMWindow>::From<FontAccess>(window);
+  FontAccess* supplement = window->GetFontAccess();
   if (!supplement) {
     supplement = MakeGarbageCollected<FontAccess>(window);
-    Supplement<LocalDOMWindow>::ProvideTo(*window, supplement);
+    window->SetFontAccess(supplement);
   }
   return supplement;
 }
@@ -94,7 +89,7 @@ ScriptPromise<IDLSequence<FontMetadata>> FontAccess::QueryLocalFontsImpl(
         remote_.BindNewPipeAndPassReceiver(
             context->GetTaskRunner(TaskType::kFontLoading)));
     remote_.set_disconnect_handler(
-        WTF::BindOnce(&FontAccess::OnDisconnect, WrapWeakPersistent(this)));
+        BindOnce(&FontAccess::OnDisconnect, WrapWeakPersistent(this)));
   }
   DCHECK(remote_.is_bound());
 
@@ -103,8 +98,8 @@ ScriptPromise<IDLSequence<FontMetadata>> FontAccess::QueryLocalFontsImpl(
           script_state, exception_state.GetContext());
   auto promise = resolver->Promise();
   remote_->EnumerateLocalFonts(resolver->WrapCallbackInScriptScope(
-      WTF::BindOnce(&FontAccess::DidGetEnumerationResponse,
-                    WrapWeakPersistent(this), WrapPersistent(options))));
+      blink::BindOnce(&FontAccess::DidGetEnumerationResponse,
+                      WrapWeakPersistent(this), WrapPersistent(options))));
 
   return promise;
 }

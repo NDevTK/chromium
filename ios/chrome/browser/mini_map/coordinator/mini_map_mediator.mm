@@ -136,14 +136,6 @@ enum class MiniMapOutcome {
   }
 }
 
-- (void)userDisabledURLSettingFromMiniMap {
-  // TODO(crbug.com/420402648): Add metrics.
-  if (!self.prefService) {
-    return;
-  }
-  self.prefService->SetBoolean(prefs::kIosMiniMapShowNativeMap, false);
-}
-
 - (void)userOpenedSettingsFromDisableConfirmation {
   base::UmaHistogramEnumeration("IOS.MiniMap.Outcome",
                                 MiniMapOutcome::kUserDisabledThenSettings);

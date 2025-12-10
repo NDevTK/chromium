@@ -21,15 +21,16 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSuppliers;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.components.browser_ui.widget.TouchEventProvider;
 import org.chromium.ui.base.TestActivity;
+
+import java.util.function.Supplier;
 
 @RunWith(BaseRobolectricTestRunner.class)
 public class HistoryNavigationCoordinatorUnitTest {
@@ -38,8 +39,8 @@ public class HistoryNavigationCoordinatorUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveContextWrapperTestRule =
-            new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mAutomotiveContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
 
     @Rule
     public ActivityScenarioRule<TestActivity> mActivityScenarioRule =
@@ -47,7 +48,6 @@ public class HistoryNavigationCoordinatorUnitTest {
 
     @Mock private ActivityLifecycleDispatcher mLifecycleDispatcher;
     @Mock private ViewGroup mParentView;
-    @Mock private ActivityTabProvider mTab;
     @Mock private Supplier<TouchEventProvider> mTouchEventProviderSupplier;
     @Mock private TouchEventProvider mTouchEventProvider;
     @Mock private FullscreenManager mFullscreenManager;
@@ -71,7 +71,7 @@ public class HistoryNavigationCoordinatorUnitTest {
                         mLifecycleDispatcher,
                         mParentView,
                         null,
-                        mTab,
+                        ObservableSuppliers.alwaysNull(),
                         null,
                         null,
                         mTouchEventProviderSupplier,

@@ -4,10 +4,13 @@
 
 #include "chrome/browser/glic/fre/glic_fre_controller.h"
 
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/metrics/user_action_tester.h"
 #include "base/test/run_until.h"
 #include "base/time/time.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
+#include "chrome/browser/glic/fre/glic_fre_page_handler.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/glic/test_support/glic_test_environment.h"
 #include "chrome/browser/glic/test_support/non_interactive_glic_test.h"
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
@@ -19,9 +22,21 @@
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/views/widget/widget.h"
 
 namespace glic {
 namespace {
+
+// Fake handler to allow testing multi-handler coordination.
+class FakeGlicFrePageHandler : public GlicFrePageHandler {
+ public:
+  FakeGlicFrePageHandler(bool is_unified,
+                         content::WebContents* web_contents,
+                         GlicFreController& controller)
+      : GlicFrePageHandler(is_unified, web_contents, {}) {}
+
+  void SimulateAccept() { AcceptFre(); }
+};
 
 class GlicFreControllerBrowserTest : public NonInteractiveGlicTest {
  public:
@@ -36,8 +51,8 @@ class GlicFreControllerBrowserTest : public NonInteractiveGlicTest {
     NonInteractiveGlicTest::SetUpOnMainThread();
   }
 
-  GlicFreController* glic_fre_controller() {
-    return glic_service()->window_controller().fre_controller();
+  GlicFreController& glic_fre_controller() {
+    return glic_service()->fre_controller();
   }
 
   tabs::TabInterface* GetTabInterfaceForActiveWebContents(Browser* browser) {
@@ -48,13 +63,19 @@ class GlicFreControllerBrowserTest : public NonInteractiveGlicTest {
 
   void WaitForFreShow() {
     ASSERT_TRUE(base::test::RunUntil([&]() {
-      return glic_fre_controller()->IsShowingDialog();
+      return glic_fre_controller().IsShowingDialog();
     })) << "FRE dialog should have been shown";
+  }
+
+  void WaitForFreInitialized() {
+    ASSERT_TRUE(base::test::RunUntil([&]() {
+      return glic_fre_controller().IsShowingDialogAndStateInitialized();
+    })) << "FRE dialog should have been initialized";
   }
 
   void WaitForFreClose() {
     ASSERT_TRUE(base::test::RunUntil([&]() {
-      return !glic_fre_controller()->IsShowingDialog();
+      return !glic_fre_controller().IsShowingDialog();
     })) << "FRE dialog should have been closed";
   }
 
@@ -68,9 +89,13 @@ class GlicFreControllerBrowserTest : public NonInteractiveGlicTest {
     auto end_time = base::TimeTicks::Now() + base::Milliseconds(500);
     ASSERT_TRUE(base::test::RunUntil(
         [&]() { return end_time < base::TimeTicks::Now(); }));
-    ASSERT_FALSE(glic_fre_controller()->IsShowingDialog())
+    ASSERT_FALSE(glic_fre_controller().IsShowingDialog())
         << "FRE dialog should not have been shown";
   }
+
+ protected:
+  base::UserActionTester user_action_tester_;
+  base::HistogramTester histogram_tester_;
 };
 
 IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
@@ -80,13 +105,13 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // FRE dialog should be blocked from showing if another modal dialog is
   // already open.
   auto scoped_tab_modal_ui = tab->ShowModalUI();
-  EXPECT_FALSE(glic_fre_controller()->CanShowFreDialog(browser()));
+  EXPECT_FALSE(glic_fre_controller().CanShowFreDialog(browser()));
 
   // The FRE dialog should be able to open after the existing modal dialog
   // is closed.
   scoped_tab_modal_ui.reset();
-  EXPECT_TRUE(glic_fre_controller()->CanShowFreDialog(browser()));
-  glic_fre_controller()->ShowFreDialog(
+  EXPECT_TRUE(glic_fre_controller().CanShowFreDialog(browser()));
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
 
   // Verify the FRE dialog is shown.
@@ -98,8 +123,8 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   tabs::TabInterface* tab = GetTabInterfaceForActiveWebContents(browser());
 
   // The FRE dialog should be able to open with no other modal dialogs open.
-  EXPECT_TRUE(glic_fre_controller()->CanShowFreDialog(browser()));
-  glic_fre_controller()->ShowFreDialog(
+  EXPECT_TRUE(glic_fre_controller().CanShowFreDialog(browser()));
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
 
   // Verify the FRE dialog is shown.
@@ -109,7 +134,7 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   EXPECT_FALSE(tab->CanShowModalUI());
 
   // Once the FRE is closed, other modal dialogs can be shown again.
-  glic_fre_controller()->DismissFre();
+  glic_fre_controller().DismissFre(mojom::FreWebUiState::kReady);
   EXPECT_TRUE(tab->CanShowModalUI());
 }
 
@@ -118,13 +143,13 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Open the FRE dialog in a tab.
   chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  EXPECT_TRUE(glic_fre_controller()->CanShowFreDialog(browser()));
-  glic_fre_controller()->ShowFreDialog(
+  EXPECT_TRUE(glic_fre_controller().CanShowFreDialog(browser()));
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 
   // Showing the FRE should be blocked as it is already open in the same tab.
-  EXPECT_FALSE(glic_fre_controller()->CanShowFreDialog(browser()));
+  EXPECT_FALSE(glic_fre_controller().CanShowFreDialog(browser()));
 }
 
 IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
@@ -132,13 +157,13 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Open the FRE dialog in a tab.
   chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 
   // Close the FRE on the active tab.
-  glic_fre_controller()->DismissFreIfOpenOnActiveTab(browser());
-  EXPECT_FALSE(glic_fre_controller()->IsShowingDialog());
+  glic_fre_controller().DismissFreIfOpenOnActiveTab(browser());
+  EXPECT_FALSE(glic_fre_controller().IsShowingDialog());
 }
 
 IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
@@ -147,7 +172,7 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Open the FRE dialog in a tab.
   chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 }
@@ -157,7 +182,7 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Open the FRE dialog in a tab.
   chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 
@@ -166,8 +191,8 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   browser()->tab_strip_model()->ActivateTabAt(1);
 
   // Attempting to close the FRE on the active tab should do nothing.
-  glic_fre_controller()->DismissFreIfOpenOnActiveTab(browser());
-  EXPECT_TRUE(glic_fre_controller()->IsShowingDialog());
+  glic_fre_controller().DismissFreIfOpenOnActiveTab(browser());
+  EXPECT_TRUE(glic_fre_controller().IsShowingDialog());
 }
 
 // TODO(crbug.com/402310277): Re-enable this test.
@@ -185,7 +210,7 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Open the FRE dialog in a tab.
   chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
   tabs::TabInterface* original_tab =
@@ -197,8 +222,8 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   tabs::TabInterface* new_tab = GetTabInterfaceForActiveWebContents(browser());
 
   // Opening the FRE dialog should close the existing dialog.
-  EXPECT_TRUE(glic_fre_controller()->CanShowFreDialog(browser()));
-  glic_fre_controller()->ShowFreDialog(
+  EXPECT_TRUE(glic_fre_controller().CanShowFreDialog(browser()));
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
   // The original tab no longer has a modal, while the active one does.
@@ -213,7 +238,7 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Open the FRE dialog in a tab.
   chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
   tabs::TabInterface* original_tab =
@@ -228,8 +253,8 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   auto scoped_tab_modal_ui = new_tab->ShowModalUI();
   // The FRE should be blocked from showing, the existing FRE should not close,
   // and a new FRE should not be opened in the active tab.
-  EXPECT_FALSE(glic_fre_controller()->CanShowFreDialog(browser()));
-  glic_fre_controller()->DismissFreIfOpenOnActiveTab(browser());
+  EXPECT_FALSE(glic_fre_controller().CanShowFreDialog(browser()));
+  glic_fre_controller().DismissFreIfOpenOnActiveTab(browser());
   WaitForFreShow();
   EXPECT_FALSE(original_tab->CanShowModalUI());
 }
@@ -239,7 +264,7 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
 IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
                        FreControllerWithWebContentsDestruction) {
   // Open the FRE dialog in a tab.
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 
@@ -250,27 +275,131 @@ IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
   // Destroy the WebContents that the dialog is being shown on.
   browser()->tab_strip_model()->CloseWebContentsAt(
       0, TabCloseTypes::CLOSE_USER_GESTURE);
+
+  WaitForFreClose();
+  histogram_tester_.ExpectUniqueSample(
+      "Glic.Fre.WidgetClosedReason2",
+      /*sample=*/glic::GlicFreWidgetClosedReason::kHostTabClosed,
+      /*expected_bucket_count=*/1);
 }
 
 IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest, FreAcceptance) {
+  if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+    // TODO(b/453696965): Broken in multi-instance.
+    GTEST_SKIP() << "Skipping for kGlicMultiInstance";
+  }
   // Open the FRE dialog in a tab.
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 
   // Accept the FRE and confirm it closed and the glic panel opened.
-  glic_fre_controller()->AcceptFre();
+  glic_fre_controller().AcceptFre(/*handler=*/nullptr);
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.Accept"), 1);
   WaitForFreClose();
   WaitForGlicPanelShow();
+  histogram_tester_.ExpectUniqueSample(
+      "Glic.Fre.WidgetClosedReason2",
+      /*sample=*/glic::GlicFreWidgetClosedReason::kAcceptButtonClicked,
+      /*expected_bucket_count=*/1);
 }
 
 IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest, DoNotCrashOnBrowserClose) {
   // Open the FRE dialog in a tab.
-  glic_fre_controller()->ShowFreDialog(
+  glic_fre_controller().ShowFreDialog(
       browser(), mojom::InvocationSource::kTopChromeButton);
   WaitForFreShow();
 
   chrome::CloseAllBrowsers();
+  histogram_tester_.ExpectUniqueSample(
+      "Glic.Fre.WidgetClosedReason2",
+      /*sample=*/glic::GlicFreWidgetClosedReason::kHostTabClosed,
+      /*expected_bucket_count=*/1);
+}
+
+IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
+                       NoPanelClosedActionOnBrowserCloseBeforeShow) {
+  // Close the browser, which should not log a "panel closed" user action.
+  chrome::CloseAllBrowsers();
+
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.ErrorPanelClosed"), 0);
+  EXPECT_EQ(
+      user_action_tester_.GetActionCount("Glic.Fre.DisabledByAdminPanelClosed"),
+      0);
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.OfflinePanelClosed"),
+            0);
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.LoadingPanelClosed"),
+            0);
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.ReadyPanelClosed"), 0);
+  EXPECT_EQ(
+      user_action_tester_.GetActionCount("Glic.Fre.UninitializedPanelClosed"),
+      0);
+}
+
+IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
+                       PanelClosedActionOnBrowserCloseAfterShow) {
+  // Open the FRE dialog in a tab.
+  glic_fre_controller().ShowFreDialog(
+      browser(), mojom::InvocationSource::kTopChromeButton);
+  WaitForFreInitialized();
+
+  // Close the browser, which should not log a "panel closed" user action.
+  chrome::CloseAllBrowsers();
+
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.LoadingPanelClosed"),
+            1);
+  histogram_tester_.ExpectUniqueSample(
+      "Glic.Fre.WidgetClosedReason2",
+      /*sample=*/glic::GlicFreWidgetClosedReason::kHostTabClosed,
+      /*expected_bucket_count=*/1);
+}
+
+IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest, FreRejection) {
+  // Open the FRE dialog in a tab.
+  glic_fre_controller().ShowFreDialog(
+      browser(), mojom::InvocationSource::kTopChromeButton);
+  WaitForFreShow();
+
+  // Reject the FRE and confirm it closed.
+  glic_fre_controller().RejectFre();
+  EXPECT_EQ(user_action_tester_.GetActionCount("Glic.Fre.NoThanks"), 1);
+  WaitForFreClose();
+
+  // Verify the close reason was logged correctly.
+  histogram_tester_.ExpectUniqueSample(
+      "Glic.Fre.WidgetClosedReason2",
+      /*sample=*/glic::GlicFreWidgetClosedReason::kCancelButtonClicked,
+      /*expected_bucket_count=*/1);
+}
+
+IN_PROC_BROWSER_TEST_F(GlicFreControllerBrowserTest,
+                       FreAcceptanceClosesOtherHandlers) {
+  // Open two tabs so there are valid WebContents for the handlers.
+  chrome::AddTabAt(browser(), GURL("about:blank"), -1, true);
+  content::WebContents* wc1 = browser()->tab_strip_model()->GetWebContentsAt(0);
+  content::WebContents* wc2 = browser()->tab_strip_model()->GetWebContentsAt(1);
+  // Show FRE (initializes controller state) in 2 tabs and create 2 page
+  // handlers.
+  glic_service()->ToggleUI(browser(), true,
+                           mojom::InvocationSource::kTopChromeButton);
+  FakeGlicFrePageHandler handler1(/*is_unified=*/true, wc1,
+                                  glic_fre_controller());
+  glic_service()->ToggleUI(browser(), true,
+                           mojom::InvocationSource::kTopChromeButton);
+  FakeGlicFrePageHandler handler2(/*is_unified=*/true, wc2,
+                                  glic_fre_controller());
+
+  // Handler 1 accepts.
+  handler1.SimulateAccept();
+
+  // Verify that a sample was recorded in each histogram, regardless of its
+  // value.
+  histogram_tester_.ExpectTotalCount("Glic.UnifiedFre.TotalTime.Accepted", 1);
+  histogram_tester_.ExpectTotalCount(
+      "Glic.UnifiedFre.TotalTime.AcceptedByOtherInstance", 1);
+  // Ensure no generic dismissal was logged.
+  histogram_tester_.ExpectTotalCount("Glic.Fre.TotalTime.Dismissed", 0);
+  histogram_tester_.ExpectTotalCount("Glic.UnifiedFre.TotalTime.Dismissed", 0);
 }
 
 }  // namespace

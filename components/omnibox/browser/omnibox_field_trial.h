@@ -15,11 +15,14 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
+#include "components/omnibox/browser/aim_eligibility_service.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/omnibox_proto/entity_info.pb.h"
+
+class AutocompleteProviderClient;
 
 namespace base {
 class TimeDelta;
@@ -140,38 +143,13 @@ bool HasDynamicFieldTrialGroupPrefix(const char* group_prefix);
 void GetActiveSuggestFieldTrialHashes(std::vector<uint32_t>* field_trial_hash);
 
 // ---------------------------------------------------------
-// For the SearchHistory experiment that's part of the bundled omnibox
-// field trial.
-
-// ---------------------------------------------------------
-// For the DemoteByType experiment that's part of the bundled omnibox field
-// trial.
-
-// If the user is in an experiment group that, in the provided
-// |current_page_classification| context, demotes the relevance scores
-// of certain types of matches, populates the |demotions_by_type| map
-// appropriately.  Otherwise, sets |demotions_by_type| to its default
-// value based on the context.
-void GetDemotionsByType(
-    metrics::OmniboxEventProto::PageClassification current_page_classification,
-    DemotionMultipliers* demotions_by_type);
-
-// ---------------------------------------------------------
 // For experiments related to the number of suggestions shown.
 
 // If the user is in an experiment group that specifies the max results for a
 // particular provider, returns the limit. Otherwise returns the default limit.
 size_t GetProviderMaxMatches(AutocompleteProvider::Type provider);
 
-// Returns whether the feature to limit the number of shown URL matches
-// is enabled.
-bool IsMaxURLMatchesFeatureEnabled();
 
-// Returns the maximum number of URL matches that should be allowed within
-// the Omnibox if there are search-type matches available to replace them.
-// If the capping feature is not enabled, or the parameter cannot be
-// parsed, it returns 0.
-size_t GetMaxURLMatches();
 
 // ---------------------------------------------------------
 // For the HistoryURL provider new scoring experiment that is part of the
@@ -354,7 +332,6 @@ extern const char kMaxNumHQPUrlsIndexedAtStartupOnNonLowEndDevicesParam[];
 
 // Parameter names used by num suggestion experiments.
 extern const char kMaxZeroSuggestMatchesParam[];
-extern const char kOmniboxMaxURLMatchesParam[];
 extern const char kUIMaxAutocompleteMatchesByProviderParam[];
 extern const char kUIMaxAutocompleteMatchesParam[];
 // The URL cutoff and increased limit for dynamic max autocompletion.
@@ -408,9 +385,6 @@ extern const base::FeatureParam<bool> kZeroSuggestPrefetchDebounceFromLastRun;
 // Determines the maximum number of entries stored by the in-memory ZPS cache.
 extern const base::FeatureParam<int> kZeroSuggestCacheMaxSize;
 
-// Returns true if any of the zero-suggest prefetching features are enabled.
-bool IsZeroSuggestPrefetchingEnabled();
-
 // Returns whether zero-suggest prefetching is enabled in the given context.
 bool IsZeroSuggestPrefetchingEnabledInContext(
     metrics::OmniboxEventProto::PageClassification page_classification);
@@ -424,6 +398,19 @@ bool IsOnFocusZeroSuggestEnabledInContext(
 bool IsHideSuggestionGroupHeadersEnabledInContext(
     metrics::OmniboxEventProto::PageClassification page_classification);
 
+// Returns whether the deterministic AIM shortcut action in typed state is
+// enabled.
+bool IsDeterministicAimActionInTypedStateEnabled(
+    AutocompleteProviderClient* client);
+
+// Returns whether AIM page action in Omnibox is enabled.
+bool IsAimOmniboxEntrypointEnabled(
+    const AimEligibilityService* aim_eligibility_service);
+
+// Returns whether AIM starter pack is enabled.
+bool IsAimStarterPackEnabled(
+    const AimEligibilityService* aim_eligibility_service);
+
 // Rich autocompletion.
 bool IsRichAutocompletionEnabled();
 extern const base::FeatureParam<size_t>
@@ -434,42 +421,6 @@ extern const base::FeatureParam<size_t>
 // Specifies the relevance scores for the Site Search Starter Pack ACMatches
 // (e.g. @bookmarks, @history) provided by the Builtin Provider.
 extern const base::FeatureParam<int> kSiteSearchStarterPackRelevanceScore;
-
-// Domain suggestions.
-// Whether enabled for counterfactual logging; i.e. shouldn't use domain
-// suggestions/scores.
-extern const base::FeatureParam<bool> kDomainSuggestionsCounterfactual;
-// The minimum number of unique URLs a domain needs to be considered highly
-// visited.
-extern const base::FeatureParam<int> kDomainSuggestionsTypedUrlsThreshold;
-// The minimum number of typed visits a URL needs to count for
-// `kDomainSuggestionsTypedUrlsThreshold`
-extern const base::FeatureParam<int> kDomainSuggestionsTypedUrlsOffset;
-// The minimum number of typed visits a domain needs to be considered highly
-// visited.
-extern const base::FeatureParam<int> kDomainSuggestionsTypedVisitThreshold;
-// The value to subtract from each URL's typed visits before contributing to
-// `kDomainSuggestionsTypedVisitThreshold`.
-extern const base::FeatureParam<int> kDomainSuggestionsTypedVisitOffset;
-// The max each visit can contribute to `kDomainSuggestionsTypedVisitThreshold`.
-// E.g. if 2, 'google.com/x' is typed-visited 5 times, and 'google.com/y' is
-// typed visited 1 time, then 'google.com' will be scored min(5,2) + min(1,2) =
-// 3, rather than 5+1 = 6.
-extern const base::FeatureParam<int> kDomainSuggestionsTypedVisitCapPerVisit;
-// The input inclusive minimum length to trigger domain suggestions.
-extern const base::FeatureParam<int> kDomainSuggestionsMinInputLength;
-// The maximum number of matches per domain to suggest.
-extern const base::FeatureParam<int> kDomainSuggestionsMaxMatchesPerDomain;
-// The scoring factor used to boost HQP suggestions from highly visited domains.
-// A value of 1 is the control behavior. A value of 2 will boost scores, but not
-// necessarily double them due to how HQP maps the factors to actual scores.
-extern const base::FeatureParam<double> kDomainSuggestionsScoreFactor;
-// Whether to use an alternative scoring algorithm based on last visit time to
-// boost scores (e.g., 1000 - 80 / day). If disabled, domain suggestions use
-// traditional HQP scoring (optionally scaled by
-// `kDomainSuggestionsScoreFactor`). If enabled, they use the max of the
-// traditional and the alternate scoring algorithms.
-extern const base::FeatureParam<bool> kDomainSuggestionsAlternativeScoring;
 
 // ---------------------------------------------------------
 // ML Relevance Scoring ->
@@ -690,25 +641,6 @@ std::vector<std::pair<double, int>> GetPiecewiseMappingBreakPoints(
 // ---------------------------------------------------------
 // Actions In Suggest ->
 
-constexpr base::FeatureParam<bool> kAnswerActionsCounterfactual(
-    &omnibox::kOmniboxAnswerActions,
-    "AnswerActionsCounterfactual",
-    false);
-constexpr base::FeatureParam<bool> kAnswerActionsShowAboveKeyboard(
-    &omnibox::kOmniboxAnswerActions,
-    "ShowAboveKeyboard",
-    false);
-
-constexpr base::FeatureParam<bool> kAnswerActionsShowIfUrlsPresent(
-    &omnibox::kOmniboxAnswerActions,
-    "ShowIfUrlsPresent",
-    false);
-
-constexpr base::FeatureParam<bool> kAnswerActionsShowRichCard(
-    &omnibox::kOmniboxAnswerActions,
-    "ShowRichCard",
-    false);
-
 // <- Actions In Suggest
 // ---------------------------------------------------------
 // Touch Down Trigger For Prefetch ->
@@ -764,12 +696,50 @@ inline constexpr base::FeatureParam<bool> kAndroidDiagInputConnection{
 // <- Diagnostics
 // ---------------------------------------------------------
 // Mobile Parity update -->
-inline constexpr base::FeatureParam<bool> kMobileParityRetrieveTrueFavicon{
-    &omnibox::kOmniboxMobileParityUpdate, "retrieve_true_favicon", false};
+inline constexpr base::FeatureParam<bool> kMobileParityRetrieveBuiltinFavicon{
+    &omnibox::kOmniboxMobileParityUpdateV2, "retrieve_builtin_favicon", true};
 
 inline constexpr base::FeatureParam<bool> kMobileParityEnableFeedForGoogleOnly{
     &omnibox::kOmniboxMobileParityUpdate, "enable_feed_for_google_only", true};
 // <-- Mobile Parity update
+
+// Aim shortcut for typed state ->
+
+constexpr base::FeatureParam<int> kMinimumTypedCharactersToInvokeAimShortcut(
+    &omnibox::kOmniboxAimShortcutTypedState,
+    "MinimumTypedCharactersToInvokeAimShortcut",
+    1);
+
+// <- Aim shortcut for typed state
+
+#if BUILDFLAG(IS_ANDROID)
+// Omnibox Improvement for Large Form Factors -->
+
+inline constexpr base::FeatureParam<bool>
+    kOmniboxImprovementForLFFSwitchToTabChip{
+        &omnibox::kOmniboxImprovementForLFF, "switch_to_tab_chip", false};
+
+inline constexpr base::FeatureParam<bool>
+    kOmniboxImprovementForLFFRemoveSuggestionViaButton{
+        &omnibox::kOmniboxImprovementForLFF, "remove_suggestion_via_button",
+        false};
+
+inline constexpr base::FeatureParam<bool>
+    kOmniboxImprovementForLFFPersistEditingState{
+        &omnibox::kOmniboxImprovementForLFF, "persist_editing_state", false};
+
+// <-- Omnibox Improvement for Large Form Factors
+// Fusebox -->
+inline constexpr base::FeatureParam<bool> kOmniboxMultimodalInputMultiContext{
+    &omnibox::kOmniboxMultimodalInput, "multi_context", false};
+
+inline constexpr base::FeatureParam<bool>
+    kOmniboxMultimodalPrioritizeSuggestionsForFirstDocument{
+        &omnibox::kOmniboxMultimodalInput,
+        "prioritize_suggestions_for_first_document",
+        BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)};
+// <-- Fusebox
+#endif
 
 // New params should be inserted above this comment. They should be ordered
 // consistently with `omnibox_features.h`. They should be formatted as:
@@ -796,39 +766,6 @@ inline constexpr base::FeatureParam<bool> kMobileParityEnableFeedForGoogleOnly{
   // If true, document suggestions will be hidden but logged for analysis.
   extern const base::FeatureParam<bool> kDocumentCounterfactual;
 */
-
-namespace internal {
-// The bundled omnibox experiment comes with a set of parameters
-// (key-value pairs).  Each key indicates a certain rule that applies in
-// a certain context.  The value indicates what the consequences of
-// applying the rule are.  For example, the value of a SearchHistory rule
-// in the context of a search results page might indicate that we should
-// prevent search history matches from inlining.
-//
-// This function returns the value associated with the |rule| that applies
-// in the current context (which currently consists of |page_classification|
-// and whether Instant Extended is enabled).  If no such rule exists in the
-// current context, fall back to the rule in various wildcard contexts and
-// return its value if found.  If the rule remains unfound in the global
-// context, returns the empty string.  For more details, including how we
-// prioritize different wildcard contexts, see the implementation.  How to
-// interpret the value is left to the caller; this is rule-dependent.
-//
-// Deprecated. Use GetValueForRuleInContextByFeature instead.
-std::string GetValueForRuleInContext(
-    const std::string& rule,
-    metrics::OmniboxEventProto::PageClassification page_classification);
-
-// Same as GetValueForRuleInContext, but by |feature| instead of the bundled
-// omnibox experiment.  Prefer to use this method over GetValueForRuleInContext
-// when possible, as it can be useful to configure parameters outside of the
-// omnibox bundled experiment.
-std::string GetValueForRuleInContextByFeature(
-    const base::Feature& feature,
-    const std::string& rule,
-    metrics::OmniboxEventProto::PageClassification page_classification);
-
-}  // namespace internal
 
 }  // namespace OmniboxFieldTrial
 

@@ -21,21 +21,15 @@ class FaviconDriver;
 class TabFavicon : public favicon::FaviconDriverObserver {
  public:
   TabFavicon(JNIEnv* env,
-             const base::android::JavaParamRef<jobject>& obj,
+             const base::android::JavaRef<jobject>& obj,
              int navigation_transition_favicon_size);
   ~TabFavicon() override;
 
-  void SetWebContents(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& jweb_contents);
-  void ResetWebContents(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& obj);
-  void OnDestroyed(JNIEnv* env,
-                   const base::android::JavaParamRef<jobject>& obj);
-  base::android::ScopedJavaLocalRef<jobject> GetFavicon(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  void SetWebContents(JNIEnv* env,
+                      const base::android::JavaRef<jobject>& jweb_contents);
+  void ResetWebContents(JNIEnv* env);
+  void OnDestroyed(JNIEnv* env);
+  base::android::ScopedJavaLocalRef<jobject> GetFavicon(JNIEnv* env);
 
   // favicon::FaviconDriverObserver
   void OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,

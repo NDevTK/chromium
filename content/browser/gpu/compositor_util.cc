@@ -184,24 +184,18 @@ std::vector<GpuFeatureData> GetGpuFeatureData(
       "multiple_raster_threads",
       GetFakeFeatureStatus(NumberOfRendererRasterThreads() > 1));
 #if BUILDFLAG(IS_ANDROID)
-  features.emplace_back(
-      "surface_control",
-      SafeGetFeatureStatus(gpu_feature_info,
-                           gpu::GPU_FEATURE_TYPE_ANDROID_SURFACE_CONTROL));
+  features.emplace_back("surface_control",
+                        features::IsAndroidSurfaceControlEnabled()
+                            ? gpu::kGpuFeatureStatusEnabled
+                            : gpu::kGpuFeatureStatusDisabled);
 #endif
-  features.emplace_back(
-      "webgl2",
-      SafeGetFeatureStatus(
-          gpu_feature_info, gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL2,
-          command_line.HasSwitch(switches::kDisableWebGL) ||
-              command_line.HasSwitch(switches::kDisableWebGL2)),
-      DisableInfo::Problem(
-          "WebGL2 has been disabled via blocklist or the command line."),
-      false);
   features.emplace_back("raw_draw",
                         GetFakeFeatureStatus(::features::IsUsingRawDraw()));
-  features.emplace_back("direct_rendering_display_compositor",
-                        GetFakeFeatureStatus(::features::IsDrDcEnabled()));
+  features.emplace_back(
+      "direct_rendering_display_compositor",
+      SafeGetFeatureStatus(
+          gpu_feature_info,
+          gpu::GPU_FEATURE_TYPE_DIRECT_RENDERING_DISPLAY_COMPOSITOR));
   features.emplace_back(
       "webgpu",
       SafeGetFeatureStatus(
@@ -271,7 +265,6 @@ base::Value GetFeatureStatusImpl(GpuFeatureInfoType type) {
         status += "_on";
       }
       if ((gpu_feature_data.name == "webgl" ||
-           gpu_feature_data.name == "webgl2" ||
            gpu_feature_data.name == "webgpu") &&
           is_gpu_compositing_disabled)
         status += "_readback";

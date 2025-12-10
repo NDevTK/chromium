@@ -33,6 +33,7 @@
 
 #include <limits>
 
+#include "base/containers/span.h"
 #include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/events/before_text_inserted_event.h"
@@ -120,9 +121,9 @@ void NumberInputType::SetValueAsDouble(double new_value,
   GetElement().SetValue(SerializeForNumberType(new_value), event_behavior);
 }
 
-void NumberInputType::SetValueAsDecimal(const Decimal& new_value,
-                                        TextFieldEventBehavior event_behavior,
-                                        ExceptionState& exception_state) const {
+void NumberInputType::SetValueAsDecimal(
+    const Decimal& new_value,
+    TextFieldEventBehavior event_behavior) const {
   GetElement().SetValue(SerializeForNumberType(new_value), event_behavior);
 }
 
@@ -288,7 +289,7 @@ void NumberInputType::HandleBeforeTextInsertedEvent(
     // - Reject if the editing value contains 'e' and the caret is placed
     // neither at the beginning of the value nor just after 'e'
     else if (locale.IsSignPrefix(c)) {
-      String both_halves = left_half + right_half;
+      String both_halves = StrCat({left_half, right_half});
       if (locale.HasTwoSignChars(both_halves) ||
           (both_halves.Find(IsE) != kNotFound &&
            !(left_half == "" || IsE(left_half[left_half.length() - 1]))))
@@ -308,7 +309,7 @@ void NumberInputType::HandleBeforeTextInsertedEvent(
     }
 
     // Add character
-    left_half = left_half + c;
+    left_half = StrCat({left_half, StringView(base::span_from_ref(c))});
     final_event_text.Append(c);
   }
   event.SetText(final_event_text.ReleaseString());

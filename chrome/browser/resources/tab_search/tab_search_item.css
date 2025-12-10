@@ -33,6 +33,12 @@
   width: auto;
 }
 
+@media (forced-colors: active) {
+  :host(:is(.hovered, .selected)) {
+    border: 1px solid ActiveBorder;
+  }
+}
+
 .button-container {
   height: 0;
   margin-inline-start: 2px;
@@ -71,6 +77,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#secondaryText {
+  /* Elide hostname from the front to prevent URL spoofing. */
+  direction: rtl;
 }
 
 #primaryText {

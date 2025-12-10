@@ -3,35 +3,41 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.win builder group."""
 
-load("//lib/args.star", "args")
-load("//lib/branches.star", "branches")
-load("//lib/builder_config.star", "builder_config")
-load("//lib/builder_health_indicators.star", "health_spec")
-load("//lib/builders.star", "gardener_rotations", "os", "siso")
-load("//lib/ci.star", "ci")
-load("//lib/consoles.star", "consoles")
-load("//lib/gn_args.star", "gn_args")
-load("//lib/html.star", "linkify_builder")
-load("//lib/targets.star", "targets")
+load("@chromium-luci//args.star", "args")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builder_config.star", "builder_config")
+load("@chromium-luci//builder_health_indicators.star", "health_spec")
+load("@chromium-luci//builders.star", "os")
+load("@chromium-luci//ci.star", "ci")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//gn_args.star", "gn_args")
+load("@chromium-luci//html.star", "linkify_builder")
+load("@chromium-luci//targets.star", "targets")
+load("//lib/ci_constants.star", "ci_constants")
+load("//lib/gardener_rotations.star", "gardener_rotations")
+load("//lib/siso.star", "siso")
 
 ci.defaults.set(
-    executable = ci.DEFAULT_EXECUTABLE,
+    executable = ci_constants.DEFAULT_EXECUTABLE,
     builder_group = "chromium.win",
     builder_config_settings = builder_config.ci_settings(
         retry_failed_shards = True,
     ),
-    pool = ci.DEFAULT_POOL,
+    pool = ci_constants.DEFAULT_POOL,
     cores = 8,
     os = os.WINDOWS_DEFAULT,
     gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
-    tree_closing_notifiers = ci.DEFAULT_TREE_CLOSING_NOTIFIERS,
+    tree_closing_notifiers = ci_constants.DEFAULT_TREE_CLOSING_NOTIFIERS,
     main_console_view = "main",
     contact_team_email = "chrome-desktop-engprod@google.com",
-    execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    health_spec = health_spec.DEFAULT,
-    service_account = ci.DEFAULT_SERVICE_ACCOUNT,
-    shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
+    execution_timeout = ci_constants.DEFAULT_EXECUTION_TIMEOUT,
+    experiments = {
+        "chromium_tests.resultdb_module": 100,
+    },
+    health_spec = health_spec.default(),
+    service_account = ci_constants.DEFAULT_SERVICE_ACCOUNT,
+    shadow_service_account = ci_constants.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_project = siso.project.DEFAULT_TRUSTED,
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
@@ -72,7 +78,6 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     targets = targets.bundle(
         targets = [
@@ -105,7 +110,6 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -122,7 +126,6 @@ ci.builder(
             "chromium_win_scripts",
         ],
         additional_compile_targets = [
-            "ipc_fuzzer",
             "pdf_fuzzers",
         ],
     ),
@@ -151,12 +154,15 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
             "gpu_tests",
             "debug_builder",
+            # TODO(https://crbug.com/449751912): Prformance overhead of
+            # symbolizing crash stacks in debug builds were causing renderer
+            # crash related tests to timeout.
+            "no_symbols",
             "remoteexec",
             "win",
             "x64",
@@ -193,7 +199,6 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     targets = targets.bundle(
         targets = [
@@ -262,10 +267,13 @@ ci.builder(
                 # crbug.com/870673
                 experiment_percentage = 100,
             ),
+            "content_browsertests": targets.mixin(
+                swarming = targets.swarming(
+                    shards = 12,
+                ),
+            ),
         },
     ),
-    # Too flaky. See crbug.com/876224 for more details.
-    gardener_rotations = args.ignore_default(None),
     tree_closing = False,
     console_view_entry = consoles.console_view_entry(
         category = "debug|tester",
@@ -289,7 +297,6 @@ ci.builder(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -339,7 +346,6 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -360,7 +366,6 @@ ci.builder(
             "blink_platform_nocompile_tests",
             "blink_probes_nocompile_tests",
             "content_nocompile_tests",
-            "ipc_fuzzer",
             "pdf_fuzzers",
         ],
     ),
@@ -396,7 +401,6 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     targets = targets.bundle(
         targets = [
@@ -408,6 +412,7 @@ ci.builder(
             "x86-64",
             "win10",
             "isolate_profile_data",
+            "retry_only_failed_tests",
         ],
         per_test_modifications = {
             "blink_web_tests": targets.mixin(
@@ -428,7 +433,6 @@ ci.builder(
                 # Only retry the individual failed tests instead of rerunning
                 # entire shards.
                 # crbug.com/1473501
-                retry_only_failed_tests = True,
                 swarming = targets.swarming(
                     # This is for slow test execution that often becomes a
                     # critical path of swarming jobs. crbug.com/868114
@@ -438,12 +442,6 @@ ci.builder(
             "chromedriver_py_tests": targets.mixin(
                 # TODO(crbug.com/40868908): Fix & re-enable.
                 isolate_profile_data = False,
-            ),
-            "content_browsertests": targets.mixin(
-                # Only retry the individual failed tests instead of rerunning
-                # entire shards.
-                # crbug.com/1475852
-                retry_only_failed_tests = True,
             ),
             "interactive_ui_tests": targets.mixin(
                 swarming = targets.swarming(
@@ -497,7 +495,6 @@ ci.thin_tester(
             target_bits = 32,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     targets = targets.bundle(
         targets = [
@@ -538,7 +535,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     targets = targets.bundle(
         targets = [
@@ -547,11 +543,14 @@ ci.thin_tester(
         ],
         mixins = [
             "x86-64",
-            "win11",
+            "win11-any",
             "isolate_profile_data",
+            "retry_only_failed_tests",
         ],
         per_test_modifications = {
             "blink_web_tests": targets.mixin(
+                # TODO(https://crbug.com/433551587): Fix test failures due to win11-24h2
+                experiment_percentage = 100,
                 swarming = targets.swarming(
                     shards = 12,
                 ),
@@ -568,6 +567,11 @@ ci.thin_tester(
             ),
             "components_browsertests_no_field_trial": targets.remove(
                 reason = "crbug/40630866",
+            ),
+            "interactive_ui_tests": targets.mixin(
+                swarming = targets.swarming(
+                    shards = 9,
+                ),
             ),
             "interactive_ui_tests_no_field_trial": targets.remove(
                 reason = "crbug/40630866",
@@ -634,7 +638,6 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -690,7 +693,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     builder_config_settings = builder_config.ci_settings(
         retry_failed_shards = True,
@@ -703,6 +705,7 @@ ci.thin_tester(
         ],
         mixins = [
             "win-arm64",
+            "retry_only_failed_tests",
         ],
         per_test_modifications = {
             "browser_tests": targets.mixin(
@@ -717,6 +720,11 @@ ci.thin_tester(
             ),
             "components_browsertests_no_field_trial": targets.remove(
                 reason = "Disabled on similar Windows testers due to crbug/40630866.",
+            ),
+            "interactive_ui_tests": targets.mixin(
+                swarming = targets.swarming(
+                    shards = 6,
+                ),
             ),
             "interactive_ui_tests_no_field_trial": targets.remove(
                 reason = "Disabled on similar Windows testers due to crbug/40630866.",
@@ -781,7 +789,6 @@ ci.builder(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -828,7 +835,6 @@ ci.thin_tester(
             target_bits = 64,
             target_platform = builder_config.target_platform.WIN,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     targets = targets.bundle(
         targets = [
@@ -929,7 +935,6 @@ ci.builder(
             target_platform = builder_config.target_platform.WIN,
             host_platform = builder_config.host_platform.LINUX,
         ),
-        build_gs_bucket = "chromium-win-archive",
     ),
     gn_args = gn_args.config(
         configs = [
@@ -954,9 +959,6 @@ ci.builder(
         ],
         per_test_modifications = {
             "blink_web_tests": targets.remove(
-                reason = "TODO: crbug.com/346921029 - fix broken tests.",
-            ),
-            "blink_wpt_tests": targets.remove(
                 reason = "TODO: crbug.com/346921029 - fix broken tests.",
             ),
             "grit_python_unittests": targets.remove(

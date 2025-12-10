@@ -36,6 +36,7 @@ suite('AutofillAiAddOrEditDialogUiTest', function() {
         addEntityTypeString: 'Add vehicle',
         editEntityTypeString: 'Edit vehicle',
         deleteEntityTypeString: 'Delete vehicle',
+        supportsWalletStorage: false,
       },
       attributeInstances: [
         {
@@ -120,10 +121,10 @@ suite('AutofillAiAddOrEditDialogUiTest', function() {
   }
 
   const addOrEditEntityInstanceParams: AddOrEditParamsInterface[] = [
-    {confirmed: true, add: true, title: 'testAddEntityInstanceConfirmed'},
-    {confirmed: true, add: false, title: 'testEditEntityInstanceConfirmed'},
-    {confirmed: false, add: true, title: 'testAddEntityInstanceCancelled'},
-    {confirmed: false, add: false, title: 'testEditEntityInstanceCancelled'},
+    {confirmed: true, add: true, title: 'AddEntityInstanceConfirmed'},
+    {confirmed: true, add: false, title: 'EditEntityInstanceConfirmed'},
+    {confirmed: false, add: true, title: 'AddEntityInstanceCancelled'},
+    {confirmed: false, add: false, title: 'EditEntityInstanceCancelled'},
   ];
 
   addOrEditEntityInstanceParams.forEach(
@@ -173,7 +174,7 @@ suite('AutofillAiAddOrEditDialogUiTest', function() {
         const dialogTitle =
             dialog.shadowRoot!.querySelector<HTMLElement>('div[slot="title"]');
         assertTrue(
-            dialogTitle!.textContent!.includes(
+            dialogTitle!.textContent.includes(
                 params.add ? 'Add vehicle' : 'Edit vehicle'));
 
         // Edit first field.
@@ -213,7 +214,7 @@ suite('AutofillAiAddOrEditDialogUiTest', function() {
         }
       }));
 
-  test('testAddOrEditEntityInstanceValidationError', async function() {
+  test('AddOrEditEntityInstanceValidationError', async function() {
     dialog.entityInstance = testEntityInstance;
     document.body.appendChild(dialog);
     await entityDataManager.whenCalled('getAllAttributeTypesForEntityTypeName');
@@ -333,6 +334,7 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
         addEntityTypeString: 'Add passport',
         editEntityTypeString: 'Edit passport',
         deleteEntityTypeString: 'Delete passport',
+        supportsWalletStorage: false,
       },
       attributeInstances: [],
       guid: 'e4bbe384-ee63-45a4-8df3-713a58fdc181',
@@ -374,16 +376,16 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
 
   const addOrEditEntityInstanceCountryParams:
       AddOrEditEntityInstanceCountryParamsInterface[] = [
-        {add: true, changeCountry: true, title: 'testAddEntityInstanceCountry'},
+        {add: true, changeCountry: true, title: 'AddEntityInstanceCountry'},
         {
           add: false,
           changeCountry: true,
-          title: 'testEditEntityInstanceCountry',
+          title: 'EditEntityInstanceCountry',
         },
         {
           add: false,
           changeCountry: false,
-          title: 'testEditEntityInstanceDontChangeCountry',
+          title: 'EditEntityInstanceDontChangeCountry',
         },
       ];
 
@@ -409,10 +411,10 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
         assertTrue(!!countrySelect);
         if (params.add) {
           assertEquals('', countrySelect.value);
-          assertTrue(countrySelect.textContent!.includes('Select'));
+          assertTrue(countrySelect.textContent.includes('Select'));
         } else {
           assertEquals(oldCountryCode, countrySelect.value);
-          assertTrue(countrySelect.textContent!.includes('Germany'));
+          assertTrue(countrySelect.textContent.includes('Germany'));
         }
 
         if (params.changeCountry) {
@@ -457,16 +459,16 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
 
   const addOrEditEntityInstanceDateParams:
       AddOrEditEntityInstanceDateParamsInterface[] = [
-        {add: true, changeDate: true, title: 'testAddEntityInstanceDate'},
+        {add: true, changeDate: true, title: 'AddEntityInstanceDate'},
         {
           add: false,
           changeDate: true,
-          title: 'testEditEntityInstanceDate',
+          title: 'EditEntityInstanceDate',
         },
         {
           add: false,
           changeDate: false,
-          title: 'testEditEntityInstanceDontChangeDate',
+          title: 'EditEntityInstanceDontChangeDate',
         },
       ];
 
@@ -503,16 +505,16 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
           assertEquals('', monthSelect.value);
           assertEquals('', daySelect.value);
           assertEquals('', yearSelect.value);
-          assertTrue(monthSelect.textContent!.includes('MM'));
-          assertTrue(daySelect.textContent!.includes('DD'));
-          assertTrue(yearSelect.textContent!.includes('YYYY'));
+          assertTrue(monthSelect.textContent.includes('MM'));
+          assertTrue(daySelect.textContent.includes('DD'));
+          assertTrue(yearSelect.textContent.includes('YYYY'));
         } else {
           assertEquals(oldDate.month, monthSelect.value);
           assertEquals(oldDate.day, daySelect.value);
           assertEquals(oldDate.year, yearSelect.value);
-          assertTrue(monthSelect.textContent!.includes('Mar'));
-          assertTrue(daySelect.textContent!.includes(oldDate.day));
-          assertTrue(yearSelect.textContent!.includes(oldDate.year));
+          assertTrue(monthSelect.textContent.includes('Mar'));
+          assertTrue(daySelect.textContent.includes(oldDate.day));
+          assertTrue(yearSelect.textContent.includes(oldDate.year));
         }
 
         if (params.changeDate) {
@@ -544,7 +546,7 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
         assertDeepEquals(expectedEntityInstance, dialogConfirmedEvent.detail);
       }));
 
-  test('testEditEntityInstanceExistingYearOutOfBounds', async function() {
+  test('EditEntityInstanceExistingYearOutOfBounds', async function() {
     // Set up the test.
     (testDateAttributeInstance.value as DateValue).year = '1800';
     testEntityInstance.attributeInstances.push(testDateAttributeInstance);
@@ -572,7 +574,7 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
     assertEquals('1800', yearSelect.value);
   });
 
-  test('testAddOrEditEntityInstanceCountryValidationError', async function() {
+  test('AddOrEditEntityInstanceCountryValidationError', async function() {
     testEntityInstance.attributeInstances.push(testCountryAttributeInstance);
     dialog.entityInstance = testEntityInstance;
     document.body.appendChild(dialog);
@@ -616,7 +618,7 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
     assertFalse(saveButton.disabled);
   });
 
-  test('testAddOrEditEntityInstanceDateValidationError', async function() {
+  test('AddOrEditEntityInstanceDateValidationError', async function() {
     testEntityInstance.attributeInstances.push(testDateAttributeInstance);
     dialog.entityInstance = testEntityInstance;
     document.body.appendChild(dialog);
@@ -802,7 +804,7 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
             ' Nov\n',
             ' Dec\n',
           ],
-          title: 'testMonthPickerHasCorrectMonthsEnglishLocale',
+          title: 'MonthPickerHasCorrectMonthsEnglishLocale',
         },
         {
           locale: 'cs',
@@ -820,7 +822,7 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
             ' lis\n',
             ' pro\n',
           ],
-          title: 'testMonthPickerHasCorrectMonthsCzechLocale',
+          title: 'MonthPickerHasCorrectMonthsCzechLocale',
         },
       ];
 
@@ -839,13 +841,13 @@ suite('AutofillAiAddOrEditDialogSelectElementUiTest', function() {
         const firstOptionInTheMonthSelectorIndex =
             Array.from(allSelectorOptions)
                 .findIndex(
-                    option => option.textContent!.includes(
+                    option => option.textContent.includes(
                         params.monthsAbbreviations[0]!));
         assertNotEquals(firstOptionInTheMonthSelectorIndex, -1);
 
         for (let i = 0, j = firstOptionInTheMonthSelectorIndex;
              i < params.monthsAbbreviations.length; i++, j++) {
-          assertTrue(allSelectorOptions.item(j).textContent!.includes(
+          assertTrue(allSelectorOptions.item(j).textContent.includes(
               params.monthsAbbreviations[i]!));
         }
       }));

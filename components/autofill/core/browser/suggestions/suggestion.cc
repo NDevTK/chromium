@@ -56,8 +56,6 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kAccount";
     case Suggestion::Icon::kClear:
       return "kClear";
-    case Suggestion::Icon::kCreate:
-      return "kCreate";
     case Suggestion::Icon::kCode:
       return "kCode";
     case Suggestion::Icon::kDelete:
@@ -70,6 +68,8 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kEmail";
     case Suggestion::Icon::kError:
       return "kError";
+    case Suggestion::Icon::kFlight:
+      return "kFlight";
     case Suggestion::Icon::kGlobe:
       return "kGlobe";
     case Suggestion::Icon::kGoogle:
@@ -86,10 +86,6 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kGoogleWalletMonochrome";
     case Suggestion::Icon::kHome:
       return "kHome";
-    case Suggestion::Icon::kHttpWarning:
-      return "kHttpWarning";
-    case Suggestion::Icon::kHttpsInvalid:
-      return "kHttpsInvalid";
     case Suggestion::Icon::kIdCard:
       return "kIdCard";
     case Suggestion::Icon::kKey:
@@ -104,6 +100,8 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kOfferTag";
     case Suggestion::Icon::kPenSpark:
       return "kPenSpark";
+    case Suggestion::Icon::kPersonCheck:
+      return "kPersonCheck";
     case Suggestion::Icon::kQuestionMark:
       return "kQuestionMark";
     case Suggestion::Icon::kRecoveryPassword:
@@ -112,8 +110,6 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kScanCreditCard";
     case Suggestion::Icon::kSettings:
       return "kSettings";
-    case Suggestion::Icon::kSettingsAndroid:
-      return "kSettingsAndroid";
     case Suggestion::Icon::kUndo:
       return "kUndo";
     case Suggestion::Icon::kVehicle:
@@ -154,6 +150,8 @@ std::string_view ConvertIconToPrintableString(Suggestion::Icon icon) {
       return "kBnpl";
     case Suggestion::Icon::kSaveAndFill:
       return "kSaveAndFill";
+    case Suggestion::Icon::kAndroidMessages:
+      return "kAndroidMessages";
   }
   NOTREACHED();
 }
@@ -172,6 +170,14 @@ Suggestion::PasswordSuggestionDetails::PasswordSuggestionDetails(
       signon_realm(signon_realm),
       display_signon_realm(display_signon_realm),
       is_cross_domain(is_cross_domain) {}
+
+Suggestion::PasswordSuggestionDetails::PasswordSuggestionDetails(
+    std::u16string_view username,
+    std::u16string_view password,
+    std::u16string_view backup_password)
+    : username(username),
+      password(password),
+      backup_password(backup_password) {}
 
 Suggestion::PasswordSuggestionDetails::PasswordSuggestionDetails(
     const PasswordSuggestionDetails&) = default;
@@ -207,7 +213,7 @@ Suggestion::PlusAddressPayload::~PlusAddressPayload() = default;
 
 Suggestion::AutofillAiPayload::AutofillAiPayload() = default;
 
-Suggestion::AutofillAiPayload::AutofillAiPayload(base::Uuid guid)
+Suggestion::AutofillAiPayload::AutofillAiPayload(EntityInstance::EntityId guid)
     : guid(std::move(guid)) {}
 
 Suggestion::AutofillAiPayload::AutofillAiPayload(const AutofillAiPayload&) =
@@ -258,8 +264,11 @@ Suggestion::AutofillProfilePayload::CreateJavaObject() const {
 Suggestion::IdentityCredentialPayload::IdentityCredentialPayload() = default;
 Suggestion::IdentityCredentialPayload::IdentityCredentialPayload(
     GURL configURL,
-    std::string account_id)
-    : config_url(std::move(configURL)), account_id(std::move(account_id)) {}
+    std::string account_id,
+    const std::map<FieldType, std::u16string>& fields)
+    : config_url(std::move(configURL)),
+      account_id(std::move(account_id)),
+      fields(fields) {}
 
 Suggestion::IdentityCredentialPayload::IdentityCredentialPayload(
     const IdentityCredentialPayload&) = default;
@@ -341,11 +350,6 @@ Suggestion::Text& Suggestion::Text::operator=(const Text& other) = default;
 Suggestion::Text& Suggestion::Text::operator=(Text&& other) = default;
 
 Suggestion::Text::~Text() = default;
-
-Suggestion::Suggestion() = default;
-
-Suggestion::Suggestion(std::u16string main_text)
-    : main_text(std::move(main_text), Text::IsPrimary(true)) {}
 
 Suggestion::Suggestion(SuggestionType type) : type(type) {}
 
@@ -437,3 +441,8 @@ void PrintTo(const Suggestion& suggestion, std::ostream* os) {
 }
 
 }  // namespace autofill
+
+#if BUILDFLAG(IS_ANDROID)
+DEFINE_JNI(AutofillProfilePayload)
+DEFINE_JNI(PaymentsPayload)
+#endif

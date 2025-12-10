@@ -10,8 +10,10 @@
 #include <vector>
 
 #include "base/time/time.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_info.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
+#include "components/enterprise/connectors/core/cloud_content_scanning/common.h"
 #include "components/enterprise/connectors/core/common.h"
 #include "components/safe_browsing/core/browser/referrer_chain_provider.h"
 #include "url/gurl.h"
@@ -24,48 +26,13 @@ class ContentAnalysisResponse;
 
 namespace safe_browsing {
 
-// Access points used to record UMA metrics and specify which code location is
-// initiating a deep scan. Any new caller of
-// ContentAnalysisDelegate::CreateForWebContents should add an access point
-// here instead of re-using an existing value. histograms.xml should also be
-// updated by adding histograms with names
-//   "SafeBrowsing.DeepScan.<access-point>.BytesPerSeconds"
-//   "SafeBrowsing.DeepScan.<access-point>.Duration"
-//   "SafeBrowsing.DeepScan.<access-point>.<result>.Duration"
-// for the new access point and every possible result.
-// LINT.IfChange(DeepScanAccessPoint)
-enum class DeepScanAccessPoint {
-  // A deep scan was initiated from downloading 1+ file(s).
-  DOWNLOAD,
-
-  // A deep scan was initiated from uploading 1+ file(s) via a system dialog.
-  UPLOAD,
-
-  // A deep scan was initiated from drag-and-dropping text or 1+ file(s).
-  DRAG_AND_DROP,
-
-  // A deep scan was initiated from pasting text.
-  PASTE,
-
-  // A deep scan was initiated from printing a page.
-  PRINT,
-
-  // A deep scan was initiated from transferring 1+ file(s) within ChromeOS.
-  FILE_TRANSFER,
-
-  kMaxValue = FILE_TRANSFER,
-};
-// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:DeepScanAccessPoint)
-std::string DeepScanAccessPointToString(DeepScanAccessPoint access_point);
-
 // Helper function to examine a ContentAnalysisResponse and report the
 // appropriate events to the enterprise admin. |download_digest_sha256| must be
 // encoded using base::HexEncode.  |event_result| indicates whether the user was
 // ultimately allowed to access the text or file.
 void MaybeReportDeepScanningVerdict(
     Profile* profile,
-    const GURL& url,
-    const GURL& tab_url,
+    const enterprise_connectors::ContentAnalysisInfo* content_analysis_info,
     const std::string& source,
     const std::string& destination,
     const std::string& file_name,
@@ -74,10 +41,9 @@ void MaybeReportDeepScanningVerdict(
     const std::string& trigger,
     const std::string& content_transfer_method,
     const std::string& source_email,
-    DeepScanAccessPoint access_point,
     const int64_t content_size,
     const safe_browsing::ReferrerChain& referrer_chain,
-    BinaryUploadService::Result result,
+    enterprise_connectors::ScanRequestUploadResult result,
     const enterprise_connectors::ContentAnalysisResponse& response,
     enterprise_connectors::EventResult event_result);
 
@@ -87,8 +53,7 @@ void MaybeReportDeepScanningVerdict(
 // base::HexEncode.
 void ReportAnalysisConnectorWarningBypass(
     Profile* profile,
-    const GURL& url,
-    const GURL& tab_url,
+    const enterprise_connectors::ContentAnalysisInfo& content_analysis_info,
     const std::string& source,
     const std::string& destination,
     const std::string& file_name,
@@ -96,7 +61,6 @@ void ReportAnalysisConnectorWarningBypass(
     const std::string& mime_type,
     const std::string& trigger,
     const std::string& content_transfer_method,
-    DeepScanAccessPoint access_point,
     const int64_t content_size,
     const safe_browsing::ReferrerChain& referrer_chain,
     const enterprise_connectors::ContentAnalysisResponse& response,
@@ -106,17 +70,18 @@ void ReportAnalysisConnectorWarningBypass(
 // request split by its result and bytes/sec for successful requests.
 void RecordDeepScanMetrics(
     bool is_cloud,
-    DeepScanAccessPoint access_point,
+    enterprise_connectors::DeepScanAccessPoint access_point,
     base::TimeDelta duration,
     int64_t total_bytes,
-    const BinaryUploadService::Result& result,
+    const enterprise_connectors::ScanRequestUploadResult& result,
     const enterprise_connectors::ContentAnalysisResponse& response);
-void RecordDeepScanMetrics(bool is_cloud,
-                           DeepScanAccessPoint access_point,
-                           base::TimeDelta duration,
-                           int64_t total_bytes,
-                           const std::string& result,
-                           bool success);
+void RecordDeepScanMetrics(
+    bool is_cloud,
+    enterprise_connectors::DeepScanAccessPoint access_point,
+    base::TimeDelta duration,
+    int64_t total_bytes,
+    const std::string& result,
+    bool success);
 
 // Helper function to make ContentAnalysisResponses for tests.
 enterprise_connectors::ContentAnalysisResponse
@@ -124,10 +89,10 @@ SimpleContentAnalysisResponseForTesting(std::optional<bool> dlp_success,
                                         std::optional<bool> malware_success,
                                         bool has_custom_rule_message);
 
-// Helper function to convert a BinaryUploadService::Result to a CamelCase
-// string.
+// Helper function to convert a enterprise_connectors::ScanRequestUploadResult
+// to a CamelCase string.
 std::string BinaryUploadServiceResultToString(
-    const BinaryUploadService::Result& result,
+    const enterprise_connectors::ScanRequestUploadResult& result,
     bool success);
 
 // Helper enum and function to manipulate crash keys relevant to scanning.
@@ -147,7 +112,7 @@ void DecrementCrashKey(ScanningCrashKey key, int delta = 1);
 
 // Returns true for consumer scans and not on enterprise scans.
 bool IsConsumerScanRequest(
-    const safe_browsing::BinaryUploadService::Request& request);
+    const enterprise_connectors::BinaryUploadRequest& request);
 
 }  // namespace safe_browsing
 

@@ -9,6 +9,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/tabs/organization/tab_organization_utils.h"
 #include "chrome/browser/user_education/user_education_service.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
@@ -27,7 +28,7 @@ DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kOsToggleIsVisible);
 DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kKeyboardShortcutIsVisible);
 DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kBubbleIsVisible);
 DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kBubbleIsHidden);
-DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kBasicPageIsVisible);
+DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kAiPageIndexIsVisible);
 DEFINE_LOCAL_CUSTOM_ELEMENT_EVENT_TYPE(kGlicSectionIsVisible);
 
 auto ElementIsVisibleStateChange(
@@ -75,14 +76,13 @@ class GlicSettingsUtilUiTest
         }),
         WaitForWebContentsNavigation(
             kFirstTab, chrome::GetSettingsUrl(chrome::kGlicSettingsSubpage)),
-        AddInstrumentedTab(kSecondTab , GURL(chrome::kChromeUICreditsURL)),
+        AddInstrumentedTab(kSecondTab, GURL(chrome::kChromeUICreditsURL)),
         AddInstrumentedTab(kThirdTab, GURL(chrome::kChromeUIAboutURL)),
         Do([this, f] { f(browser()->profile()); }), InstrumentTab(kSettingsTab),
         WaitForWebContentsReady(
             kSettingsTab, chrome::GetSettingsUrl(chrome::kGlicSettingsSubpage)),
-        CheckResult(
-            [this] { return browser()->tab_strip_model()->GetTabCount(); }, 3,
-            "CheckTabCount"));
+        CheckResult([this] { return browser()->tab_strip_model()->count(); }, 3,
+                    "CheckTabCount"));
   }
 
   auto SetFRECompletion(glic::prefs::FreStatus status) {
@@ -106,15 +106,15 @@ class GlicSettingsUtilUiTest
 
   const DeepQuery kOsToggleHelpBubbleQuery{"settings-ui",
                                            "settings-main",
-                                           "settings-basic-page",
-                                           "settings-glic-page",
+                                           "settings-ai-page-index",
+                                           "settings-glic-subpage",
                                            "#launcherToggle",
                                            "help-bubble",
                                            "#close"};
 
   const DeepQuery kKeyboardShortcutHelpBubbleQuery{
-      "settings-ui",        "settings-main", "settings-basic-page",
-      "settings-glic-page", "help-bubble",   "#close"};
+      "settings-ui",           "settings-main", "settings-ai-page-index",
+      "settings-glic-subpage", "help-bubble",   "#close"};
 
   const DeepQuery kOpenSettingsButton = {"#openGlicSettings"};
 };
@@ -124,10 +124,9 @@ IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest, OpenSettings) {
 }
 
 IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest, OpenOsToggleSetting) {
-  RunTestSequence(
-      VerifyOpensGlicSettings(glic::OpenGlicOsToggleSetting),
-      WaitForStateChange(
-          kFirstTab, ElementIsVisibleStateChange(kBubbleIsVisible,
+  RunTestSequence(VerifyOpensGlicSettings(glic::OpenGlicOsToggleSetting),
+                  WaitForStateChange(kFirstTab, ElementIsVisibleStateChange(
+                                                    kBubbleIsVisible,
                                                     kOsToggleHelpBubbleQuery)));
 }
 
@@ -141,9 +140,9 @@ IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest,
                        MAYBE_OpenKeyboardShortcutSetting) {
   RunTestSequence(
       VerifyOpensGlicSettings(glic::OpenGlicKeyboardShortcutSetting),
-      WaitForStateChange(kFirstTab, ElementIsVisibleStateChange(
-                                           kBubbleIsVisible,
-                                           kKeyboardShortcutHelpBubbleQuery)));
+      WaitForStateChange(
+          kFirstTab, ElementIsVisibleStateChange(
+                         kBubbleIsVisible, kKeyboardShortcutHelpBubbleQuery)));
 }
 
 IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest, ThrottleOpenOsToggleSetting) {
@@ -158,8 +157,8 @@ IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest, ThrottleOpenOsToggleSetting) {
           kFirstTab,
           ElementIsVisibleStateChange(
               kOsToggleIsVisible,
-              {"settings-ui", "settings-main", "settings-basic-page",
-               "settings-glic-page", "#launcherToggle"})),
+              {"settings-ui", "settings-main", "settings-ai-page-index",
+               "settings-glic-subpage", "#launcherToggle"})),
       WaitForStateChange(kFirstTab,
                          ElementIsHiddenStateChange(kBubbleIsHidden,
                                                     kOsToggleHelpBubbleQuery)));
@@ -178,7 +177,7 @@ IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest,
                          ElementIsVisibleStateChange(
                              kKeyboardShortcutIsVisible,
                              {"settings-ui", "settings-main",
-                              "settings-basic-page", "settings-glic-page",
+                              "settings-ai-page-index", "settings-glic-subpage",
                               "#mainShortcutSetting", ".shortcut-input"})),
       WaitForStateChange(kSettingsTab, ElementIsHiddenStateChange(
                                            kBubbleIsHidden,
@@ -186,6 +185,10 @@ IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest,
 }
 
 IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest, OpenSettingsFromGlicUi) {
+  if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+    // TODO(b/453696965): Broken in multi-instance.
+    GTEST_SKIP() << "Skipping for kGlicMultiInstance";
+  }
   RunTestSequence(
       OpenGlicWindow(GlicWindowMode::kAttached,
                      GlicInstrumentMode::kHostAndContents),
@@ -195,29 +198,55 @@ IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest, OpenSettingsFromGlicUi) {
           kSettingsTab, chrome::GetSettingsUrl(chrome::kGlicSettingsSubpage)));
 }
 
-IN_PROC_BROWSER_TEST_F(GlicSettingsUtilUiTest,
+// Following SettingsUI test assumes there is chrome://settings/ai page
+// which requires some (at least one) AI feature to be enabled.
+// TabOrganization is used for the purpose.
+// kAiSettingsPageForceAvailable feature flag cannot be used for the purpose
+// in the test, because it forces to show glic settings page, too, but
+// we'd like to make sure that is invisible until glic FRE is completed.
+class GlicSettingsUtilSettingsUiTest : public GlicSettingsUtilUiTest {
+ public:
+  GlicSettingsUtilSettingsUiTest() = default;
+  ~GlicSettingsUtilSettingsUiTest() override = default;
+
+  void SetUp() override {
+    TabOrganizationUtils::GetInstance()->SetIgnoreOptGuideForTesting(true);
+    GlicSettingsUtilUiTest::SetUp();
+  }
+
+  void TearDown() override {
+    GlicSettingsUtilUiTest::TearDown();
+    TabOrganizationUtils::GetInstance()->SetIgnoreOptGuideForTesting(false);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::kTabOrganization};
+};
+
+IN_PROC_BROWSER_TEST_F(GlicSettingsUtilSettingsUiTest,
                        RefreshSettingsAfterAcceptingFRE) {
-  // This specifies the sequence of Polymer elements required to locate the
-  // "more actions" button in the Downloads page.
-  const DeepQuery kPathToBasicPage{"settings-ui", "settings-main",
-                                   "settings-basic-page"};
-  const DeepQuery kPathToGlicSection{"settings-ui", "settings-main",
-                                     "settings-basic-page",
-                                     "settings-section[section=glicSection]"};
+  const DeepQuery kPathToAiPageIndex{"settings-ui", "settings-main",
+                                     "settings-ai-page-index"};
+  const DeepQuery kPathToGlicPage{"settings-ui", "settings-main",
+                                  "settings-ai-page-index",
+                                  "settings-glic-page"};
   RunTestSequence(
       InstrumentTab(kFirstTab),
       SetFRECompletion(glic::prefs::FreStatus::kNotStarted),
       NavigateToSettingsPage(chrome::kExperimentalAISettingsSubPage),
-      WaitForStateChange(kFirstTab, ElementIsVisibleStateChange(
-                                        kBasicPageIsVisible, kPathToBasicPage)),
       WaitForStateChange(kFirstTab,
-                         ElementIsHiddenStateChange(kGlicSectionIsVisible,
-                                                    kPathToGlicSection)),
+                         ElementIsVisibleStateChange(kAiPageIndexIsVisible,
+                                                     kPathToAiPageIndex)),
+      WaitForStateChange(
+          kFirstTab,
+          ElementIsHiddenStateChange(kGlicSectionIsVisible, kPathToGlicPage)),
       SetFRECompletion(glic::prefs::FreStatus::kCompleted),
       ReloadTab(kFirstTab),
-      WaitForStateChange(kFirstTab, ElementIsVisibleStateChange(
-                                        kBasicPageIsVisible, kPathToBasicPage)),
       WaitForStateChange(kFirstTab,
-                         ElementIsVisibleStateChange(kGlicSectionIsVisible,
-                                                     kPathToGlicSection)));
+                         ElementIsVisibleStateChange(kAiPageIndexIsVisible,
+                                                     kPathToAiPageIndex)),
+      WaitForStateChange(
+          kFirstTab,
+          ElementIsVisibleStateChange(kGlicSectionIsVisible, kPathToGlicPage)));
 }

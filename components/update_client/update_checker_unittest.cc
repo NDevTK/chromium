@@ -15,7 +15,7 @@
 
 #include "base/check.h"
 #include "base/check_deref.h"
-#include "base/files/file_util.h"
+#include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/memory/raw_ptr.h"
@@ -196,7 +196,7 @@ std::unique_ptr<Component> UpdateCheckerTest::MakeComponent(
   crx_component.lang = lang;
   crx_component.install_data_index = install_data_index;
   crx_component.name = "test_jebg";
-  crx_component.pk_hash.assign(std::begin(jebg_hash), std::end(jebg_hash));
+  crx_component.pk_hash = base::ToVector(jebg_hash);
   crx_component.installer = nullptr;
   crx_component.version = base::Version("0.9");
   crx_component.allow_updates_on_metered_connection =
@@ -213,7 +213,8 @@ std::optional<base::Value::Dict> UpdateCheckerTest::ParseRequest(
     int request_number) {
   const std::string& request =
       post_interceptor_->GetRequestBody(request_number);
-  std::optional<base::Value> request_val = base::JSONReader::Read(request);
+  std::optional<base::Value> request_val =
+      base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
 
   if (!request_val || !request_val->is_dict()) {
     return std::nullopt;
@@ -290,7 +291,7 @@ TEST_P(UpdateCheckerTest, UpdateCheckSuccess) {
   EXPECT_EQ("params", *request->FindString("extra"));
   ASSERT_TRUE(request->FindIntByDottedPath("hw.physmemory").has_value());
   EXPECT_LT(0, *request->FindIntByDottedPath("hw.physmemory"));
-  EXPECT_TRUE(request->contains("nacl_arch"));
+  EXPECT_FALSE(request->contains("nacl_arch"));
   ASSERT_TRUE(request->FindString("prodchannel"));
   EXPECT_EQ("fake_channel_string", *request->FindString("prodchannel"));
   ASSERT_TRUE(request->FindString("prodversion"));
@@ -762,7 +763,8 @@ TEST_P(UpdateCheckerTest, UpdateCheckInstallSource) {
                          base::Unretained(this)));
       RunThreads();
       const auto& request = post_interceptor->GetRequestBody(0);
-      const auto root = base::JSONReader::Read(request);
+      const auto root =
+          base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
       ASSERT_TRUE(root);
       const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
       EXPECT_EQ("ondemand", CHECK_DEREF(app.FindString("installsource")));
@@ -783,7 +785,8 @@ TEST_P(UpdateCheckerTest, UpdateCheckInstallSource) {
                          base::Unretained(this)));
       RunThreads();
       const auto& request = post_interceptor->GetRequestBody(0);
-      const auto root = base::JSONReader::Read(request);
+      const auto root =
+          base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
       ASSERT_TRUE(root);
       const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
       EXPECT_EQ("sideload", CHECK_DEREF(app.FindString("installsource")));
@@ -805,7 +808,8 @@ TEST_P(UpdateCheckerTest, UpdateCheckInstallSource) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_FALSE(app.contains("installsource"));
@@ -825,7 +829,8 @@ TEST_P(UpdateCheckerTest, UpdateCheckInstallSource) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ("webstore", CHECK_DEREF(app.FindString("installsource")));
@@ -853,7 +858,8 @@ TEST_P(UpdateCheckerTest, ComponentDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(true, app.FindBool("enabled"));
@@ -874,7 +880,8 @@ TEST_P(UpdateCheckerTest, ComponentDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(true, app.FindBool("enabled"));
@@ -895,7 +902,8 @@ TEST_P(UpdateCheckerTest, ComponentDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(false, app.FindBool("enabled"));
@@ -917,7 +925,8 @@ TEST_P(UpdateCheckerTest, ComponentDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(false, app.FindBool("enabled"));
@@ -940,7 +949,8 @@ TEST_P(UpdateCheckerTest, ComponentDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(false, app.FindBool("enabled"));
@@ -965,7 +975,8 @@ TEST_P(UpdateCheckerTest, ComponentDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(false, app.FindBool("enabled"));
@@ -1004,7 +1015,8 @@ TEST_P(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(kUpdateItemId, CHECK_DEREF(app.FindString("appid")));
@@ -1029,7 +1041,8 @@ TEST_P(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value app_as_val = GetFirstAppAsValue(root->GetDict());
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
@@ -1070,7 +1083,8 @@ TEST_P(UpdateCheckerTest, UpdateDisabledByMeteredConnection) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
     EXPECT_EQ(kUpdateItemId, CHECK_DEREF(app.FindString("appid")));
@@ -1095,7 +1109,8 @@ TEST_P(UpdateCheckerTest, UpdateDisabledByMeteredConnection) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const base::Value app_as_val = GetFirstAppAsValue(root->GetDict());
     const base::Value::Dict app = GetFirstAppAsDict(root->GetDict());
@@ -1130,7 +1145,8 @@ TEST_P(UpdateCheckerTest, SameVersionUpdateAllowed) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const auto& app =
         (*root->GetDict().FindListByDottedPath("request.apps"))[0].GetDict();
@@ -1154,7 +1170,8 @@ TEST_P(UpdateCheckerTest, SameVersionUpdateAllowed) {
                        base::Unretained(this)));
     RunThreads();
     const auto& request = post_interceptor->GetRequestBody(0);
-    const auto root = base::JSONReader::Read(request);
+    const auto root =
+        base::JSONReader::Read(request, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(root);
     const auto& app =
         (*root->GetDict().FindListByDottedPath("request.apps"))[0].GetDict();

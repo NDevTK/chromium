@@ -11,7 +11,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/callback_helpers.h"
+#include "base/functional/is_callback.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/post_task_and_reply_with_result_internal.h"
@@ -158,10 +158,10 @@ class BASE_EXPORT TaskRunner
     auto* result = new std::unique_ptr<TaskReturnType>();
     return PostTaskAndReply(
         from_here,
-        BindOnce(&internal::ReturnAsParamAdapter<TaskReturnType>,
-                 std::move(task), result),
-        BindOnce(&internal::ReplyAdapter<TaskReturnType, ReplyArgType>,
-                 std::move(reply), Owned(result)));
+        base::BindOnce(&internal::ReturnAsParamAdapter<TaskReturnType>,
+                       std::move(task), result),
+        base::BindOnce(&internal::ReplyAdapter<TaskReturnType, ReplyArgType>,
+                       std::move(reply), Owned(result)));
   }
 
  protected:

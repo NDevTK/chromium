@@ -2107,11 +2107,6 @@ TEST_F(NigoriSyncBridgeImplTest, ShouldRegenerateKeyPairIfCorrupted) {
   // Verify that local state wasn't dropped.
   ASSERT_THAT(bridge()->GetDataForDebugging(), HasKeystoreNigori());
 
-  // Verify that the key pair is corrupted.
-  histogram_tester.ExpectUniqueSample("Sync.CrossUserSharingKeyPairState",
-                                      /*kCorruptedKeyPair*/ 3,
-                                      /*expected_bucket_count=*/1);
-
   // Mimic commit completion.
   EXPECT_THAT(bridge()->ApplyIncrementalSyncChanges(std::nullopt),
               Eq(std::nullopt));
@@ -2189,6 +2184,35 @@ TEST_F(NigoriSyncBridgeImplTest,
   EXPECT_CALL(*processor(),
               ModelReadyToSync(NotNull(), IsEmptyMetadataBatch()));
   MimicRestartWithLocalData(local_data);
+  EXPECT_TRUE(PerformInitialSyncWithSimpleKeystoreNigori());
+}
+
+// Regression test for crbug.com/422542565: bridge should reset local data
+// if processor reports that it doesn't track metadata upon ModelReadyToSync(),
+// meaning that metadata is corrupted.
+TEST_F(NigoriSyncBridgeImplTest,
+       ShouldIgnoreLocalDataIfProcessorNotTrackingMetadata) {
+  // Prepare valid local data.
+  ASSERT_TRUE(PerformInitialSyncWithSimpleKeystoreNigori());
+  sync_pb::NigoriLocalData local_data = nigori_local_data();
+  ASSERT_THAT(bridge()->GetPassphraseType(),
+              Eq(PassphraseType::kKeystorePassphrase));
+
+  // Mimic browser restart.
+  // Ensure that ModelReadyToSync() is called and mimic the scenario when the
+  // processor reports that it doesn't want to track the metadata indicating
+  // that metadata is corrupted.
+  EXPECT_CALL(
+      *processor(),
+      ModelReadyToSync(NotNull(),
+                       IsFakeNigoriMetadataBatchWithTokenAndSequenceNumber(
+                           "fake_token", 100)));
+  EXPECT_CALL(*processor(), IsTrackingMetadata()).WillOnce(Return(false));
+
+  // Ensure that bridge ignores local state.
+  MimicRestartWithLocalData(local_data);
+  EXPECT_THAT(bridge()->GetPassphraseType(),
+              Eq(PassphraseType::kImplicitPassphrase));
   EXPECT_TRUE(PerformInitialSyncWithSimpleKeystoreNigori());
 }
 

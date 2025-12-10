@@ -12,6 +12,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/test/trace_event_analyzer.h"
+#include "base/test/trace_test_utils.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/viz/common/frame_timing_details.h"
@@ -38,7 +39,7 @@
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/core/testing/mock_policy_container_host.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/performance_event_timing.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
@@ -141,6 +142,9 @@ class WindowPerformanceTest : public testing::Test,
     init->setKeyCode(key_code);
     KeyboardEvent* keyboard_event =
         MakeGarbageCollected<KeyboardEvent>(type, init, start_time);
+    // use start_time to simulate enqueue time.
+    performance_->GetResponsivenessMetrics()
+          .SetCurrentInteractionEventQueuedTimestamp(start_time);
     performance_->EventTimingProcessingStart(*keyboard_event, processing_start,
                                              target);
     keyboard_event->SetTarget(target);
@@ -157,6 +161,9 @@ class WindowPerformanceTest : public testing::Test,
     PointerEventInit* init = PointerEventInit::Create();
     init->setPointerId(pointer_id);
     PointerEvent* pointer_event = PointerEvent::Create(type, init, start_time);
+    // use start_time to simulate enqueue time.
+    performance_->GetResponsivenessMetrics()
+          .SetCurrentInteractionEventQueuedTimestamp(start_time);
     performance_->EventTimingProcessingStart(*pointer_event, processing_start,
                                              target);
     pointer_event->SetTarget(target);
@@ -178,7 +185,8 @@ class WindowPerformanceTest : public testing::Test,
 
     return PerformanceEventTiming::Create(
         name, reporting_info, false, nullptr,
-        LocalDOMWindow::From(GetScriptState()));
+        LocalDOMWindow::From(GetScriptState()),
+        performance_->NavigationId());
   }
 
   HeapVector<Member<PerformanceEventTiming>>*
@@ -204,7 +212,7 @@ class WindowPerformanceTest : public testing::Test,
     page_holder_->GetDocument().SetURL(KURL("https://example.com"));
 
     LocalDOMWindow* window = LocalDOMWindow::From(GetScriptState());
-    performance_ = DOMWindowPerformance::performance(*window);
+    performance_ = GlobalPerformance::performance(*window);
     performance_->SetClocksForTesting(test_task_runner_->GetMockClock(),
                                       test_task_runner_->GetMockTickClock());
     performance_->time_origin_ = GetTimeOrigin();
@@ -233,6 +241,7 @@ class WindowPerformanceTest : public testing::Test,
   }
 
   test::TaskEnvironment task_environment_;
+  base::test::TracingEnvironment tracing_environment_;
   Persistent<WindowPerformance> performance_;
   std::unique_ptr<DummyPageHolder> page_holder_;
   scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
@@ -294,8 +303,9 @@ TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
       .SetSecurityOriginForTesting(SecurityOrigin::Create(KURL(url)));
 
   WindowPerformance* perf =
-      DOMWindowPerformance::performance(*page_holder->GetFrame().DomWindow());
+      GlobalPerformance::performance(*page_holder->GetFrame().DomWindow());
   PerformanceTiming* timing = perf->timing();
+  uint64_t navigation_id = perf->NavigationId();
 
   auto* document_loader = page_holder->GetFrame().Loader().GetDocumentLoader();
   ASSERT_TRUE(document_loader);
@@ -315,8 +325,9 @@ TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
       mock_policy_container_host.BindNewEndpointAndPassDedicatedRemote());
   page_holder->GetFrame().Loader().CommitNavigation(std::move(params), nullptr);
 
-  EXPECT_EQ(perf, DOMWindowPerformance::performance(
+  EXPECT_EQ(perf, GlobalPerformance::performance(
                       *page_holder->GetFrame().DomWindow()));
+  EXPECT_EQ(navigation_id, perf->NavigationId());
   EXPECT_EQ(timing, perf->timing());
   EXPECT_EQ(page_holder->GetFrame().DomWindow(), perf->DomWindow());
   EXPECT_EQ(page_holder->GetFrame().DomWindow(), timing->DomWindow());
@@ -1418,6 +1429,7 @@ TEST_P(WindowPerformanceTest, ElementTimingTraceEvent) {
   std::string* url = arg_dict.FindString("url");
   ASSERT_TRUE(url);
   EXPECT_EQ(*url, "url");
+  ASSERT_TRUE(arg_dict.FindInt("nodeId").has_value());
 }
 
 TEST_P(WindowPerformanceTest, EventTimingTraceEvents) {
@@ -1713,6 +1725,40 @@ TEST_P(WindowPerformanceTest, InteractionID) {
         ukm::builders::Responsiveness_UserInteraction::kInteractionTypeName,
         static_cast<int>(expected_ukm[i].type));
   }
+}
+
+TEST_P(WindowPerformanceTest, ContainerTimingTraceEvent) {
+  using trace_analyzer::Query;
+  trace_analyzer::Start("*");
+  performance_->AddContainerTiming(
+      DOMPaintTimingInfo{.paint_time = 2000, .presentation_time = 2000},
+      gfx::Rect(10, 20, 30, 40), 1200, nullptr, AtomicString("identifier"),
+      /*element*/ nullptr,
+      DOMPaintTimingInfo{.paint_time = 1000, .presentation_time = 1000});
+  auto analyzer = trace_analyzer::Stop();
+  trace_analyzer::TraceEventVector events;
+  Query q = Query::EventNameIs("PerformanceContainerTiming");
+  analyzer->FindEvents(q, &events);
+  EXPECT_EQ(1u, events.size());
+  EXPECT_EQ("loading", events[0]->category);
+  EXPECT_TRUE(events[0]->HasStringArg("frame"));
+
+  ASSERT_TRUE(events[0]->HasDictArg("data"));
+  base::Value::Dict arg_dict = events[0]->GetKnownArgAsDict("data");
+  std::string* element_type = arg_dict.FindString("elementType");
+  ASSERT_TRUE(element_type);
+  EXPECT_EQ(*element_type, "container-paints");
+  EXPECT_EQ(arg_dict.FindInt("startTime").value_or(-1), 2000);
+  EXPECT_EQ(arg_dict.FindInt("firstRenderTime").value_or(-1), 1000);
+  EXPECT_EQ(arg_dict.FindInt("duration").value_or(-1), 0);
+  EXPECT_EQ(arg_dict.FindDouble("rectLeft").value_or(-1), 10);
+  EXPECT_EQ(arg_dict.FindDouble("rectTop").value_or(-1), 20);
+  EXPECT_EQ(arg_dict.FindDouble("rectWidth").value_or(-1), 30);
+  EXPECT_EQ(arg_dict.FindDouble("rectHeight").value_or(-1), 40);
+  EXPECT_EQ(arg_dict.FindDouble("size").value_or(-1), 1200);
+  std::string* identifier = arg_dict.FindString("identifier");
+  ASSERT_TRUE(identifier);
+  EXPECT_EQ(*identifier, "identifier");
 }
 
 INSTANTIATE_TEST_SUITE_P(All, WindowPerformanceTest, ::testing::Bool());
@@ -2153,39 +2199,48 @@ TEST_P(InteractionIdTest, ClickIncorrectPointerId) {
   CheckUKMValues({{40, 40, UserInteractionType::kTapOrClick}});
 }
 
-TEST_P(WindowPerformanceTest, ContainerTimingTraceEvent) {
-  using trace_analyzer::Query;
-  trace_analyzer::Start("*");
-  performance_->AddContainerTiming(
-      DOMPaintTimingInfo{.paint_time = 2000, .presentation_time = 2000},
-      gfx::Rect(10, 20, 30, 40), 1200, AtomicString("identifier"),
-      /*element*/ nullptr,
-      DOMPaintTimingInfo{.paint_time = 1000, .presentation_time = 1000});
-  auto analyzer = trace_analyzer::Stop();
-  trace_analyzer::TraceEventVector events;
-  Query q = Query::EventNameIs("PerformanceContainerTiming");
-  analyzer->FindEvents(q, &events);
-  EXPECT_EQ(1u, events.size());
-  EXPECT_EQ("loading", events[0]->category);
-  EXPECT_TRUE(events[0]->HasStringArg("frame"));
+INSTANTIATE_TEST_SUITE_P(All, InteractionIdTest, ::testing::Bool());
 
-  ASSERT_TRUE(events[0]->HasDictArg("data"));
-  base::Value::Dict arg_dict = events[0]->GetKnownArgAsDict("data");
-  std::string* element_type = arg_dict.FindString("elementType");
-  ASSERT_TRUE(element_type);
-  EXPECT_EQ(*element_type, "container-paints");
-  EXPECT_EQ(arg_dict.FindInt("startTime").value_or(-1), 2000);
-  EXPECT_EQ(arg_dict.FindInt("firstRenderTime").value_or(-1), 1000);
-  EXPECT_EQ(arg_dict.FindInt("duration").value_or(-1), 0);
-  EXPECT_EQ(arg_dict.FindDouble("rectLeft").value_or(-1), 10);
-  EXPECT_EQ(arg_dict.FindDouble("rectTop").value_or(-1), 20);
-  EXPECT_EQ(arg_dict.FindDouble("rectWidth").value_or(-1), 30);
-  EXPECT_EQ(arg_dict.FindDouble("rectHeight").value_or(-1), 40);
-  EXPECT_EQ(arg_dict.FindDouble("size").value_or(-1), 1200);
-  std::string* identifier = arg_dict.FindString("identifier");
-  ASSERT_TRUE(identifier);
-  EXPECT_EQ(*identifier, "identifier");
+class WindowPerformanceNavigationIdTest : public testing::Test {
+ protected:
+  test::TaskEnvironment task_environment_;
+};
+
+TEST_F(WindowPerformanceNavigationIdTest, NavigationIdHardNavigations) {
+  // Initial navigation: randomly generated IDs, assumed to be hard nav.
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 100; ++i) {
+    // Making a new scope is like a hard nav (the ID gets generated via the
+    // constructor of LocalDOMWindow).
+    V8TestingScope scope;
+    const WindowPerformance* performance =
+        GlobalPerformance::performance(*scope.GetFrame().DomWindow());
+    ASSERT_TRUE(performance);
+    ids.push_back(performance->NavigationId());
+  }
+  // We allow 10 collisions, since the IDs are randomly generated between 100
+  // and 10000.
+  auto last = std::unique(ids.begin(), ids.end());
+  auto num_collisions = std::distance(last, ids.end());
+  EXPECT_LT(num_collisions, 10u);
+  ids.erase(last, ids.end());
+  // The IDs are not in sorted order.
+  std::vector<uint32_t> sorted_ids(ids.begin(), ids.end());
+  std::sort(sorted_ids.begin(), sorted_ids.end());
+  EXPECT_NE(sorted_ids, ids);
 }
 
-INSTANTIATE_TEST_SUITE_P(All, InteractionIdTest, ::testing::Bool());
+TEST_F(WindowPerformanceNavigationIdTest, NavigationIdSoftNavigations) {
+  // Initial navigation: randomly generated ID, assumed to be hard nav.
+  V8TestingScope scope;
+  WindowPerformance* performance =
+      GlobalPerformance::performance(*scope.GetFrame().DomWindow());
+  uint32_t navigation_id1 = performance->NavigationId();
+
+  // Soft navigation or back-forward cache restoration: incremented ID.
+  performance->IncrementNavigationId();
+  uint32_t navigation_id3 = performance->NavigationId();
+  EXPECT_NE(navigation_id1, navigation_id3);
+  EXPECT_LT(navigation_id1, navigation_id3);
+}
 }  // namespace blink

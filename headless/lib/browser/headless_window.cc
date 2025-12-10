@@ -28,6 +28,13 @@ void HeadlessWindow::SetWindowState(HeadlessWindowState window_state) {
     return;
   }
 
+  // Ignore transitions to states other than normal while in full screen state.
+  // See http://crbug.com/429423225.
+  if (window_state_ == HeadlessWindowState::kFullscreen &&
+      window_state != HeadlessWindowState::kNormal) {
+    return;
+  }
+
   bool set_visible = false;
 
   switch (window_state) {
@@ -70,7 +77,7 @@ void HeadlessWindow::SetWindowState(HeadlessWindowState window_state) {
 
 void HeadlessWindow::ZoomWindowBounds() {
   const gfx::Rect zoomed_bounds =
-      display::Screen::GetScreen()->GetDisplayMatching(bounds_).work_area();
+      display::Screen::Get()->GetDisplayMatching(bounds_).work_area();
   UpdateBounds(zoomed_bounds);
 }
 

@@ -21,8 +21,11 @@
 #include "content/public/browser/web_authentication_request_proxy.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace content {
 class BrowserContext;
@@ -155,7 +158,7 @@ class WebAuthenticationProxyService
   using RespondCallback = base::OnceCallback<void(std::optional<std::string>)>;
 
   // Returns the service instance for the given BrowserContext, if a proxy is
-  // currently attached, and nulltpr otherwise. References to this class should
+  // currently attached, and nullptr otherwise. References to this class should
   // not be stored because they become invalid whenever the proxy detaches.
   //
   // Service instances are shared between incognito and regular contexts if the

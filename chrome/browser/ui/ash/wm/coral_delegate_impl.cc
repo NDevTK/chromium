@@ -11,11 +11,12 @@
 #include "chrome/browser/ash/app_restore/full_restore_app_launch_handler.h"
 #include "chrome/browser/ash/app_restore/full_restore_service.h"
 #include "chrome/browser/ash/app_restore/full_restore_service_factory.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/ash/desks/desks_templates_app_launch_handler.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/webui/ash/scanner_feedback_dialog/scanner_feedback_dialog.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
@@ -107,7 +108,7 @@ std::unique_ptr<app_restore::RestoreData> CoralGroupToRestoreData(
       new_app_restore_data = std::make_unique<app_restore::AppRestoreData>();
       new_app_restore_data->container = 0;
       new_app_restore_data->display_id =
-          display::Screen::GetScreen()->GetPrimaryDisplay().id();
+          display::Screen::Get()->GetPrimaryDisplay().id();
       new_app_restore_data->disposition = 3;
       continue;
     }
@@ -151,31 +152,35 @@ Browser* CreateBrowser() {
 
 // Finds the first tab with given url on the desk with the given `index` and
 // returns the source browser and the tab index.
-Browser* FindTabOnDeskAtIndex(const GURL& url,
-                              int& out_tab_index,
-                              size_t src_desk_index) {
+ash::BrowserDelegate* FindTabOnDeskAtIndex(const GURL& url,
+                                           int& out_tab_index,
+                                           size_t src_desk_index) {
   out_tab_index = -1;
-  auto* desks_helper = chromeos::DesksHelper::Get(nullptr);
-  for (auto browser : *BrowserList::GetInstance()) {
-    // Guarantee the window belongs to the desk with the given `index`.
-    if (!desks_helper->BelongsToDesk(browser->window()->GetNativeWindow(),
-                                     src_desk_index)) {
-      continue;
-    }
+  auto* desks_helper = chromeos::DesksHelper::Get();
+  ash::BrowserDelegate* found_browser = nullptr;
+  ash::BrowserController::GetInstance()->ForEachBrowser(
+      ash::BrowserController::kAscendingActivationTime,
+      [&](ash::BrowserDelegate& browser) {
+        // Guarantee the window belongs to the desk with the given `index`.
+        if (!desks_helper->BelongsToDesk(browser.GetNativeWindow(),
+                                         src_desk_index)) {
+          return ash::BrowserController::kContinueIteration;
+        }
 
-    if (browser->profile()->IsIncognitoProfile()) {
-      continue;
-    }
+        if (browser.GetBrowser().GetProfile()->IsIncognitoProfile()) {
+          return ash::BrowserController::kContinueIteration;
+        }
 
-    TabStripModel* tab_strip_model = browser->tab_strip_model();
-    for (int idx = 0; idx < tab_strip_model->count(); idx++) {
-      if (tab_strip_model->GetWebContentsAt(idx)->GetVisibleURL() == url) {
-        out_tab_index = idx;
-        return browser;
-      }
-    }
-  }
-  return nullptr;
+        for (size_t idx = 0; idx < browser.GetWebContentsCount(); idx++) {
+          if (browser.GetWebContentsAt(idx)->GetVisibleURL() == url) {
+            out_tab_index = idx;
+            found_browser = &browser;
+          }
+        }
+        return found_browser ? ash::BrowserController::kBreakIteration
+                             : ash::BrowserController::kContinueIteration;
+      });
+  return found_browser;
 }
 
 }  // namespace
@@ -223,36 +228,28 @@ void CoralDelegateImpl::LaunchPostLoginGroup(coral::mojom::GroupPtr group) {
 void CoralDelegateImpl::MoveTabsInGroupToNewDesk(
     const std::vector<coral::mojom::Tab>& tabs,
     size_t src_desk_index) {
-  Browser* target_browser = nullptr;
+  ash::BrowserDelegate* target_browser = nullptr;
   for (const auto& tab : tabs) {
     // Find the index of the tab item on its browser window.
     const auto& tab_url = tab.url;
     int tab_index = -1;
-    Browser* source_browser =
+    ash::BrowserDelegate* source_browser =
         FindTabOnDeskAtIndex(tab_url, tab_index, src_desk_index);
     if (source_browser) {
       // Create a browser on the new desk if there is none.
       if (!target_browser) {
-        target_browser = CreateBrowser();
+        target_browser =
+            ash::BrowserController::GetInstance()->GetDelegate(CreateBrowser());
         if (!target_browser) {
           break;
         }
       }
-
-      // Move the tab from source browser to target browser.
-      TabStripModel* source_tab_strip = source_browser->tab_strip_model();
-      bool was_pinned = source_tab_strip->IsTabPinned(tab_index);
-      int add_types =
-          was_pinned ? AddTabTypes::ADD_PINNED : AddTabTypes::ADD_ACTIVE;
-      std::unique_ptr<tabs::TabModel> tab_model =
-          source_tab_strip->DetachTabAtForInsertion(tab_index);
-      target_browser->tab_strip_model()->InsertDetachedTabAt(
-          -1, std::move(tab_model), add_types);
+      source_browser->MoveTab(tab_index, *target_browser);
     }
   }
 
   if (target_browser) {
-    target_browser->window()->ShowInactive();
+    target_browser->ShowInactive();
   }
 }
 

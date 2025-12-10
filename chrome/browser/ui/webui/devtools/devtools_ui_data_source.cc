@@ -5,6 +5,8 @@
 #include "chrome/browser/ui/webui/devtools/devtools_ui_data_source.h"
 
 #include <list>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "base/command_line.h"
@@ -38,7 +40,7 @@ std::string PathWithoutParams(const std::string& path) {
                             url::kStandardSchemeSeparator,
                             chrome::kChromeUIDevToolsHost}))
       .Resolve(path)
-      .path()
+      .GetPath()
       .substr(1);
 }
 
@@ -188,7 +190,7 @@ void DevToolsDataSource::StartDataRequest(
     GURL remote_url(kRemoteFrontendBase +
                     path.substr(remote_path_prefix.length()));
 
-    CHECK_EQ(remote_url.host(), kRemoteFrontendDomain);
+    CHECK_EQ(remote_url.GetHost(), kRemoteFrontendDomain);
     if (remote_url.is_valid() &&
         DevToolsUIBindings::IsValidRemoteFrontendURL(remote_url)) {
       StartRemoteDataRequest(remote_url, std::move(callback));
@@ -221,8 +223,16 @@ std::string DevToolsDataSource::GetMimeType(const GURL& url) {
   return GetMimeTypeForUrl(url);
 }
 
-bool DevToolsDataSource::ShouldAddContentSecurityPolicy() {
-  return false;
+std::string DevToolsDataSource::GetContentSecurityPolicy(
+    network::mojom::CSPDirectiveName directive) {
+  switch (directive) {
+    case network::mojom::CSPDirectiveName::ObjectSrc:
+      return "object-src 'none';";
+    case network::mojom::CSPDirectiveName::ScriptSrc:
+      return "script-src 'self' https://chrome-devtools-frontend.appspot.com;";
+    default:
+      return std::string();
+  }
 }
 
 bool DevToolsDataSource::ShouldDenyXFrameOptions() {
@@ -368,7 +378,7 @@ void DevToolsDataSource::StartFileRequest(const std::string& path,
 
 void DevToolsDataSource::OnLoadComplete(
     std::list<PendingRequest>::iterator request_iter,
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   GotDataCallback callback = std::move(request_iter->callback);
   pending_requests_.erase(request_iter);
   std::move(callback).Run(response_body

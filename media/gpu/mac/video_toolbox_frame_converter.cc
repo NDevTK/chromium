@@ -94,7 +94,6 @@ VideoPixelFormat PixelFormatToVideoPixelFormat(OSType pixel_format) {
 // TODO: crbug.com/349290188 - Clean up if no performance regressions are
 // observed.
 BASE_FEATURE(kVideoToolboxFrameConverterSpecifyWebGpuUsage,
-             "VideoToolboxFrameConverterSpecifyWebGpuUsage",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
@@ -189,13 +188,10 @@ void VideoToolboxFrameConverter::Convert(
   const gfx::Size natural_size =
       metadata->aspect_ratio.GetNaturalSize(visible_rect);
 
-  gfx::GpuMemoryBufferHandle handle;
-  handle.id = gfx::GpuMemoryBufferHandle::kInvalidId;
-  handle.type = gfx::GpuMemoryBufferType::IO_SURFACE_BUFFER;
-  handle.io_surface.reset(CVPixelBufferGetIOSurface(image.get()),
-                          base::scoped_policy::RETAIN);
+  gfx::GpuMemoryBufferHandle handle(gfx::ScopedIOSurface(
+      CVPixelBufferGetIOSurface(image.get()), base::scoped_policy::RETAIN));
 
-  OSType pixel_format = IOSurfaceGetPixelFormat(handle.io_surface.get());
+  OSType pixel_format = IOSurfaceGetPixelFormat(handle.io_surface().get());
   std::optional<viz::SharedImageFormat> format =
       PixelFormatToImageFormat(pixel_format);
   if (!format) {
@@ -270,9 +266,6 @@ void VideoToolboxFrameConverter::Convert(
       base::BindOnce(&VideoToolboxFrameConverter::OnVideoFrameReleased, this,
                      shared_image, std::move(image)));
 
-  // It should be possible to use VideoFrame::WrapExternalGpuMemoryBuffer(),
-  // which would allow the renderer to map the IOSurface, but this is more
-  // expensive whenever the renderer is not doing readback.
   scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImage(
       video_pixel_format, shared_image, shared_image->creation_sync_token(),
       std::move(release_cb), coded_size, visible_rect, natural_size,

@@ -20,8 +20,7 @@
 #include "base/containers/span.h"
 #include "components/cbor/values.h"
 
-namespace device {
-namespace fido_parsing_utils {
+namespace device::fido_parsing_utils {
 
 // Comparator object that calls std::lexicographical_compare on the begin and
 // end iterators of the passed in ranges. Useful when comparing sequence
@@ -37,14 +36,6 @@ struct RangeLess {
 
   using is_transparent = void;
 };
-
-// U2FResponse offsets. The format of a U2F response is defined in
-// https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-raw-message-formats-v1.2-ps-20170411.html#registration-response-message-success
-COMPONENT_EXPORT(DEVICE_FIDO)
-extern const uint32_t kU2fResponseKeyHandleLengthPos;
-COMPONENT_EXPORT(DEVICE_FIDO)
-extern const uint32_t kU2fResponseKeyHandleStartPos;
-COMPONENT_EXPORT(DEVICE_FIDO) extern const char kEs256[];
 
 // Returns a materialized copy of |span|, that is, a vector with the same
 // elements.
@@ -131,7 +122,79 @@ bool CopyCBORBytestring(std::array<uint8_t, N>* out,
   return ExtractArray(bytestring, /*pos=*/0, out);
 }
 
-}  // namespace fido_parsing_utils
-}  // namespace device
+// Redacts `paths_to_redact` from `cbor` by finding the corresponding keys and
+// replacing them by the cbor string "redacted". Nested paths should correspond
+// to nested maps under the same key name. The redaction is applied to all array
+// elements for a matching key.
+// If a path is not found, a clone of `cbor` is returned.
+//
+// Example:
+//
+// Given a `cbor` value...
+// {
+//   characters: [
+//     {
+//       name: "Reimu",
+//       occupation: ["Shrine maiden"]
+//     },
+//     {
+//       name: "Marisa",
+//       occupation: ["Witch", "Troublemaker"]
+//     }
+//   ]
+// }
+//
+// ...and a `paths_to_redact` value...
+//
+// [
+//   ["characters", "occupation"],
+//   ["characters", "date-of-birth"],
+// ]
+//
+// ...the returned cbor will be:
+//
+// {
+//   characters: [
+//     {
+//       name: "Reimu",
+//       occupation: "redacted"
+//     },
+//     {
+//       name: "Marisa",
+//       occupation: "redacted"
+//     }
+//   ]
+// }
+COMPONENT_EXPORT(DEVICE_FIDO)
+cbor::Value RedactCbor(
+    const cbor::Value& cbor,
+    base::span<const std::vector<cbor::Value>> paths_to_redact);
+
+namespace internal {
+
+// These helpers allow us to implement `ToCborVector` without needing to prepend
+// values to the vector to satisfy the left recursion, which would be slower.
+template <typename T>
+void AppendToCborVector(std::vector<cbor::Value>* vec, T value) {
+  vec->emplace_back(std::move(value));
+}
+template <typename T, typename... Args>
+void AppendToCborVector(std::vector<cbor::Value>* vec, T first, Args... args) {
+  vec->emplace_back(std::move(first));
+  AppendToCborVector(vec, args...);
+}
+
+}  // namespace internal
+
+// This function makes using `RedactCbor` more readable by moving the parameters
+// into a vector of `cbor::Value`s and returning it.
+template <typename... Args>
+std::vector<cbor::Value> ToCborVector(Args... args) {
+  std::vector<cbor::Value> vec;
+  internal::AppendToCborVector(&vec, args...);
+  return vec;
+}
+
+}  // namespace device::fido_parsing_utils
 
 #endif  // DEVICE_FIDO_FIDO_PARSING_UTILS_H_

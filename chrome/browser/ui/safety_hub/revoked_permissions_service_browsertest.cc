@@ -23,8 +23,10 @@
 #include "chrome/browser/ui/safety_hub/disruptive_notification_permissions_manager.h"
 #include "chrome/browser/ui/safety_hub/mock_safe_browsing_database_manager.h"
 #include "chrome/browser/ui/safety_hub/revoked_permissions_service_factory.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_result.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_test_util.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_util.h"
+#include "chrome/browser/ui/safety_hub/unused_site_permissions_manager.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -42,14 +44,18 @@
 #include "components/safe_browsing/core/common/features.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/test/browser_test.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/notifications/platform_notification_data.h"
 
 namespace {
 
 using testing::Eq;
 using testing::Field;
+using testing::Ge;
 using testing::Not;
 using testing::Optional;
+using testing::Pointee;
 
 const char histogram_name[] =
     "Settings.SafetyHub.UnusedSitePermissionsModule.AutoRevoked2";
@@ -268,7 +274,7 @@ IN_PROC_BROWSER_TEST_F(RevokedPermissionsServiceBrowserTest,
 
   for (int i = 0; i < (int)revoked_permission_types.size(); i++) {
     ContentSettingsType revoked_permission_type =
-        RevokedPermissionsService::ConvertKeyToContentSettingsType(
+        UnusedSitePermissionsManager::ConvertKeyToContentSettingsType(
             revoked_permission_types[i].GetString());
     EXPECT_EQ(allowed_permission_types[i], revoked_permission_type);
   }
@@ -566,7 +572,7 @@ IN_PROC_BROWSER_TEST_F(
       Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
                      DisruptiveNotificationRevocationState::kProposed)));
   ASSERT_EQ(GetRevokedUnusedPermissions(hcsm).size(), 0u);
-  std::optional<std::unique_ptr<SafetyHubService::Result>> opt_result =
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
       service->GetCachedResult();
   ASSERT_TRUE(opt_result.has_value());
   auto* result =
@@ -669,7 +675,7 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
       Optional(Field(&DisruptiveNotificationRevocationEntry::revocation_state,
                      DisruptiveNotificationRevocationState::kRevoked)));
 
-  std::optional<std::unique_ptr<SafetyHubService::Result>> opt_result =
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
       service->GetCachedResult();
   ASSERT_TRUE(opt_result.has_value());
   auto* result =
@@ -739,7 +745,7 @@ IN_PROC_BROWSER_TEST_F(
   safety_hub_test_util::UpdateRevokedPermissionsServiceAsync(service);
   // Both disruptive notifications and unused permissions were revoked for the
   // URL.
-  std::optional<std::unique_ptr<SafetyHubService::Result>> opt_result =
+  std::optional<std::unique_ptr<SafetyHubResult>> opt_result =
       service->GetCachedResult();
   ASSERT_TRUE(opt_result.has_value());
   auto* result =
@@ -808,9 +814,9 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
       HostContentSettingsMapFactory::GetForProfile(browser()->profile());
   GURL url = embedded_test_server()->GetURL("/title1.html");
 
-  // Set up a proposed revoked notification.
+  // Set up a revoked notification.
   DisruptiveNotificationRevocationEntry proposed_entry(
-      /*revocation_state=*/DisruptiveNotificationRevocationState::kProposed,
+      /*revocation_state=*/DisruptiveNotificationRevocationState::kRevoked,
       /*site_engagement=*/0.0,
       /*daily_notification_count=*/5,
       /*timestamp=*/base::Time::Now() - base::Days(3));
@@ -818,6 +824,7 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
   DisruptiveNotificationContentSettingHelper(*hcsm).PersistRevocationEntry(
       url, proposed_entry);
 
+  site_engagement_service()->AddPointsForTesting(url, 4.0);
   // Visit the page.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
 
@@ -830,8 +837,8 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
       interaction_entry, "Reason",
       static_cast<int>(DisruptiveNotificationPermissionsManager::
                            FalsePositiveReason::kPageVisit));
-  // Site engagement hasn't been updated yet.
-  recorder_->ExpectEntryMetric(interaction_entry, "NewSiteEngagement", 0.0);
+  EXPECT_THAT(recorder_->GetEntryMetric(interaction_entry, "NewSiteEngagement"),
+              Pointee(Ge(4.0)));
   recorder_->ExpectEntryMetric(interaction_entry, "OldSiteEngagement", 0.0);
   recorder_->ExpectEntryMetric(interaction_entry, "DailyAverageVolume", 5);
 
@@ -842,7 +849,8 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
   recorder_->ExpectEntryMetric(revocation_entry, "DaysSinceRevocation", 3);
   recorder_->ExpectEntryMetric(revocation_entry, "PageVisitCount", 1);
   recorder_->ExpectEntryMetric(revocation_entry, "NotificationClickCount", 0);
-  recorder_->ExpectEntryMetric(revocation_entry, "NewSiteEngagement", 0.0);
+  EXPECT_THAT(recorder_->GetEntryMetric(revocation_entry, "NewSiteEngagement"),
+              Pointee(Ge(4.0)));
   recorder_->ExpectEntryMetric(revocation_entry, "OldSiteEngagement", 0.0);
   recorder_->ExpectEntryMetric(revocation_entry, "DailyAverageVolume", 5);
 
@@ -854,7 +862,7 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
   // reported again.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   EXPECT_EQ(
-      1u, recorder_
+      2u, recorder_
               ->GetEntriesByName("SafetyHub.DisruptiveNotificationRevocations."
                                  "FalsePositiveInteraction")
               .size());
@@ -918,12 +926,5 @@ IN_PROC_BROWSER_TEST_F(DisruptiveNotificationPermissionsRevocationBrowserTest,
 
   auto revocation_entries = recorder_->GetEntriesByName(
       "SafetyHub.DisruptiveNotificationRevocations.FalsePositiveRevocation");
-  ASSERT_EQ(1u, revocation_entries.size());
-  auto* revocation_entry = revocation_entries[0].get();
-  recorder_->ExpectEntryMetric(revocation_entry, "DaysSinceRevocation", 3);
-  recorder_->ExpectEntryMetric(revocation_entry, "PageVisitCount", 0);
-  recorder_->ExpectEntryMetric(revocation_entry, "NotificationClickCount", 1);
-  recorder_->ExpectEntryMetric(revocation_entry, "NewSiteEngagement", 2.0);
-  recorder_->ExpectEntryMetric(revocation_entry, "OldSiteEngagement", 0.0);
-  recorder_->ExpectEntryMetric(revocation_entry, "DailyAverageVolume", 5);
+  ASSERT_EQ(0u, revocation_entries.size());
 }

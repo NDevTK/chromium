@@ -24,19 +24,33 @@
 #include "chrome/browser/ash/video_conference/video_conference_client_wrapper.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
-#include "chromeos/crosapi/mojom/video_conference.mojom-forward.h"
 #include "chromeos/crosapi/mojom/video_conference.mojom.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 
 namespace ash {
 
+namespace {
+VideoConferenceManagerAsh* g_instance = nullptr;
+}  // namespace
+
+// static
+VideoConferenceManagerAsh* VideoConferenceManagerAsh::Get() {
+  return g_instance;
+}
+
 VideoConferenceManagerAsh::VideoConferenceManagerAsh() {
+  CHECK(!g_instance);
+  g_instance = this;
+
   if (ash::features::IsVideoConferenceEnabled()) {
     GetTrayController()->Initialize(this);
   }
 }
 
-VideoConferenceManagerAsh::~VideoConferenceManagerAsh() = default;
+VideoConferenceManagerAsh::~VideoConferenceManagerAsh() {
+  CHECK_EQ(g_instance, this);
+  g_instance = nullptr;
+}
 
 void VideoConferenceManagerAsh::RegisterCppClient(
     crosapi::mojom::VideoConferenceManagerClient* client,
@@ -92,10 +106,10 @@ void VideoConferenceManagerAsh::ReturnToApp(const base::UnguessableToken& id) {
 
 void VideoConferenceManagerAsh::SetSystemMediaDeviceStatus(
     crosapi::mojom::VideoConferenceMediaDevice device,
-    bool disabled) {
+    bool enabled) {
   for (auto& [_, client_wrapper] : client_id_to_wrapper_) {
     client_wrapper.SetSystemMediaDeviceStatus(
-        device, disabled, base::BindOnce([](bool success) {
+        device, enabled, base::BindOnce([](bool success) {
           if (!success) {
             LOG(ERROR)
                 << "VideoConferenceClient::SetSystemMediaDeviceStatus was "

@@ -30,10 +30,6 @@
 
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 
-#include <algorithm>
-#include <cmath>
-
-#include "base/numerics/safe_conversions.h"
 #include "partition_alloc/partition_alloc.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
@@ -130,14 +126,6 @@ InterpolationQuality ComputeInterpolationQuality(float src_width,
   return GetDefaultInterpolationQuality();
 }
 
-SkColor ScaleAlpha(SkColor color, float alpha) {
-  const auto clamped_alpha = std::max(0.0f, std::min(1.0f, alpha));
-  const auto rounded_alpha =
-      base::ClampRound<U8CPU>(SkColorGetA(color) * clamped_alpha);
-
-  return SkColorSetA(color, rounded_alpha);
-}
-
 bool ApproximatelyEqualSkColorSpaces(sk_sp<SkColorSpace> src_color_space,
                                      sk_sp<SkColorSpace> dst_color_space) {
   if ((!src_color_space && dst_color_space) ||
@@ -153,7 +141,7 @@ bool ApproximatelyEqualSkColorSpaces(sk_sp<SkColorSpace> src_color_space,
 
 sk_sp<SkData> TryAllocateSkData(size_t size) {
   void* buffer =
-      WTF::Partitions::BufferPartition()
+      Partitions::BufferPartition()
           ->AllocInline<partition_alloc::AllocFlags::kReturnNull |
                         partition_alloc::AllocFlags::kZeroFill>(size, "SkData");
   if (!buffer)
@@ -161,7 +149,7 @@ sk_sp<SkData> TryAllocateSkData(size_t size) {
   return SkData::MakeWithProc(
       buffer, size,
       [](const void* buffer, void* context) {
-        WTF::Partitions::BufferPartition()->Free(const_cast<void*>(buffer));
+        Partitions::BufferPartition()->Free(const_cast<void*>(buffer));
       },
       /*context=*/nullptr);
 }

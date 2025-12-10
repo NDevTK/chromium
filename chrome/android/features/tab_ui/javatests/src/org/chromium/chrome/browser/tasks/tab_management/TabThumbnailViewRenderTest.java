@@ -16,6 +16,7 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.ColorInt;
 import androidx.core.view.ViewCompat;
+import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
 
 import org.junit.After;
@@ -62,7 +63,7 @@ public class TabThumbnailViewRenderTest {
     public final ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(RenderTestRule.Component.UI_BROWSER_MOBILE_TAB_SWITCHER_GRID)
-                    .setRevision(7)
+                    .setRevision(8)
                     .build();
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
@@ -113,6 +114,7 @@ public class TabThumbnailViewRenderTest {
                                     ViewGroup.LayoutParams.WRAP_CONTENT);
                     mActivityTestRule.getActivity().setContentView(mContentView, params);
                 });
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     final int cardWidthPx = mContentView.getMeasuredWidth() / 2;
@@ -127,6 +129,7 @@ public class TabThumbnailViewRenderTest {
                     mTabCard.getLayoutParams().height = cardHeightPx;
                     mTabCard.setLayoutParams(mTabCard.getLayoutParams());
                 });
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mBitmap = createBitmapFourColor();
@@ -224,13 +227,13 @@ public class TabThumbnailViewRenderTest {
         cardView.getBackground().mutate();
         final @ColorInt int backgroundColor =
                 TabCardThemeUtil.getCardViewBackgroundColor(
-                        cardView.getContext(), isIncognito, isSelected, /* colorId */ null);
+                        cardView.getContext(), isIncognito, isSelected, /* colorId= */ null);
         ViewCompat.setBackgroundTintList(cardView, ColorStateList.valueOf(backgroundColor));
 
-        mTabThumbnailView.updateThumbnailPlaceholder(isIncognito, isSelected, /* colorId */ null);
+        mTabThumbnailView.updateThumbnailPlaceholder(isIncognito, isSelected, /* colorId= */ null);
 
         mTabCard.setTabActionButtonTint(
                 TabCardThemeUtil.getActionButtonTintList(
-                        mTabCard.getContext(), isIncognito, isSelected, /* colorId */ null));
+                        mTabCard.getContext(), isIncognito, isSelected, /* colorId= */ null));
     }
 }

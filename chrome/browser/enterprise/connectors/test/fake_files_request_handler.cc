@@ -17,7 +17,7 @@ FakeFilesRequestHandler::FakeFilesRequestHandler(
     const std::string& source,
     const std::string& destination,
     const std::string& content_transfer_method,
-    safe_browsing::DeepScanAccessPoint access_point,
+    DeepScanAccessPoint access_point,
     const std::vector<base::FilePath>& paths,
     CompletionCallback callback)
     : FilesRequestHandler(content_analysis_info,
@@ -44,7 +44,7 @@ std::unique_ptr<FilesRequestHandler> FakeFilesRequestHandler::Create(
     const std::string& source,
     const std::string& destination,
     const std::string& content_transfer_method,
-    safe_browsing::DeepScanAccessPoint access_point,
+    DeepScanAccessPoint access_point,
     const std::vector<base::FilePath>& paths,
     FilesRequestHandler::CompletionCallback callback) {
   return std::make_unique<FakeFilesRequestHandler>(
@@ -54,9 +54,9 @@ std::unique_ptr<FilesRequestHandler> FakeFilesRequestHandler::Create(
 }
 
 void FakeFilesRequestHandler::UploadFileForDeepScanning(
-    safe_browsing::BinaryUploadService::Result result,
+    ScanRequestUploadResult result,
     const base::FilePath& path,
-    std::unique_ptr<safe_browsing::BinaryUploadService::Request> request) {
+    std::unique_ptr<BinaryUploadRequest> request) {
   fake_file_upload_callback_.Run(
       result, path, std::move(request),
       base::BindOnce(&FakeFilesRequestHandler::FileRequestCallbackForTesting,

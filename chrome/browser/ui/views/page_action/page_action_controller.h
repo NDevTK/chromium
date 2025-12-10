@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -19,6 +20,7 @@
 #include "base/types/pass_key.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model.h"
 #include "chrome/browser/ui/views/page_action/page_action_metrics_recorder_interface.h"
+#include "chrome/browser/ui/views/page_action/page_action_model.h"
 #include "chrome/browser/ui/views/page_action/page_action_properties_provider.h"
 #include "chrome/browser/ui/views/page_action/page_action_triggers.h"
 #include "components/tabs/public/tab_interface.h"
@@ -45,9 +47,19 @@ class PageActionModelObserver;
 class PageActionMetricsRecorderFactory;
 class PageActionMetricsRecorderInterface;
 
+// Indicates the source used to color the page action icon.
+enum class PageActionColorSource {
+  // The foreground's color.
+  kForeground,
+  // A blend between the focus border color and the background.
+  kCascadingAccent,
+};
+
 // Configuration for a page action's suggestion chip.
 struct SuggestionChipConfig {
   // Whether the chip should have expand/collapse animations.
+  // The suggestion chip will only animate once per call to
+  // `PageActionController::ShowSuggestionChip`.
   bool should_animate = true;
 
   // Whether the chip should be announced by a screen reader.
@@ -64,7 +76,7 @@ struct SuggestionChipConfig {
 // action is decremented.
 class ScopedPageActionActivity {
  public:
-  ScopedPageActionActivity(PageActionController* controller,
+  ScopedPageActionActivity(PageActionController& controller,
                            actions::ActionId action_id);
   ScopedPageActionActivity(ScopedPageActionActivity&& other) noexcept;
   ScopedPageActionActivity& operator=(
@@ -76,8 +88,12 @@ class ScopedPageActionActivity {
   ScopedPageActionActivity& operator=(const ScopedPageActionActivity&) = delete;
 
  private:
+  void RegisterWillDestroyControllerCallback();
+
   raw_ptr<PageActionController> controller_;
   actions::ActionId action_id_;
+
+  base::CallbackListSubscription on_will_destroy_controller_subscription_;
 };
 
 std::ostream& operator<<(std::ostream& os, const SuggestionChipConfig& config);
@@ -120,9 +136,14 @@ class PageActionController {
   // By default, the page action will have an image which can be shared in the
   // other places that rely on the same action item. However, features can
   // provide a custom image to use for the page action for a specific context
-  // (tab).
+  // (tab). The source of the icon's color can be controlled with
+  // `color_source`, which defaults to using foreground color.
   virtual void OverrideImage(actions::ActionId action_id,
                              const ui::ImageModel& override_image) = 0;
+  virtual void OverrideImage(actions::ActionId action_id,
+                             const ui::ImageModel& override_image,
+                             PageActionColorSource color_source) = 0;
+
   virtual void ClearOverrideImage(actions::ActionId action_id) = 0;
 
   // By default, the page action will have an tooltip which can be shared in the
@@ -154,6 +175,10 @@ class PageActionController {
   // of whether they would otherwise be visible. Setting it to `false` reverts
   // back to each page action's normal visibility logic.
   virtual void SetShouldHidePageActions(bool should_hide_page_actions) = 0;
+
+  // Registers a callback executed right before the controller is destroyed.
+  virtual base::CallbackListSubscription RegisterOnWillDestroyCallback(
+      base::OnceCallback<void(PageActionController&)> callback) = 0;
 
   // Provides a metric recording callback to the caller. The callback won't run
   // if the page action controller is destroyed.
@@ -215,6 +240,9 @@ class PageActionControllerImpl : public PageActionController,
   void ClearOverrideAccessibleName(actions::ActionId action_id) override;
   void OverrideImage(actions::ActionId action_id,
                      const ui::ImageModel& override_image) override;
+  void OverrideImage(actions::ActionId action_id,
+                     const ui::ImageModel& override_image,
+                     PageActionColorSource color_source) override;
   void ClearOverrideImage(actions::ActionId action_id) override;
   void OverrideTooltip(actions::ActionId action_id,
                        const std::u16string& override_tooltip) override;
@@ -230,7 +258,8 @@ class PageActionControllerImpl : public PageActionController,
   base::RepeatingCallback<void(PageActionTrigger)> GetClickCallback(
       base::PassKey<PageActionView>,
       actions::ActionId action_id) override;
-
+  base::CallbackListSubscription RegisterOnWillDestroyCallback(
+      base::OnceCallback<void(PageActionController&)> callback) override;
   void RegisterIsChipShowingChangedCallback(
       base::PassKey<PageActionView>,
       actions::ActionId action_id,
@@ -252,7 +281,8 @@ class PageActionControllerImpl : public PageActionController,
   // Creates a page action model for the given id, and initializes it's values.
   void Register(actions::ActionId action_id,
                 bool is_tab_active,
-                bool is_ephemeral);
+                bool is_ephemeral,
+                bool is_exempt_from_omnibox_suppression);
 
   // Triggered when `page_action_view` chip state visibility has changed and
   // completed animation to the new state.
@@ -319,6 +349,9 @@ class PageActionControllerImpl : public PageActionController,
 
   base::CallbackListSubscription tab_activated_callback_subscription_;
   base::CallbackListSubscription tab_deactivated_callback_subscription_;
+
+  base::OnceCallbackList<void(PageActionController&)>
+      on_will_destroy_callback_list_;
 
   base::WeakPtrFactory<PageActionControllerImpl> weak_factory_{this};
 };

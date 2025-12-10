@@ -27,6 +27,7 @@
 #include "net/base/net_errors.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_utils.h"
@@ -664,7 +665,7 @@ TEST_F(OAuth2MintTokenFlowTest, CreateApiCallHeaders) {
 
 TEST_F(OAuth2MintTokenFlowTest,
        CreateApiCallBodyClientAccessTokenFlowWithBoundOAuthToken) {
-  CreateClientFlow(/*bound_oauth_token=*/std::string());
+  CreateClientFlow("test_bound_oauth_token");
   std::string body = flow_->CreateApiCallBody();
   std::string expected_body(
       "force=false"

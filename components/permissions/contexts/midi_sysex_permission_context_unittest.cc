@@ -12,8 +12,10 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request_id.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
 #include "components/permissions/test/test_permissions_client.h"
 #include "content/public/browser/permission_descriptor_util.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_render_process_host.h"
@@ -43,14 +45,13 @@ class TestPermissionContext : public MidiSysexPermissionContext {
 
   bool tab_context_updated() { return tab_context_updated_; }
 
-  void TrackPermissionDecision(PermissionStatus permission_status) {
+  void TrackPermissionDecision(content::PermissionResult permission_result) {
     permission_set_ = true;
-    permission_granted_ = permission_status == PermissionStatus::GRANTED;
+    permission_granted_ = permission_result.status == PermissionStatus::GRANTED;
   }
 
  protected:
-  void UpdateTabContext(const PermissionRequestID& id,
-                        const GURL& requesting_origin,
+  void UpdateTabContext(const PermissionRequestData& request_data,
                         bool allowed) override {
     tab_context_updated_ = true;
   }
@@ -83,8 +84,10 @@ TEST_F(MidiSysexPermissionContextTests, TestInsecureRequestingUrl) {
       web_contents()->GetPrimaryMainFrame()->GetGlobalId(),
       permissions::PermissionRequestID::RequestLocalId());
   permission_context.RequestPermission(
-      std::make_unique<PermissionRequestData>(&permission_context, id,
-                                              /*user_gesture=*/true, url),
+      std::make_unique<PermissionRequestData>(
+          std::make_unique<ContentSettingPermissionResolver>(
+              ContentSettingsType::MIDI_SYSEX),
+          id, /*user_gesture=*/true, url),
       base::BindOnce(&TestPermissionContext::TrackPermissionDecision,
                      base::Unretained(&permission_context)));
 

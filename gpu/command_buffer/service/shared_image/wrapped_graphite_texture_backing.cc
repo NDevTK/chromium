@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
@@ -118,8 +119,8 @@ class WrappedGraphiteTextureBacking::SkiaGraphiteImageRepresentationImpl
   bool SupportsMultipleConcurrentReadAccess() override { return true; }
 
   // Graphite context submit is done only once per frame for Dawn D3D backend.
-  bool NeedGraphiteContextSubmitBeforeEndAccess() override {
-    return !context_state_->IsGraphiteDawnD3D();
+  bool SupportsDeferredGraphiteSubmit() override {
+    return context_state_->IsGraphiteDawnD3D();
   }
 
  private:
@@ -159,7 +160,8 @@ WrappedGraphiteTextureBacking::WrappedGraphiteTextureBacking(
 
   // TODO:crbug.com/427657657 - Implement a generic solution to handle all
   // SkImage release callbacks through GraphiteSharedContext.
-  if (is_thread_safe() || features::IsGraphiteContextThreadSafe()) {
+  if (is_thread_safe() || (context_state_->is_drdc_enabled() &&
+                           features::IsGraphiteContextThreadSafe())) {
     // If the backing is thread safe then it may be destroyed on a different
     // thread. Store the task runner so textures can be destroyed on the same
     // thread they were created on.
@@ -353,10 +355,7 @@ bool WrappedGraphiteTextureBacking::InsertRecordingAndSubmit() {
     LOG(ERROR) << "Graphite insertRecording() failed";
     return false;
   }
-  if (!context_state_->graphite_shared_context()->submit()) {
-    LOG(ERROR) << "Graphite context submit() failed";
-    return false;
-  }
+  context_state_->graphite_shared_context()->submit();
   return true;
 }
 

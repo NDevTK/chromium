@@ -317,8 +317,14 @@ IN_PROC_BROWSER_TEST_F(WebAppProfileDeletionTest_WebContentsGracefulShutdown,
             webapps::WebAppUrlLoaderResult::kFailedWebContentsDestroyed);
 }
 
+// Flaky on Linux, see https://crbug.com/454830629.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_IconDownloading DISABLED_IconDownloading
+#else
+#define MAYBE_IconDownloading IconDownloading
+#endif
 IN_PROC_BROWSER_TEST_F(WebAppProfileDeletionTest_WebContentsGracefulShutdown,
-                       IconDownloading) {
+                       MAYBE_IconDownloading) {
   WebAppIconDownloader icon_downloader;
 
   std::unique_ptr<content::WebContents> deleting_web_contents =
@@ -397,7 +403,7 @@ IN_PROC_BROWSER_TEST_F(WebAppProfileDeletionTest_WebContentsGracefulShutdown,
   icon_urls.insert(IconUrlWithSize::CreateForUnspecifiedSize(
       GURL("https://www.example.com/favicon.ico")));
   data_retriever.GetIcons(deleting_web_contents.get(), icon_urls,
-                          /*skip_page_favicons=*/false,
+                          /*download_page_favicons=*/true,
                           /*fail_all_if_any_fail=*/false,
                           icon_download_future.GetCallback());
   EXPECT_TRUE(icon_download_future.Wait());

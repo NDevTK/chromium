@@ -9,6 +9,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import static org.chromium.components.browser_ui.widget.ListItemBuilder.buildSimpleMenuItem;
+
 import androidx.annotation.ColorRes;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.IdRes;
@@ -19,7 +21,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.ui.listmenu.BasicListMenu;
+import org.chromium.ui.listmenu.ListItemType;
 import org.chromium.ui.listmenu.ListMenuItemProperties;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -42,7 +44,7 @@ public class ListItemBuilderUnitTest {
         ListItem listItem = new ListItemBuilder().build();
         PropertyModel model = listItem.model;
 
-        assertEquals(BasicListMenu.ListMenuItemType.MENU_ITEM, listItem.type);
+        assertEquals(ListItemType.MENU_ITEM, listItem.type);
         assertTrue(model.get(ListMenuItemProperties.ENABLED));
         assertEquals(
                 BrowserUiListMenuUtils.getDefaultTextAppearanceStyle(),
@@ -107,12 +109,21 @@ public class ListItemBuilderUnitTest {
     }
 
     @Test
+    public void testBuildSimpleMenuItem() {
+        ListItem listItem = buildSimpleMenuItem(FAKE_TITLE_ID);
+        PropertyModel model = listItem.model;
+
+        assertEquals(FAKE_TITLE_ID, model.get(ListMenuItemProperties.TITLE_ID));
+        assertNull(model.get(ListMenuItemProperties.TITLE));
+    }
+
+    @Test
     public void testBuild_incognito_withDefaults() {
         ListItem listItem = new ListItemBuilder().withIsIncognito(true).build();
         PropertyModel model = listItem.model;
 
         assertEquals(
-                R.style.TextAppearance_TextLarge_Primary_Baseline_Light,
+                R.style.TextAppearance_DensityAdaptive_TextLarge_Primary_Baseline_Light,
                 model.get(ListMenuItemProperties.TEXT_APPEARANCE_ID));
         assertEquals(
                 R.color.default_icon_color_light_tint_list,

@@ -21,6 +21,7 @@
 #include "media/mojo/mojom/audio_processing.mojom.h"
 #include "media/mojo/mojom/audio_stream_factory.mojom.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/shared_remote.h"
 #include "services/audio/loopback_coordinator.h"
 #include "services/audio/realtime_audio_thread.h"
 
@@ -44,6 +45,7 @@ namespace audio {
 class InputStream;
 class LocalMuter;
 class LoopbackStream;
+class MlModelManager;
 class OutputStream;
 
 // This class is used to provide the AudioStreamFactory interface. It will
@@ -52,10 +54,12 @@ class OutputStream;
 // created. |audio_manager| must outlive the factory.
 class StreamFactory final : public media::mojom::AudioStreamFactory {
  public:
-  // If not nullptr, then |aecdump_recording_manager| must outlive the factory.
+  // Non-null `aecdump_recording_manager` and `ml_model_manager` must outlive
+  // this factory.
   explicit StreamFactory(
       media::AudioManager* audio_manager,
-      media::AecdumpRecordingManager* aecdump_recording_manager);
+      media::AecdumpRecordingManager* aecdump_recording_manager,
+      raw_ptr<MlModelManager> ml_model_manager);
 
   StreamFactory(const StreamFactory&) = delete;
   StreamFactory& operator=(const StreamFactory&) = delete;
@@ -72,6 +76,7 @@ class StreamFactory final : public media::mojom::AudioStreamFactory {
       mojo::PendingRemote<media::mojom::AudioLog> log,
       const std::string& device_id,
       const media::AudioParameters& params,
+      const base::UnguessableToken& group_id,
       uint32_t shared_memory_count,
       bool enable_agc,
       media::mojom::AudioProcessingConfigPtr processing_config,
@@ -114,7 +119,8 @@ class StreamFactory final : public media::mojom::AudioStreamFactory {
       CreateLoopbackStreamCallback created_callback) final;
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
   std::unique_ptr<ReferenceSignalProvider> GetNewReferenceSignalProvider(
-      const media::mojom::AudioProcessingConfigPtr& processing_config);
+      const media::mojom::AudioProcessingConfigPtr& processing_config,
+      const mojo::SharedRemote<media::mojom::AudioLog>& audio_log);
 #endif
 
  private:
@@ -149,6 +155,9 @@ class StreamFactory final : public media::mojom::AudioStreamFactory {
 
   mojo::ReceiverSet<media::mojom::AudioStreamFactory> receivers_;
 
+  // Ml managers that deliver model related information to the audio processing.
+  // May be nullptr.
+  const raw_ptr<MlModelManager> ml_model_manager_;
   // Order of the following members is important for a clean shutdown.
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
   // output_device_mixer_manager_ must be before input_streams_ to guarantee

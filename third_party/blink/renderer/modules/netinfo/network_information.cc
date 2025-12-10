@@ -15,10 +15,10 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -164,8 +164,12 @@ double NetworkInformation::downlink() {
 }
 
 bool NetworkInformation::saveData() const {
-  return IsObserving() ? save_data_
-                       : GetNetworkStateNotifier().SaveDataEnabled();
+  bool save_data =
+      IsObserving() ? save_data_ : GetNetworkStateNotifier().SaveDataEnabled();
+
+  probe::ApplyDataSaverOverride(probe::ToCoreProbeSink(GetExecutionContext()),
+                                save_data);
+  return save_data;
 }
 
 void NetworkInformation::ConnectionChange(
@@ -285,23 +289,19 @@ void NetworkInformation::StopObserving() {
   }
 }
 
-const char NetworkInformation::kSupplementName[] = "NetworkInformation";
-
 NetworkInformation* NetworkInformation::connection(NavigatorBase& navigator) {
   if (!navigator.GetExecutionContext())
     return nullptr;
-  NetworkInformation* supplement =
-      Supplement<NavigatorBase>::From<NetworkInformation>(navigator);
+  NetworkInformation* supplement = navigator.GetNetworkInformation();
   if (!supplement) {
     supplement = MakeGarbageCollected<NetworkInformation>(navigator);
-    ProvideTo(navigator, supplement);
+    navigator.SetNetworkInformation(supplement);
   }
   return supplement;
 }
 
 NetworkInformation::NetworkInformation(NavigatorBase& navigator)
     : ActiveScriptWrappable<NetworkInformation>({}),
-      Supplement<NavigatorBase>(navigator),
       ExecutionContextLifecycleObserver(navigator.GetExecutionContext()),
       web_holdback_console_message_shown_(false),
       context_stopped_(false) {
@@ -321,7 +321,6 @@ NetworkInformation::NetworkInformation(NavigatorBase& navigator)
 
 void NetworkInformation::Trace(Visitor* visitor) const {
   EventTarget::Trace(visitor);
-  Supplement<NavigatorBase>::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }
 

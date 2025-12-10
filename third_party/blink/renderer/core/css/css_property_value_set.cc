@@ -75,20 +75,20 @@ unsigned CSSPropertyValueSet::ComputeHash() const {
 
   for (const CSSPropertyValue& property : Properties()) {
     if (property.PropertyID() == CSSPropertyID::kVariable) {
-      WTF::AddIntToHash(hash, property.Name().ToAtomicString().Hash());
+      AddIntToHash(hash, property.Name().ToAtomicString().Hash());
     } else {
-      WTF::AddIntToHash(hash, static_cast<unsigned>(property.PropertyID()));
+      AddIntToHash(hash, static_cast<unsigned>(property.PropertyID()));
     }
-    WTF::AddIntToHash(hash, property.IsImportant());
-    WTF::AddIntToHash(hash, property.Value().Hash());
+    AddIntToHash(hash, property.IsImportant());
+    AddIntToHash(hash, property.Value().Hash());
   }
 
-  static_assert((WTF::HashTraits<unsigned>::EmptyValue() ^ 0x80000000) !=
-                    WTF::HashTraits<unsigned>::DeletedValue(),
+  static_assert((HashTraits<unsigned>::EmptyValue() ^ 0x80000000) !=
+                    HashTraits<unsigned>::DeletedValue(),
                 "We assume below that flipping the top bit will not turn "
                 "EmptyValue into DeletedValue or vice versa");
-  if (hash == WTF::HashTraits<unsigned>::EmptyValue() ||
-      hash == WTF::HashTraits<unsigned>::DeletedValue()) {
+  if (hash == HashTraits<unsigned>::EmptyValue() ||
+      hash == HashTraits<unsigned>::DeletedValue()) {
     hash ^= 0x80000000;
   }
 
@@ -166,7 +166,11 @@ static bool IsPropertyMatch(const CSSPropertyValue& property,
                             uint16_t id,
                             const AtomicString& custom_property_name) {
   DCHECK_EQ(id, static_cast<uint16_t>(CSSPropertyID::kVariable));
-  return property.Name() == CSSPropertyName(custom_property_name);
+  if (property.PropertyID() == CSSPropertyID::kVariable) {
+    return property.CustomPropertyName() == custom_property_name;
+  } else {
+    return false;
+  }
 }
 
 static bool IsPropertyMatch(const CSSPropertyValue& property,
@@ -534,7 +538,7 @@ MutableCSSPropertyValueSet::SetLonghandProperty(CSSPropertyValue property) {
   CSSPropertyValue* to_replace;
   if (id == CSSPropertyID::kVariable) {
     to_replace = const_cast<CSSPropertyValue*>(
-        FindPropertyPointer(property.Name().ToAtomicString()));
+        FindPropertyPointer(property.CustomPropertyName()));
   } else {
     to_replace = FindInsertionPointForID(id);
   }

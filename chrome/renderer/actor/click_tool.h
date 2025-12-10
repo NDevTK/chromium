@@ -8,17 +8,15 @@
 #include <cstdint>
 
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
 #include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
+#include "chrome/common/actor/task_id.h"
 #include "chrome/renderer/actor/tool_base.h"
 
 namespace content {
 class RenderFrame;
 }  // namespace content
-
-namespace gfx {
-class PointF;
-}  // namespace gfx
 
 namespace actor {
 
@@ -26,20 +24,29 @@ namespace actor {
 class ClickTool : public ToolBase {
  public:
   ClickTool(content::RenderFrame& frame,
-            Journal::TaskId task_id,
+            TaskId task_id,
             Journal& journal,
-            mojom::ClickActionPtr action);
+            mojom::ClickActionPtr action,
+            mojom::ToolTargetPtr target,
+            mojom::ObservedToolTargetPtr observed_target);
   ~ClickTool() override;
 
   // actor::ToolBase
-  mojom::ActionResultPtr Execute() override;
+  void Execute(ToolFinishedCallback callback) override;
   std::string DebugString() const override;
+  bool SupportsPaintStability() const override;
 
  private:
-  using ValidatedResult = base::expected<gfx::PointF, mojom::ActionResultPtr>;
+  using ValidatedResult =
+      base::expected<ResolvedTarget, mojom::ActionResultPtr>;
   ValidatedResult Validate() const;
 
+  void OnActionComplete(ToolFinishedCallback callback,
+                        mojom::ActionResultPtr result);
+
   mojom::ClickActionPtr action_;
+
+  base::WeakPtrFactory<ClickTool> weak_ptr_factory_{this};
 };
 
 }  // namespace actor

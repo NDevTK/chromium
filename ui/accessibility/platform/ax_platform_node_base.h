@@ -5,12 +5,12 @@
 #ifndef UI_ACCESSIBILITY_PLATFORM_AX_PLATFORM_NODE_BASE_H_
 #define UI_ACCESSIBILITY_PLATFORM_AX_PLATFORM_NODE_BASE_H_
 
-#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_split.h"
@@ -24,7 +24,7 @@
 #include "ui/accessibility/platform/ax_platform_text_boundary.h"
 #include "ui/base/buildflags.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(USE_ATK)
 #include <atk/atk.h>
@@ -37,7 +37,7 @@ struct AXNodeData;
 // TODO(nektar): Move this struct over to AXNode so that it can be accessed by
 // AXPosition.
 struct COMPONENT_EXPORT(AX_PLATFORM) AXLegacyHypertext {
-  using OffsetToIndex = std::map<int32_t, int32_t>;
+  using OffsetToIndex = base::flat_map<int32_t, int32_t>;
 
   AXLegacyHypertext();
   ~AXLegacyHypertext();
@@ -45,6 +45,8 @@ struct COMPONENT_EXPORT(AX_PLATFORM) AXLegacyHypertext {
   AXLegacyHypertext& operator=(const AXLegacyHypertext& other);
   AXLegacyHypertext(AXLegacyHypertext&& other) noexcept;
   AXLegacyHypertext& operator=(AXLegacyHypertext&& other);
+
+  void Clear();
 
   // A flag that should be set if the hypertext information in this struct is
   // out-of-date and needs to be updated. This flag should always be set upon
@@ -103,6 +105,10 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNodeBase : public AXPlatformNode {
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   void NotifyAccessibilityEvent(ax::mojom::Event event_type) override;
 
+  // For testing.
+  AXPlatformNodeDelegate* SetDelegateForTesting(
+      AXPlatformNodeDelegate* delegate);
+
   // Returns the top-level URL for the active document. This should generally
   // correspond to what would be shown in the Omnibox.
   std::string GetRootURL() const override;
@@ -151,14 +157,12 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNodeBase : public AXPlatformNode {
   bool GetFloatAttribute(ax::mojom::FloatAttribute attribute,
                          float* value) const;
 
-  const std::vector<std::pair<ax::mojom::IntAttribute, int32_t>>&
-  GetIntAttributes() const;
+  const AXIntAttributes& GetIntAttributes() const;
   bool HasIntAttribute(ax::mojom::IntAttribute attribute) const;
   int GetIntAttribute(ax::mojom::IntAttribute attribute) const;
   bool GetIntAttribute(ax::mojom::IntAttribute attribute, int* value) const;
 
-  const std::vector<std::pair<ax::mojom::StringAttribute, std::string>>&
-  GetStringAttributes() const;
+  const AXStringAttributes& GetStringAttributes() const;
   bool HasStringAttribute(ax::mojom::StringAttribute attribute) const;
   const std::string& GetStringAttribute(
       ax::mojom::StringAttribute attribute) const;
@@ -179,9 +183,7 @@ class COMPONENT_EXPORT(AX_PLATFORM) AXPlatformNodeBase : public AXPlatformNode {
   bool GetInheritedString16Attribute(ax::mojom::StringAttribute attribute,
                                      std::u16string* value) const;
 
-  const std::vector<
-      std::pair<ax::mojom::IntListAttribute, std::vector<int32_t>>>&
-  GetIntListAttributes() const;
+  const AXIntListAttributes& GetIntListAttributes() const;
   bool HasIntListAttribute(ax::mojom::IntListAttribute attribute) const;
   const std::vector<int32_t>& GetIntListAttribute(
       ax::mojom::IntListAttribute attribute) const;

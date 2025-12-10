@@ -26,6 +26,8 @@
 #include "chrome/browser/apps/app_service/metrics/app_service_metrics.h"
 #include "chrome/browser/ash/apps/apk_web_app_service.h"
 #include "chrome/browser/ash/arc/arc_util.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
 #include "chrome/browser/ash/file_manager/url_util.h"
@@ -49,7 +51,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -63,6 +64,7 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
+#include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/file_manager/app_id.h"
 #include "chromeos/ash/experiences/arc/intent_helper/arc_intent_helper_bridge.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
@@ -103,13 +105,13 @@ bool IsIncognitoAllowed() {
 // Returns URL path and query without the "/" prefix. For example, for the URL
 // "chrome://settings/networks/?type=WiFi" returns "networks/?type=WiFi".
 std::string GetPathAndQuery(const GURL& url) {
-  std::string result = url.path();
+  std::string result = url.GetPath();
   if (!result.empty() && result[0] == '/') {
     result.erase(0, 1);
   }
   if (url.has_query()) {
     result += '?';
-    result += url.query();
+    result += url.GetQuery();
   }
   return result;
 }
@@ -166,26 +168,7 @@ bool OpenFilesSwa(Profile* const profile,
   return true;
 }
 
-bool IsGeminiApp(Browser* browser) {
-  return web_app::GetAppIdFromApplicationName(browser->app_name()) ==
-         ash::kGeminiAppId;
-}
-
 }  // namespace
-
-ChromeNewWindowClient::ChromeNewWindowClient() {
-  arc::ArcIntentHelperBridge::SetControlCameraAppDelegate(this);
-}
-
-ChromeNewWindowClient::~ChromeNewWindowClient() {
-  arc::ArcIntentHelperBridge::SetControlCameraAppDelegate(nullptr);
-}
-
-// static
-ChromeNewWindowClient* ChromeNewWindowClient::Get() {
-  return static_cast<ChromeNewWindowClient*>(
-      ash::NewWindowDelegate::GetInstance());
-}
 
 // TabRestoreHelper is used to restore a tab. In particular when the user
 // attempts to a restore a tab if the TabRestoreService hasn't finished loading
@@ -231,10 +214,24 @@ class ChromeNewWindowClient::TabRestoreHelper
   raw_ptr<sessions::TabRestoreService> tab_restore_service_;
 };
 
+ChromeNewWindowClient::ChromeNewWindowClient() {
+  arc::ArcIntentHelperBridge::SetControlCameraAppDelegate(this);
+}
+
+ChromeNewWindowClient::~ChromeNewWindowClient() {
+  arc::ArcIntentHelperBridge::SetControlCameraAppDelegate(nullptr);
+}
+
+// static
+ChromeNewWindowClient* ChromeNewWindowClient::Get() {
+  return static_cast<ChromeNewWindowClient*>(
+      ash::NewWindowDelegate::GetInstance());
+}
+
 void ChromeNewWindowClient::NewTab() {
   Browser* browser = chrome::FindBrowserWithActiveWindow();
   if (browser && browser->is_type_normal()) {
-    chrome::NewTab(browser);
+    chrome::NewTab(browser, NewTabTypes::kNewTabCommand);
     return;
   }
 
@@ -250,7 +247,7 @@ void ChromeNewWindowClient::NewTab() {
     }
     chrome::ScopedTabbedBrowserDisplayer displayer(profile);
     browser = displayer.browser();
-    chrome::NewTab(browser);
+    chrome::NewTab(browser, NewTabTypes::kNewTabCommand);
   }
 
   browser->SetFocusToLocationBar();
@@ -343,13 +340,13 @@ void ChromeNewWindowClient::OpenUrl(const GURL& url,
        url.SchemeIs(content::kChromeUIScheme))) {
     // Show browser settings (e.g. chrome://settings). This may open in a window
     // or a tab depending on feature SplitSettings.
-    if (url.host() == chrome::kChromeUISettingsHost) {
+    if (url.GetHost() == chrome::kChromeUISettingsHost) {
       std::string sub_page = GetPathAndQuery(url);
       chrome::ShowSettingsSubPageForProfile(profile, sub_page);
       return;
     }
     // OS settings are shown in a window.
-    if (url.host() == chrome::kChromeUIOSSettingsHost) {
+    if (url.GetHost() == chrome::kChromeUIOSSettingsHost) {
       std::string sub_page = GetPathAndQuery(url);
       chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(profile,
                                                                    sub_page);
@@ -376,7 +373,7 @@ void ChromeNewWindowClient::OpenUrl(const GURL& url,
     // The browser window might be on another user's desktop, and hence not
     // visible. Ensure the browser becomes visible on this user's desktop.
     multi_user_util::MoveWindowToCurrentDesktop(
-        navigate_params.browser->window()->GetNativeWindow());
+        navigate_params.browser->GetWindow()->GetNativeWindow());
   }
 
   auto* tab = navigate_params.navigated_or_inserted_contents.get();
@@ -469,7 +466,7 @@ void ChromeNewWindowClient::OpenCrosh() {
 
 void ChromeNewWindowClient::OpenGetHelp() {
   Profile* const profile = ProfileManager::GetActiveUserProfile();
-  chrome::ShowHelpForProfile(profile, chrome::HELP_SOURCE_KEYBOARD);
+  chrome::ShowHelpForProfile(profile, chrome::HelpSource::kKeyboard);
 }
 
 void ChromeNewWindowClient::RestoreTab() {
@@ -537,24 +534,20 @@ void ChromeNewWindowClient::OpenFile(const base::FilePath& file_path) {
 }
 
 void ChromeNewWindowClient::ToggleGeminiApp() {
-  Profile* const profile = ProfileManager::GetActiveUserProfile();
-  const auto& browsers = BrowserList::GetInstance()->OrderedByActivation();
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+  const AccountId& account_id = ash::BrowserContextHelper::Get()
+                                    ->GetUserByBrowserContext(profile)
+                                    ->GetAccountId();
 
-  auto it = std::find_if(browsers.begin(), browsers.end(),
-                         [profile](Browser* browser) {
-                           return browser->profile() == profile &&
-                                  browser->type() == Browser::Type::TYPE_APP &&
-                                  IsGeminiApp(browser);
-                         });
-
-  Browser* active_browser = (it != browsers.end()) ? *it : nullptr;
-  if (!active_browser) {
+  ash::BrowserDelegate* app_window =
+      ash::BrowserController::GetInstance()->FindWebApp(
+          account_id, ash::kGeminiAppId, ash::BrowserType::kApp);
+  if (!app_window) {
     apps::AppServiceProxyFactory::GetForProfile(profile)->Launch(
         ash::kGeminiAppId, ui::EF_NONE, apps::LaunchSource::kFromKeyboard);
     return;
   }
 
-  BrowserWindow* app_window = active_browser->window();
   if (app_window->IsActive()) {
     app_window->Minimize();
   } else {

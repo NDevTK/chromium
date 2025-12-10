@@ -109,7 +109,7 @@ QualifiedName::QualifiedNameImpl::~QualifiedNameImpl() {
 String QualifiedName::ToString() const {
   String local = LocalName();
   if (HasPrefix())
-    return Prefix().GetString() + ":" + local;
+    return StrCat({Prefix().GetString(), ":", local});
   return local;
 }
 
@@ -117,7 +117,7 @@ String QualifiedName::ToString() const {
 DEFINE_GLOBAL(, QualifiedName, g_any_name);
 DEFINE_GLOBAL(, QualifiedName, g_null_name);
 
-void QualifiedName::InitAndReserveCapacityForSize(unsigned size) {
+void QualifiedName::InitAndReserveCapacityForSize(wtf_size_t size) {
   DCHECK(g_star_atom.Impl());
   GetQualifiedNameCache().ReserveCapacityForSize(
       size + 2 /*g_star_atom and g_null_atom */);

@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.ntp_customization;
 
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_VIEW_DELEGATE;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_MVT_SECTION_SUBTITLE;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_NTP_CARDS_SECTION_SUBTITLE_RES_ID;
 
 import android.view.View;
 
@@ -23,9 +25,9 @@ public class BottomSheetListContainerViewBinder {
         if (propertyKey == LIST_CONTAINER_VIEW_DELEGATE) {
             ListContainerViewDelegate delegate = model.get(LIST_CONTAINER_VIEW_DELEGATE);
             if (delegate == null) {
-                ((BottomSheetListContainerView) view).destroy();
+                ((ListContainerView) view).destroy();
             } else {
-                ((BottomSheetListContainerView) view).renderAllListItems(delegate);
+                ((ListContainerView) view).renderAllListItems(delegate);
             }
         } else if (propertyKey == MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE) {
             BottomSheetListItemView feedListItem = view.findViewById(R.id.feed_settings);
@@ -35,6 +37,22 @@ public class BottomSheetListContainerViewBinder {
             String subtitleText =
                     view.getContext().getString(model.get(MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE));
             feedListItem.setSubtitle(subtitleText);
+        } else if (propertyKey == MAIN_BOTTOM_SHEET_MVT_SECTION_SUBTITLE) {
+            BottomSheetListItemView mvtListItem = view.findViewById(R.id.mvt_settings);
+            if (mvtListItem == null) return;
+
+            String subtitleText =
+                    view.getContext().getString(model.get(MAIN_BOTTOM_SHEET_MVT_SECTION_SUBTITLE));
+            mvtListItem.setSubtitle(subtitleText);
+        } else if (propertyKey == MAIN_BOTTOM_SHEET_NTP_CARDS_SECTION_SUBTITLE_RES_ID) {
+            BottomSheetListItemView ntpCardsListItem = view.findViewById(R.id.ntp_cards);
+            if (ntpCardsListItem == null) return;
+
+            String subtitleText =
+                    view.getContext()
+                            .getString(
+                                    model.get(MAIN_BOTTOM_SHEET_NTP_CARDS_SECTION_SUBTITLE_RES_ID));
+            ntpCardsListItem.setSubtitle(subtitleText);
         }
     }
 }

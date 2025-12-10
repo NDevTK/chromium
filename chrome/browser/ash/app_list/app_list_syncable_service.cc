@@ -10,7 +10,6 @@
 #include <variant>
 #include <vector>
 
-#include "ash/constants/ash_features.h"
 #include "ash/constants/ash_switches.h"
 #include "ash/constants/web_app_id_constants.h"
 #include "ash/public/cpp/app_list/app_list_config.h"
@@ -65,6 +64,7 @@
 #include "components/sync/model/sync_change_processor.h"
 #include "components/sync/model/sync_data.h"
 #include "components/sync/protocol/app_list_specifics.pb.h"
+#include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/service/sync_service.h"
 #include "extensions/browser/extension_prefs.h"
@@ -568,19 +568,15 @@ void AppListSyncableService::BuildModel() {
 
   app_service_apps_builder_ =
       std::make_unique<AppServiceAppModelBuilder>(controller);
-  if (ash::features::ArePromiseIconsEnabled()) {
-    app_service_promise_apps_builder_ =
-        std::make_unique<AppServicePromiseAppModelBuilder>(controller);
-  }
+  app_service_promise_apps_builder_ =
+      std::make_unique<AppServicePromiseAppModelBuilder>(controller);
 
   DCHECK(profile_);
   SyncStarted();
 
   app_service_apps_builder_->Initialize(this, profile_, model_updater_.get());
-  if (ash::features::ArePromiseIconsEnabled()) {
-    app_service_promise_apps_builder_->Initialize(this, profile_,
-                                                  model_updater_.get());
-  }
+  app_service_promise_apps_builder_->Initialize(this, profile_,
+                                                model_updater_.get());
 
   HandleUpdateFinished(false /* clean_up_after_init_sync */);
 
@@ -1422,8 +1418,8 @@ std::optional<syncer::ModelError> AppListSyncableService::ProcessSyncChanges(
     const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (!sync_processor_.get()) {
-    return syncer::ModelError(FROM_HERE,
-                              "App List syncable service is not started.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::kAppListSyncableServiceNotStarted);
   }
 
   HandleUpdateStarted();
@@ -1452,11 +1448,14 @@ base::WeakPtr<syncer::SyncableService> AppListSyncableService::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
+std::string AppListSyncableService::GetClientTag(
+    const syncer::EntityData& entity_data) const {
+  return entity_data.specifics.app_list().item_id();
+}
+
 void AppListSyncableService::Shutdown() {
   app_service_apps_builder_.reset();
-  if (ash::features::ArePromiseIconsEnabled()) {
-    app_service_promise_apps_builder_.reset();
-  }
+  app_service_promise_apps_builder_.reset();
   // Set `extension_registrar_` and `extension_registry_` to be null to make
   // sure they won't be used after `Shutdown`.
   extension_registrar_ = nullptr;

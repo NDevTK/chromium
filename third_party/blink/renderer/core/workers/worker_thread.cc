@@ -37,6 +37,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/worker_main_script_load_parameters.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -102,7 +103,7 @@ static int GetNextWorkerThreadId() {
 // thread and the worker thread with this wrapper. See
 // WorkerThread::PerformShutdownOnWorkerThread() for details.
 class WorkerThread::RefCountedWaitableEvent
-    : public WTF::ThreadSafeRefCounted<RefCountedWaitableEvent> {
+    : public ThreadSafeRefCounted<RefCountedWaitableEvent> {
  public:
   static scoped_refptr<RefCountedWaitableEvent> Create() {
     return base::AdoptRef<RefCountedWaitableEvent>(new RefCountedWaitableEvent);
@@ -123,7 +124,7 @@ class WorkerThread::RefCountedWaitableEvent
 // A class that is passed into V8 Interrupt and via a PostTask. Once both have
 // run this object will be destroyed in
 // PauseOrFreezeWithInterruptDataOnWorkerThread. The V8 API only takes a raw ptr
-// otherwise this could have been done with WTF::Bind and ref counted objects.
+// otherwise this could have been done with blink::Bind and ref counted objects.
 class WorkerThread::InterruptData {
  public:
   InterruptData(WorkerThread* worker_thread,
@@ -505,8 +506,8 @@ void WorkerThread::ChildThreadTerminatedOnWorkerThread(WorkerThread* child) {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner =
         GetWorkerBackingThread().BackingThread().GetTaskRunner();
     GetWorkerBackingThread().BackingThread().GetTaskRunner()->PostTask(
-        FROM_HERE, WTF::BindOnce(&WorkerThread::PerformShutdownOnWorkerThread,
-                                 WTF::Unretained(this)));
+        FROM_HERE, blink::BindOnce(&WorkerThread::PerformShutdownOnWorkerThread,
+                                   blink::Unretained(this)));
   }
 }
 
@@ -537,8 +538,9 @@ void WorkerThread::ScheduleToTerminateScriptExecution() {
   // class on the parent thread.
   forcible_termination_task_handle_ = PostDelayedCancellableTask(
       *parent_thread_default_task_runner_, FROM_HERE,
-      WTF::BindOnce(&WorkerThread::EnsureScriptExecutionTerminates,
-                    WTF::Unretained(this), ExitCode::kAsyncForciblyTerminated),
+      blink::BindOnce(&WorkerThread::EnsureScriptExecutionTerminates,
+                      blink::Unretained(this),
+                      ExitCode::kAsyncForciblyTerminated),
       forcible_termination_delay_);
 }
 

@@ -61,7 +61,9 @@ TEST(FileInputTypeTest, createFileList) {
   // Non-native file.
   KURL url("filesystem:http://example.com/isolated/hash/non-native-file");
   files.push_back(CreateFileChooserFileInfoFileSystem(
-      url, base::Time::FromMillisecondsSinceUnixEpoch(1.0 * kMsPerDay + 3),
+      url,
+      base::Time::FromMillisecondsSinceUnixEpoch(
+          base::Time::kMillisecondsPerDay + 3),
       64));
 
   ScopedNullExecutionContext execution_context;
@@ -78,7 +80,7 @@ TEST(FileInputTypeTest, createFileList) {
   EXPECT_EQ("non-native-file", list->item(1)->name());
   EXPECT_EQ(url, list->item(1)->FileSystemURL());
   EXPECT_EQ(64u, list->item(1)->size());
-  EXPECT_EQ(1.0 * kMsPerDay + 3, list->item(1)->lastModified());
+  EXPECT_EQ(base::Time::kMillisecondsPerDay + 3, list->item(1)->lastModified());
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -184,7 +186,8 @@ TEST(FileInputTypeTest, DropTouchesNoPopupOpeningObserver) {
       std::make_unique<DummyPageHolder>(gfx::Size(), chrome_client);
   Document& doc = page_holder->GetDocument();
 
-  doc.body()->setInnerHTML("<input type=file webkitdirectory>");
+  doc.body()->SetInnerHTMLWithoutTrustedTypes(
+      "<input type=file webkitdirectory>");
   auto& input = *To<HTMLInputElement>(doc.body()->firstChild());
 
   base::RunLoop run_loop;
@@ -208,7 +211,7 @@ TEST(FileInputTypeTest, BeforePseudoCrash) {
   std::unique_ptr<DummyPageHolder> page_holder =
       std::make_unique<DummyPageHolder>(gfx::Size(800, 600));
   Document& doc = page_holder->GetDocument();
-  doc.documentElement()->setInnerHTML(R"HTML(
+  doc.documentElement()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
 <style>
 .c6 {
   zoom: 0.01;
@@ -253,7 +256,7 @@ TEST(FileInputTypeTest, ChangeTypeDuringOpeningFileChooser) {
   LocalFrame* frame = helper.LocalMainFrame()->GetFrame();
 
   Document& doc = *frame->GetDocument();
-  doc.body()->setInnerHTML("<input type=file>");
+  doc.body()->SetInnerHTMLWithoutTrustedTypes("<input type=file>");
   auto& input = *To<HTMLInputElement>(doc.body()->firstChild());
 
   base::RunLoop run_loop;

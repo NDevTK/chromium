@@ -484,20 +484,6 @@ Summary: Serializable objects support being serialized, and later deserialized, 
 
 This attribute has no effect on code generation and should simply be used in Blink IDL files if the specification uses it. Code to perform the serialization/deserialization must be added to `V8ScriptValueSerializer` for types in `core/` or `V8ScriptValueDeserializerForModules` for types in `modules/`.
 
-### [StringContext=TrustedHTML|TrustedScript|TrustedScriptURL]
-
-Standard: [TrustedType](https://w3c.github.io/trusted-types/dist/spec/#!trustedtypes-extended-attribute)
-
-Summary: Indicate that a DOMString for HTMLs and scripts or USVString for script URLs is to be supplemented with additional Trusted Types enforcement logic.
-
-Usage: Must be specified on a DOMString or a USVString type.
-
-```webidl
-typedef [StringContext=TrustedHTML] DOMString TrustedString;
-attribute TrustedString str;
-void func(TrustedString str);
-```
-
 ### [Transferable]
 
 Standard: [Transferable](https://html.spec.whatwg.org/C/#transferable)
@@ -696,25 +682,6 @@ Usage: `[DeprecateAs]` can be specified on methods, attributes, and constants.
 ```
 
 For more documentation on deprecations, see [the documentation](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/third_party/blink/renderer/core/frame/deprecation/README.md).
-
-### [HighEntropy]
-
-Summary: Denotes an API that exposes data that folks on the internet find useful for fingerprinting.
-
-Attributes and methods marked as `[HighEntropy]` are known to be practically useful for [identifying particular clients](https://dev.chromium.org/Home/chromium-security/client-identification-mechanisms) on the web today.
-Both methods and attribute/constant getters annotated with this attribute are wired up to [`Dactyloscoper::Record`](https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/core/frame/dactyloscoper.h) for additional processing.
-
-```webidl
-[HighEntropy] attribute Node interestingAttribute;
-[HighEntropy] Node getInterestingNode();
-```
-
-Attributes and methods labeled with `[HighEntropy=Direct]` are simple surfaces which can be expressed as a sequence of bytes without any need for additional parsing logic.
-For now, this label is only supported for attribute getters, although the `[HighEntropy]` label is supported more broadly. Note that `[HighEntropy=Direct]` must be accompanied by either `[Measure]` or `[MeasureAs]`.
-
-```webidl
-[HighEntropy=Direct, MeasureAs=SimpleNamedAttribute] attribute unsigned long simpleNamedAttribute;
-```
 
 ### [ImplementedAs]
 

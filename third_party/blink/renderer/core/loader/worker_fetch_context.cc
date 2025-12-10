@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/core/loader/mixed_content_checker.h"
 #include "third_party/blink/renderer/core/loader/subresource_filter.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
-#include "third_party/blink/renderer/core/timing/worker_global_scope_performance.h"
 #include "third_party/blink/renderer/core/workers/worker_clients.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_request.h"
@@ -27,7 +26,6 @@
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/virtual_time_controller.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 
 namespace blink {
@@ -185,6 +183,8 @@ void WorkerFetchContext::PrepareRequest(
     ResourceLoaderOptions& options,
     WebScopedVirtualTimePauser& virtual_time_pauser,
     ResourceType resource_type) {
+  GetExecutionContext()->MaybeRecordNetworkRequestUrlForPushEvents(
+      request.Url());
   request.SetUkmSourceId(GetExecutionContext()->UkmSourceID());
 
   String user_agent = global_scope_->UserAgent();
@@ -213,6 +213,8 @@ void WorkerFetchContext::PrepareRequest(
 
   request.SetAllowsDeviceBoundSessionRegistration(
       RuntimeEnabledFeatures::DeviceBoundSessionCredentialsEnabled(
+          GetExecutionContext()) ||
+      RuntimeEnabledFeatures::DeviceBoundSessionCredentials2Enabled(
           GetExecutionContext()));
 }
 
@@ -290,9 +292,8 @@ WorkerSettings* WorkerFetchContext::GetWorkerSettings() const {
   return scope ? scope->GetWorkerSettings() : nullptr;
 }
 
-bool WorkerFetchContext::AllowRunningInsecureContent(
-    bool enabled_per_settings,
-    const KURL& url) const {
+bool WorkerFetchContext::AllowRunningInsecureContent(bool enabled_per_settings,
+                                                     const KURL& url) const {
   if (!global_scope_->ContentSettingsClient())
     return enabled_per_settings;
   return global_scope_->ContentSettingsClient()->AllowRunningInsecureContent(

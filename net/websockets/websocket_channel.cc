@@ -188,9 +188,10 @@ class WebSocketChannel::ConnectDelegate
     creator_->OnCreateURLRequest(request);
   }
 
-  void OnURLRequestConnected(URLRequest* request,
-                             const TransportInfo& info) override {
-    creator_->OnURLRequestConnected(request, info);
+  int OnURLRequestConnected(URLRequest* request,
+                            const TransportInfo& info,
+                            CompletionOnceCallback callback) override {
+    return creator_->OnURLRequestConnected(request, info, std::move(callback));
   }
 
   void OnSuccess(
@@ -427,13 +428,8 @@ void WebSocketChannel::SendAddChannelRequestWithSuppliedCallback(
     NetworkTrafficAnnotationTag traffic_annotation,
     WebSocketStreamRequestCreationCallback callback) {
   DCHECK_EQ(FRESHLY_CONSTRUCTED, state_);
-  if (!socket_url.SchemeIsWSOrWSS()) {
-    // TODO(ricea): Kill the renderer (this error should have been caught by
-    // Javascript).
-    event_interface_->OnFailChannel("Invalid scheme", ERR_FAILED, std::nullopt);
-    // |this| is deleted here.
-    return;
-  }
+  CHECK(socket_url.SchemeIsWSOrWSS());
+
   socket_url_ = socket_url;
   auto connect_delegate = std::make_unique<ConnectDelegate>(this);
   stream_request_ = std::move(callback).Run(
@@ -448,9 +444,11 @@ void WebSocketChannel::OnCreateURLRequest(URLRequest* request) {
   event_interface_->OnCreateURLRequest(request);
 }
 
-void WebSocketChannel::OnURLRequestConnected(URLRequest* request,
-                                             const TransportInfo& info) {
-  event_interface_->OnURLRequestConnected(request, info);
+int WebSocketChannel::OnURLRequestConnected(URLRequest* request,
+                                            const TransportInfo& info,
+                                            CompletionOnceCallback callback) {
+  return event_interface_->OnURLRequestConnected(request, info,
+                                                 std::move(callback));
 }
 
 void WebSocketChannel::OnConnectSuccess(

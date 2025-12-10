@@ -9,10 +9,11 @@
 #include "base/check.h"
 #include "base/debug/alias.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/metrics/histogram_functions.h"
 #include "content/browser/btm/btm_bounce_detector.h"
 #include "content/browser/btm/btm_utils.h"
 #include "content/browser/btm/cookie_access_filter.h"
-#include "content/public/browser/btm_redirect_info.h"
+#include "content/public/browser/btm_redirect.h"
 #include "content/public/browser/cookie_access_details.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_handle_user_data.h"
@@ -26,8 +27,8 @@ BtmNavigationInfo::BtmNavigationInfo(NavigationHandle& navigation_handle)
                          navigation_handle.HasUserGesture()),
       was_renderer_initiated(navigation_handle.IsRendererInitiated()),
       page_transition(navigation_handle.GetPageTransition()),
-      destination({navigation_handle.GetURL(),
-                   navigation_handle.GetNextPageUkmSourceId()}) {
+      destination_url(navigation_handle.GetURL()),
+      destination_source_id(navigation_handle.GetNextPageUkmSourceId()) {
   CHECK(navigation_handle.HasCommitted());
 }
 BtmNavigationInfo::BtmNavigationInfo(BtmNavigationInfo&&) = default;
@@ -98,56 +99,16 @@ class NavigationState
     // recorded an access type for.
     urls.push_back(navigation_handle.GetURL());
 
-    // TODO - crbug.com/406841434: `CHECK` the result of `filter_.Filter`.
-    bool were_all_accesses_matched = filter_.Filter(urls, accesses);
-    if (!were_all_accesses_matched && !navigation_handle.IsErrorPage()) {
-      DEBUG_ALIAS_FOR_GURL(
-          committed_url_alias,
-          navigation_handle.GetRenderFrameHost()->GetLastCommittedURL());
-      DEBUG_ALIAS_FOR_GURL(navigation_handle_url_alias,
-                           navigation_handle.GetURL());
-
-      GURL::Replacements repl;
-      repl.ClearQuery();
-      repl.ClearRef();
-
-      auto get_debug_strings = [&repl](const std::vector<GURL>& urls) {
-        std::pair<std::string, std::string> debug_strings;
-        std::string& debug_string = debug_strings.first;
-        std::string& simple_debug_string = debug_strings.second;
-        for (const GURL& url : urls) {
-          debug_string += url.spec();
-          debug_string += ", ";
-          simple_debug_string += url.ReplaceComponents(repl).spec();
-          simple_debug_string += ", ";
-        }
-        return debug_strings;
-      };
-
-      // Redirect Chain aliases
-      auto [redirect_chain_debug_string, redirect_chain_simple_debug_string] =
-          get_debug_strings(redirect_chain);
-      DEBUG_ALIAS_FOR_CSTR(redirect_chain_alias,
-                           redirect_chain_debug_string.c_str(), 512);
-      DEBUG_ALIAS_FOR_CSTR(redirect_chain_simple_alias,
-                           redirect_chain_simple_debug_string.c_str(), 512);
-
-      // Server Redirects aliases
-      auto [server_redirects_debug_string,
-            server_redirects_simple_debug_string] = get_debug_strings(urls);
-      DEBUG_ALIAS_FOR_CSTR(server_redirects_alias,
-                           server_redirects_debug_string.c_str(), 512);
-      DEBUG_ALIAS_FOR_CSTR(server_redirects_simple_alias,
-                           server_redirects_simple_debug_string.c_str(), 512);
-
-      // Cookie Accesses aliases
-      auto [accesses_debug_string, accesses_simple_debug_string] =
-          get_debug_strings(filter_.GetUrlsForDebuging());
-      DEBUG_ALIAS_FOR_CSTR(accesses_alias, accesses_debug_string.c_str(), 512);
-      DEBUG_ALIAS_FOR_CSTR(accesses_simple_alias,
-                           accesses_simple_debug_string.c_str(), 512);
-      base::debug::DumpWithoutCrashing();
-    }
+    // Cookie accesses can race each other causing order of navigations to not
+    // match the order of cookie accesses. When this happens Filter() will
+    // return false and assume all kUnknown accesses.
+    //
+    // TODO: crbug.com/407710083 - `CHECK` the result of `filter_.Filter` once
+    // the race is fixed.
+    const bool were_all_accesses_matched = filter_.Filter(urls, accesses);
+    base::UmaHistogramBoolean(
+        "Privacy.DIPS.PageVisitObserver.AllAccessesMatched",
+        were_all_accesses_matched);
 
     int i = 0;
     for (const size_t redirect_chain_index : server_redirect_chain_indices_) {
@@ -378,8 +339,8 @@ void BtmPageVisitObserver::FrameReceivedUserActivation(
 void BtmPageVisitObserver::WebAuthnAssertionRequestSucceeded(
     RenderFrameHost* render_frame_host) {
   if (!render_frame_host->IsInPrimaryMainFrame()) {
-    CHECK(render_frame_host->GetOutermostMainFrameOrEmbedder()
-              ->IsInPrimaryMainFrame());
+    // TODO: crbug.com/448047352 - Investigate (and handle, if applicable) late
+    //   WAA notifications.
     return;
   }
   current_page_.had_successful_web_authn_assertion = true;

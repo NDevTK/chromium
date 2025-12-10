@@ -29,23 +29,14 @@
 #include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/sync/base/features.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "google_apis/gaia/gaia_id.h"
 
 using signin::PrimaryAccountChangeEvent;
 
-BASE_FEATURE(kRestorePrimaryAccountInfo,
-             "RestorePrimaryAccountInfo",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kRestorePrimaryAccountInfo, base::FEATURE_ENABLED_BY_DEFAULT);
 namespace {
-
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// Kill switch needed to control the migration of sync profiles to also be
-// explicit sign-in.
-BASE_FEATURE(kMigrateSyncToExplicitSignin,
-             "kMigrateSyncToExplicitSignin",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 // Registers that the sign in occurred with an explicit user action.
 // Affected by all signin sources except when signing in to Chrome caused by a
@@ -272,8 +263,7 @@ PrimaryAccountManager::PrimaryAccountManager(
 
   bool migrated_sync_user_to_explicit_sign_in = false;
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  if (base::FeatureList::IsEnabled(kMigrateSyncToExplicitSignin) &&
-      !prefs->GetBoolean(prefs::kExplicitBrowserSignin) &&
+  if (!prefs->GetBoolean(prefs::kExplicitBrowserSignin) &&
       HasPrimaryAccount(signin::ConsentLevel::kSync)) {
     // A profile that is opted in to sync can be migrated to explicit browser
     // sign-in as the user has explicitly signed in to the browser when they
@@ -334,8 +324,6 @@ void PrimaryAccountManager::RegisterProfilePrefs(PrefRegistrySimple* registry) {
                                std::string());
   registry->RegisterStringPref(prefs::kGoogleServicesLastSignedInUsername,
                                std::string());
-  registry->RegisterStringPref(prefs::kGoogleServicesSecondLastSyncingGaiaId,
-                               std::string());
   registry->RegisterStringPref(prefs::kGoogleServicesAccountId, std::string());
   registry->RegisterBooleanPref(prefs::kGoogleServicesConsentedToSync, false);
   registry->RegisterStringPref(
@@ -349,6 +337,8 @@ void PrimaryAccountManager::RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kExplicitBrowserSignin, false);
   registry->RegisterBooleanPref(
       prefs::kPrefsThemesSearchEnginesAccountStorageEnabled, false);
+  registry->RegisterBooleanPref(prefs::kPrimaryAccountSetAfterSigninMigration,
+                                false);
 }
 
 // static
@@ -561,12 +551,6 @@ void PrimaryAccountManager::SetSyncPrimaryAccountInternal(
   SetPrimaryAccountInternal(account_info, /*consented_to_sync=*/true,
                             scoped_pref_commit);
 
-  // Before `kGoogleServicesLastSyncingGaiaId` is updated, keep a copy of the
-  // previous value, and store it in a separate pref.
-  scoped_pref_commit.SetString(
-      prefs::kGoogleServicesSecondLastSyncingGaiaId,
-      client_->GetPrefs()->GetString(prefs::kGoogleServicesLastSyncingGaiaId));
-
   // Go ahead and update the last signed in account info here as well. Once a
   // user is signed in the corresponding preferences should match. Doing it here
   // as opposed to on signin allows us to catch the upgrade scenario.
@@ -654,7 +638,7 @@ void PrimaryAccountManager::StartSignOut(
       base::BindOnce(&PrimaryAccountManager::OnSignoutDecisionReached,
                      base::Unretained(this), signout_source_metric,
                      remove_option),
-      signout_source_metric, HasPrimaryAccount(signin::ConsentLevel::kSync));
+      signout_source_metric);
 }
 
 void PrimaryAccountManager::OnSignoutDecisionReached(
@@ -678,8 +662,7 @@ void PrimaryAccountManager::OnSignoutDecisionReached(
 
   if (abort_signout) {
     // TODO(crbug.com/40240858): Add 'NOTREACHED()' after updating the
-    // 'SigninManager', 'Dice Response Handler',
-    // 'Lacros Profile Account Mapper'.
+    // 'SigninManager', 'Dice Response Handler'.
     VLOG(1) << "Ignoring attempt to sign out while signout disallowed";
     return;
   }
@@ -735,7 +718,7 @@ PrimaryAccountChangeEvent::State PrimaryAccountManager::GetPrimaryAccountState()
   return state;
 }
 
-void PrimaryAccountManager::ComputeExplicitBrowserSignin(
+void PrimaryAccountManager::SetExplicitBrowserSigninPrefs(
     const PrimaryAccountChangeEvent& event_details,
     ScopedPrefCommit& scoped_pref_commit) {
   switch (event_details.GetEventTypeFor(signin::ConsentLevel::kSignin)) {
@@ -753,6 +736,12 @@ void PrimaryAccountManager::ComputeExplicitBrowserSignin(
           event_details.GetSetPrimaryAccountAccessPoint().value();
       GaiaId current_gaia_id =
           event_details.GetCurrentState().primary_account.gaia;
+
+      if (base::FeatureList::IsEnabled(
+              syncer::kReplaceSyncPromosWithSignInPromos)) {
+        scoped_pref_commit.SetBoolean(
+            prefs::kPrimaryAccountSetAfterSigninMigration, true);
+      }
 
       bool is_implicit_signin =
           access_point == signin_metrics::AccessPoint::kUnknown ||
@@ -859,7 +848,7 @@ void PrimaryAccountManager::FirePrimaryAccountChanged(
 
   LogPrimaryAccountChangeMetrics(event_details);
 
-  ComputeExplicitBrowserSignin(event_details, scoped_pref_commit);
+  SetExplicitBrowserSigninPrefs(event_details, scoped_pref_commit);
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   if (event_details.GetEventTypeFor(signin::ConsentLevel::kSignin) ==

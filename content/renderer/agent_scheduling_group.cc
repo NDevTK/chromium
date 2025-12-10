@@ -22,7 +22,7 @@
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_navigation_metrics_manager.h"
-#include "ipc/ipc_channel_mojo.h"
+#include "ipc/ipc_channel_factory.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sync_channel.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
@@ -39,7 +39,7 @@
 
 namespace content {
 
-using ::IPC::ChannelMojo;
+using ::IPC::ChannelFactory;
 using ::IPC::Listener;
 using ::IPC::SyncChannel;
 using ::mojo::AssociatedReceiver;
@@ -135,11 +135,10 @@ AgentSchedulingGroup::AgentSchedulingGroup(
   // TODO(crbug.com/40142495): Add necessary filters.
   // Currently, the renderer process has these filters:
   // 1. `UnfreezableMessageFilter` - in the process of being removed,
-  // 2. `PnaclTranslationResourceHost` - NaCl is going away, and
-  // 3. `AutomationMessageFilter` - needs to be handled somehow.
+  // 2. `AutomationMessageFilter` - needs to be handled somehow.
 
   channel_->Init(
-      ChannelMojo::CreateClientFactory(
+      ChannelFactory::CreateClientFactory(
           bootstrap.PassPipe(),
           /*ipc_task_runner=*/render_thread_->GetIOTaskRunner(),
           /*proxy_task_runner=*/agent_group_scheduler_->DefaultTaskRunner()),
@@ -162,24 +161,10 @@ AgentSchedulingGroup::AgentSchedulingGroup(
 
 AgentSchedulingGroup::~AgentSchedulingGroup() = default;
 
-bool AgentSchedulingGroup::OnMessageReceived(const IPC::Message& message) {
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  DCHECK_NE(message.routing_id(), MSG_ROUTING_CONTROL);
-
-  auto* listener = GetListener(message.routing_id());
-  if (!listener)
-    return false;
-
-  return listener->OnMessageReceived(message);
-#else
-  return false;
-#endif
-}
-
-void AgentSchedulingGroup::OnBadMessageReceived(const IPC::Message& message) {
+void AgentSchedulingGroup::OnBadMessageReceived() {
   // Not strictly required, since we don't currently do anything with bad
   // messages in the renderer, but if we ever do then this will "just work".
-  return ToImpl(*render_thread_).OnBadMessageReceived(message);
+  return ToImpl(*render_thread_).OnBadMessageReceived();
 }
 
 void AgentSchedulingGroup::OnAssociatedInterfaceRequest(
@@ -195,40 +180,12 @@ void AgentSchedulingGroup::OnAssociatedInterfaceRequest(
                  agent_group_scheduler_->DefaultTaskRunner());
 }
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-bool AgentSchedulingGroup::Send(IPC::Message* message) {
-  std::unique_ptr<IPC::Message> msg(message);
-
-  if (GetMBIMode() == features::MBIMode::kLegacy)
-    return render_thread_->Send(msg.release());
-
-  // This DCHECK is too idealistic for now - messages that are handled by
-  // filters are sent control messages since they are intercepted before
-  // routing. It is put here as documentation for now, since this code would not
-  // be reached until we activate
-  // `features::MBIMode::kEnabledPerRenderProcessHost` or
-  // `features::MBIMode::kEnabledPerSiteInstance`.
-  DCHECK_NE(message->routing_id(), MSG_ROUTING_CONTROL);
-
-  DCHECK(channel_);
-  return channel_->Send(msg.release());
-}
-#endif
-
 void AgentSchedulingGroup::AddFrameRoute(
     const blink::LocalFrameToken& frame_token,
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-    int routing_id,
-#endif
     RenderFrameImpl* render_frame,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   DCHECK(!base::Contains(listener_map_, frame_token));
   listener_map_.insert({frame_token, render_frame});
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  DCHECK(!base::Contains(routing_id_map_, routing_id));
-  routing_id_map_.insert({routing_id, render_frame});
-  render_thread_->AddRoute(routing_id, render_frame);
-#endif
 
   // See warning in `GetAssociatedInterface`.
   // Replay any `GetAssociatedInterface` calls for this route.
@@ -239,25 +196,12 @@ void AgentSchedulingGroup::AddFrameRoute(
                                                data.receiver.PassHandle());
   }
   pending_receivers_.erase(range.first, range.second);
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  render_thread_->AttachTaskRunnerToRoute(routing_id, std::move(task_runner));
-#endif
 }
 
 void AgentSchedulingGroup::RemoveFrameRoute(
-    const blink::LocalFrameToken& frame_token
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-    ,
-    int routing_id
-#endif
-) {
+    const blink::LocalFrameToken& frame_token) {
   DCHECK(base::Contains(listener_map_, frame_token));
   listener_map_.erase(frame_token);
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  DCHECK(base::Contains(routing_id_map_, routing_id));
-  routing_id_map_.erase(routing_id);
-  render_thread_->RemoveRoute(routing_id);
-#endif
 }
 
 void AgentSchedulingGroup::DidUnloadRenderFrame(
@@ -306,7 +250,7 @@ blink::WebView* AgentSchedulingGroup::CreateWebView(
       std::move(params->blink_page_broadcast), agent_group_scheduler(),
       params->session_storage_namespace_id, params->base_background_color,
       params->browsing_context_group_token, &params->color_provider_colors,
-      std::move(params->partitioned_popin_params));
+      params->history_index, params->history_length);
 
   web_view->SetRendererPreferences(params->renderer_preferences);
   web_view->SetWebPreferences(params->web_preferences);
@@ -394,12 +338,6 @@ blink::WebView* AgentSchedulingGroup::CreateWebView(
       auto& provisional_local_params =
           params->main_frame->get_provisional_local_params();
       auto& local_params = provisional_local_params->local_params;
-
-      // It does not make swense to reuse the compositor if there is no previous
-      // RenderFrame to take it from.
-      if (local_params->widget_params->reuse_compositor) {
-        DCHECK(provisional_local_params->previous_frame_token);
-      }
 
       // Create the provisional main LocalFrame.
       // TODO(dcheng): RenderFrameImpl::CreateFrame() should probably be split
@@ -510,11 +448,5 @@ RenderFrameImpl* AgentSchedulingGroup::GetListener(
     const blink::LocalFrameToken& frame_token) {
   return base::FindPtrOrNull(listener_map_, frame_token);
 }
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-RenderFrameImpl* AgentSchedulingGroup::GetListener(int32_t routing_id) {
-  return base::FindPtrOrNull(routing_id_map_, routing_id);
-}
-#endif
 
 }  // namespace content

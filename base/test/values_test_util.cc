@@ -13,6 +13,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/types/optional_util.h"
 #include "base/values.h"
@@ -24,9 +25,7 @@ namespace base::test {
 namespace {
 
 std::string FormatAsJSON(ValueView value) {
-  std::string json;
-  JSONWriter::Write(value, &json);
-  return json;
+  return WriteJson(value).value_or("");
 }
 
 // Attempts to parse `json` as JSON. Returns resulting Value on success, has an
@@ -403,11 +402,11 @@ Value::Dict ParseJsonDictFromFile(const FilePath& json_file_path) {
 
 expected<void, WriteJsonError> WriteJsonFile(const FilePath& json_file_path,
                                              ValueView root) {
-  std::string json;
-  if (!JSONWriter::Write(root, &json)) {
+  std::optional<std::string> json = WriteJson(root);
+  if (!json.has_value()) {
     return unexpected(WriteJsonError::kGenerateJsonFailure);
   }
-  if (!WriteFile(json_file_path, json)) {
+  if (!WriteFile(json_file_path, json.value())) {
     return unexpected(WriteJsonError::kWriteFileFailure);
   }
   return {};

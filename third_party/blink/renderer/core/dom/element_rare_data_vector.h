@@ -6,11 +6,14 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_ELEMENT_RARE_DATA_VECTOR_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/css_pseudo_element.h"
+#include "third_party/blink/renderer/core/dom/element_animation_trigger_data.h"
 #include "third_party/blink/renderer/core/dom/element_rare_data_field.h"
 #include "third_party/blink/renderer/core/dom/explicitly_set_attr_elements_map.h"
 #include "third_party/blink/renderer/core/dom/focusgroup_flags.h"
 #include "third_party/blink/renderer/core/dom/has_invalidation_flags.h"
 #include "third_party/blink/renderer/core/dom/node_rare_data.h"
+#include "third_party/blink/renderer/core/dom/overscroll_pseudo_element_data.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element_data.h"
 #include "third_party/blink/renderer/platform/heap/trace_traits.h"
@@ -24,10 +27,12 @@ namespace blink {
 
 class CSSStyleDeclaration;
 class ColumnPseudoElement;
+class ContentData;
 class ShadowRoot;
 class NamedNodeMap;
 class DOMTokenList;
 class DatasetDOMStringMap;
+class DisplayAdElementMonitor;
 class ElementAnimations;
 class Attr;
 typedef HeapVector<Member<Attr>> AttrNodeList;
@@ -48,6 +53,8 @@ class InvokerData;
 class InterestInvokerTargetData;
 class OutOfFlowData;
 class HTMLElement;
+class Element;
+class OverscrollAreaTracker;
 
 enum class ElementFlags;
 
@@ -80,7 +87,7 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     kSavedLayerScrollOffset = 22,
     kAnchorPositionScrollData = 23,
     kAnchorElementObserver = 24,
-    kImplicitlyAnchoredElementCount = 25,
+    kMayBeImplicitAnchor = 25,
     kLastRememberedBlockSize = 26,
     kLastRememberedInlineSize = 27,
     kRestrictionTargetId = 28,
@@ -91,8 +98,15 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     kScrollMarkerGroupData = 33,
     kScrollMarkerGroupContainerData = 34,
     kExplicitlySetElementsForAttr = 35,
+    kCSSPseudoElementData = 36,
+    kCustomElementRegistry = 37,
+    kAnimationTriggerData = 38,
+    kFocusgroupLastFocused = 39,
+    kDisplayAdElementMonitor = 40,
+    kOverscrollAreaTracker = 41,
+    kAltContentData = 42,
 
-    kNumFields = 36,
+    kNumFields = 43,
   };
 
   ElementRareDataField* GetField(FieldId field_id) const;
@@ -168,10 +182,15 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
       const AtomicString& document_transition_tag = g_null_atom) const;
   bool HasScrollButtonOrMarkerGroupPseudos() const;
   PseudoElementData::PseudoElementVector GetPseudoElements() const;
+
   void AddColumnPseudoElement(ColumnPseudoElement&);
   const ColumnPseudoElementsVector* GetColumnPseudoElements() const;
   ColumnPseudoElement* GetColumnPseudoElement(wtf_size_t idx) const;
   void ClearColumnPseudoElements(wtf_size_t to_keep);
+
+  void AddOverscrollPseudoElement(PseudoElement&);
+  const OverscrollPseudoElementData* GetOverscrollPseudoElementData() const;
+  void ClearOverscrollPseudoElements();
 
   CSSStyleDeclaration& EnsureInlineCSSStyleDeclaration(Element* owner_element);
 
@@ -307,6 +326,9 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
   void SetScrollMarkerGroupContainerData(ScrollMarkerGroupData*);
   ScrollMarkerGroupData* GetScrollMarkerGroupContainerData() const;
 
+  void CacheCSSPseudoElement(PseudoId, CSSPseudoElement&);
+  CSSPseudoElement* GetCSSPseudoElement(PseudoId) const;
+
   ExplicitlySetAttrElementsMap* GetExplicitlySetElementsForAttr() const;
   ExplicitlySetAttrElementsMap& EnsureExplicitlySetElementsForAttr();
 
@@ -317,9 +339,16 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
   AnchorElementObserver& EnsureAnchorElementObserver(Element*);
   AnchorElementObserver* GetAnchorElementObserver() const;
 
-  void IncrementImplicitlyAnchoredElementCount();
-  void DecrementImplicitlyAnchoredElementCount();
-  bool HasImplicitlyAnchoredElement() const;
+  bool HasCustomElementRegistrySet() const;
+  CustomElementRegistry* GetCustomElementRegistry() const;
+  void SetCustomElementRegistry(CustomElementRegistry* registry);
+  void ClearCustomElementRegistry();
+
+  ElementAnimationTriggerData* AnimationTriggerData();
+  ElementAnimationTriggerData& EnsureAnimationTriggerData();
+
+  DisplayAdElementMonitor* GetDisplayAdElementMonitor() const;
+  DisplayAdElementMonitor& EnsureDisplayAdElementMonitor(Element*);
 
   void SetDidAttachInternals() { fields_.did_attach_internals = true; }
   bool DidAttachInternals() const { return fields_.did_attach_internals; }
@@ -343,17 +372,31 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
   bool HasBeenExplicitlyScrolled() const {
     return fields_.has_been_explicitly_scrolled;
   }
+  bool MayBeImplicitAnchor() const { return fields_.may_be_implicit_anchor; }
+  void SetMayBeImplicitAnchor() { fields_.may_be_implicit_anchor = true; }
 
-  FocusgroupFlags GetFocusgroupFlags() const {
-    return fields_.focusgroup_flags;
+  FocusgroupData GetFocusgroupData() const {
+    return {fields_.focusgroup_behavior, fields_.focusgroup_flags};
   }
-  void SetFocusgroupFlags(FocusgroupFlags flags) {
-    fields_.focusgroup_flags = flags;
+  void SetFocusgroupData(FocusgroupData data) {
+    fields_.focusgroup_behavior = data.behavior;
+    fields_.focusgroup_flags = data.flags;
   }
-  void ClearFocusgroupFlags() {
+  void ClearFocusgroupData() {
+    fields_.focusgroup_behavior = FocusgroupBehavior::kNoBehavior;
     fields_.focusgroup_flags = FocusgroupFlags::kNone;
+    SetFocusgroupLastFocused(nullptr);
   }
+  void SetFocusgroupLastFocused(Element* element);
+  Element* GetFocusgroupLastFocused() const;
+  void ClearFocusgroupLastFocused() { SetFocusgroupLastFocused(nullptr); }
 
+  void SetAffectedByStartingStyles() {
+    fields_.affected_by_starting_styles = true;
+  }
+  bool AffectedByStartingStyles() const {
+    return fields_.affected_by_starting_styles;
+  }
   bool AffectedBySubjectHas() const {
     return fields_.has_invalidation_flags.affected_by_subject_has;
   }
@@ -436,6 +479,12 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     fields_.has_invalidation_flags.affected_by_multiple_has = true;
   }
 
+  ContentData* GetAltContentData() const;
+  void SetAltContentData(ContentData* content_data);
+
+  OverscrollAreaTracker& EnsureOverscrollAreaTracker(Element*);
+  OverscrollAreaTracker* OverscrollAreaTracker() const;
+
   void Trace(blink::Visitor*) const override;
 
  private:
@@ -451,8 +500,11 @@ class CORE_EXPORT ElementRareDataVector final : public NodeRareData {
     // it doesn't hurt performance much.
     unsigned has_counters_styles : 1 = false;
     unsigned has_been_explicitly_scrolled : 1 = false;
+    unsigned may_be_implicit_anchor : 1 = false;
     HasInvalidationFlags has_invalidation_flags;
+    FocusgroupBehavior focusgroup_behavior = FocusgroupBehavior::kNoBehavior;
     FocusgroupFlags focusgroup_flags = FocusgroupFlags::kNone;
+    unsigned affected_by_starting_styles : 1 = false;
   };
   Fields fields_;
 };

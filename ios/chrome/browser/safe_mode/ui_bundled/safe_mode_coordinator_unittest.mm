@@ -6,8 +6,8 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/app/chrome_overlay_window.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
+#import "ios/chrome/browser/shared/ui/chrome_overlay_window/chrome_overlay_window.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -43,12 +43,12 @@ TEST_F(SafeModeCoordinatorTest, RootVC) {
   OCMStub([scene_mock_ windows]).andReturn(@[ window ]);
 
   UIViewController* initial_root_view_controller =
-      scene_state_.rootViewController;
-  EXPECT_EQ(scene_state_.rootViewController, initial_root_view_controller);
+      scene_state_.window.rootViewController;
   SafeModeCoordinator* safe_mode_coordinator =
       [[SafeModeCoordinator alloc] initWithSceneState:scene_state_];
   [safe_mode_coordinator start];
-  EXPECT_NE(scene_state_.rootViewController, initial_root_view_controller);
+  EXPECT_NE(scene_state_.window.rootViewController,
+            initial_root_view_controller);
 
   [applicationWindowMock stopMocking];
 }

@@ -49,7 +49,8 @@ void ViewPainterFixedBackgroundTest::RunFixedBackgroundTest(
 
   ScrollOffset scroll_offset(200, 150);
   layout_viewport->SetScrollOffset(scroll_offset,
-                                   mojom::blink::ScrollType::kUser);
+                                   mojom::blink::ScrollType::kUser,
+                                   cc::ScrollSourceType::kNone);
   frame_view->UpdateAllLifecyclePhasesForTest();
 
   const auto& display_items = GetPersistentData().GetDisplayItemList();
@@ -199,7 +200,7 @@ TEST_P(ViewPainterTest, TouchActionRect) {
     <div id='forcescroll' style='width: 0; height: 2900px;'></div>
   )HTML");
 
-  GetFrame().DomWindow()->scrollBy(0, 100);
+  GetFrame().DomWindow()->scrollByForTesting(0, 100);
   UpdateAllLifecyclePhasesForTest();
 
   auto* view = &GetLayoutView();

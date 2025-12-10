@@ -44,18 +44,22 @@ std::optional<V8GPUFeatureName::Enum> GPUSupportedFeatures::ToV8FeatureNameEnum(
       return V8GPUFeatureName::Enum::kDualSourceBlending;
     case wgpu::FeatureName::Subgroups:
       return V8GPUFeatureName::Enum::kSubgroups;
+    case wgpu::FeatureName::TextureComponentSwizzle:
+      return V8GPUFeatureName::Enum::kTextureComponentSwizzle;
     case wgpu::FeatureName::CoreFeaturesAndLimits:
       return V8GPUFeatureName::Enum::kCoreFeaturesAndLimits;
     case wgpu::FeatureName::ClipDistances:
       return V8GPUFeatureName::Enum::kClipDistances;
     case wgpu::FeatureName::MultiDrawIndirect:
       return V8GPUFeatureName::Enum::kChromiumExperimentalMultiDrawIndirect;
-    case wgpu::FeatureName::Unorm16TextureFormats:
-      return V8GPUFeatureName::Enum::kChromiumExperimentalUnorm16TextureFormats;
-    case wgpu::FeatureName::Snorm16TextureFormats:
-      return V8GPUFeatureName::Enum::kChromiumExperimentalSnorm16TextureFormats;
     case wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix:
       return V8GPUFeatureName::Enum::kChromiumExperimentalSubgroupMatrix;
+    case wgpu::FeatureName::PrimitiveIndex:
+      return V8GPUFeatureName::Enum::kPrimitiveIndex;
+    case wgpu::FeatureName::TextureFormatsTier1:
+      return V8GPUFeatureName::Enum::kTextureFormatsTier1;
+    case wgpu::FeatureName::TextureFormatsTier2:
+      return V8GPUFeatureName::Enum::kTextureFormatsTier2;
     default:
       return std::nullopt;
   }
@@ -106,8 +110,7 @@ GPUSupportedFeatures::IterationSource::IterationSource(
 
 bool GPUSupportedFeatures::IterationSource::FetchNextItem(
     ScriptState* script_state,
-    String& value,
-    ExceptionState& exception_state) {
+    String& value) {
   if (iter_ == features_.end()) {
     return false;
   }

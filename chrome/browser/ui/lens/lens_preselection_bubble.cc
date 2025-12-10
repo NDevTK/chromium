@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/lens/lens_help_menu_utils.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
+#include "chrome/browser/ui/lens/lens_search_feature_flag_utils.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/lens/lens_features.h"
@@ -82,11 +83,8 @@ void LensPreselectionBubble::Init() {
            : set_margins(gfx::Insets::TLBR(12, 16, 12, 16));
 
   // Set bubble icon and text
-  const std::u16string online_toast_text =
-      lens::features::IsSimplifiedSelectionEnabled()
-          ? l10n_util::GetStringUTF16(
-                IDS_LENS_OVERLAY_INITIAL_TOAST_MESSAGE_SIMPLIFIED)
-          : l10n_util::GetStringUTF16(IDS_LENS_OVERLAY_INITIAL_TOAST_MESSAGE);
+  const std::u16string online_toast_text = l10n_util::GetStringUTF16(
+      IDS_LENS_OVERLAY_INITIAL_TOAST_MESSAGE_SIMPLIFIED);
   const std::u16string toast_text =
       offline_ ? l10n_util::GetStringUTF16(
                      IDS_LENS_OVERLAY_INITIAL_TOAST_ERROR_MESSAGE)
@@ -97,7 +95,7 @@ void LensPreselectionBubble::Init() {
   label_->SetMultiLine(false);
   label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label_->SetAllowCharacterBreak(false);
-  if (lens::features::IsLensOverlayContextualSearchboxEnabled()) {
+  if (lens::IsLensOverlayContextualSearchboxEnabled()) {
     auto button = views::CreateVectorImageButtonWithNativeTheme(
         base::RepeatingClosure(), kHelpMenuIcon, 20,
         kColorLensOverlayToastForeground, kColorLensOverlayToastForeground);

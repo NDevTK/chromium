@@ -8,7 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 
-import static org.chromium.components.browser_ui.widget.BrowserUiListMenuUtils.buildMenuListItem;
+import static org.chromium.components.browser_ui.widget.ListItemBuilder.buildSimpleMenuItem;
 
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -17,6 +17,7 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
+import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
 
 import org.junit.Before;
@@ -82,7 +83,7 @@ public class ImprovedBookmarkRowRenderTest {
     @Rule
     public ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(6)
+                    .setRevision(7)
                     .setBugComponent(ChromeRenderTestRule.Component.UI_BROWSER_BOOKMARKS)
                     .build();
 
@@ -113,10 +114,10 @@ public class ImprovedBookmarkRowRenderTest {
         CurrencyFormatterJni.setInstanceForTesting(mCurrencyFormatterJniMock);
         doAnswer(
                         (invocation) -> {
-                            return "$" + invocation.getArgument(2);
+                            return "$" + invocation.getArgument(1);
                         })
                 .when(mCurrencyFormatterJniMock)
-                .format(anyLong(), any(), any());
+                .format(anyLong(), any());
 
         int bitmapSize =
                 mActivityTestRule
@@ -174,16 +175,18 @@ public class ImprovedBookmarkRowRenderTest {
                     PropertyModelChangeProcessor.create(
                             mModel, mImprovedBookmarkRow, ImprovedBookmarkRowViewBinder::bind);
                 });
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     ListMenu buildListMenu() {
         ModelList listItems = new ModelList();
-        listItems.add(buildMenuListItem(R.string.bookmark_item_select, 0, 0));
-        listItems.add(buildMenuListItem(R.string.bookmark_item_delete, 0, 0));
-        listItems.add(buildMenuListItem(R.string.bookmark_item_edit, 0, 0));
-        listItems.add(buildMenuListItem(R.string.bookmark_item_move, 0, 0));
+        listItems.add(buildSimpleMenuItem(R.string.bookmark_item_select));
+        listItems.add(buildSimpleMenuItem(R.string.bookmark_item_delete));
+        listItems.add(buildSimpleMenuItem(R.string.bookmark_item_edit));
+        listItems.add(buildSimpleMenuItem(R.string.bookmark_item_move));
 
-        ListMenu.Delegate delegate = item -> {};
+        ListMenu.Delegate delegate = (item, view) -> {};
         return BrowserUiListMenuUtils.getBasicListMenu(
                 mActivityTestRule.getActivity(), listItems, delegate);
     }

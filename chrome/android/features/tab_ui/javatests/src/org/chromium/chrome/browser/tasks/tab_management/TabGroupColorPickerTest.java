@@ -14,7 +14,10 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 
+import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.MediumTest;
+
+import com.google.android.material.button.MaterialButton;
 
 import org.hamcrest.Matchers;
 import org.junit.Assert;
@@ -52,13 +55,6 @@ import java.util.List;
 /** Integration and render tests for the ColorPicker feature. */
 @RunWith(ParameterizedRunner.class)
 @ParameterAnnotations.UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-// TODO(crbug.com/419289558): Re-enable color surface feature flags
-@Features.DisableFeatures({
-    ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE,
-    ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
-    ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE,
-    ChromeFeatureList.ANDROID_THEME_MODULE
-})
 @Batch(Batch.PER_CLASS)
 public class TabGroupColorPickerTest {
     @ParameterAnnotations.ClassParameter
@@ -133,6 +129,8 @@ public class TabGroupColorPickerTest {
                     mRootView.addView(mContainerView);
                 });
 
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
         // Change the width of the parent view to restrict for a double row
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -187,6 +185,8 @@ public class TabGroupColorPickerTest {
                     mRootView.addView(mContainerView);
                 });
 
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
         // Change the width of the parent view to allow for a single row
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -237,11 +237,16 @@ public class TabGroupColorPickerTest {
 
     @Test
     @MediumTest
+    @Features.DisableFeatures({
+        ChromeFeatureList.ANDROID_THEME_MODULE,
+    })
     public void testColorPicker_dynamicSingleRow() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mRootView.addView(mContainerView);
                 });
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -269,11 +274,16 @@ public class TabGroupColorPickerTest {
 
     @Test
     @MediumTest
+    @Features.DisableFeatures({
+        ChromeFeatureList.ANDROID_THEME_MODULE,
+    })
     public void testColorPicker_dynamicAlternateSelection() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mRootView.addView(mContainerView);
                 });
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -303,11 +313,45 @@ public class TabGroupColorPickerTest {
 
     @Test
     @MediumTest
+    @Features.EnableFeatures({
+        ChromeFeatureList.ANDROID_THEME_MODULE,
+    })
+    public void testColorPicker_dynamicSingleRow_androidThemeModule() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mRootView.addView(mContainerView);
+                });
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    LinearLayout firstRow =
+                            mContainerView.findViewById(R.id.color_picker_first_row);
+                    Assert.assertEquals(mColorList.size(), firstRow.getChildCount());
+
+                    for (int color : mColorList) {
+                        FrameLayout colorView = (FrameLayout) firstRow.getChildAt(color);
+                        Assert.assertTrue(
+                                colorView.findViewById(R.id.color_picker_icon)
+                                        instanceof MaterialButton);
+                        MaterialButton materialButton =
+                                colorView.findViewById(R.id.color_picker_icon);
+                        Assert.assertNotNull(materialButton.getBackgroundTintList());
+                        Assert.assertNotNull(materialButton.getRippleColor());
+                    }
+                });
+    }
+
+    @Test
+    @MediumTest
     public void testColorPicker_dynamicDoubleRow() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mRootView.addView(mContainerView);
                 });
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         // Change the width of the parent view to enact a row split on the colors
         ThreadUtils.runOnUiThreadBlocking(
@@ -398,6 +442,8 @@ public class TabGroupColorPickerTest {
                     mRootView.addView(mContainerView);
                 });
 
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
         mRenderTestRule.render(mRootView, "tab_group_color_picker_single_row");
     }
 
@@ -409,6 +455,8 @@ public class TabGroupColorPickerTest {
                 () -> {
                     mRootView.addView(mContainerView);
                 });
+
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         // Change the width of the parent view to enact a row split on the colors
         ThreadUtils.runOnUiThreadBlocking(

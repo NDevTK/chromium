@@ -8,8 +8,9 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
-#include "components/facilitated_payments/core/browser/network_api/multiple_request_facilitated_payments_network_interface.h"
+#include "components/facilitated_payments/core/browser/network_api/facilitated_payments_network_interface.h"
 #include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
+#include "url/origin.h"
 
 namespace payments::facilitated {
 
@@ -29,14 +30,24 @@ class PixAccountLinkingManager {
 
   // Initialize the Pix account linking flow. Virtual so it can be overridden in
   // tests.
-  virtual void MaybeShowPixAccountLinkingPrompt();
+  virtual void MaybeShowPixAccountLinkingPrompt(
+      const url::Origin& pix_payment_page_origin);
 
  private:
   friend class PixAccountLinkingManagerTestApi;
 
-  // Sets the UI event listener and triggers showing the Pix account linking
-  // prompt.
+  void Reset();
+
+  // Sets the UI event listener, sets the internal UI state, and triggers
+  // showing the Pix account linking prompt if the user is eligible.
   void ShowPixAccountLinkingPromptIfEligible();
+
+  // Shows the Pix account linking prompt to user after the predefined wait
+  // time.
+  void ShowPixAccountLinkingPromptAfterDelay();
+
+  // Sets the internal UI state and triggers dismissal.
+  void DismissPrompt();
 
   void OnAccepted();
 
@@ -45,20 +56,28 @@ class PixAccountLinkingManager {
   // Called by the view to communicate UI events.
   void OnUiScreenEvent(UiEvent ui_event_type);
 
-  // Callback for when the payments request to check pix account linking
+  // Callback for when the payments request to check Pix account linking
   // eligibility is completed.
   void OnGetDetailsForCreatePaymentInstrumentResponseReceived(
+      base::TimeTicks start_time,
       autofill::payments::PaymentsAutofillClient::PaymentsRpcResult result,
       bool is_eligible_for_pix_account_linking);
 
   // Owner.
   const raw_ref<FacilitatedPaymentsClient> client_;
 
-  // Optional bool to indicate whether the user is eligible for pix account
+  // Optional bool to indicate whether the user is eligible for Pix account
   // linking based on the response from payments backend. This field is set to
   // optional to be able to differentiate between the case where the server
   // response is not received yet.
   std::optional<bool> is_eligible_for_pix_account_linking_ = std::nullopt;
+
+  // True when the Pix account linking prompt is being shown to the user. Used
+  // to catch instances where the prompt is unexpectedly closed.
+  bool is_prompt_showing_ = false;
+
+  // The origin of the Pix payment page that triggered the account linking flow.
+  url::Origin pix_payment_page_origin_;
 
   base::WeakPtrFactory<PixAccountLinkingManager> weak_ptr_factory_{this};
 };

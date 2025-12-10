@@ -11,9 +11,7 @@
 #include <algorithm>
 #include <memory>
 
-#include "base/atomicops.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -23,6 +21,7 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
@@ -32,7 +31,6 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/sys_addrinfo.h"
-#include "net/base/tracing.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"

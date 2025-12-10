@@ -13,6 +13,9 @@
 #include "chrome/browser/extensions/window_controller_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/windows.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -64,9 +67,15 @@ WindowController::WindowController(ui::BaseWindow* window, Profile* profile)
 
 WindowController::~WindowController() = default;
 
+BrowserWindowInterface* WindowController::GetBrowserWindowInterface() {
+  return nullptr;
+}
+
+#if !BUILDFLAG(IS_ANDROID)
 Browser* WindowController::GetBrowser() const {
   return nullptr;
 }
+#endif
 
 bool WindowController::MatchesFilter(TypeFilter filter) const {
   TypeFilter type = 1 << base::to_underlying(
@@ -76,6 +85,11 @@ bool WindowController::MatchesFilter(TypeFilter filter) const {
 
 void WindowController::NotifyWindowBoundsChanged() {
   WindowControllerList::GetInstance()->NotifyWindowBoundsChanged(this);
+}
+
+void WindowController::NotifyWindowFocusChanged(bool has_focus) {
+  WindowControllerList::GetInstance()->NotifyWindowFocusChanged(this,
+                                                                has_focus);
 }
 
 }  // namespace extensions

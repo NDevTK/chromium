@@ -31,24 +31,18 @@ PressureSource V8PressureSourceToPressureSource(V8PressureSource::Enum source) {
 }  // namespace
 
 // static
-const char PressureObserverManager::kSupplementName[] =
-    "PressureObserverManager";
-
-// static
 PressureObserverManager* PressureObserverManager::From(
     ExecutionContext* context) {
-  PressureObserverManager* manager =
-      Supplement<ExecutionContext>::From<PressureObserverManager>(context);
+  PressureObserverManager* manager = context->GetPressureObserverManager();
   if (!manager) {
     manager = MakeGarbageCollected<PressureObserverManager>(context);
-    Supplement<ExecutionContext>::ProvideTo(*context, manager);
+    context->SetPressureObserverManager(manager);
   }
   return manager;
 }
 
 PressureObserverManager::PressureObserverManager(ExecutionContext* context)
     : ExecutionContextLifecycleStateObserver(context),
-      Supplement<ExecutionContext>(*context),
       pressure_manager_(context) {
   UpdateStateIfNeeded();
   for (const auto& source : PressureObserver::knownSources()) {
@@ -76,8 +70,8 @@ void PressureObserverManager::AddObserver(V8PressureSource::Enum source,
     pressure_manager_->AddClient(
         V8PressureSourceToPressureSource(source),
         client->BindNewEndpointAndPassRemote(task_runner),
-        WTF::BindOnce(&PressureObserverManager::DidAddClient,
-                      WrapWeakPersistent(this), source));
+        BindOnce(&PressureObserverManager::DidAddClient,
+                 WrapWeakPersistent(this), source));
   } else if (state == PressureClientImpl::State::kInitialized) {
     observer->OnBindingSucceeded(source);
   }
@@ -110,7 +104,6 @@ void PressureObserverManager::Trace(Visitor* visitor) const {
   visitor->Trace(pressure_manager_);
   visitor->Trace(source_to_client_);
   ExecutionContextLifecycleStateObserver::Trace(visitor);
-  Supplement<ExecutionContext>::Trace(visitor);
 }
 
 void PressureObserverManager::EnsureConnection(
@@ -120,7 +113,7 @@ void PressureObserverManager::EnsureConnection(
   if (!pressure_manager_.is_bound()) {
     GetExecutionContext()->GetBrowserInterfaceBroker().GetInterface(
         pressure_manager_.BindNewPipeAndPassReceiver(task_runner));
-    pressure_manager_.set_disconnect_handler(WTF::BindOnce(
+    pressure_manager_.set_disconnect_handler(BindOnce(
         &PressureObserverManager::OnConnectionError, WrapWeakPersistent(this)));
   }
 }

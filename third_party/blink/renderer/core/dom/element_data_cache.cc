@@ -39,10 +39,7 @@ inline unsigned AttributeHash(
 inline bool HasSameAttributes(
     const Vector<Attribute, kAttributePrealloc>& attributes,
     ShareableElementData& element_data) {
-  return std::equal(attributes.begin(), attributes.end(),
-                    element_data.attribute_array_,
-                    UNSAFE_TODO(element_data.attribute_array_ +
-                                element_data.Attributes().size()));
+  return std::ranges::equal(attributes, element_data.AttributesSpan());
 }
 
 ShareableElementData*
@@ -51,7 +48,7 @@ ElementDataCache::CachedShareableElementDataWithAttributes(
     const Vector<Attribute, kAttributePrealloc>& attributes) {
   DCHECK(!attributes.empty());
 
-  unsigned hash = WTF::HashInts(tag_name->GetHash(), AttributeHash(attributes));
+  unsigned hash = HashInts(tag_name->GetHash(), AttributeHash(attributes));
   ShareableElementDataCache::ValueType* it =
       shareable_element_data_cache_.insert(hash, std::pair(nullptr, nullptr))
           .stored_value;

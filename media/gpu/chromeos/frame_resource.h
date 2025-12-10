@@ -98,8 +98,10 @@ class FrameResource : public base::RefCountedThreadSafe<FrameResource> {
 
   // Gets the ScopedMapping object which clients can use to access the CPU
   // visible memory and other metadata for the gpu buffer backing |this|.
-  virtual std::unique_ptr<VideoFrame::ScopedMapping> MapGMBOrSharedImage()
+  virtual std::unique_ptr<VideoFrame::ScopedMapping> MapSharedImageDEPRECATED()
       const = 0;
+
+  virtual scoped_refptr<gpu::ClientSharedImage> GetSharedImage() const = 0;
 
   virtual const VideoFrameLayout& layout() const = 0;
 
@@ -148,9 +150,8 @@ class FrameResource : public base::RefCountedThreadSafe<FrameResource> {
   virtual gfx::ColorSpace ColorSpace() const = 0;
   virtual void set_color_space(const gfx::ColorSpace& color_space) = 0;
 
-  virtual const std::optional<gfx::HDRMetadata>& hdr_metadata() const = 0;
-  virtual void set_hdr_metadata(
-      const std::optional<gfx::HDRMetadata>& hdr_metadata) = 0;
+  virtual const gfx::HDRMetadata& hdr_metadata() const = 0;
+  virtual void set_hdr_metadata(const gfx::HDRMetadata& hdr_metadata) = 0;
 
   // Adds a callback to be run when the FrameResource is about to be destroyed.
   // The callback may be run from ANY THREAD, and so it is up to the client to

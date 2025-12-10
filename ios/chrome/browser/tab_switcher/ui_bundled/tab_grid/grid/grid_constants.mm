@@ -18,6 +18,9 @@ NSString* const kInactiveTabsButtonAccessibilityIdentifier =
 // Accessibility identifier prefix of a grid cell.
 NSString* const kGridCellIdentifierPrefix = @"GridCellIdentifierPrefix";
 
+NSString* const kGridCellSnapshotIdentifierPrefix =
+    @"GridCellSnapshotIdentifierPrefix";
+
 // Accessibility identifier prefix of a grid cell.
 NSString* const kGroupGridCellIdentifierPrefix =
     @"GroupGridCellIdentifierPrefix";
@@ -84,3 +87,6 @@ const CGFloat kGridCellSelectionRingTintWidth = 5.0f;
 const CGFloat kGridCellPriceDropTopSpacing = 10.0f;
 const CGFloat kGridCellPriceDropLeadingSpacing = 10.0f;
 const CGFloat kGridCellPriceDropTrailingSpacing = 10.0f;
+
+const CGFloat kGridCellHighlightScaleTransform = 0.8f;
+const CGFloat kGridCellHighlightDuration = 0.2f;

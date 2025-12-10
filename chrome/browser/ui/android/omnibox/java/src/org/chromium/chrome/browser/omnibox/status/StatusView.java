@@ -64,7 +64,6 @@ public class StatusView extends LinearLayout {
     private int mTouchDelegateEndOffset;
 
     private ImageView mIconView;
-    private View mIconBackground;
     private StatusIconView mStatusIconView;
     private TextView mVerboseStatusTextView;
     private View mSeparatorView;
@@ -90,6 +89,7 @@ public class StatusView extends LinearLayout {
     private @Nullable BrowserStateBrowserControlsVisibilityDelegate
             mBrowserControlsVisibilityDelegate;
     private int mShowBrowserControlsToken = TokenHolder.INVALID_TOKEN;
+    private int mStatusIconSize;
     private @Nullable Integer mIconAnimationDurationForTests;
 
     public StatusView(Context context, AttributeSet attributes) {
@@ -101,7 +101,6 @@ public class StatusView extends LinearLayout {
         super.onFinishInflate();
 
         mIconView = findViewById(R.id.location_bar_status_icon);
-        mIconBackground = findViewById(R.id.location_bar_status_icon_bg);
         mStatusIconView = findViewById(R.id.location_bar_status_icon_view);
         mVerboseStatusTextView = findViewById(R.id.location_bar_verbose_status);
         mSeparatorView = findViewById(R.id.location_bar_verbose_status_separator);
@@ -134,6 +133,10 @@ public class StatusView extends LinearLayout {
                     }
                 });
 
+        mStatusIconSize =
+                getResources()
+                        .getDimensionPixelSize(R.dimen.omnibox_search_engine_logo_composed_size);
+
         // Configure icon rounding.
         mIconView.setOutlineProvider(
                 new RoundedCornerOutlineProvider(
@@ -142,7 +145,6 @@ public class StatusView extends LinearLayout {
                                                 R.dimen.omnibox_search_engine_logo_composed_size)
                                 / 2));
         mIconView.setClipToOutline(true);
-        mIconView.setScaleType(ImageView.ScaleType.FIT_CENTER);
 
         configureAccessibilityDescriptions();
     }
@@ -304,6 +306,9 @@ public class StatusView extends LinearLayout {
                                 transitionType == IconTransitionType.ROTATE
                                         ? getRotatedIcon(targetIcon)
                                         : targetIcon);
+                newImage.setLayerSize(0, mStatusIconSize, mStatusIconSize);
+                newImage.setLayerSize(1, mStatusIconSize, mStatusIconSize);
+
                 mIconView.setImageDrawable(newImage);
 
                 if (transitionType == IconTransitionType.CROSSFADE) {
@@ -321,6 +326,7 @@ public class StatusView extends LinearLayout {
                     updateAnimationStartTime();
                     mIsAnimatingStatusIconChange = true;
                     keepControlsShownForAnimation();
+                    mIconView.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_ASSERTIVE);
                     mIconView
                             .animate()
                             .setDuration(ICON_ROTATION_DURATION_MS)
@@ -443,10 +449,6 @@ public class StatusView extends LinearLayout {
     void setStatusIconAlpha(float alpha) {
         if (mIconView == null) return;
         mIconView.setAlpha(alpha);
-
-        if (mIconBackground != null && mIconBackground.getVisibility() == VISIBLE) {
-            mIconBackground.setAlpha(alpha);
-        }
     }
 
     /** Specify the status icon visibility. */
@@ -475,13 +477,6 @@ public class StatusView extends LinearLayout {
                                     ViewUtils.requestLayout(
                                             this, "StatusView.setStatusIconShown Runnable"));
         }
-    }
-
-    /** Specify the status icon background visibility. */
-    void setStatusIconBackgroundVisibility(boolean showIconBackground) {
-        if (mIconView == null || mIconBackground == null) return;
-
-        mIconBackground.setVisibility(showIconBackground ? VISIBLE : INVISIBLE);
     }
 
     /** Specify accessibility string presented to user upon long click. */
@@ -547,7 +542,8 @@ public class StatusView extends LinearLayout {
     }
 
     void setBrowserControlsVisibilityDelegate(
-            BrowserStateBrowserControlsVisibilityDelegate browserControlsVisibilityDelegate) {
+            @Nullable BrowserStateBrowserControlsVisibilityDelegate
+                    browserControlsVisibilityDelegate) {
         mBrowserControlsVisibilityDelegate = browserControlsVisibilityDelegate;
     }
 

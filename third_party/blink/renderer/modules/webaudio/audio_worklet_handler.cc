@@ -5,6 +5,8 @@
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_handler.h"
 
 #include "base/compiler_specific.h"
+#include "media/base/audio_bus.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
@@ -224,7 +226,7 @@ void AudioWorkletHandler::CheckNumberOfChannelsForInput(AudioNodeInput* input) {
   }
 
   AudioHandler::CheckNumberOfChannelsForInput(input);
-  UpdatePullStatusIfNeeded();
+  Context()->GetDeferredTaskHandler().UpdatePullStatusWithFeatureCheck(this);
 }
 
 void AudioWorkletHandler::UpdatePullStatusIfNeeded() {

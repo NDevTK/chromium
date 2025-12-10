@@ -12,6 +12,8 @@
 #include "components/autofill/core/browser/form_structure_test_api.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/payments/test/mock_iban_manager.h"
+#include "components/autofill/core/browser/suggestions/suggestion_generator.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/form_data_test_api.h"
@@ -20,16 +22,52 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/mock_resource_bundle_delegate.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
 namespace autofill {
 namespace {
 
 using ::testing::_;
+using ::testing::AllOf;
+using ::testing::Field;
+using ::testing::Matcher;
 
 constexpr char kNickname_0[] = "Nickname 0";
 constexpr char kNickname_1[] = "Nickname 1";
+
+Matcher<Suggestion> EqualsIbanSuggestion(
+    const std::u16string& identifier_string,
+    const Suggestion::Payload& payload,
+    const std::u16string& nickname) {
+  if constexpr (BUILDFLAG(IS_ANDROID)) {
+    if (nickname.empty()) {
+      return AllOf(
+          Field(&Suggestion::type, SuggestionType::kIbanEntry),
+          Field(&Suggestion::main_text, Suggestion::Text(identifier_string)),
+          Field(&Suggestion::payload, payload));
+    }
+    return AllOf(Field(&Suggestion::type, SuggestionType::kIbanEntry),
+                 Field(&Suggestion::main_text, Suggestion::Text(nickname)),
+                 Field(&Suggestion::minor_texts,
+                       std::vector<Suggestion::Text>{
+                           Suggestion::Text(identifier_string)}),
+                 Field(&Suggestion::payload, payload));
+  }
+  if (nickname.empty()) {
+    return AllOf(Field(&Suggestion::type, SuggestionType::kIbanEntry),
+                 Field(&Suggestion::main_text,
+                       Suggestion::Text(identifier_string,
+                                        Suggestion::Text::IsPrimary(true))),
+                 Field(&Suggestion::payload, payload));
+  }
+  return AllOf(
+      Field(&Suggestion::type, SuggestionType::kIbanEntry),
+      Field(&Suggestion::main_text,
+            Suggestion::Text(nickname, Suggestion::Text::IsPrimary(true))),
+      Field(&Suggestion::payload, payload),
+      Field(&Suggestion::labels, std::vector<std::vector<Suggestion::Text>>{
+                                     {Suggestion::Text(identifier_string)}}));
+}
 
 class IbanSuggestionGeneratorTest : public testing::Test,
                                     public testing::WithParamInterface<bool> {
@@ -48,24 +86,9 @@ class IbanSuggestionGeneratorTest : public testing::Test,
         test::CreateTestIbanFormData(/*value=*/""));
     test_api(*form_structure_).SetFieldTypes({IBAN_VALUE});
 
-    ui::ResourceBundle::InitSharedInstanceWithLocale(
-        "en-US", &mock_resource_delegate_,
-        ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
-    if (IsNewFopDisplayEnabled()) {
-      ON_CALL(mock_resource_delegate_, GetImageNamed(IDR_AUTOFILL_IBAN))
-          .WillByDefault(testing::Return(gfx::test::CreateImage(100, 50)));
-    } else {
-      ON_CALL(mock_resource_delegate_, GetImageNamed(IDR_AUTOFILL_IBAN_OLD))
-          .WillByDefault(testing::Return(gfx::test::CreateImage(100, 50)));
-    }
-
-    ON_CALL(*autofill_client_.GetAutofillOptimizationGuide(),
+    ON_CALL(*autofill_client_.GetAutofillOptimizationGuideDecider(),
             ShouldBlockSingleFieldSuggestions)
         .WillByDefault(testing::Return(false));
-  }
-
-  ~IbanSuggestionGeneratorTest() override {
-    ui::ResourceBundle::CleanupSharedInstance();
   }
 
   bool IsNewFopDisplayEnabled() const {
@@ -112,7 +135,7 @@ class IbanSuggestionGeneratorTest : public testing::Test,
 
   // Get an IBAN suggestion with the given `iban`.
   Suggestion GetSuggestionForIban(const Iban& iban) {
-    Suggestion iban_suggestion;
+    Suggestion iban_suggestion(SuggestionType::kIbanEntry);
     const std::u16string iban_identifier =
         iban.GetIdentifierStringForAutofillDisplay();
 #if BUILDFLAG(IS_ANDROID)
@@ -133,7 +156,6 @@ class IbanSuggestionGeneratorTest : public testing::Test,
     }
 #endif
 
-    iban_suggestion.type = SuggestionType::kIbanEntry;
     if (iban.record_type() == Iban::kServerIban) {
       iban_suggestion.payload = Suggestion::InstrumentId(iban.instrument_id());
     } else {
@@ -142,18 +164,35 @@ class IbanSuggestionGeneratorTest : public testing::Test,
     return iban_suggestion;
   }
 
-  Suggestion SetUpSeparator() {
-    Suggestion separator;
-    separator.type = SuggestionType::kSeparator;
-    return separator;
-  }
-
   Suggestion SetUpFooterManagePaymentMethods() {
     Suggestion footer_suggestion(
-        l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS));
-    footer_suggestion.type = SuggestionType::kManageIban;
+        l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS),
+        SuggestionType::kManageIban);
     footer_suggestion.icon = Suggestion::Icon::kSettings;
     return footer_suggestion;
+  }
+
+  std::vector<Suggestion> GetSuggestionsForIbans(
+      const std::vector<Iban>& ibans) {
+    IbanSuggestionGenerator generator;
+    std::vector<Suggestion> suggestions;
+
+    auto on_suggestions_generated =
+        [&suggestions](
+            SuggestionGenerator::ReturnedSuggestions returned_suggestions) {
+          suggestions = returned_suggestions.second;
+        };
+
+    std::vector<SuggestionGenerator::SuggestionData> suggestion_data(
+        ibans.begin(), ibans.end());
+    base::flat_map<SuggestionGenerator::SuggestionDataSource,
+                   std::vector<SuggestionGenerator::SuggestionData>>
+        fetched_data = {{SuggestionGenerator::SuggestionDataSource::kIban,
+                         std::move(suggestion_data)}};
+    generator.GenerateSuggestions(form().ToFormData(), field(), &form(),
+                                  &field(), client(), fetched_data,
+                                  on_suggestions_generated);
+    return suggestions;
   }
 
  private:
@@ -162,8 +201,6 @@ class IbanSuggestionGeneratorTest : public testing::Test,
   TestAutofillClient autofill_client_;
   std::unique_ptr<PrefService> prefs_;
   std::unique_ptr<FormStructure> form_structure_;
-  testing::NiceMock<ui::MockResourceBundleDelegate> mock_resource_delegate_;
-  ui::ResourceBundle::SharedInstanceSwapperForTesting resource_bundle_swapper_;
   base::test::ScopedFeatureList feature_list_;
 };
 
@@ -189,11 +226,11 @@ TEST_P(IbanSuggestionGeneratorTest, GeneratesIbanSuggestions) {
   Suggestion server_iban_suggestion_1 = GetSuggestionForIban(SetUpServerIban(
       /*instrument_id=*/12346, /*prefix=*/"BE71", /*suffix=*/"6769",
       kNickname_1));
-  Suggestion separator_suggestion = SetUpSeparator();
+  Suggestion separator_suggestion(SuggestionType::kSeparator);
   Suggestion footer_suggestion = SetUpFooterManagePaymentMethods();
 
   base::MockCallback<base::OnceCallback<void(
-      std::pair<FillingProduct,
+      std::pair<SuggestionGenerator::SuggestionDataSource,
                 std::vector<SuggestionGenerator::SuggestionData>>)>>
       suggestion_data_callback;
   base::MockCallback<
@@ -201,29 +238,161 @@ TEST_P(IbanSuggestionGeneratorTest, GeneratesIbanSuggestions) {
       suggestions_generated_callback;
 
   IbanSuggestionGenerator generator;
-  std::pair<FillingProduct, std::vector<SuggestionGenerator::SuggestionData>>
+  std::pair<SuggestionGenerator::SuggestionDataSource,
+            std::vector<SuggestionGenerator::SuggestionData>>
       savedCallbackArgument;
 
-  EXPECT_CALL(suggestion_data_callback,
-              Run(testing::Pair(FillingProduct::kIban, testing::SizeIs(4))))
+  EXPECT_CALL(
+      suggestion_data_callback,
+      Run(testing::Pair(SuggestionGenerator::SuggestionDataSource::kIban,
+                        testing::SizeIs(4))))
       .WillOnce(testing::SaveArg<0>(&savedCallbackArgument));
-  generator.FetchSuggestionData(form(), field(), client(),
-                                suggestion_data_callback.Get());
+  generator.FetchSuggestionData(form().ToFormData(), field(), &form(), &field(),
+                                client(), suggestion_data_callback.Get());
 
   EXPECT_CALL(suggestions_generated_callback,
               Run(testing::Pair(
                   FillingProduct::kIban,
                   testing::UnorderedElementsAre(
-                    MatchesTextAndSuggestionType(local_iban_suggestion_0),
-                    MatchesTextAndSuggestionType(local_iban_suggestion_1),
-                    MatchesTextAndSuggestionType(server_iban_suggestion_0),
-                    MatchesTextAndSuggestionType(server_iban_suggestion_1),
-                    MatchesTextAndSuggestionType(separator_suggestion),
-                    MatchesTextAndSuggestionType(footer_suggestion)))));
-  generator.GenerateSuggestions(form(), field(),
-                                {savedCallbackArgument},
+                      MatchesTextAndSuggestionType(local_iban_suggestion_0),
+                      MatchesTextAndSuggestionType(local_iban_suggestion_1),
+                      MatchesTextAndSuggestionType(server_iban_suggestion_0),
+                      MatchesTextAndSuggestionType(server_iban_suggestion_1),
+                      MatchesTextAndSuggestionType(separator_suggestion),
+                      MatchesTextAndSuggestionType(footer_suggestion)))));
+  generator.GenerateSuggestions(form().ToFormData(), field(), &form(), &field(),
+                                client(), {savedCallbackArgument},
                                 suggestions_generated_callback.Get());
   task_environment().RunUntilIdle();
+}
+
+TEST_P(IbanSuggestionGeneratorTest, GetLocalIbanSuggestions) {
+  auto MakeLocalIban = [](const std::u16string& value,
+                          const std::u16string& nickname) {
+    Iban iban(Iban::Guid(base::Uuid::GenerateRandomV4().AsLowercaseString()));
+    iban.set_value(value);
+    if (!nickname.empty()) {
+      iban.set_nickname(nickname);
+    }
+    return iban;
+  };
+  Iban iban0 =
+      MakeLocalIban(u"CH56 0483 5012 3456 7800 9", u"My doctor's IBAN");
+  Iban iban1 =
+      MakeLocalIban(u"DE91 1000 0000 0123 4567 89", u"My brother's IBAN");
+  Iban iban2 =
+      MakeLocalIban(u"GR96 0810 0010 0000 0123 4567 890", u"My teacher's IBAN");
+  Iban iban3 = MakeLocalIban(u"PK70 BANK 0000 1234 5678 9000", u"");
+
+  std::vector<Suggestion> iban_suggestions =
+      GetSuggestionsForIbans({iban0, iban1, iban2, iban3});
+
+  // There are 6 suggestions, 4 for IBAN suggestions, followed by a separator,
+  // and followed by "Manage payment methods..." which redirects to the Chrome
+  // payment methods settings page.
+  ASSERT_EQ(iban_suggestions.size(), 6u);
+
+  EXPECT_THAT(
+      iban_suggestions[0],
+      EqualsIbanSuggestion(iban0.GetIdentifierStringForAutofillDisplay(),
+                           Suggestion::Guid(iban0.guid()), iban0.nickname()));
+
+  EXPECT_THAT(
+      iban_suggestions[1],
+      EqualsIbanSuggestion(iban1.GetIdentifierStringForAutofillDisplay(),
+                           Suggestion::Guid(iban1.guid()), iban1.nickname()));
+
+  EXPECT_THAT(
+      iban_suggestions[2],
+      EqualsIbanSuggestion(iban2.GetIdentifierStringForAutofillDisplay(),
+                           Suggestion::Guid(iban2.guid()), iban2.nickname()));
+
+  EXPECT_THAT(
+      iban_suggestions[3],
+      EqualsIbanSuggestion(iban3.GetIdentifierStringForAutofillDisplay(),
+                           Suggestion::Guid(iban3.guid()), iban3.nickname()));
+
+  EXPECT_EQ(iban_suggestions[4].type, SuggestionType::kSeparator);
+
+  EXPECT_EQ(iban_suggestions[5].main_text.value,
+            l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS));
+  EXPECT_EQ(iban_suggestions[5].type, SuggestionType::kManageIban);
+}
+
+TEST_P(IbanSuggestionGeneratorTest, GetServerIbanSuggestions) {
+  Iban server_iban1 = test::GetServerIban();
+  Iban server_iban2 = test::GetServerIban2();
+  Iban server_iban3 = test::GetServerIban3();
+
+  std::vector<Suggestion> iban_suggestions =
+      GetSuggestionsForIbans({server_iban1, server_iban2, server_iban3});
+
+  // There are 5 suggestions, 3 for IBAN suggestions, followed by a separator,
+  // and followed by "Manage payment methods..." which redirects to the Chrome
+  // payment methods settings page.
+  ASSERT_EQ(iban_suggestions.size(), 5u);
+
+  EXPECT_THAT(iban_suggestions[0],
+              EqualsIbanSuggestion(
+                  server_iban1.GetIdentifierStringForAutofillDisplay(),
+                  Suggestion::InstrumentId(server_iban1.instrument_id()),
+                  server_iban1.nickname()));
+
+  EXPECT_THAT(iban_suggestions[1],
+              EqualsIbanSuggestion(
+                  server_iban2.GetIdentifierStringForAutofillDisplay(),
+                  Suggestion::InstrumentId(server_iban2.instrument_id()),
+                  server_iban2.nickname()));
+
+  EXPECT_THAT(iban_suggestions[2],
+              EqualsIbanSuggestion(
+                  server_iban3.GetIdentifierStringForAutofillDisplay(),
+                  Suggestion::InstrumentId(server_iban3.instrument_id()),
+                  server_iban3.nickname()));
+
+  EXPECT_EQ(iban_suggestions[3].type, SuggestionType::kSeparator);
+
+  EXPECT_EQ(iban_suggestions[4].main_text.value,
+            l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS));
+  EXPECT_EQ(iban_suggestions[4].type, SuggestionType::kManageIban);
+}
+
+TEST_P(IbanSuggestionGeneratorTest, GetLocalAndServerIbanSuggestions) {
+  Iban server_iban1 = test::GetServerIban();
+  Iban server_iban2 = test::GetServerIban2();
+  Iban local_iban1 = test::GetLocalIban();
+
+  std::vector<Suggestion> iban_suggestions =
+      GetSuggestionsForIbans({server_iban1, server_iban2, local_iban1});
+
+  // There are 5 suggestions, 3 for IBAN suggestions, followed by a separator,
+  // and followed by "Manage payment methods..." which redirects to the Chrome
+  // payment methods settings page.
+  ASSERT_EQ(iban_suggestions.size(), 5u);
+
+  EXPECT_THAT(iban_suggestions[0],
+              EqualsIbanSuggestion(
+                  server_iban1.GetIdentifierStringForAutofillDisplay(),
+                  Suggestion::InstrumentId(server_iban1.instrument_id()),
+                  server_iban1.nickname()));
+
+  EXPECT_THAT(iban_suggestions[1],
+              EqualsIbanSuggestion(
+                  server_iban2.GetIdentifierStringForAutofillDisplay(),
+                  Suggestion::InstrumentId(server_iban2.instrument_id()),
+                  server_iban2.nickname()));
+
+  EXPECT_THAT(
+      iban_suggestions[2],
+      EqualsIbanSuggestion(local_iban1.GetIdentifierStringForAutofillDisplay(),
+                           Suggestion::Guid(local_iban1.guid()),
+                           local_iban1.nickname()));
+
+  EXPECT_EQ(iban_suggestions[3].type, SuggestionType::kSeparator);
+
+  EXPECT_EQ(iban_suggestions[4].main_text.value,
+            l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS));
+  EXPECT_EQ(iban_suggestions[4].type, SuggestionType::kManageIban);
 }
 
 }  // namespace

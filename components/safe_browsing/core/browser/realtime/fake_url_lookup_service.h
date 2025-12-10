@@ -39,7 +39,9 @@ class FakeRealTimeUrlLookupService
   std::string GetProfileDMTokenString() const override;
   std::unique_ptr<enterprise_connectors::ClientMetadata> GetClientMetadata()
       const override;
+  std::string GetContentAreaAccountEmail(const GURL& tab_url) const override;
   std::string GetMetricSuffix() const override;
+  bool ShouldOverrideKnownSafeUrlDecision(const GURL& url) const override;
   void SendSampledRequest(
       const GURL& url,
       scoped_refptr<base::SequencedTaskRunner> callback_task_runner,

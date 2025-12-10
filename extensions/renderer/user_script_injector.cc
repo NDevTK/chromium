@@ -9,6 +9,7 @@
 
 #include "base/check.h"
 #include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "components/guest_view/buildflags/buildflags.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
@@ -20,7 +21,6 @@
 #include "extensions/renderer/injection_host.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/scripts_run_info.h"
-#include "ipc/ipc_sync_channel.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -45,10 +45,7 @@ struct RoutingInfoKey {
                  std::string script_id)
       : frame_token(frame_token), script_id(std::move(script_id)) {}
 
-  bool operator<(const RoutingInfoKey& other) const {
-    return std::tie(frame_token, script_id) <
-           std::tie(other.frame_token, other.script_id);
-  }
+  auto operator<=>(const RoutingInfoKey& rhs) const = default;
 };
 
 using RoutingInfoMap = std::map<RoutingInfoKey, bool>;
@@ -87,14 +84,16 @@ blink::WebScriptSource GreasemonkeyApiJsString::GetSource() const {
   return blink::WebScriptSource(source_);
 }
 
-base::LazyInstance<GreasemonkeyApiJsString>::Leaky g_greasemonkey_api =
-    LAZY_INSTANCE_INITIALIZER;
+const GreasemonkeyApiJsString& GetGreasemonkeyApi() {
+  static base::NoDestructor<GreasemonkeyApiJsString> api;
+  return *api;
+}
 
 bool ShouldInjectScripts(const UserScript::ContentList& script_contents,
                          const std::set<std::string>& injected_files) {
   for (const std::unique_ptr<UserScript::Content>& content : script_contents) {
     // Check if the script is already injected.
-    if (injected_files.count(content->url().path()) == 0) {
+    if (injected_files.count(content->url().GetPath()) == 0) {
       return true;
     }
   }
@@ -251,19 +250,20 @@ std::vector<blink::WebScriptSource> UserScriptInjector::GetJsSources(
   // Emulate Greasemonkey API for scripts that were converted to extension
   // user scripts.
   if (script_->emulate_greasemonkey())
-    sources.push_back(g_greasemonkey_api.Get().GetSource());
+    sources.push_back(GetGreasemonkeyApi().GetSource());
   for (const std::unique_ptr<UserScript::Content>& file : js_scripts) {
     const GURL& script_url = file->url();
     // Check if the script is already injected.
-    if (executing_scripts->count(script_url.path()) != 0)
+    if (executing_scripts->count(script_url.GetPath()) != 0) {
       continue;
+    }
 
     sources.push_back(blink::WebScriptSource(
         user_script_set_->GetJsSource(*file, script_->emulate_greasemonkey()),
         script_url));
 
     ++*num_injected_js_scripts;
-    executing_scripts->insert(script_url.path());
+    executing_scripts->insert(script_url.GetPath());
   }
 
   return sources;
@@ -282,7 +282,7 @@ std::vector<ScriptInjector::CSSSource> UserScriptInjector::GetCssSources(
   sources.reserve(css_scripts.size());
   for (const std::unique_ptr<UserScript::Content>& file :
        script_->css_scripts()) {
-    const std::string& stylesheet_path = file->url().path();
+    const std::string& stylesheet_path = file->url().GetPath();
     // Check if the stylesheet is already injected.
     if (injected_stylesheets->count(stylesheet_path) != 0)
       continue;

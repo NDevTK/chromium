@@ -43,8 +43,6 @@ SearchResult::AnswerType MatchTypeToAnswerType(const int type) {
       return SearchResult::AnswerType::kSunrise;
     case omnibox::ANSWER_TYPE_TRANSLATION:
       return SearchResult::AnswerType::kTranslation;
-    case omnibox::ANSWER_TYPE_WHEN_IS:
-      return SearchResult::AnswerType::kWhenIs;
     default:
       return SearchResult::AnswerType::kDefaultAnswer;
   }
@@ -238,7 +236,7 @@ ash::SearchResultTags TagsForText(const std::u16string& text,
 
 bool IsDriveUrl(const GURL& url) {
   // Returns true if the |url| points to a Drive Web host.
-  const std::string& host = url.host();
+  const std::string& host = url.GetHost();
   return host == "drive.google.com" || host == "docs.google.com";
 }
 

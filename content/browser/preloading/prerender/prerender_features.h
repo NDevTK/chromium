@@ -11,31 +11,7 @@
 
 namespace features {
 
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrerender2AllowActivationInBackground);
-
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrerender2FallbackPrefetchSpecRules);
-
-// This allows controlling the behavior of multiple use of `PrefetchContainer`
-// if `kPrerender2FallbackPrefetchSpecRules` is enabled and `kPrefetchReusable`
-// is disabled. If `kPrefetchReusable` is enabled, the feature flag has
-// priority.
-//
-// TODO(crbug.com/373553133): Remove this control once a behavior is shipped and
-// stabilized.
-enum class Prerender2FallbackPrefetchReusablePolicy {
-  // Do not use `PrefetchReusable` code path.
-  kNotUse,
-  // Use if a prefetch is started by prerender.
-  kUseIfIsLikelyAheadOfPrerender,
-  // Use always.
-  kUseAlways,
-};
-CONTENT_EXPORT extern const base::FeatureParam<
-    Prerender2FallbackPrefetchReusablePolicy>
-    kPrerender2FallbackPrefetchReusablePolicy;
-
-CONTENT_EXPORT extern const base::FeatureParam<size_t>
-    kPrerender2FallbackBodySizeLimit;
 
 // Controls whether `PrefetchMatchResolver` use timeout for prefetch ahead of
 // prerender. We are going not to use timeout as it makes prerender fail. For
@@ -55,6 +31,11 @@ enum class Prerender2FallbackPrefetchSchedulerPolicy {
 CONTENT_EXPORT extern const base::FeatureParam<
     Prerender2FallbackPrefetchSchedulerPolicy>
     kPrerender2FallbackPrefetchSchedulerPolicy;
+
+// If enabled, `PreloadServingMetrics` is collected and metrics are rerpoted.
+// For more details, see `PreloadServingMetrics`.
+CONTENT_EXPORT extern const base::FeatureParam<bool>
+    kPrerender2FallbackUsePreloadServingMetrics;
 
 // This feature was used to launch Prerender2 support for No-Vary-Search header.
 // This work has finished and the old implementation was deleted. Now this flag
@@ -90,7 +71,6 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrerender2WarmUpCompositorForImmediate);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrerender2WarmUpCompositorForNonImmediate);
 
 CONTENT_EXPORT bool UsePrefetchPrerenderIntegration();
-
 }  // namespace features
 
 #endif  // CONTENT_BROWSER_PRELOADING_PRERENDER_PRERENDER_FEATURES_H_

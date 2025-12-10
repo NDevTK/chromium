@@ -88,7 +88,7 @@ NonModalPromoTriggerType MetricTypeForPromoReason(
 // Time when a promo was shown on screen, used for metrics only.
 @property(nonatomic) base::TimeTicks promoShownTime;
 
-// WebState that the triggering event occured in.
+// WebState that the triggering event occurred in.
 @property(nonatomic, assign) web::WebState* webStateToListenTo;
 
 // Whether or not the promo is currently showing.
@@ -146,7 +146,7 @@ NonModalPromoTriggerType MetricTypeForPromoReason(
   }
 
   // This assumes that the currently active webstate is the one that the paste
-  // occured in.
+  // occurred in.
   web::WebState* activeWebState = self.webStateList->GetActiveWebState();
   // There should always be an active web state when pasting in the omnibox.
   if (!activeWebState) {
@@ -233,35 +233,11 @@ NonModalPromoTriggerType MetricTypeForPromoReason(
     return false;
   }
 
-  if (IsNonModalPromoMigrationEnabled()) {
-    return self.tracker &&
-           self.tracker->WouldTriggerHelpUI(
-               GetFeatureForPromoReason(self.currentPromoReason));
-  }
-
-  if (UserInNonModalPromoCooldown()) {
-    return false;
-  }
-
-  NSInteger count = UserInteractionWithNonModalPromoCount();
-  return count < GetNonModalDefaultBrowserPromoImpressionLimit();
+  return self.tracker && self.tracker->WouldTriggerHelpUI(
+                             GetFeatureForPromoReason(self.currentPromoReason));
 }
 
 - (void)notifyHandlerShowPromo {
-  if (!IsNonModalPromoMigrationEnabled()) {
-    // The count of past non-modal promo interactions is cached because multiple
-    // interactions may be logged for the current non-modal promo impression.
-    // This makes sure we don't over-increment the interactions count value.
-    _userInteractionWithNonModalPromoCount =
-        UserInteractionWithNonModalPromoCount();
-  }
-
-  if (!IsNonModalPromoMigrationEnabled() && IsNonModalPromoMigrationDone() &&
-      self.tracker) {
-    self.tracker->NotifyEvent(
-        GetFeatureEventNameForPromoReason(self.currentPromoReason));
-  }
-
   [_handler showDefaultBrowserNonModalPromoWithReason:self.currentPromoReason];
 }
 
@@ -299,10 +275,7 @@ NonModalPromoTriggerType MetricTypeForPromoReason(
   LogNonModalTimeOnScreen(promoShownTime);
   LogUserInteractionWithNonModalPromo(_userInteractionWithNonModalPromoCount);
 
-  NSURL* settingsURL = [NSURL URLWithString:UIApplicationOpenSettingsURLString];
-  [[UIApplication sharedApplication] openURL:settingsURL
-                                     options:@{}
-                           completionHandler:nil];
+  OpenIOSDefaultBrowserSettingsPage();
 }
 
 - (void)logPromoUserDismiss:
@@ -543,21 +516,18 @@ NonModalPromoTriggerType MetricTypeForPromoReason(
     return;
   }
 
-  if (IsNonModalPromoMigrationEnabled()) {
-    // If the tracker is null, the promo cannot be shown.
-    if (!self.tracker) {
-      return;
-    }
+  // If the tracker is null, the promo cannot be shown.
+  if (!self.tracker) {
+    return;
+  }
 
-    // Record the impression before calling ShouldTriggerHelpUI, as it will
-    // increase the impression count.
-    _userInteractionWithNonModalPromoCount =
-        [self nonModalPromoInteractionCount];
+  // Record the impression before calling ShouldTriggerHelpUI, as it will
+  // increase the impression count.
+  _userInteractionWithNonModalPromoCount = [self nonModalPromoInteractionCount];
 
-    if (!self.tracker->ShouldTriggerHelpUI(
-            GetFeatureForPromoReason(self.currentPromoReason))) {
-      return;
-    }
+  if (!self.tracker->ShouldTriggerHelpUI(
+          GetFeatureForPromoReason(self.currentPromoReason))) {
+    return;
   }
 
   _showPromoTimer = nullptr;

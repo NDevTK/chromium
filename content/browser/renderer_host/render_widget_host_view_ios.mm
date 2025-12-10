@@ -10,10 +10,12 @@
 
 #include "base/command_line.h"
 #include "build/ios_buildflags.h"
+#include "cc/mojom/render_frame_metadata.mojom-shared.h"
 #include "components/input/events_helper.h"
 #include "components/input/render_widget_host_input_event_router.h"
 #include "components/input/switches.h"
 #include "components/viz/common/features.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/surfaces/frame_sink_id_allocator.h"
 #include "content/browser/renderer_host/browser_compositor_ios.h"
 #include "content/browser/renderer_host/input/motion_event_web.h"
@@ -31,7 +33,7 @@
 #include "ui/display/screen.h"
 #include "ui/events/gesture_detection/gesture_provider_config_helper.h"
 #include "ui/gfx/geometry/size_conversions.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_IOS_TVOS)
 #include "content/browser/renderer_host/render_widget_host_view_tvos_uiview.h"
@@ -98,12 +100,12 @@ RenderWidgetHostViewIOS::RenderWidgetHostViewIOS(RenderWidgetHost* widget)
   ui_view_->view_ =
       [[RenderWidgetUIView alloc] initWithWidget:weak_factory_.GetWeakPtr()];
 
-  auto* screen = display::Screen::GetScreen();
+  auto* screen = display::Screen::Get();
   screen_infos_ =
       screen->GetScreenInfosNearestDisplay(screen->GetPrimaryDisplay().id());
 
   browser_compositor_ = std::make_unique<BrowserCompositorIOS>(
-      [ui_view_->view_ viewHandle], this, host()->is_hidden(),
+      [ui_view_->view_ viewHandle], this, host()->IsHidden(),
       host()->GetFrameSinkId());
 
   if (IsTesting()) {
@@ -125,6 +127,10 @@ RenderWidgetHostViewIOS::RenderWidgetHostViewIOS(RenderWidgetHost* widget)
   }
 
   host()->render_frame_metadata_provider()->AddObserver(this);
+  host()
+      ->render_frame_metadata_provider()
+      ->UpdateRootScrollOffsetUpdateFrequency(
+          cc::mojom::RootScrollOffsetUpdateFrequency::kAllUpdates);
   host()->SetView(this);
 }
 
@@ -152,7 +158,8 @@ bool RenderWidgetHostViewIOS::IsSurfaceAvailableForCopy() {
 void RenderWidgetHostViewIOS::CopyFromSurface(
     const gfx::Rect& src_rect,
     const gfx::Size& dst_size,
-    base::OnceCallback<void(const SkBitmap&)> callback) {
+    base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+        callback) {
   base::WeakPtr<RenderWidgetHostImpl> popup_host;
   base::WeakPtr<DelegatedFrameHost> popup_frame_host;
   RenderWidgetHostViewBase::CopyMainAndPopupFromSurface(
@@ -160,6 +167,11 @@ void RenderWidgetHostViewIOS::CopyFromSurface(
       browser_compositor_->GetDelegatedFrameHost()->GetWeakPtr(), popup_host,
       popup_frame_host, src_rect, dst_size, GetDeviceScaleFactor(),
       std::move(callback));
+}
+
+ui::FilteredGestureProvider*
+RenderWidgetHostViewIOS::GetFilteredGestureProviderForTesting() {
+  return &gesture_provider_;
 }
 
 void RenderWidgetHostViewIOS::InitAsChild(gfx::NativeView parent_view) {}
@@ -304,7 +316,7 @@ void RenderWidgetHostViewIOS::Hide() {
   is_visible_ = false;
   browser_compositor_->SetViewVisible(is_visible_);
   browser_compositor_->SetRenderWidgetHostIsHidden(true);
-  if (!host() || host()->is_hidden()) {
+  if (!host() || host()->IsHidden()) {
     return;
   }
 
@@ -414,7 +426,7 @@ void RenderWidgetHostViewIOS::UpdateScreenInfo() {
     host()->delegate()->SendScreenRects();
   }
 
-  auto* display_screen = display::Screen::GetScreen();
+  auto* display_screen = display::Screen::Get();
   display::ScreenInfos new_screen_infos =
       display_screen->GetScreenInfosNearestDisplay(
           display_screen->GetPrimaryDisplay().id());
@@ -449,6 +461,7 @@ void RenderWidgetHostViewIOS::UpdateCALayerTree(
 void RenderWidgetHostViewIOS::OnOldViewDidNavigatePreCommit() {
   CHECK(browser_compositor_) << "Shouldn't be called during destruction!";
   browser_compositor_->DidNavigateMainFramePreCommit();
+  gesture_provider_.ResetDetection();
 }
 
 void RenderWidgetHostViewIOS::OnNewViewDidNavigatePostCommit() {
@@ -876,18 +889,18 @@ void RenderWidgetHostViewIOS::ChildDidAckGestureEvent(
   // event after examining how the bug implements GestureEventAck.
 }
 
+void RenderWidgetHostViewIOS::OnUnconfirmedTapConvertedToTap() {
+  gesture_provider_.OnUnconfirmedTapConvertedToTap();
+}
+
 void RenderWidgetHostViewIOS::UpdateFrameBounds() {
-  // UIScrollView* scrollView = (UIScrollView*)[ui_view_->view_ superview];
-  gfx::PointF scrollOffset;
-  if (last_root_scroll_offset_) {
-    scrollOffset = *last_root_scroll_offset_;
-  }
-  CGRect parentBounds = [[ui_view_->view_ superview] bounds];
-  gfx::SizeF viewportSize(parentBounds.size);
+  const gfx::PointF scrollOffset =
+      last_root_scroll_offset_.value_or(gfx::PointF());
+  const CGRect parentBounds = [[ui_view_->view_ superview] bounds];
 
   CGRect frameBounds;
   frameBounds.origin = scrollOffset.ToCGPoint();
-  frameBounds.size = viewportSize.ToCGSize();
+  frameBounds.size = parentBounds.size;
 
   // If we are scrolling we don't resize the WebView immediately.
   if (!is_scrolling_ && !IsTesting()) {
@@ -922,6 +935,11 @@ void RenderWidgetHostViewIOS::OnRenderFrameMetadataChangedBeforeActivation(
   }
 }
 
+void RenderWidgetHostViewIOS::OnRootScrollOffsetChanged(
+    const gfx::PointF& root_scroll_offset) {
+  ApplyRootScrollOffsetChanged(root_scroll_offset, /*force=*/false);
+}
+
 void RenderWidgetHostViewIOS::ContentInsetChanged() {
   if (last_root_scroll_offset_) {
     ApplyRootScrollOffsetChanged(*last_root_scroll_offset_, /*force=*/true);
@@ -931,14 +949,32 @@ void RenderWidgetHostViewIOS::ContentInsetChanged() {
   }
 }
 
-void RenderWidgetHostViewIOS::DeleteSurroundingText(int before, int after) {
-  if (auto* widget_host = GetActiveWidget()) {
-    auto* input_handler = widget_host->GetFrameWidgetInputHandler();
-    if (!input_handler) {
-      return;
-    }
-    input_handler->DeleteSurroundingTextInCodePoints(before, after);
+void RenderWidgetHostViewIOS::ExtendSelectionAndDelete(int32_t before,
+                                                       int32_t after) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
   }
+  input_handler->ExtendSelectionAndDelete(before, after);
+}
+
+void RenderWidgetHostViewIOS::ExtendSelectionAndReplace(
+    uint32_t before,
+    uint32_t after,
+    const std::u16string& replacement_text) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->ExtendSelectionAndReplace(before, after, replacement_text);
+}
+
+void RenderWidgetHostViewIOS::ExecuteEditCommand(const std::string& command) {
+  auto* input_handler = GetFrameWidgetInputHandlerForFocusedWidget();
+  if (!input_handler) {
+    return;
+  }
+  input_handler->ExecuteEditCommand(command, std::nullopt);
 }
 
 void RenderWidgetHostViewIOS::SendKeyEvent(

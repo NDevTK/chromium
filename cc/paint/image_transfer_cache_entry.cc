@@ -17,6 +17,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "cc/paint/paint_op_reader.h"
 #include "cc/paint/paint_op_writer.h"
+#include "third_party/skia/include/core/SkCPURecorder.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPixmap.h"
@@ -490,7 +491,7 @@ ClientImageTransferCacheEntry::Image::Image(
 ClientImageTransferCacheEntry::ClientImageTransferCacheEntry(
     const Image& image,
     bool needs_mips,
-    const std::optional<gfx::HDRMetadata>& hdr_metadata,
+    const gfx::HDRMetadata& hdr_metadata,
     sk_sp<SkColorSpace> target_color_space)
     : needs_mips_(needs_mips),
       target_color_space_(target_color_space),
@@ -537,9 +538,9 @@ bool ClientImageTransferCacheEntry::Serialize(base::span<uint8_t> data) const {
   bool has_gainmap = gainmap_image_.has_value();
   writer.Write(has_gainmap);
   writer.Write(needs_mips_);
-  writer.Write(hdr_metadata_.has_value());
-  if (hdr_metadata_.has_value()) {
-    writer.Write(hdr_metadata_.value());
+  writer.Write(!hdr_metadata_.IsEmpty());
+  if (!hdr_metadata_.IsEmpty()) {
+    writer.Write(hdr_metadata_);
   }
   writer.Write(target_color_space_.get());
   WriteImage(writer, image_);
@@ -560,8 +561,8 @@ void ClientImageTransferCacheEntry::ComputeSize() {
   safe_size += PaintOpWriter::SerializedSize<bool>();  // has_gainmap
   safe_size += PaintOpWriter::SerializedSize<bool>();  // needs_mips
   safe_size += PaintOpWriter::SerializedSize<bool>();  // has_hdr_metadata
-  if (hdr_metadata_.has_value()) {
-    safe_size += PaintOpWriter::SerializedSize(hdr_metadata_.value());
+  if (!hdr_metadata_.IsEmpty()) {
+    safe_size += PaintOpWriter::SerializedSize(hdr_metadata_);
   }
   safe_size += PaintOpWriter::SerializedSize(target_color_space_.get());
   safe_size += SafeSizeForImage(image_);
@@ -724,7 +725,9 @@ bool ServiceImageTransferCacheEntry::Deserialize(
       // `graphite_recorder` to be nullptr if `image_` is not texture backed.
       // Need to handle this case (currently just goes through gr_context path
       // with nullptr context).
-      image_ = image_->makeColorSpace(gr_context_, target_color_space);
+      image_ = image_->makeColorSpace(
+          gr_context_ ? gr_context_->asRecorder() : skcpu::Recorder::TODO(),
+          target_color_space, {});
       if (needs_mips && gr_context_ && image_ && image_->isTextureBacked()) {
         image_ = SkImages::TextureFromImage(
             gr_context, image_, skgpu::Mipmapped::kYes, skgpu::Budgeted::kNo);

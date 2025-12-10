@@ -19,13 +19,16 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_priority.h"
 #include "third_party/blink/renderer/platform/scheduler/public/web_scheduling_queue_type.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace base {
 class SingleThreadTaskRunner;
 }  // namespace base
+
+namespace v8 {
+class Isolate;
+}  // namespace v8
 
 namespace blink {
 class AbortSignal;
@@ -57,13 +60,10 @@ class WebSchedulingTaskQueue;
  *  and their lifetime matches that of the associated TaskSignal.
  */
 class CORE_EXPORT DOMScheduler : public ScriptWrappable,
-                                 public ExecutionContextLifecycleObserver,
-                                 public Supplement<ExecutionContext> {
+                                 public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static const char kSupplementName[];
-
   static DOMScheduler* scheduler(ExecutionContext&);
 
   explicit DOMScheduler(ExecutionContext*);
@@ -79,11 +79,10 @@ class CORE_EXPORT DOMScheduler : public ScriptWrappable,
                                  SchedulerPostTaskOptions*,
                                  ExceptionState&);
 
-  ScriptPromise<IDLUndefined> yield(ScriptState*,
-                                    ExceptionState&);
+  ScriptPromise<IDLUndefined> yield(ScriptState*, ExceptionState&);
 
-  scheduler::TaskAttributionIdType taskId(ScriptState*);
-  void setTaskId(ScriptState*, scheduler::TaskAttributionIdType);
+  scheduler::TaskAttributionIdType taskId(v8::Isolate*);
+  void setTaskId(v8::Isolate*, scheduler::TaskAttributionIdType);
 
   void ContextDestroyed() override;
 

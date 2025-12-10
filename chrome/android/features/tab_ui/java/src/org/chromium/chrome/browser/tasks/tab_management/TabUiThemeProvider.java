@@ -15,10 +15,12 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.color.MaterialColors;
 
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.tab_ui.TabCardThemeUtil;
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
-import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.components.tab_groups.TabGroupColorId;
 
 /** Utility class that provides theme related attributes for Tab UI. */
 @NullMarked
@@ -32,6 +34,13 @@ public class TabUiThemeProvider {
      */
     public static @ColorInt int getDefaultNtbContainerColor(Context context) {
         return MaterialColors.getColor(context, R.attr.colorPrimaryContainer, TAG);
+    }
+
+    public static @ColorInt int getGridTabSwitcherBackgroundColor(
+            Context context, boolean isIncognito) {
+        return isIncognito
+                ? ContextCompat.getColor(context, R.color.default_bg_color_dark)
+                : SemanticColorUtils.getDefaultBgColor(context);
     }
 
     /**
@@ -48,8 +57,7 @@ public class TabUiThemeProvider {
             return AppCompatResources.getColorStateList(
                     context, R.color.incognito_tab_bg_selected_color);
         }
-        return ColorStateList.valueOf(
-                MaterialColors.getColor(context, org.chromium.chrome.R.attr.colorPrimary, TAG));
+        return ColorStateList.valueOf(MaterialColors.getColor(context, R.attr.colorPrimary, TAG));
     }
 
     /**
@@ -74,10 +82,9 @@ public class TabUiThemeProvider {
      * @return The favicon background color.
      */
     public static @ColorInt int getFaviconBackgroundColor(Context context, boolean isIncognito) {
-        return context.getColor(
-                isIncognito
-                        ? R.color.favicon_background_color_incognito
-                        : R.color.favicon_background_color);
+        return isIncognito
+                ? context.getColor(R.color.favicon_background_color_incognito)
+                : SemanticColorUtils.getColorSurfaceBright(context);
     }
 
     /**
@@ -101,9 +108,7 @@ public class TabUiThemeProvider {
         } else {
             if (isSelected) {
                 @ColorInt
-                int baseColor =
-                        MaterialColors.getColor(
-                                context, org.chromium.chrome.R.attr.colorPrimary, TAG);
+                int baseColor = MaterialColors.getColor(context, R.attr.colorPrimary, TAG);
                 int alpha =
                         context.getResources()
                                 .getInteger(
@@ -137,7 +142,7 @@ public class TabUiThemeProvider {
         if (creationMode == CreationMode.DIALOG) {
             return getTabGridDialogBackgroundColor(context, isIncognito);
         } else {
-            return SurfaceColorUpdateUtils.getGridTabSwitcherBackgroundColor(context, isIncognito);
+            return getGridTabSwitcherBackgroundColor(context, isIncognito);
         }
     }
 
@@ -150,7 +155,11 @@ public class TabUiThemeProvider {
      */
     public static @ColorInt int getTabGridDialogBackgroundColor(
             Context context, boolean isIncognito) {
-        return SurfaceColorUpdateUtils.getTabGridDialogBackgroundColor(context, isIncognito);
+        if (isIncognito) {
+            return context.getColor(R.color.gm3_baseline_surface_container_dark);
+        } else {
+            return ContextCompat.getColor(context, R.color.tab_grid_dialog_bg_color);
+        }
     }
 
     private static @ColorInt int getTabGridDialogUngroupBarBackgroundColor(
@@ -173,9 +182,7 @@ public class TabUiThemeProvider {
                             : R.color.incognito_tab_grid_dialog_ungroup_bar_text_color);
         } else {
             return MaterialColors.getColor(
-                    context,
-                    isTabHovered ? R.attr.colorOnPrimary : org.chromium.chrome.R.attr.colorPrimary,
-                    TAG);
+                    context, isTabHovered ? R.attr.colorOnPrimary : R.attr.colorPrimary, TAG);
         }
     }
 
@@ -304,7 +311,7 @@ public class TabUiThemeProvider {
         if (creationMode == CreationMode.DIALOG) {
             return getTabGridDialogBackgroundColor(context, isIncognito);
         }
-        return SurfaceColorUpdateUtils.getGridTabSwitcherBackgroundColor(context, isIncognito);
+        return getGridTabSwitcherBackgroundColor(context, isIncognito);
     }
 
     /**
@@ -331,7 +338,9 @@ public class TabUiThemeProvider {
      * @return The background resource id for message card view.
      */
     public static int getMessageCardBackgroundResourceId(boolean isIncognito) {
-        return isIncognito ? R.drawable.incognito_card_bg : R.drawable.card_with_corners_background;
+        return isIncognito
+                ? R.drawable.card_background_corners_16dp_baseline_dark
+                : R.drawable.card_background_corners_16dp;
     }
 
     /**
@@ -510,13 +519,34 @@ public class TabUiThemeProvider {
      *
      * @param context {@link Context} used to retrieve color.
      * @param showFavicon Whether the quarter is showing a favicon.
+     * @param enableContainment Whether the tile is shown in the containment list.
      * @return The color for the tab group favicon quarter.
      */
     public static @ColorInt int getTabGroupFaviconQuarterFillColor(
-            Context context, boolean showFavicon) {
+            Context context, boolean showFavicon, boolean enableContainment) {
+        if (enableContainment) {
+            return showFavicon
+                    ? SemanticColorUtils.getColorSurfaceContainer(context)
+                    : SemanticColorUtils.getColorSurfaceContainerLow(context);
+        }
         return showFavicon
                 ? SemanticColorUtils.getColorSurfaceBright(context)
-                : ContextCompat.getColor(context, R.color.tab_group_favicon_quater_empty_fill_color);
+                : ContextCompat.getColor(
+                        context, R.color.tab_group_favicon_quater_empty_fill_color);
+    }
+
+    /**
+     * Get the background color tint for the tab group cluster background.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param enableContainment Whether the cluster row is shown in the containment list.
+     * @return The color for the tab group favicon quarter.
+     */
+    public static @ColorInt int getTabGroupClusterBackgroundTint(
+            Context context, boolean enableContainment) {
+        return enableContainment
+                ? SemanticColorUtils.getColorSurfaceBright(context)
+                : SemanticColorUtils.getColorSurfaceContainer(context);
     }
 
     /**
@@ -532,5 +562,36 @@ public class TabUiThemeProvider {
                 ? ContextCompat.getColor(
                         context, R.color.tab_group_color_picker_selection_bg_incognito)
                 : SemanticColorUtils.getDialogBgColor(context);
+    }
+
+    /**
+     * Returns the color used for an empty thumbnail.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param isIncognito Whether the color is used for incognito mode.
+     * @param isSelected Whether the tab is currently selected.
+     * @return The color for the empty thumbnail.
+     */
+    public static @ColorInt int getEmptyThumbnailColor(
+            Context context,
+            boolean isIncognito,
+            boolean isSelected,
+            @Nullable @TabGroupColorId Integer colorId) {
+        return TabCardThemeUtil.getCardViewBackgroundColor(
+                context, isIncognito, isSelected, colorId);
+    }
+
+    /**
+     * Returns the color used for the tab switcher pane hairline.
+     *
+     * @param context {@link Context} used to retrieve color.
+     * @param isIncognito Whether the color is used for incognito mode.
+     * @return The color for the pane hairline.
+     */
+    public static @ColorInt int getPaneHairlineColor(Context context, boolean isIncognito) {
+        return isIncognito
+                ? ContextCompat.getColor(
+                        context, org.chromium.chrome.tab_ui.R.color.divider_line_bg_color_light)
+                : SemanticColorUtils.getDividerLineBgColor(context);
     }
 }

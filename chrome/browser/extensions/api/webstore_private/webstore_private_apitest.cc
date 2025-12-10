@@ -21,7 +21,6 @@
 #include "chrome/browser/extensions/api/webstore_private/webstore_private_api.h"
 #include "chrome/browser/extensions/extension_allowlist.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
-#include "chrome/browser/extensions/install_approval.h"
 #include "chrome/browser/extensions/mixin_based_extension_apitest.h"
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "chrome/browser/profiles/profile.h"
@@ -31,8 +30,10 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_test_util.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/platform_browser_test.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/test/browser_test.h"
@@ -41,6 +42,9 @@
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/install_approval.h"
+#include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/switches.h"
@@ -50,11 +54,9 @@
 #include "ui/gl/gl_switches.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/supervised_user/supervised_user_extensions_delegate_impl.h"
 #include "chrome/browser/supervised_user/supervised_user_test_util.h"  // nogncheck
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/supervised_user/parent_permission_dialog_view.h"
 #include "chrome/test/supervised_user/supervision_mixin.h"
 #include "components/supervised_user/core/common/features.h"
@@ -64,8 +66,16 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/supervised_user/chromeos/parent_access_extension_approvals_manager.h"
-#include "chromeos/crosapi/mojom/parent_access.mojom.h"
+#include "chrome/browser/ui/webui/ash/parent_access/fake_parent_access_dialog.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "components/enterprise/browser/promotion/promotion_eligibility_checker.h"
+#include "components/enterprise/browser/promotion/promotion_prefs.h"
+#include "components/enterprise/promotion_types.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -128,6 +138,46 @@ class WebstoreInstallListener : public WebstorePrivateApi::Delegate {
   std::string error_;
   base::RunLoop loop_;
 };
+
+#if !BUILDFLAG(IS_ANDROID)
+class FakePromotionEligibilityChecker
+    : public enterprise_promotion::PromotionEligibilityChecker {
+ public:
+  explicit FakePromotionEligibilityChecker(
+      enterprise_management::GetUserEligiblePromotionsResponse response)
+      : enterprise_promotion::PromotionEligibilityChecker("",
+                                                          nullptr,
+                                                          nullptr,
+                                                          "",
+                                                          false),
+        response_(std::move(response)) {}
+
+  // The only logic: immediately run the callback with our stored response.
+  void MaybeCheckPromotionEligibility(
+      PromotionEligibilityCallback callback) override {
+    std::move(callback).Run(response_);
+  }
+
+ private:
+  enterprise_management::GetUserEligiblePromotionsResponse response_;
+};
+
+class FailIfCalledPromotionEligibilityChecker
+    : public enterprise_promotion::PromotionEligibilityChecker {
+ public:
+  FailIfCalledPromotionEligibilityChecker()
+      : enterprise_promotion::PromotionEligibilityChecker("",
+                                                          nullptr,
+                                                          nullptr,
+                                                          "",
+                                                          false) {}
+
+  void MaybeCheckPromotionEligibility(
+      PromotionEligibilityCallback callback) override {
+    ADD_FAILURE() << "Network check should not be called when cache is valid.";
+  }
+};
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
@@ -314,9 +364,6 @@ static constexpr char kTestAppVersion[] = "0.1";
 // Test fixture for various cases of installation for child accounts.
 class SupervisedUserExtensionWebstorePrivateApiTest
     : public ExtensionWebstorePrivateApiTest,
-#if BUILDFLAG(IS_CHROMEOS)
-      public TestExtensionApprovalsManagerObserver,
-#endif
       public TestParentPermissionDialogViewObserver {
  public:
   // The next dialog action to take.
@@ -326,11 +373,7 @@ class SupervisedUserExtensionWebstorePrivateApiTest
   };
 
   SupervisedUserExtensionWebstorePrivateApiTest()
-      :
-#if BUILDFLAG(IS_CHROMEOS)
-        TestExtensionApprovalsManagerObserver(this),
-#endif
-        TestParentPermissionDialogViewObserver(this),
+      : TestParentPermissionDialogViewObserver(this),
         embedded_test_server_(std::make_unique<net::EmbeddedTestServer>()),
         supervision_mixin_(
             mixin_host_,
@@ -340,8 +383,7 @@ class SupervisedUserExtensionWebstorePrivateApiTest
                 .consent_level = signin::ConsentLevel::kSignin,
                 .sign_in_mode =
                     supervised_user::SupervisionMixin::SignInMode::kSupervised,
-            }) {
-  }
+            }) {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ExtensionWebstorePrivateApiTest::SetUpCommandLine(command_line);
@@ -357,8 +399,18 @@ class SupervisedUserExtensionWebstorePrivateApiTest
   void SetUpOnMainThread() override {
     ExtensionWebstorePrivateApiTest::SetUpOnMainThread();
 
-    extensions_delegate_ =
-        std::make_unique<SupervisedUserExtensionsDelegateImpl>(profile());
+    extensions_delegate_ = static_cast<SupervisedUserExtensionsDelegateImpl*>(
+        BrowserContextKeyedAPIFactory<ManagementAPI>::GetIfExists(profile())
+            ->GetSupervisedUserExtensionsDelegate());
+
+#if BUILDFLAG(IS_CHROMEOS)
+    auto dialog_provider =
+        std::make_unique<ash::FakeParentAccessDialogProvider>();
+    fake_parent_access_dialog_provider_ = dialog_provider.get();
+    extensions_delegate_->SetParentAccessExtensionApprovalsManagerForTesting(
+        std::make_unique<extensions::ParentAccessExtensionApprovalsManager>(
+            std::move(dialog_provider)));
+#endif
 
     supervised_user_test_util::
         SetSupervisedUserExtensionsMayRequestPermissionsPref(profile(), true);
@@ -367,7 +419,10 @@ class SupervisedUserExtensionWebstorePrivateApiTest
   }
 
   void TearDownOnMainThread() override {
-    extensions_delegate_.reset();
+#if BUILDFLAG(IS_CHROMEOS)
+    fake_parent_access_dialog_provider_ = nullptr;
+#endif
+    extensions_delegate_ = nullptr;
     ExtensionWebstorePrivateApiTest::TearDownOnMainThread();
   }
 
@@ -400,42 +455,50 @@ class SupervisedUserExtensionWebstorePrivateApiTest
     }
   }
 
+  bool IsParentPermissionDialogAppeared() {
 #if BUILDFLAG(IS_CHROMEOS)
-  // TestExtensionApprovalsManagerObserver override:
-  void OnTestParentAccessDialogCreated() override {
-    parent_permission_dialog_appeared_ = true;
-    if (next_dialog_action_) {
-      switch (next_dialog_action_.value()) {
-        case NextDialogAction::kCancel:
-          SetParentAccessDialogResult(
-              crosapi::mojom::ParentAccessResult::NewCanceled(
-                  crosapi::mojom::ParentAccessCanceledResult::New()));
-          break;
-        case NextDialogAction::kAccept:
-          SetParentAccessDialogResult(
-              crosapi::mojom::ParentAccessResult::NewApproved(
-                  crosapi::mojom::ParentAccessApprovedResult::New(
-                      "test_token",
-                      base::Time::FromSecondsSinceUnixEpoch(123456L))));
-          break;
-      }
-    }
-  }
+    return bool(fake_parent_access_dialog_provider_->TakeLastParams());
+#else
+    return parent_permission_dialog_appeared_;
 #endif  // BUILDFLAG(IS_CHROMEOS)
+  }
 
   void set_next_dialog_action(NextDialogAction action) {
+#if BUILDFLAG(IS_CHROMEOS)
+    auto result = std::make_unique<ash::ParentAccessDialog::Result>();
+    switch (action) {
+      case NextDialogAction::kCancel:
+        result->status = ash::ParentAccessDialog::Result::Status::kCanceled;
+        break;
+      case NextDialogAction::kAccept:
+        result->status = ash::ParentAccessDialog::Result::Status::kApproved;
+        result->parent_access_token = "test_token";
+        result->parent_access_token_expire_timestamp =
+            base::Time::FromSecondsSinceUnixEpoch(123456L);
+        break;
+    }
+    fake_parent_access_dialog_provider_->SetNextAction(
+        ash::FakeParentAccessDialogProvider::Action::WithResult(
+            std::move(result)));
+#else
     next_dialog_action_ = action;
+#endif
   }
 
  protected:
-  std::unique_ptr<SupervisedUserExtensionsDelegateImpl> extensions_delegate_;
-  bool parent_permission_dialog_appeared_ = false;
+  raw_ptr<SupervisedUserExtensionsDelegateImpl> extensions_delegate_;
 
  private:
   // Create another embedded test server to avoid starting the same one twice.
   std::unique_ptr<net::EmbeddedTestServer> embedded_test_server_;
   supervised_user::SupervisionMixin supervision_mixin_;
   std::optional<NextDialogAction> next_dialog_action_;
+
+  bool parent_permission_dialog_appeared_ = false;
+#if BUILDFLAG(IS_CHROMEOS)
+  raw_ptr<ash::FakeParentAccessDialogProvider>
+      fake_parent_access_dialog_provider_;
+#endif
 };
 
 // Tests install for a child when parent permission is granted.
@@ -539,30 +602,29 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserExtensionWebstorePrivateApiTest,
   std::string page = "install_child.html";
   ASSERT_TRUE(RunInstallTest(page, "app.crx"));
 
-    listener.Wait();
-    ASSERT_TRUE(listener.received_success());
-    ASSERT_EQ(kTestAppId, listener.id());
+  listener.Wait();
+  ASSERT_TRUE(listener.received_success());
+  ASSERT_EQ(kTestAppId, listener.id());
 
-    scoped_refptr<const Extension> extension =
-        extensions::ExtensionBuilder("test extension")
-            .SetID(kTestAppId)
-            .SetVersion(kTestAppVersion)
-            .Build();
-    ASSERT_TRUE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
+  scoped_refptr<const Extension> extension =
+      extensions::ExtensionBuilder("test extension")
+          .SetID(kTestAppId)
+          .SetVersion(kTestAppVersion)
+          .Build();
+  ASSERT_TRUE(extensions_delegate_->IsExtensionAllowedByParent(*extension));
 
-    int expected_count_failed = 0;
-    histogram_tester.ExpectUniqueSample(
-        SupervisedUserExtensionsMetricsRecorder::kEnablementHistogramName,
-        SupervisedUserExtensionsMetricsRecorder::EnablementState::
-            kFailedToEnable,
-        expected_count_failed);
-    histogram_tester.ExpectTotalCount(
-        SupervisedUserExtensionsMetricsRecorder::kEnablementHistogramName,
-        expected_count_failed);
-    EXPECT_EQ(expected_count_failed,
-              user_action_tester.GetActionCount(
-                  SupervisedUserExtensionsMetricsRecorder::
-                      kFailedToEnableActionName));
+  int expected_count_failed = 0;
+  histogram_tester.ExpectUniqueSample(
+      SupervisedUserExtensionsMetricsRecorder::kEnablementHistogramName,
+      SupervisedUserExtensionsMetricsRecorder::EnablementState::kFailedToEnable,
+      expected_count_failed);
+  histogram_tester.ExpectTotalCount(
+      SupervisedUserExtensionsMetricsRecorder::kEnablementHistogramName,
+      expected_count_failed);
+  EXPECT_EQ(
+      expected_count_failed,
+      user_action_tester.GetActionCount(
+          SupervisedUserExtensionsMetricsRecorder::kFailedToEnableActionName));
 }
 
 // Tests a successful install for a child when parent permission can be skipped
@@ -586,7 +648,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserExtensionWebstorePrivateApiTest,
   ASSERT_TRUE(listener.received_success());
   ASSERT_EQ(kTestAppId, listener.id());
 
-  EXPECT_FALSE(parent_permission_dialog_appeared_);
+  EXPECT_FALSE(IsParentPermissionDialogAppeared());
 
   scoped_refptr<const Extension> extension =
       extensions::ExtensionBuilder("test extension")
@@ -777,5 +839,63 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiAllowlistEnforcementTest,
   EXPECT_EQ(ALLOWLIST_UNDEFINED,
             GetAllowlist()->GetExtensionAllowlistState(kExtensionId));
 }
+
+#if !BUILDFLAG(IS_ANDROID)
+class WebstorePrivateEnterprisePromotionApiTest : public ExtensionApiTest {
+ public:
+  WebstorePrivateEnterprisePromotionApiTest() = default;
+};
+
+IN_PROC_BROWSER_TEST_F(WebstorePrivateEnterprisePromotionApiTest,
+                       DeterminesAndSavesPromotionEligibility) {
+  enterprise_management::GetUserEligiblePromotionsResponse mock_response;
+  mock_response.mutable_promotions()->set_policy_page_promotion(
+      enterprise_management::CHROME_ENTERPRISE_CORE);
+  auto function = base::MakeRefCounted<
+      WebstorePrivateShouldShowEnterprisePromotionBannerFunction>();
+  function->SetFakePromotionEligibilityCheckerForTesting(
+      std::make_unique<FakePromotionEligibilityChecker>(
+          std::move(mock_response)));
+
+  std::optional<base::Value> result =
+      utils::RunFunctionAndReturnSingleResult(function.get(), "[]", profile());
+
+  ASSERT_TRUE(result);
+  EXPECT_EQ("CHROME_ENTERPRISE_CORE", result->GetString());
+  EXPECT_EQ(static_cast<int>(enterprise::PromotionType::kChromeEnterpriseCore),
+            profile()->GetPrefs()->GetInteger(
+                enterprise_promotion::kEnterprisePromotionEligibility));
+}
+
+IN_PROC_BROWSER_TEST_F(WebstorePrivateEnterprisePromotionApiTest,
+                       ReturnsCachedPromotionEligibility) {
+  PrefService* prefs = profile()->GetPrefs();
+  prefs->SetInteger(
+      enterprise_promotion::kEnterprisePromotionEligibility,
+      static_cast<int>(
+          api::webstore_private::PromotionType::kChromeEnterprisePremium));
+  base::Time future_expiration = base::Time::Now() + base::Hours(1);
+  prefs->SetTime(pref_names::kEnterprisePromotionExpirationTime,
+                 future_expiration);
+  auto function = base::MakeRefCounted<
+      WebstorePrivateShouldShowEnterprisePromotionBannerFunction>();
+  // It should return saved prefs and NEVER call this checker.
+  function->SetFakePromotionEligibilityCheckerForTesting(
+      std::make_unique<FailIfCalledPromotionEligibilityChecker>());
+
+  std::optional<base::Value> result =
+      utils::RunFunctionAndReturnSingleResult(function.get(), "[]", profile());
+
+  ASSERT_TRUE(result);
+  EXPECT_TRUE(result->is_string());
+  EXPECT_EQ("CHROME_ENTERPRISE_PREMIUM", result->GetString());
+  EXPECT_EQ(
+      static_cast<int>(
+          api::webstore_private::PromotionType::kChromeEnterprisePremium),
+      prefs->GetInteger(enterprise_promotion::kEnterprisePromotionEligibility));
+  EXPECT_EQ(future_expiration,
+            prefs->GetTime(pref_names::kEnterprisePromotionExpirationTime));
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace extensions

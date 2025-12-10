@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,12 +22,15 @@
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "content/browser/fenced_frame/fenced_frame_url_mapping.h"
 #include "content/browser/loader/keep_alive_url_loader_service.h"
 #include "content/browser/loader/navigation_url_loader_delegate.h"
 #include "content/browser/loader/subresource_proxying_url_loader_service.h"
 #include "content/browser/navigation_subresource_loader_params.h"
+#include "content/browser/preloading/prerender/reserved_prerender_host_info.h"
+#include "content/browser/prerender_host_id.h"
 #include "content/browser/renderer_host/browsing_context_group_swap.h"
 #include "content/browser/renderer_host/commit_deferring_condition_runner.h"
 #include "content/browser/renderer_host/cookie_access_observers.h"
@@ -34,6 +38,7 @@
 #include "content/browser/renderer_host/navigation_policy_container_builder.h"
 #include "content/browser/renderer_host/navigation_throttle_registry_impl.h"
 #include "content/browser/renderer_host/navigation_type.h"
+#include "content/browser/renderer_host/process_selection_deferring_condition_runner.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/scoped_view_transition_resources.h"
 #include "content/browser/security/coop/cross_origin_opener_policy_status.h"
@@ -43,10 +48,12 @@
 #include "content/browser/webui/web_ui_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/navigation_client.mojom-forward.h"
+#include "content/public/browser/error_navigation_trigger.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/preloading_trigger_type.h"
+#include "content/public/browser/process_selection_user_data.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -236,59 +243,6 @@ class CONTENT_EXPORT NavigationRequest
     kPostCommit,
   };
 
-  // A detailed reason on why errors in navigation happened, to be assigned in
-  // the extended error code field. Mostly focusing on `net::ERR_ABORTED`
-  // failures.
-  //
-  // These values are persisted to logs. Entries should not be renumbered and
-  // numeric values should never be reused.
-  //
-  // LINT.IfChange(ErrorNavigationTrigger)
-  enum class ErrorNavigationTrigger {
-    // An unknown trigger caused navigation abort.
-    kUnknown = 0,
-
-    // Caused by the cancelation from the navigation throttle.
-    kNavigationThrottleCancel,
-
-    // Caused by being blocked by the navigation throtle.
-    kNavigationThrottleBlock,
-
-    // Caused by the redirect not allowed due to the security policy.
-    kRedirectNotAllowed,
-
-    // Caused by the Credentialed subresource check blocked.
-    kCredentialedSubresourceBlocked,
-
-    // Caused by the embedder-initiated navigation of FencedFrame being blocked.
-    kFencedFrameEmbedderInitiatedNavigation,
-
-    // Caused by the permission policy of fenced frames being blocked.
-    kFencedFramesPermissionPolicyBlocked,
-
-    // Caused by the content decoder data pipe creation failing.
-    kContentDecoderDataPipeCreationFailed,
-
-    // The response should not be rendered (e.g. a download).
-    kShouldNotRenderResponse,
-
-    // The embedder overrides/blocks the URL load.
-    kShouldOverrideUrlLoading,
-
-    // The render initiated cross process navigation is not allowed, and blocked
-    // the navigation.
-    kRenderInitiatedCrossProcessNavigationNotAllowed,
-
-    // The render initiated navigation could not request the URL.
-    kRendererInitiatedCanNotRequestURL,
-
-    // The response rendered fallback content, due to e.g. Http errors.
-    kShouldRenderFallbackContent,
-
-    kMaxValue = kShouldRenderFallbackContent,
-  };
-  // LINT.ThenChange(//tools/metrics/histograms/metadata/navigation/enums.xml:ErrorNavigationTrigger)
-
   // Creates a request for a browser-initiated navigation.
   static std::unique_ptr<NavigationRequest> CreateBrowserInitiated(
       FrameTreeNode* frame_tree_node,
@@ -449,8 +403,11 @@ class CONTENT_EXPORT NavigationRequest
   bool IsExternalProtocol() override;
   net::Error GetNetErrorCode() override;
   int GetNetExtendedErrorCode() override;
+  std::optional<ErrorNavigationTrigger> GetErrorNavigationTrigger() override;
   RenderFrameHostImpl* GetRenderFrameHost() const override;
   bool IsSameDocument() const override;
+  std::optional<base::UnguessableToken> GetSameDocumentMetricsToken()
+      const override;
   bool IsHistory() const override;
   bool HasCommitted() const override;
   bool IsErrorPage() const override;
@@ -460,11 +417,9 @@ class CONTENT_EXPORT NavigationRequest
   const GURL& GetPreviousPrimaryMainFrameURL() override;
   net::IPEndPoint GetSocketAddress() override;
   const net::HttpRequestHeaders& GetRequestHeaders() override;
-  void RemoveRequestHeader(const std::string& header_name) override;
-  void SetRequestHeader(const std::string& header_name,
-                        const std::string& header_value) override;
-  void SetCorsExemptRequestHeader(const std::string& header_name,
-                                  const std::string& header_value) override;
+  void RemoveRequestHeader(std::string_view header_name) override;
+  void SetRequestHeader(std::string_view header_name,
+                        std::string_view header_value) override;
   void SetLCPPNavigationHint(
       const blink::mojom::LCPCriticalPathPredictorNavigationTimeHint& hint)
       override;
@@ -494,6 +449,7 @@ class CONTENT_EXPORT NavigationRequest
   bool IsSignedExchangeInnerResponse() override;
   bool HasPrefetchedAlternativeSubresourceSignedExchange() override;
   bool WasResponseCached() override;
+  bool NetworkAccessed() override;
   const std::string& GetHrefTranslate() override;
   const std::optional<blink::Impression>& GetImpression() override;
   const std::optional<blink::LocalFrameToken>& GetInitiatorFrameToken()
@@ -503,13 +459,14 @@ class CONTENT_EXPORT NavigationRequest
   const std::optional<GURL>& GetInitiatorBaseUrl() override;
   const std::vector<std::string>& GetDnsAliases() override;
   bool IsSameProcess() override;
+  ProcessSelectionUserData& GetProcessSelectionUserData() override;
   NavigationEntry* GetNavigationEntry() const override;
   int GetNavigationEntryOffset() const override;
   void RegisterSubresourceOverride(
       blink::mojom::TransferrableURLLoaderPtr transferrable_loader) override;
   GlobalRenderFrameHostId GetPreviousRenderFrameHostId() override;
   ChildProcessId GetExpectedRenderProcessHostId() override;
-  bool IsServedFromBackForwardCache() override;
+  bool IsServedFromBackForwardCache() const override;
   void SetIsOverridingUserAgent(bool override_ua) override;
   void SetSilentlyIgnoreErrors() override;
   void SetVisitedLinkSalt(uint64_t salt) override;
@@ -526,6 +483,7 @@ class CONTENT_EXPORT NavigationRequest
   void GetResponseBody(ResponseBodyCallback callback) override;
   PreloadingTriggerType GetPrerenderTriggerType() override;
   std::string GetPrerenderEmbedderHistogramSuffix() override;
+  bool IsPrerenderHostReused() override;
 #if BUILDFLAG(IS_ANDROID)
   const base::android::JavaRef<jobject>& GetJavaNavigationHandle() override;
 #endif
@@ -541,6 +499,8 @@ class CONTENT_EXPORT NavigationRequest
   std::optional<NavigationDiscardReason> GetNavigationDiscardReason() override;
   // NOTE: Read function comments in NavigationHandle before use!
   std::optional<url::Origin> GetOriginToCommit() override;
+  bool NeedsUrlLoader() override;
+  bool IsInitialWebUINavigation() override;
   // End of NavigationHandle implementation.
 
   // mojom::NavigationRendererCancellationListener implementation:
@@ -1049,7 +1009,10 @@ class CONTENT_EXPORT NavigationRequest
   }
 
   // Returns the current url from GetURL() packaged with other state required to
-  // properly determine SiteInstances and process allocation.
+  // properly determine SiteInstances and process allocation. The returned
+  // UrlInfo must not outlive this NavigationRequest because it contains a
+  // reference to ProcessSelectionUserData, which is owned by this
+  // NavigationRequest.
   UrlInfo GetUrlInfo();
 
   bool is_overriding_user_agent() const {
@@ -1060,34 +1023,6 @@ class CONTENT_EXPORT NavigationRequest
   const net::IsolationInfo& isolation_info_for_subresources() const {
     return isolation_info_for_subresources_;
   }
-
-  // NeedsUrlLoader() returns true if the navigation needs to use the
-  // NavigationURLLoader for loading the document.
-  //
-  // A few types of navigations don't make any network requests. They can be
-  // committed immediately in BeginNavigation(). They self-contain the data
-  // needed for commit:
-  // - about:blank: The renderer already knows how to load the empty document.
-  // - about:srcdoc: The data is stored in the iframe srcdoc attribute.
-  // - same-document: Only the history and URL are updated, no new document.
-  // - MHTML subframe: The data is in the archive, owned by the main frame.
-  //
-  // Note #1: Even though "data:" URLs don't generate actual network requests,
-  // including within MHTML subframes, they are still handled by the network
-  // stack. The reason is that a few of them can't always be handled otherwise.
-  // For instance:
-  //  - the ones resulting in downloads.
-  //  - the "invalid" ones. An error page is generated instead.
-  //  - the ones with an unsupported MIME type.
-  //  - the ones targeting the top-level frame on Android.
-  //
-  // Note #2: Even though "javascript:" URL and RendererDebugURL fit very well
-  // in this category, they don't use the NavigationRequest.
-  //
-  // Note #3: Navigations that do not use a URL loader do not send the usual
-  // set of callbacks to NavigationThrottle. Instead, they send a single
-  // separate callback, WillCommitWithoutUrlLoader().
-  bool NeedsUrlLoader();
 
   network::mojom::PrivateNetworkRequestPolicy private_network_request_policy()
       const {
@@ -1116,10 +1051,6 @@ class CONTENT_EXPORT NavigationRequest
   // The previous main frame URL. This may be empty if there was no last
   // committed entry.
   const GURL& GetPreviousMainFrameURL() const;
-
-  // This is the same as |NavigationHandle::IsServedFromBackForwardCache|, but
-  // adds a const qualifier.
-  bool IsServedFromBackForwardCache() const;
 
   // Whether this navigation is activating an existing page (e.g. served from
   // the BackForwardCache or Prerender)
@@ -1234,6 +1165,11 @@ class CONTENT_EXPORT NavigationRequest
   // Empties this instance's vector.
   std::vector<blink::mojom::WebFeature> TakeWebFeaturesToLog();
 
+  void set_same_document_metrics_token(base::UnguessableToken token) {
+    DCHECK(!same_document_metrics_token_);
+    same_document_metrics_token_ = token;
+  }
+
   void set_subresource_proxying_url_loader_service_bind_context(
       base::WeakPtr<SubresourceProxyingURLLoaderService::BindContext>
           bind_context) {
@@ -1247,11 +1183,7 @@ class CONTENT_EXPORT NavigationRequest
   }
 
   void set_keep_alive_url_loader_factory_context(
-      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
-          factory_context) {
-    DCHECK(!keep_alive_url_loader_factory_context_);
-    keep_alive_url_loader_factory_context_ = factory_context;
-  }
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
 
   base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
   fetch_later_loader_factory_context() {
@@ -1259,11 +1191,12 @@ class CONTENT_EXPORT NavigationRequest
   }
 
   void set_fetch_later_loader_factory_context(
-      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
-          factory_context) {
-    DCHECK(!fetch_later_loader_factory_context_);
-    fetch_later_loader_factory_context_ = factory_context;
-  }
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
+
+  void SetKeepAliveURLLoaderFactoryContextForTesting(
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
+  void SetFetchLaterLoaderFactoryContextForTesting(
+      base::WeakPtr<KeepAliveURLLoaderService::FactoryContext> factory_context);
 
   // Helper for logging crash keys related to a NavigationRequest (e.g.
   // "navigation_request_url", "navigation_request_initiator", and
@@ -1284,15 +1217,6 @@ class CONTENT_EXPORT NavigationRequest
     url::debug::ScopedUrlCrashKey url_;
     base::debug::ScopedCrashKeyString is_same_document_;
   };
-
-  // Prerender2:
-  void set_prerender_trigger_type(PreloadingTriggerType type) {
-    DCHECK(!prerender_trigger_type_.has_value());
-    prerender_trigger_type_ = type;
-  }
-  void set_prerender_embedder_histogram_suffix(const std::string& suffix) {
-    prerender_embedder_histogram_suffix_ = suffix;
-  }
 
   // Used in tests to indicate this navigation should force a BrowsingInstance
   // swap.
@@ -1517,6 +1441,17 @@ class CONTENT_EXPORT NavigationRequest
     navigation_discard_reason_ = navigation_discard_reason;
   }
 
+  void set_extended_error_code(int extended_error_code) {
+    CHECK(!extended_error_code_);
+    extended_error_code_ = extended_error_code;
+  }
+
+  void set_error_navigation_trigger(
+      ErrorNavigationTrigger error_navigation_trigger) {
+    CHECK(!error_navigation_trigger_.has_value());
+    error_navigation_trigger_ = error_navigation_trigger;
+  }
+
   // Returns the type of this navigation (e.g. history, browser-initiated, etc)
   // to set as a discard reason on another navigation that is being discarded
   // because this navigation is taking its place in the FrameTreeNode.
@@ -1536,6 +1471,8 @@ class CONTENT_EXPORT NavigationRequest
   int64_t frame_entry_document_sequence_number() const {
     return frame_entry_document_sequence_number_;
   }
+
+  bool is_ad_tagged() const { return is_ad_tagged_; }
 
   // Called when the browser process is about to process beforeunload handlers
   // for this navigation, including sending an IPC to the renderer process to
@@ -1733,6 +1670,43 @@ class CONTENT_EXPORT NavigationRequest
       NavigationThrottleEvent event,
       NavigationThrottle::ThrottleCheckResult result);
 
+  // Returns the PrerenderHostId driving the navigation. If the navigation
+  // is not derived from a prerendered page, the default-consturcted null
+  // value will be returned.
+  PrerenderHostId GetPrerenderHostId() const;
+
+  const std::optional<base::UnguessableToken>& network_restrictions_id() const {
+    return network_restrictions_id_;
+  }
+
+  void set_network_restrictions_id(
+      const base::UnguessableToken& network_restrictions_id) {
+    network_restrictions_id_ = network_restrictions_id;
+  }
+
+  // Checks whether the navigation request contains active view transition
+  // resources.
+  bool HasViewTransitionResources() const {
+    return !!view_transition_resources_;
+  }
+
+  // Get the view transition resources for this navigation request
+  ScopedViewTransitionResources* GetViewTransitionResources() const {
+    return view_transition_resources_.get();
+  }
+
+  bool HasViewTransitionDelayLayerTreeViewDeletion() const {
+    return view_transition_resources_ &&
+           view_transition_resources_->delay_layer_tree_view_deletion();
+  }
+
+  bool HasCookieChangeListener() const {
+    return !!cookie_change_listener_.get();
+  }
+  // Checks whether cookies for the navigation target changed since the
+  // navigation started.
+  bool DidCookiesChangeAfterStart(bool exclude_http_only) const;
+
  private:
   friend class NavigationRequestTest;
   FRIEND_TEST_ALL_PREFIXES(NavigationRequestTest, SanitizeRedirectsForCommit);
@@ -1844,6 +1818,7 @@ class CONTENT_EXPORT NavigationRequest
   std::optional<NavigationEarlyHintsManagerParams>
   CreateNavigationEarlyHintsManagerParams(
       const network::mojom::EarlyHints& early_hints) override;
+  bool ShouldClearParsedHeadersOnTestReceiveRedirect() override;
 
   // Selecting a `RenderFrameHost` to commit a navigation may occasionally fail.
   // When this happens, the navigation will bind a closure to continue the
@@ -1884,15 +1859,17 @@ class CONTENT_EXPORT NavigationRequest
   void OnWillCommitWithoutUrlLoaderChecksComplete(
       NavigationThrottle::ThrottleCheckResult result);
 
-  // Runs CommitDeferringConditions.
+  // Runs CommitDeferringConditions. Stores the provided callback in
+  // NavigationRequest and runs it after all the conditions finish running.
   //
   // For prerendered page activation, this is called at the beginning of the
   // navigation (i.e., in BeginNavigation()). This is because activating a
   // prerendered page must be an atomic, synchronous operation so there is no
   // chance for the prerender to be cancelled during the operation. The
-  // CommitDeferringConditions are asynchronous, so they run at the beginning
-  // of navigation. Once they finish, the atomic activation sequence runs.
-  void RunCommitDeferringConditions();
+  // CommitDeferringConditions are asynchronous, so they run at the beginning of
+  // navigation. Once they finish, the atomic activation sequence runs.
+  void RunCommitDeferringConditions(
+      base::OnceClosure on_commit_deferring_conditions_complete_callback);
 
   // Similar to the NavigationThrottle checks above but this is called from
   // CommitDeferringConditionRunner rather than NavigationThrottles and is
@@ -1903,9 +1880,17 @@ class CONTENT_EXPORT NavigationRequest
       std::optional<FrameTreeNodeId> candidate_prerender_frame_tree_node_id)
       override;
 
-  // Called either by OnFailureChecksComplete() or OnRequestFailed() directly.
-  // |error_page_content| contains the content of the error page (i.e. flattened
-  // HTML, JS, CSS).
+  // Internal helper to prepare to commit an error page, by running
+  // CommitDeferringConditions and then proceeding to `CommitErrorPage()`.
+  // Called either by `OnFailureChecksComplete()` or `OnRequestFailed()`
+  // directly. `error_page_content` contains the content of the error page (i.e.
+  // flattened HTML, JS, CSS).
+  void PrepareToCommitErrorPage(
+      const std::optional<std::string>& error_page_content);
+
+  // Actually commits an error page after CommitDeferringConditions finish
+  // running. `error_page_content` contains the content of the error page; this
+  // is handed off from `PrepareToCommitErrorPage()`.
   void CommitErrorPage(const std::optional<std::string>& error_page_content);
 
   // Have a RenderFrameHost commit the navigation. The NavigationRequest will
@@ -2031,6 +2016,8 @@ class CONTENT_EXPORT NavigationRequest
   // process crashes.
   void OnNavigationClientDisconnected(uint32_t reason,
                                       const std::string& description);
+
+  void ReuseRequestNavigationClientForCommitIfNeeded();
 
   // Binds the given error_handler to be called when an interface disconnection
   // happens on the renderer side.
@@ -2606,6 +2593,9 @@ class CONTENT_EXPORT NavigationRequest
   net::Error net_error_ = net::OK;
   int extended_error_code_ = 0;
 
+  // The trigger for the error navigation.
+  std::optional<ErrorNavigationTrigger> error_navigation_trigger_;
+
   // Detailed host resolution error information. The error code in
   // |resolve_error_info_.error| should be consistent with (but not necessarily
   // the same as) |net_error_|. In the case of a host resolution error, for
@@ -2675,6 +2665,21 @@ class CONTENT_EXPORT NavigationRequest
   // BeginNavigation(). See the comment on RunCommitDeferringConditions() for
   // details.
   std::unique_ptr<CommitDeferringConditionRunner> commit_deferrer_;
+
+  // A navigation gets assigned to a renderer process at two points during a
+  // navigation. However we may not have all of the process selection criteria
+  // resolved before the final selection is made. This
+  // `ProcessSelectionDeferringConditionRunner` lets us start checks early,
+  // restart checks on redirects, and provides an interface to finalize results
+  // after the response is received but before the final process selection is
+  // made. If the results are not ready at that time, the navigation is deferred
+  // until all conditions are resolved.
+  //
+  // `ProcessSelectionDeferringConditions` are not checked for prerendered page
+  // activations because those destinations have previously been assigned to a
+  // process.
+  std::unique_ptr<ProcessSelectionDeferringConditionRunner>
+      process_selection_deferrer_;
 
   // Indicates whether the navigation changed which NavigationEntry is current.
   bool subframe_entry_committed_ = false;
@@ -2827,8 +2832,6 @@ class CONTENT_EXPORT NavigationRequest
   // modified during a redirect, the headers will be applied to the redirected
   // request.
   net::HttpRequestHeaders modified_request_headers_;
-
-  net::HttpRequestHeaders cors_exempt_request_headers_;
 
   // Set of headers to remove during the redirect phase. This can only be
   // modified during the redirect phase.
@@ -3009,6 +3012,8 @@ class CONTENT_EXPORT NavigationRequest
   // only know whether this is the case when BeginNavigation is called so the
   // optional will be empty until then and callers must not query its value
   // before it's been computed.
+  // TODO(crbug.com/427054641): Remove this field once the migration to use
+  // `reserved_prerender_host_info_` is complete.
   std::optional<FrameTreeNodeId> prerender_frame_tree_node_id_;
 
   // Contains state pertaining to a prerender activation. This is only used if
@@ -3099,12 +3104,10 @@ class CONTENT_EXPORT NavigationRequest
   std::optional<std::u16string> embedder_shared_storage_context_;
 
   // Prerender2:
-  // The type to trigger prerendering. The value is valid only when Prerender2
-  // is enabled.
-  std::optional<PreloadingTriggerType> prerender_trigger_type_;
-  // The suffix of a prerender embedder. This value is valid only when
-  // PreloadingTriggerType is kEmbedder. Only used for metrics.
-  std::string prerender_embedder_histogram_suffix_;
+  // The information about the reserved prerender host. This is used to pass
+  // information about the reserved host including information required for
+  // metrics collection.
+  std::optional<ReservedPrerenderHostInfo> reserved_prerender_host_info_;
 
   // Prevents the compositor from requesting main frame updates early in
   // navigation.
@@ -3175,6 +3178,11 @@ class CONTENT_EXPORT NavigationRequest
   base::WeakPtr<KeepAliveURLLoaderService::FactoryContext>
       fetch_later_loader_factory_context_;
 
+  // Set to true when the loaders above are set by unittests that want to avoid
+  // setting a real connection to the renderer.
+  bool did_set_keep_alive_url_loader_factory_context_for_testing_ = false;
+  bool did_set_fetch_later_url_loader_factory_context_for_testing_ = false;
+
   scoped_refptr<NavigationOrDocumentHandle> navigation_or_document_handle_;
 
   // Exposes getters and setters for Blink Runtime-Enabled Features to the
@@ -3216,6 +3224,12 @@ class CONTENT_EXPORT NavigationRequest
   // means the original NavigationRequest could already be deleted by the
   // time the closure runs.
   base::OnceClosure resume_commit_closure_;
+
+  // This closure is set just before CommitDeferringConditions start to run and
+  // is used to proceed with either a prerender activation, a normal navigation
+  // commit, or an error page commit once all CommitDeferringConditions finish
+  // running.
+  base::OnceClosure commit_deferring_conditions_complete_closure_;
 
   // Metrics for measuring the impact of navigation queueing. Note that while
   // `resume_commit_closure_` is set on the navigation that was *blocked*, these
@@ -3319,7 +3333,7 @@ class CONTENT_EXPORT NavigationRequest
       EarlyRenderFrameHostSwapType::kNone;
 
   // Whether the embedder indicated this navigation is being used for
-  // advertising porpoises.
+  // advertising purposes.
   bool is_ad_tagged_ = false;
 
   // This is the origin to commit value calculated at request time for data: URL
@@ -3372,6 +3386,28 @@ class CONTENT_EXPORT NavigationRequest
   // instantiated.
   blink::mojom::ConfidenceLevel confidence_level_ =
       blink::mojom::ConfidenceLevel::kHigh;
+
+  // A container for embedder-specific data that needs to be available during
+  // the renderer process selection phase of a navigation.
+  ProcessSelectionUserData process_selection_user_data_;
+
+  // For NavigationRequests not in a prerendered page, the value will be the
+  // default-constructed null value.
+  const PrerenderHostId prerender_host_id_;
+
+  // This field is only populated between DidCommit and the deletion of the
+  // NavigationRequest, with a token that's generated in the renderer at commit
+  // time. It uniquely identifies a committed same-document navigation,
+  // including distinguishing multiple visits to the same session history item
+  // (so we can't use item sequence number). The token is used for attributing
+  // soft navigation metrics to the correct UKM Source ID.
+  std::optional<base::UnguessableToken> same_document_metrics_token_;
+
+  // Connection-Allowlist feature: Id used to identify restrictions associated
+  // with this navigation. This is also passed to the network service and
+  // stored in the DocumentAssociatedData at commit. Only used for
+  // cross-document navigations.
+  std::optional<base::UnguessableToken> network_restrictions_id_;
 
   base::WeakPtrFactory<NavigationRequest> weak_factory_{this};
 };

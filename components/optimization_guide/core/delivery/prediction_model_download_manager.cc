@@ -4,6 +4,7 @@
 
 #include "components/optimization_guide/core/delivery/prediction_model_download_manager.h"
 
+#include "base/command_line.h"
 #include "base/containers/flat_set.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -18,6 +19,7 @@
 #include "base/task/thread_pool.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
+#include "components/component_updater/pref_names.h"
 #include "components/crx_file/crx_verifier.h"
 #include "components/download/public/background_service/background_download_service.h"
 #include "components/optimization_guide/core/delivery/model_util.h"
@@ -27,15 +29,25 @@
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
+#include "components/prefs/pref_service.h"
 #include "components/services/unzip/public/cpp/unzip.h"
 #include "components/services/unzip/public/mojom/unzipper.mojom.h"
 #include "crypto/hash.h"
 #include "google_apis/common/api_key_request_util.h"
+#include "google_apis/google_api_keys.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace optimization_guide {
 
+using enum PredictionModelDownloadManager::PredictionModelDownloadState;
+
 namespace {
+
+// Disables model downloads for benchmarking. This is to ensure that
+// benchmarking runs for CPU, battery, and memory are not affected by tens of
+// model downloads that happen on startup with a clean profile.
+const char kDisableModelDownloadsForBenchmarking[] =
+    "disable-optimization-guide-model-downloads-for-benchmarking";
 
 // The SHA256 hash of the public key for the Optimization Guide Server that
 // we require models to come from.
@@ -79,6 +91,16 @@ void RecordPredictionModelDownloadStatus(PredictionModelDownloadStatus status) {
       status);
 }
 
+void RecordPredictionModelDownloadState(
+    proto::OptimizationTarget optimization_target,
+    PredictionModelDownloadManager::PredictionModelDownloadState state) {
+  base::UmaHistogramEnumeration(
+      "OptimizationGuide.PredictionModelDownloadManager.State." +
+          optimization_guide::GetStringNameForOptimizationTarget(
+              optimization_target),
+      state);
+}
+
 // Writes the |model_info| to |file_path|.
 bool WriteModelInfoProtoToFile(const proto::ModelInfo& model_info,
                                const base::FilePath& file_path) {
@@ -95,23 +117,26 @@ const char kPredictionModelOptimizationTargetCustomDataKey[] =
     "PredictionModelOptimizationTargetCustomDataKey";
 
 PredictionModelDownloadManager::PredictionModelDownloadManager(
-    download::BackgroundDownloadService* download_service,
+    PrefService* local_state,
+    ProfileDownloadServiceTracker& download_service_tracker,
     GetBaseModelDirForDownloadCallback get_base_model_dir_for_download_callback,
     unzip::UnzipperFactory unzipper_factory,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
-    : download_service_(download_service),
+    : download_service_tracker_(download_service_tracker),
       is_available_for_downloads_(true),
       api_key_(features::GetOptimizationGuideServiceAPIKey()),
       get_base_model_dir_for_download_callback_(
           get_base_model_dir_for_download_callback),
       unzipper_factory_(std::move(unzipper_factory)),
+      local_state_(local_state),
       background_task_runner_(background_task_runner) {}
 
 PredictionModelDownloadManager::~PredictionModelDownloadManager() = default;
 
 void PredictionModelDownloadManager::StartDownload(
     const GURL& download_url,
-    proto::OptimizationTarget optimization_target) {
+    proto::OptimizationTarget optimization_target,
+    const std::optional<download::SchedulingParams>& scheduling_params) {
   download::DownloadParams download_params;
   download_params.client =
       download::DownloadClient::OPTIMIZATION_GUIDE_PREDICTION_MODELS;
@@ -131,36 +156,53 @@ void PredictionModelDownloadManager::StartDownload(
   download_params.request_params.method = "GET";
   google_apis::AddAPIKeyToRequest(
       download_params.request_params.request_headers, api_key_);
-  if (features::IsUnrestrictedModelDownloadingEnabled()) {
-    // This feature param should really only be used for testing, so it is ok
-    // to have this be a high priority download with no network restrictions.
-    download_params.scheduling_params.priority =
-        download::SchedulingParams::Priority::HIGH;
+
+  if (scheduling_params) {
+    download_params.scheduling_params = *scheduling_params;
   } else {
     download_params.scheduling_params.priority =
-        download::SchedulingParams::Priority::NORMAL;
+        download::SchedulingParams::Priority::HIGH;
+    download_params.scheduling_params.battery_requirements =
+        download::SchedulingParams::BatteryRequirements::BATTERY_INSENSITIVE;
+    download_params.scheduling_params.network_requirements =
+        download::SchedulingParams::NetworkRequirements::NONE;
   }
-  download_params.scheduling_params.battery_requirements =
-      download::SchedulingParams::BatteryRequirements::BATTERY_INSENSITIVE;
-  download_params.scheduling_params.network_requirements =
-      download::SchedulingParams::NetworkRequirements::NONE;
-  base::UmaHistogramEnumeration(
-      "OptimizationGuide.PredictionModelDownloadManager.State." +
-          optimization_guide::GetStringNameForOptimizationTarget(
-              optimization_target),
-      PredictionModelDownloadManager::PredictionModelDownloadState::kRequested);
 
-  download_service_->StartDownload(std::move(download_params));
+  download::BackgroundDownloadService* download_service =
+      download_service_tracker_->GetBackgroundDownloadService();
+  if (!download_service) {
+    RecordPredictionModelDownloadState(optimization_target,
+                                       kNoDownloadServiceFromTracker);
+    return;
+  }
+
+  download_service->StartDownload(std::move(download_params));
+  RecordPredictionModelDownloadState(optimization_target, kRequested);
 }
 
 void PredictionModelDownloadManager::CancelAllPendingDownloads() {
+  download::BackgroundDownloadService* download_service =
+      download_service_tracker_->GetBackgroundDownloadService();
+  if (!download_service) {
+    return;
+  }
   for (const std::string& pending_download_guid : pending_download_guids_) {
-    download_service_->CancelDownload(pending_download_guid);
+    download_service->CancelDownload(pending_download_guid);
   }
 }
 
 bool PredictionModelDownloadManager::IsAvailableForDownloads() const {
   return is_available_for_downloads_;
+}
+
+bool PredictionModelDownloadManager::ShouldFetchModels() const {
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          kDisableModelDownloadsForBenchmarking)) {
+    return false;
+  }
+  return (switches::ShouldSkipGoogleApiKeyConfigurationCheck() ||
+          google_apis::HasAPIKeyConfigured()) &&
+         local_state_->GetBoolean(prefs::kComponentUpdatesEnabled);
 }
 
 void PredictionModelDownloadManager::AddObserver(
@@ -199,11 +241,7 @@ void PredictionModelDownloadManager::OnDownloadStarted(
     download::DownloadParams::StartResult start_result) {
   if (start_result == download::DownloadParams::StartResult::ACCEPTED) {
     pending_download_guids_.insert(guid);
-    base::UmaHistogramEnumeration(
-        "OptimizationGuide.PredictionModelDownloadManager.State." +
-            optimization_guide::GetStringNameForOptimizationTarget(
-                optimization_target),
-        PredictionModelDownloadManager::PredictionModelDownloadState::kStarted);
+    RecordPredictionModelDownloadState(optimization_target, kStarted);
     base::UmaHistogramLongTimes(
         "OptimizationGuide.PredictionModelDownloadManager."
         "DownloadStartLatency." +

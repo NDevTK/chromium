@@ -21,6 +21,7 @@
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/content_setting_bubble_contents.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
 #include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
 #include "chrome/browser/ui/views/page_info/page_info_view_factory.h"
 #include "chrome/browser/ui/views/permissions/chip/chip_controller.h"
@@ -35,10 +36,10 @@
 #include "components/metrics/content/subprocess_metrics_provider.h"
 #include "components/permissions/features.h"
 #include "components/permissions/origin_keyed_permission_action_service.h"
-#include "components/permissions/permission_ui_selector.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permission_util.h"
 #include "components/permissions/permissions_client.h"
+#include "components/permissions/prediction_service/permission_ui_selector.h"
 #include "components/permissions/request_type.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
 #include "components/permissions/test/mock_permission_request.h"
@@ -190,14 +191,6 @@ class PermissionChipInteractiveUITest : public InProcessBrowserTest {
     views::test::ButtonTestApi(chip).NotifyClick(
         ui::MouseEvent(ui::EventType::kMousePressed, gfx::Point(), gfx::Point(),
                        ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON, 0));
-    base::RunLoop().RunUntilIdle();
-  }
-
-  void ClickOnLock() {
-    views::test::ButtonTestApi(GetLocationBarView()->location_icon_view())
-        .NotifyClick(ui::MouseEvent(ui::EventType::kMousePressed, gfx::Point(),
-                                    gfx::Point(), ui::EventTimeForNow(),
-                                    ui::EF_LEFT_MOUSE_BUTTON, 0));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -411,70 +404,30 @@ IN_PROC_BROWSER_TEST_F(ConfirmationChipEnabledInteractiveTest,
   ASSERT_FALSE(GetChip()->GetVisible());
 }
 
-class ConfirmationChipUmaInteractiveTest
-    : public PermissionChipInteractiveUITest {
- public:
-  ConfirmationChipUmaInteractiveTest() = default;
-};
-
-IN_PROC_BROWSER_TEST_F(ConfirmationChipUmaInteractiveTest, VerifyUmaMetrics) {
-  base::HistogramTester histograms;
-
-  ClickOnLock();
-
-  metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
-  histograms.ExpectBucketCount(
-      "Permissions.ConfirmationChip.PageInfoDialogAccessType",
-      static_cast<int>(permissions::PageInfoDialogAccessType::LOCK_CLICK), 1);
-
-  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_ESCAPE, false,
-                                              false, false, false));
-  base::RunLoop().RunUntilIdle();
-
+IN_PROC_BROWSER_TEST_F(ConfirmationChipEnabledInteractiveTest,
+                       HideChipWhenOmniboxIsEdited) {
   RequestPermission(permissions::RequestType::kGeolocation);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(GetChip()->GetVisible());
+  EXPECT_TRUE(GetChip()->GetText() ==
+              l10n_util::GetStringUTF16(IDS_GEOLOCATION_PERMISSION_CHIP));
+
   test_api_->manager()->Accept();
+  EXPECT_TRUE(GetChip()->GetVisible());
+  EXPECT_TRUE(GetChip()->GetText() ==
+              l10n_util::GetStringUTF16(
+                  IDS_PERMISSIONS_PERMISSION_ALLOWED_CONFIRMATION));
+  EXPECT_EQ(GetChip()->theme(), PermissionChipTheme::kNormalVisibility);
 
-  ClickOnChip(GetChip());
-
-  metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
-  histograms.ExpectBucketCount(
-      "Permissions.ConfirmationChip.PageInfoDialogAccessType",
-      static_cast<int>(
-          permissions::PageInfoDialogAccessType::CONFIRMATION_CHIP_CLICK),
-      1);
-
-  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_ESCAPE, false,
-                                              false, false, false));
-
-  base::RunLoop().RunUntilIdle();
-
-  GetLocationBarView()->SetConfirmationChipShownTimeForTesting(
-      base::TimeTicks::Now() - base::Seconds(10));
-
-  ClickOnLock();
-
-  metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
-  histograms.ExpectBucketCount(
-      "Permissions.ConfirmationChip.PageInfoDialogAccessType",
-      static_cast<int>(permissions::PageInfoDialogAccessType::
-                           LOCK_CLICK_SHORTLY_AFTER_CONFIRMATION_CHIP),
-      1);
-
-  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_ESCAPE, false,
-                                              false, false, false));
-
-  base::RunLoop().RunUntilIdle();
-
-  GetLocationBarView()->SetConfirmationChipShownTimeForTesting(
-      base::TimeTicks::Now() - base::Seconds(21));
-
-  ClickOnLock();
-
-  metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
-  histograms.ExpectBucketCount(
-      "Permissions.ConfirmationChip.PageInfoDialogAccessType",
-      static_cast<int>(permissions::PageInfoDialogAccessType::LOCK_CLICK), 2);
+  // Simulate the user editing the omnibox.
+  OmniboxView* omnibox_view = GetLocationBarView()->GetOmniboxView();
+  omnibox_view->SetFocus(/*is_user_initiated=*/true);
+  omnibox_view->SetUserText(u"Typing in the Omnibox...");
+  views::test::RunScheduledLayout(GetLocationBarView());
+  EXPECT_TRUE(GetLocationBarView()->IsEditingOrEmpty());
+  EXPECT_FALSE(GetChip()->GetVisible());
 }
+
 
 class PageInfoChangedWithin1mUmaTest : public PermissionChipInteractiveUITest {
  public:
@@ -703,14 +656,11 @@ class QuietChipAutoPopupBubbleInteractiveTest
 
  protected:
   using QuietUiReason = permissions::PermissionUiSelector::QuietUiReason;
-  using WarningReason = permissions::PermissionUiSelector::WarningReason;
+  using Decision = permissions::PermissionUiSelector::Decision;
 
-  void SetCannedUiDecision(std::optional<QuietUiReason> quiet_ui_reason,
-                           std::optional<WarningReason> warning_reason) {
+  void SetCannedUiDecision(const Decision& decision) {
     test_api_->manager()->set_permission_ui_selector_for_testing(
-        std::make_unique<MockPermissionUiSelector>(
-            permissions::PermissionUiSelector::Decision(quiet_ui_reason,
-                                                        warning_reason)));
+        std::make_unique<MockPermissionUiSelector>(decision));
   }
 
  private:
@@ -807,7 +757,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason :
        {QuietUiReason::kEnabledInPrefs,
         QuietUiReason::kServicePredictedVeryUnlikelyGrant}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -840,7 +791,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason :
        {QuietUiReason::kEnabledInPrefs,
         QuietUiReason::kServicePredictedVeryUnlikelyGrant}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -882,7 +834,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason : {QuietUiReason::kTriggeredByCrowdDeny,
                                QuietUiReason::kTriggeredDueToAbusiveRequests,
                                QuietUiReason::kTriggeredDueToAbusiveContent}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -917,7 +870,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason : {QuietUiReason::kTriggeredByCrowdDeny,
                                QuietUiReason::kTriggeredDueToAbusiveRequests,
                                QuietUiReason::kTriggeredDueToAbusiveContent}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -946,7 +900,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason : {QuietUiReason::kTriggeredByCrowdDeny,
                                QuietUiReason::kTriggeredDueToAbusiveRequests,
                                QuietUiReason::kTriggeredDueToAbusiveContent}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -975,7 +930,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason : {QuietUiReason::kTriggeredByCrowdDeny,
                                QuietUiReason::kTriggeredDueToAbusiveRequests,
                                QuietUiReason::kTriggeredDueToAbusiveContent}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -1004,7 +960,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason : {QuietUiReason::kTriggeredByCrowdDeny,
                                QuietUiReason::kTriggeredDueToAbusiveRequests,
                                QuietUiReason::kTriggeredDueToAbusiveContent}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -1033,7 +990,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   for (QuietUiReason reason : {QuietUiReason::kTriggeredByCrowdDeny,
                                QuietUiReason::kTriggeredDueToAbusiveRequests,
                                QuietUiReason::kTriggeredDueToAbusiveContent}) {
-    SetCannedUiDecision(reason, std::nullopt);
+    SetCannedUiDecision(
+        Decision::UseQuietUi(reason, Decision::ShowNoWarning()));
 
     RequestPermission(permissions::RequestType::kNotifications);
 
@@ -1075,8 +1033,8 @@ IN_PROC_BROWSER_TEST_F(QuietChipAutoPopupBubbleInteractiveTest,
   ASSERT_TRUE(
       base::FeatureList::IsEnabled(features::kQuietNotificationPrompts));
 
-  SetCannedUiDecision(QuietUiReason::kTriggeredDueToAbusiveContent,
-                      std::nullopt);
+  SetCannedUiDecision(Decision::UseQuietUi(
+      QuietUiReason::kTriggeredDueToAbusiveContent, Decision::ShowNoWarning()));
 
   RequestPermission(permissions::RequestType::kCameraStream);
 
@@ -1124,13 +1082,11 @@ class QuietChipFailFastInteractiveTest
  protected:
   using QuietUiReason = permissions::PermissionUiSelector::QuietUiReason;
   using WarningReason = permissions::PermissionUiSelector::WarningReason;
+  using Decision = permissions::PermissionUiSelector::Decision;
 
-  void SetCannedUiDecision(std::optional<QuietUiReason> quiet_ui_reason,
-                           std::optional<WarningReason> warning_reason) {
+  void SetCannedUiDecision(const Decision& decision) {
     test_api_->manager()->set_permission_ui_selector_for_testing(
-        std::make_unique<MockPermissionUiSelector>(
-            permissions::PermissionUiSelector::Decision(quiet_ui_reason,
-                                                        warning_reason)));
+        std::make_unique<MockPermissionUiSelector>(decision));
   }
 
  private:
@@ -1152,7 +1108,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
 
   // Keep it above `IsSubscribedToPermissionChangeEvent` to make sure it does
   // not influence it.
-  EXPECT_FALSE(content::EvalJs(main_rfh, kCheckNotifications).value.GetBool());
+  EXPECT_EQ(false, content::EvalJs(main_rfh, kCheckNotifications));
 
   bool IsPermissionStatusSubscribed =
       web_contents->GetBrowserContext()
@@ -1168,8 +1124,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
       main_rfh->GetBrowserContext()->GetPermissionController(),
       run_loop.QuitClosure());
 
-  EXPECT_TRUE(content::EvalJs(main_rfh, kAddNotificationsEventListener)
-                  .value.GetBool());
+  EXPECT_EQ(true, content::EvalJs(main_rfh, kAddNotificationsEventListener));
 
   // `kAddNotificationsEventListener` execution is async. To informing that an
   // event listener has been added for a permission we should wait otherwise
@@ -1205,7 +1160,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
 
   manager->Accept();
 
-  EXPECT_TRUE(content::EvalJs(main_rfh, kCheckNotifications).value.GetBool());
+  EXPECT_EQ(true, content::EvalJs(main_rfh, kCheckNotifications));
   EXPECT_FALSE(manager->IsRequestInProgress());
 
   IsPermissionStatusSubscribed =
@@ -1226,8 +1181,9 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
                        EventListenerAddedTest) {
   base::HistogramTester histograms;
 
-  SetCannedUiDecision(QuietUiReason::kTriggeredDueToAbusiveRequests,
-                      WarningReason::kAbusiveRequests);
+  SetCannedUiDecision(
+      Decision::UseQuietUi(QuietUiReason::kTriggeredDueToAbusiveRequests,
+                           WarningReason::kAbusiveRequests));
 
   ASSERT_TRUE(embedded_test_server()->Start());
   const GURL url(embedded_test_server()->GetURL("/title1.html"));
@@ -1240,7 +1196,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
 
   // Keep it above `IsSubscribedToPermissionChangeEvent` to make sure it does
   // not influence it.
-  EXPECT_FALSE(content::EvalJs(main_rfh, kCheckNotifications).value.GetBool());
+  EXPECT_EQ(false, content::EvalJs(main_rfh, kCheckNotifications));
 
   bool IsPermissionStatusSubscribed =
       web_contents->GetBrowserContext()
@@ -1256,8 +1212,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
       main_rfh->GetBrowserContext()->GetPermissionController(),
       run_loop.QuitClosure());
 
-  EXPECT_TRUE(content::EvalJs(main_rfh, kAddNotificationsEventListener)
-                  .value.GetBool());
+  EXPECT_EQ(true, content::EvalJs(main_rfh, kAddNotificationsEventListener));
 
   // `kAddNotificationsEventListener` execution is async. To informing that an
   // event listener has been added for a permission we should wait otherwise
@@ -1282,7 +1237,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
   EXPECT_TRUE(manager->IsRequestInProgress());
   manager->Accept();
 
-  EXPECT_TRUE(content::EvalJs(main_rfh, kCheckNotifications).value.GetBool());
+  EXPECT_EQ(true, content::EvalJs(main_rfh, kCheckNotifications));
   EXPECT_FALSE(manager->IsRequestInProgress());
 
   IsPermissionStatusSubscribed =
@@ -1318,7 +1273,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
 
   // Init global `PermissionStatus` variable and add API for assigning and
   // removing event listeners.
-  ASSERT_EQ("", content::EvalJs(main_rfh, R"(
+  ASSERT_TRUE(content::EvalJs(main_rfh, R"(
     var PermissionStatus;
 
     function onChangeListener(event) {}
@@ -1339,17 +1294,16 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
       PermissionStatus.removeEventListener("change", onChangeListener);
     }
     )")
-                    .error);
+                  .is_ok());
 
   // Initialize global JS variable `PermissionStatus`.
-  EXPECT_TRUE(content::EvalJs(main_rfh, R"(
+  EXPECT_EQ(true, content::EvalJs(main_rfh, R"(
     new Promise(async resolve => {
       PermissionStatus =
         await navigator.permissions.query({name: 'notifications'});
       resolve(true);
     })
-    )")
-                  .value.GetBool());
+    )"));
 
   bool IsPermissionStatusSubscribed =
       web_contents->GetBrowserContext()
@@ -1368,7 +1322,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
         run_loop.QuitClosure());
 
     // Set PermissionState.onchange listener.
-    ASSERT_EQ("", content::EvalJs(main_rfh, "addOnChange()").error);
+    ASSERT_TRUE(content::EvalJs(main_rfh, "addOnChange()").is_ok());
 
     // `kAddNotificationsEventListener` execution is async. To informing that an
     // event listener has been added for a permission we should wait otherwise
@@ -1390,7 +1344,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
         main_rfh->GetBrowserContext()->GetPermissionController(),
         run_loop.QuitClosure());
 
-    ASSERT_EQ("", content::EvalJs(main_rfh, "removeOnchange()").error);
+    ASSERT_TRUE(content::EvalJs(main_rfh, "removeOnchange()").is_ok());
 
     run_loop.Run();
 
@@ -1410,7 +1364,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
         run_loop.QuitClosure());
 
     // Add `change` event listener.
-    ASSERT_EQ("", content::EvalJs(main_rfh, "addEventListener()").error);
+    ASSERT_TRUE(content::EvalJs(main_rfh, "addEventListener()").is_ok());
 
     run_loop.Run();
 
@@ -1429,7 +1383,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
         main_rfh->GetBrowserContext()->GetPermissionController(),
         run_loop.QuitClosure());
     // Add the second lisener.
-    ASSERT_EQ("", content::EvalJs(main_rfh, "addOnChange()").error);
+    ASSERT_TRUE(content::EvalJs(main_rfh, "addOnChange()").is_ok());
     run_loop.Run();
   }
 
@@ -1437,7 +1391,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
     // Removing the first listener should not endup in disablign
     // `IsPermissionStatusSubscribed`. Do not need to call `run_loop.Run()` as
     // that event will not be processed.
-    ASSERT_EQ("", content::EvalJs(main_rfh, "removeEventListener()").error);
+    ASSERT_TRUE(content::EvalJs(main_rfh, "removeEventListener()").is_ok());
     // run_loop.Run();
 
     IsPermissionStatusSubscribed =
@@ -1453,7 +1407,7 @@ IN_PROC_BROWSER_TEST_F(QuietChipFailFastInteractiveTest,
         main_rfh->GetBrowserContext()->GetPermissionController(),
         run_loop.QuitClosure());
     // This will remove the internal listener.
-    ASSERT_EQ("", content::EvalJs(main_rfh, "removeOnchange()").error);
+    ASSERT_TRUE(content::EvalJs(main_rfh, "removeOnchange()").is_ok());
     run_loop.Run();
 
     IsPermissionStatusSubscribed =
@@ -1542,7 +1496,7 @@ IN_PROC_BROWSER_TEST_F(PermissionChipInteractiveUITest,
   content::RenderFrameHost* subframe = CreateIframe(main_rfh, embedded_url);
   ASSERT_TRUE(subframe);
 
-  EXPECT_FALSE(content::EvalJs(main_rfh, kCheckNotifications).value.GetBool());
+  EXPECT_EQ(false, content::EvalJs(main_rfh, kCheckNotifications));
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -1606,7 +1560,7 @@ IN_PROC_BROWSER_TEST_F(PermissionChipInteractiveUITest,
 
   manager->Accept();
 
-  EXPECT_TRUE(content::EvalJs(main_rfh, kCheckNotifications).value.GetBool());
+  EXPECT_EQ(true, content::EvalJs(main_rfh, kCheckNotifications));
 }
 
 IN_PROC_BROWSER_TEST_F(PermissionChipInteractiveUITest,
@@ -1618,6 +1572,23 @@ IN_PROC_BROWSER_TEST_F(PermissionChipInteractiveUITest,
 
   GetChipController()->GetBubbleWidget()->Close();
   permission_prompt_waiter->WaitForHide();
+}
+
+IN_PROC_BROWSER_TEST_F(PermissionChipInteractiveUITest,
+                       IgnoreRequestWhenOmniboxIsEdited) {
+  RequestPermission(permissions::RequestType::kGeolocation);
+  EXPECT_TRUE(GetChip()->GetVisible());
+  EXPECT_TRUE(test_api_->manager()->IsRequestInProgress());
+
+  // Simulate the user editing the omnibox.
+  OmniboxView* omnibox_view = GetLocationBarView()->GetOmniboxView();
+  omnibox_view->SetFocus(/*is_user_initiated=*/true);
+  omnibox_view->SetUserText(u"Typing in the Omnibox...");
+  views::test::RunScheduledLayout(GetLocationBarView());
+  ASSERT_TRUE(GetLocationBarView()->IsEditingOrEmpty());
+
+  EXPECT_FALSE(test_api_->manager()->IsRequestInProgress());
+  EXPECT_FALSE(GetChip()->GetVisible());
 }
 
 class TestWebContentsObserver : content::WebContentsObserver {

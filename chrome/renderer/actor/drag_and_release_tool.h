@@ -10,9 +10,14 @@
 #include "base/memory/raw_ref.h"
 #include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
+#include "chrome/common/actor/task_id.h"
 #include "chrome/renderer/actor/tool_base.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+
+namespace blink {
+class WebWidget;
+}  // namespace blink
 
 namespace content {
 class RenderFrame;
@@ -28,29 +33,39 @@ namespace actor {
 class DragAndReleaseTool : public ToolBase {
  public:
   DragAndReleaseTool(content::RenderFrame& frame,
-                     Journal::TaskId task_id,
+                     TaskId task_id,
                      Journal& journal,
-                     mojom::DragAndReleaseActionPtr action);
+                     mojom::DragAndReleaseActionPtr action,
+                     mojom::ToolTargetPtr target,
+                     mojom::ObservedToolTargetPtr observed_target);
 
   ~DragAndReleaseTool() override;
 
   // actor::ToolBase
-  mojom::ActionResultPtr Execute() override;
+  void Execute(ToolFinishedCallback callback) override;
   std::string DebugString() const override;
 
  private:
   struct DragParams {
-    gfx::PointF from;
-    gfx::PointF to;
+    ResolvedTarget from;
+    ResolvedTarget to;
   };
   using ValidatedResult = base::expected<DragParams, mojom::ActionResultPtr>;
   ValidatedResult Validate() const;
 
-  bool InjectMouseEvent(blink::WebInputEvent::Type type,
-                        const gfx::PointF& position_in_widget,
+  void ProcessDrag(ResolvedTarget from,
+                   ResolvedTarget to,
+                   ToolFinishedCallback callback);
+  void ProcessRelease(ResolvedTarget to, ToolFinishedCallback callback);
+
+  bool InjectMouseEvent(blink::WebWidget& widget,
+                        gfx::PointF& position_in_widget,
+                        blink::WebInputEvent::Type type,
                         blink::WebMouseEvent::Button button);
 
   mojom::DragAndReleaseActionPtr action_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  base::WeakPtrFactory<DragAndReleaseTool> weak_ptr_factory_{this};
 };
 
 }  // namespace actor

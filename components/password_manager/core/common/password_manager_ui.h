@@ -37,10 +37,6 @@ enum State {
   // Chrome needs to ask the user to confirm password updating.
   PENDING_PASSWORD_UPDATE_STATE,
 
-  // A user opted in to account storage is about to lose some unsynced
-  // passwords.
-  WILL_DELETE_UNSYNCED_ACCOUNT_PASSWORDS_STATE,
-
   // The user used a profile credential to log in successfully and should see a
   // prompt that allows them to move the credential to their account store.
   MOVE_CREDENTIAL_AFTER_LOG_IN_STATE,
@@ -94,7 +90,8 @@ enum State {
   // the same website and user.
   PASSKEY_UPGRADE_STATE,
 
-  // Password change flow was started.
+  // Password change flow ended successfully. User can trigger this state
+  // from the password change success toast.
   PASSWORD_CHANGE_STATE,
 };
 

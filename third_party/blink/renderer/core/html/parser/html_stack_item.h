@@ -117,6 +117,15 @@ class HTMLStackItem final : public GarbageCollected<HTMLStackItem> {
     DCHECK(LocalName());
     return UNSAFE_TODO({TokenAttributesData(), num_token_attributes_});
   }
+  Vector<Attribute> TakeAttributes() {
+    Vector<Attribute> attributes;
+    attributes.ReserveInitialCapacity(num_token_attributes_);
+    for (Attribute& attr : Attributes()) {
+      attributes.push_back(std::move(attr));
+    }
+    num_token_attributes_ = 0;
+    return attributes;
+  }
   Attribute* GetAttributeItem(const QualifiedName& attribute_name) {
     DCHECK(LocalName());
     return FindAttributeInVector(Attributes(), attribute_name);
@@ -322,6 +331,24 @@ class HTMLStackItem final : public GarbageCollected<HTMLStackItem> {
   void Trace(Visitor* visitor) const {
     visitor->Trace(node_);
     visitor->Trace(next_item_in_stack_);
+    visitor->Trace(adjusted_insertion_target_);
+    visitor->Trace(adjusted_insertion_next_child_);
+  }
+
+  void SetAdjustedInsertionTarget(ContainerNode* target) {
+    adjusted_insertion_target_ = target;
+  }
+
+  ContainerNode* AdjustedInsertionTarget() const {
+    return adjusted_insertion_target_.Get();
+  }
+
+  void SetAdjustedInsertionNextChild(Node* child) {
+    adjusted_insertion_next_child_ = child;
+  }
+
+  Node* AdjustedInsertionNextChild() const {
+    return adjusted_insertion_next_child_.Get();
   }
 
  private:
@@ -353,6 +380,9 @@ class HTMLStackItem final : public GarbageCollected<HTMLStackItem> {
 
   // This member is maintained by HTMLElementStack.
   Member<HTMLStackItem> next_item_in_stack_{nullptr};
+
+  Member<ContainerNode> adjusted_insertion_target_;
+  Member<Node> adjusted_insertion_next_child_;
 
   HTMLTokenName token_name_;
   AtomicString namespace_uri_;

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ranges>
 
 #include "base/containers/flat_set.h"
 #include "base/metrics/histogram_functions.h"
@@ -23,6 +24,7 @@
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/payments/credit_card.h"
+#include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/integrators/fast_checkout/fast_checkout_enums.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
 #include "components/autofill/core/browser/payments/credit_card_cvc_authenticator.h"
@@ -44,13 +46,8 @@ constexpr base::TimeDelta kSleepBetweenTriggerFormExtractionCalls =
     base::Seconds(1);
 constexpr base::TimeDelta kTimeout = base::Minutes(30);
 
-constexpr auto kSupportedFormTypes = base::MakeFixedFlatSet<autofill::FormType>(
+constexpr auto kSupportedFormTypes = autofill::DenseSet<autofill::FormType>(
     {autofill::FormType::kAddressForm, autofill::FormType::kCreditCardForm});
-
-constexpr auto kAddressFieldTypes =
-    base::MakeFixedFlatSet<autofill::FieldTypeGroup>(
-        {autofill::FieldTypeGroup::kName, autofill::FieldTypeGroup::kEmail,
-         autofill::FieldTypeGroup::kPhone, autofill::FieldTypeGroup::kAddress});
 
 bool IsVisibleTextField(const autofill::AutofillField& field) {
   return field.IsFocusable() && field.IsTextInputElement();
@@ -61,10 +58,9 @@ const autofill::AutofillField* GetFieldToFill(
     bool is_credit_card_form) {
   for (const std::unique_ptr<autofill::AutofillField>& field : fields) {
     if (IsVisibleTextField(*field) && field->value().empty() &&
-        ((!is_credit_card_form &&
-          kAddressFieldTypes.contains(field->Type().group())) ||
-         (is_credit_card_form &&
-          field->Type().GetStorableType() == autofill::CREDIT_CARD_NUMBER))) {
+        (is_credit_card_form
+             ? field->Type().GetCreditCardType() == autofill::CREDIT_CARD_NUMBER
+             : field->Type().GetAddressType() != autofill::UNKNOWN_TYPE)) {
       return field.get();
     }
   }
@@ -84,12 +80,14 @@ bool IsEmailForm(const autofill::FormStructure& form) {
       form.GetFormTypes().contains(autofill::FormType::kAddressForm);
   bool has_name_or_address_field = std::ranges::any_of(
       form.fields(), [](const std::unique_ptr<autofill::AutofillField>& field) {
-        autofill::FieldTypeGroup type_group = field->Type().group();
-        return IsNameOrAddress(type_group) && IsVisibleTextField(*field);
+        return std::ranges::any_of(field->Type().GetGroups(),
+                                   &IsNameOrAddress) &&
+               IsVisibleTextField(*field);
       });
   bool has_focusable_email_field = std::ranges::any_of(
       form.fields(), [](const std::unique_ptr<autofill::AutofillField>& field) {
-        return field->Type().group() == autofill::FieldTypeGroup::kEmail &&
+        return field->Type().GetGroups().contains(
+                   autofill::FieldTypeGroup::kEmail) &&
                IsVisibleTextField(*field);
       });
   return is_address_form && has_focusable_email_field &&
@@ -231,12 +229,11 @@ void FastCheckoutClientImpl::OnRunComplete(FastCheckoutRunOutcome run_outcome,
     for (auto [form_id, filling_state] : form_filling_states_) {
       autofill::FormSignature form_signature = form_id.first;
       autofill::DenseSet<autofill::FormTypeNameForLogging> form_types;
-      for (auto& [_, form] : autofill_manager_->form_structures()) {
-        if (form->form_signature() == form_signature) {
-          form_types =
-              autofill::autofill_metrics::GetFormTypesForLogging(*form);
-          break;
-        }
+      std::vector<raw_ref<const autofill::FormStructure>> forms =
+          autofill_manager_->FindCachedFormsBySignature(form_signature);
+      if (!forms.empty()) {
+        form_types =
+            autofill::autofill_metrics::GetFormTypesForLogging(*forms.front());
       }
       ukm::builders::FastCheckout_FormStatus form_status_builder(
           autofill_client_->GetWebContents()
@@ -524,14 +521,12 @@ void FastCheckoutClientImpl::OnFullCardRequestSucceeded(
   if (!IsFilling() || !credit_card_form_global_id_) {
     return;
   }
-  if (!autofill_manager_->form_structures().contains(
-          credit_card_form_global_id_.value())) {
+  const autofill::FormStructure* form = autofill_manager_->FindCachedFormById(
+      credit_card_form_global_id_.value());
+  if (!form) {
     credit_card_form_global_id_ = std::nullopt;
     return;
   }
-  const std::unique_ptr<autofill::FormStructure>& form =
-      autofill_manager_->form_structures().at(
-          credit_card_form_global_id_.value());
   if (const autofill::AutofillField* field =
           GetFieldToFill(form->fields(), /*is_credit_card_form=*/true)) {
     autofill::CreditCard card_with_cvc = card;
@@ -557,7 +552,7 @@ void FastCheckoutClientImpl::OnFullCardRequestFailed(
   }
 }
 
-void FastCheckoutClientImpl::OnAfterDidFillAutofillFormData(
+void FastCheckoutClientImpl::OnAfterDidAutofillForm(
     autofill::AutofillManager& manager,
     autofill::FormGlobalId form_id) {
   if (!IsFilling()) {
@@ -575,9 +570,9 @@ void FastCheckoutClientImpl::UpdateFillingStates() {
     const auto& [form_signature, form_type] = form_id;
     if (form_type == autofill::FormType::kAddressForm &&
         filling_state == FillingState::kFilling) {
-      // Assume that if `OnAfterDidFillAutofillFormData()` is called while
-      // `this` is in filling mode and there's an address form in `kFilling`
-      // state that it got filled.
+      // Assume that if `OnAfterDidAutofillForm()` is called while `this` is in
+      // filling mode and there's an address form in `kFilling` state that it
+      // got filled.
       filling_state = FillingState::kFilled;
       A11yAnnounce(form_signature, /*is_credit_card_form=*/false);
     } else if (form_type == autofill::FormType::kCreditCardForm) {
@@ -589,10 +584,10 @@ void FastCheckoutClientImpl::UpdateFillingStates() {
         // form is both an address and a credit card form.
         continue;
       } else if (filling_state == FillingState::kFilling) {
-        // Assume that if `OnAfterDidFillAutofillFormData()` is called while
-        // `this` is in filling mode and there's a credit card form in
-        // `kFilling` state - while no address form of the same signature is in
-        // `kFilling` state - that it got filled.
+        // Assume that if `OnAfterDidAutofillForm()` is called while `this` is
+        // in filling mode and there's a credit card form in `kFilling` state -
+        // while no address form of the same signature is in `kFilling` state -
+        // that it got filled.
         filling_state = FillingState::kFilled;
         A11yAnnounce(form_signature, /*is_credit_card_form=*/true);
       }

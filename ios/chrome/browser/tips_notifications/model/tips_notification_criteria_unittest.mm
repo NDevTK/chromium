@@ -6,12 +6,14 @@
 
 #import "base/test/scoped_feature_list.h"
 #import "components/feature_engagement/test/mock_tracker.h"
+#import "components/omnibox/browser/omnibox_pref_names.h"
 #import "components/password_manager/core/common/password_manager_pref_names.h"
 #import "components/prefs/pref_service.h"
 #import "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #import "components/search_engines/template_url_service.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "components/sync/base/features.h"
+#import "components/sync/test/mock_sync_service.h"
 #import "ios/chrome/browser/default_browser/model/promo_source.h"
 #import "ios/chrome/browser/default_browser/model/utils.h"
 #import "ios/chrome/browser/default_browser/model/utils_test_support.h"
@@ -23,14 +25,18 @@
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/utils/first_run_test_util.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
+#import "ios/chrome/browser/sync/model/mock_sync_service_utils.h"
+#import "ios/chrome/browser/sync/model/sync_service_factory.h"
 #import "ios/chrome/browser/tips_notifications/model/utils.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
 #import "ios/web/public/test/web_task_environment.h"
+#import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
@@ -38,9 +44,11 @@
 
 namespace {
 
+using ::testing::Return;
+
 // Creates the Feature Engagement Mock Tracker.
 std::unique_ptr<KeyedService> BuildFeatureEngagementMockTracker(
-    web::BrowserState* browser_state) {
+    ProfileIOS* profile) {
   return std::make_unique<feature_engagement::test::MockTracker>();
 }
 
@@ -56,6 +64,8 @@ class TipsNotificationCriteriaTest : public PlatformTest {
     builder.AddTestingFactory(
         feature_engagement::TrackerFactory::GetInstance(),
         base::BindRepeating(&BuildFeatureEngagementMockTracker));
+    builder.AddTestingFactory(SyncServiceFactory::GetInstance(),
+                              base::BindRepeating(&CreateMockSyncService));
     builder.AddTestingFactory(
         ios::TemplateURLServiceFactory::GetInstance(),
         ios::TemplateURLServiceFactory::GetDefaultFactory());
@@ -67,6 +77,8 @@ class TipsNotificationCriteriaTest : public PlatformTest {
     template_url_service->Load();
     criteria_ = std::make_unique<TipsNotificationCriteria>(profile_.get(),
                                                            GetLocalState());
+    sync_service_mock_ = static_cast<syncer::MockSyncService*>(
+        SyncServiceFactory::GetForProfile(profile_.get()));
   }
 
   PrefService* GetLocalState() {
@@ -108,9 +120,11 @@ class TipsNotificationCriteriaTest : public PlatformTest {
   base::test::ScopedFeatureList feature_list_;
   web::WebTaskEnvironment task_environment_;
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
-  raw_ptr<feature_engagement::test::MockTracker> mock_tracker_;
+  raw_ptr<feature_engagement::test::MockTracker, DanglingUntriaged>
+      mock_tracker_;
   std::unique_ptr<TestProfileIOS> profile_;
   std::unique_ptr<TipsNotificationCriteria> criteria_;
+  raw_ptr<syncer::MockSyncService> sync_service_mock_ = nullptr;
 };
 
 #pragma mark - ShouldSendDefaultBrowser
@@ -127,6 +141,7 @@ TEST_F(TipsNotificationCriteriaTest, TestShouldSendDefaultBrowser_Default) {
 // has previously canceled the promo.
 TEST_F(TipsNotificationCriteriaTest,
        TestShouldSendDefaultBrowser_PromoCanceled) {
+  feature_list_.InitAndDisableFeature(kIOSOneTimeDefaultBrowserNotification);
   SetFalseChromeLikelyDefaultBrowser();
   RecordDefaultBrowserPromoLastAction(IOSDefaultBrowserPromoAction::kCancel);
   EXPECT_FALSE(
@@ -137,6 +152,7 @@ TEST_F(TipsNotificationCriteriaTest,
 // previously dismissed the promo.
 TEST_F(TipsNotificationCriteriaTest,
        TestShouldSendDefaultBrowser_PromoDismissed) {
+  feature_list_.InitAndDisableFeature(kIOSOneTimeDefaultBrowserNotification);
   SetFalseChromeLikelyDefaultBrowser();
   RecordDefaultBrowserPromoLastAction(IOSDefaultBrowserPromoAction::kDismiss);
   EXPECT_TRUE(
@@ -147,6 +163,7 @@ TEST_F(TipsNotificationCriteriaTest,
 // previously tapped "Remind Me Later".
 TEST_F(TipsNotificationCriteriaTest,
        TestShouldSendDefaultBrowser_PromoRemindMeLater) {
+  feature_list_.InitAndDisableFeature(kIOSOneTimeDefaultBrowserNotification);
   SetFalseChromeLikelyDefaultBrowser();
   RecordDefaultBrowserPromoLastAction(
       IOSDefaultBrowserPromoAction::kRemindMeLater);
@@ -157,7 +174,40 @@ TEST_F(TipsNotificationCriteriaTest,
 // Tests that the Default Browser notification should be sent when the user has
 // not interacted with the promo and Chrome is not the default.
 TEST_F(TipsNotificationCriteriaTest, TestShouldSendDefaultBrowser_NoAction) {
+  feature_list_.InitAndDisableFeature(kIOSOneTimeDefaultBrowserNotification);
   SetFalseChromeLikelyDefaultBrowser();
+  EXPECT_TRUE(
+      criteria_->ShouldSendNotification(TipsNotificationType::kDefaultBrowser));
+}
+
+// Tests that the Default Browser notification should not be sent if a default
+// browser promo has been seen in the last 2 weeks.
+TEST_F(TipsNotificationCriteriaTest,
+       TestShouldSendDefaultBrowser_ShouldNotTriggerOneTime) {
+  feature_list_.InitAndEnableFeature(kIOSOneTimeDefaultBrowserNotification);
+  SetFalseChromeLikelyDefaultBrowser();
+  RecordDefaultBrowserPromoLastAction(IOSDefaultBrowserPromoAction::kCancel);
+  EXPECT_CALL(
+      *mock_tracker_,
+      WouldTriggerHelpUI(testing::Ref(
+          feature_engagement::kIPHiOSOneTimeDefaultBrowserNotificationFeature)))
+      .WillOnce(testing::Return(false));
+  EXPECT_FALSE(
+      criteria_->ShouldSendNotification(TipsNotificationType::kDefaultBrowser));
+}
+
+// Tests that the Default Browser notification should be sent if a default
+// browser promo has not been seen in the last 2 weeks.
+TEST_F(TipsNotificationCriteriaTest,
+       TestShouldSendDefaultBrowser_ShouldTriggerOneTime) {
+  feature_list_.InitAndEnableFeature(kIOSOneTimeDefaultBrowserNotification);
+  SetFalseChromeLikelyDefaultBrowser();
+  RecordDefaultBrowserPromoLastAction(IOSDefaultBrowserPromoAction::kCancel);
+  EXPECT_CALL(
+      *mock_tracker_,
+      WouldTriggerHelpUI(testing::Ref(
+          feature_engagement::kIPHiOSOneTimeDefaultBrowserNotificationFeature)))
+      .WillOnce(testing::Return(true));
   EXPECT_TRUE(
       criteria_->ShouldSendNotification(TipsNotificationType::kDefaultBrowser));
 }
@@ -329,7 +379,7 @@ TEST_F(TipsNotificationCriteriaTest,
 // has already made a choice.
 TEST_F(TipsNotificationCriteriaTest,
        TestShouldSendOmniboxPosition_ShouldNotSend) {
-  GetLocalState()->SetBoolean(prefs::kBottomOmnibox, true);
+  GetLocalState()->SetBoolean(omnibox::kIsOmniboxInBottomPosition, true);
   EXPECT_FALSE(criteria_->ShouldSendNotification(
       TipsNotificationType::kOmniboxPosition));
 }
@@ -352,7 +402,7 @@ TEST_F(TipsNotificationCriteriaTest,
   if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_TABLET) {
     GTEST_SKIP() << "Test is running on a phone, skipping.";
   }
-  GetLocalState()->SetBoolean(prefs::kBottomOmnibox, false);
+  GetLocalState()->SetBoolean(omnibox::kIsOmniboxInBottomPosition, false);
   EXPECT_FALSE(criteria_->ShouldSendNotification(
       TipsNotificationType::kOmniboxPosition));
 }
@@ -478,4 +528,45 @@ TEST_F(TipsNotificationCriteriaTest, TestShouldSendLensOverlay_ShouldSend) {
                            base::Time::Now() - base::Days(31));
   EXPECT_TRUE(
       criteria_->ShouldSendNotification(TipsNotificationType::kLensOverlay));
+}
+
+#pragma mark - ShouldSendTrustedVaultKeyRetrieval
+
+// Tests that the trusted vault notification should not be sent when the flag is
+// disabled
+TEST_F(TipsNotificationCriteriaTest,
+       TestShouldSendTrustedVaultKeyRetrieval_NotSent_WhenFlagIsDisabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(kIOSTrustedVaultNotification);
+
+  EXPECT_FALSE(criteria_->ShouldSendNotification(
+      TipsNotificationType::kTrustedVaultKeyRetrieval));
+}
+
+// Tests that the trusted vault notification should be sent when the flag is
+// enabled and the trusted vault key is missing
+TEST_F(TipsNotificationCriteriaTest,
+       TestShouldSendTrustedVaultKeyRetrieval_Sent_WhenKeyIsMissing) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(kIOSTrustedVaultNotification);
+  ON_CALL(*(sync_service_mock_->GetMockUserSettings()),
+          IsTrustedVaultKeyRequiredForPreferredDataTypes())
+      .WillByDefault(Return(true));
+
+  EXPECT_TRUE(criteria_->ShouldSendNotification(
+      TipsNotificationType::kTrustedVaultKeyRetrieval));
+}
+
+// Tests that the trusted vault notification should be sent when the flag is
+// enabled and the trusted vault key is available
+TEST_F(TipsNotificationCriteriaTest,
+       TestShouldSendTrustedVaultKeyRetrieval_NotSent_WhenKeyIsAvailable) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(kIOSTrustedVaultNotification);
+  ON_CALL(*(sync_service_mock_->GetMockUserSettings()),
+          IsTrustedVaultKeyRequiredForPreferredDataTypes())
+      .WillByDefault(Return(false));
+
+  EXPECT_FALSE(criteria_->ShouldSendNotification(
+      TipsNotificationType::kTrustedVaultKeyRetrieval));
 }

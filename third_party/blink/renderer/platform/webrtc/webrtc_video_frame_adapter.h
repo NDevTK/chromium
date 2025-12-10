@@ -5,9 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WEBRTC_WEBRTC_VIDEO_FRAME_ADAPTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WEBRTC_WEBRTC_VIDEO_FRAME_ADAPTER_H_
 
-#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
@@ -20,6 +21,7 @@
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "media/video/renderable_gpu_memory_buffer_video_frame_pool.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/webrtc/api/scoped_refptr.h"
@@ -65,7 +67,9 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
   class PLATFORM_EXPORT SharedResources
       : public ThreadSafeRefCounted<SharedResources> {
    public:
-    explicit SharedResources(
+    // Construct a new instance that preemptively requests the raster context
+    // provider.
+    static scoped_refptr<SharedResources> Create(
         media::GpuVideoAcceleratorFactories* gpu_factories);
 
     // Create frames for requested output format and resolution.
@@ -83,8 +87,18 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
         const media::VideoFrame& src_frame,
         media::VideoFrame& dest_frame);
 
+    // Request a RasterContextProvider to be fetched from the main thread.
+    // Completes asynchronously.
+    virtual void RequestRasterContextProvider();
+    // Fetch a RasterContextProvider context provider instance, if available.
+    // Will be nullptr if callback from `RequestRasterContextProvider()` has not
+    // completed.
     virtual scoped_refptr<viz::RasterContextProvider>
     GetRasterContextProvider();
+
+    virtual void ScaleAndMapFrameAsync(
+        scoped_refptr<media::VideoFrame> frame,
+        base::OnceCallback<void(scoped_refptr<media::VideoFrame>)> callback);
 
     // Constructs a VideoFrame from a texture by invoking RasterInterface,
     // which would perform a blocking call to a GPU process.
@@ -108,9 +122,16 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
 
    protected:
     friend class ThreadSafeRefCounted<SharedResources>;
+    template <typename T, typename... Args>
+    friend scoped_refptr<T> base::MakeRefCounted(Args&&... args);
+
+    explicit SharedResources(
+        media::GpuVideoAcceleratorFactories* gpu_factories);
     virtual ~SharedResources();
 
    private:
+    void SetRasterContextProvider(scoped_refptr<viz::RasterContextProvider>);
+
     media::VideoFramePool pool_;
     media::VideoFramePool pool_for_mapped_frames_;
 
@@ -118,9 +139,9 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
         accelerated_frame_pool_;
     bool disable_gmb_frames_ = false;
 
-    base::Lock context_provider_lock_;
+    base::Lock raster_context_provider_lock_;
     scoped_refptr<viz::RasterContextProvider> raster_context_provider_
-        GUARDED_BY(context_provider_lock_);
+        GUARDED_BY(raster_context_provider_lock_);
 
     raw_ptr<media::GpuVideoAcceleratorFactories> gpu_factories_;
 
@@ -137,7 +158,6 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
     ScaledBufferSize(gfx::Rect visible_rect, gfx::Size natural_size);
 
     bool operator==(const ScaledBufferSize& rhs) const;
-    bool operator!=(const ScaledBufferSize& rhs) const;
 
     // Applies crop-and-scale relative to the current natural size.
     ScaledBufferSize CropAndScale(int offset_x,
@@ -228,6 +248,13 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
 
   std::string storage_representation() const override;
 
+  void PrepareMappedBufferAsync(
+      size_t width,
+      size_t height,
+      webrtc::scoped_refptr<webrtc::VideoFrameBuffer::PreparedFrameHandler>
+          handler,
+      size_t frame_identifier) override;
+
  protected:
   ~WebRtcVideoFrameAdapter() override;
 
@@ -250,6 +277,13 @@ class PLATFORM_EXPORT WebRtcVideoFrameAdapter
       const ScaledBufferSize& size);
   AdaptedFrame AdaptBestFrame(const ScaledBufferSize& size) const
       EXCLUSIVE_LOCKS_REQUIRED(adapted_frames_lock_);
+
+  void OnFramePrepared(
+      webrtc::scoped_refptr<webrtc::VideoFrameBuffer::PreparedFrameHandler>
+          handler,
+      size_t frame_identifier,
+      const gfx::Rect& visible_rect,
+      scoped_refptr<media::VideoFrame> converted_frame);
 
   base::Lock adapted_frames_lock_;
   const scoped_refptr<media::VideoFrame> frame_;

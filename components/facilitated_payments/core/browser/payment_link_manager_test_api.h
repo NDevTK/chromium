@@ -6,11 +6,13 @@
 #define COMPONENTS_FACILITATED_PAYMENTS_CORE_BROWSER_PAYMENT_LINK_MANAGER_TEST_API_H_
 
 #include <memory>
+#include <string>
 
 #include "base/check_deref.h"
 #include "base/memory/raw_ref.h"
 #include "components/autofill/core/browser/data_model/payments/ewallet.h"
 #include "components/facilitated_payments/core/browser/facilitated_payments_api_client.h"
+#include "components/facilitated_payments/core/browser/facilitated_payments_app_info_list.h"
 #include "components/facilitated_payments/core/browser/network_api/facilitated_payments_initiate_payment_request_details.h"
 #include "components/facilitated_payments/core/browser/payment_link_manager.h"
 #include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
@@ -41,6 +43,10 @@ class PaymentLinkManagerTestApi {
     payment_link_manager_->is_device_bound_for_logging_ = is_device_bound;
   }
 
+  void set_is_payment_app_available(bool is_payment_app_available) {
+    payment_link_manager_->is_payment_app_available_ = is_payment_app_available;
+  }
+
   bool is_device_bound() {
     return payment_link_manager_->is_device_bound_for_logging_;
   }
@@ -51,6 +57,11 @@ class PaymentLinkManagerTestApi {
 
   void OnEwalletAccountSelected(int64_t selected_instrument_id) {
     payment_link_manager_->OnEwalletAccountSelected(selected_instrument_id);
+  }
+
+  void OnPaymentAppSelected(std::string_view package_name,
+                            std::string_view activity_name) {
+    payment_link_manager_->OnPaymentAppSelected(package_name, activity_name);
   }
 
   void OnRiskDataLoaded(base::TimeTicks start_time,
@@ -83,15 +94,17 @@ class PaymentLinkManagerTestApi {
 
   UiState ui_state() { return payment_link_manager_->ui_state_; }
 
-  void OnUiEvent(UiEvent ui_event_type) {
-    payment_link_manager_->OnUiEvent(ui_event_type);
+  void OnUiScreenEvent(UiEvent ui_event_type) {
+    payment_link_manager_->OnUiScreenEvent(ui_event_type);
   }
 
-  void ShowEwalletPaymentPrompt(
+  void ShowPaymentLinkPrompt(
       base::span<const autofill::Ewallet> ewallet_suggestions,
-      base::OnceCallback<void(int64_t)> on_ewallet_account_selected) {
-    payment_link_manager_->ShowEwalletPaymentPrompt(
-        ewallet_suggestions, std::move(on_ewallet_account_selected));
+      std::unique_ptr<FacilitatedPaymentsAppInfoList> app_suggestions,
+      base::OnceCallback<void(SelectedFopData)> on_fop_selected) {
+    payment_link_manager_->ShowPaymentLinkPrompt(ewallet_suggestions,
+                                                 std::move(app_suggestions),
+                                                 std::move(on_fop_selected));
   }
 
   void ShowProgressScreen() { payment_link_manager_->ShowProgressScreen(); }

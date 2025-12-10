@@ -38,7 +38,7 @@ FirstMeaningfulPaintDetector::FirstMeaningfulPaintDetector(
 }
 
 Document* FirstMeaningfulPaintDetector::GetDocument() {
-  return paint_timing_->GetSupplementable();
+  return paint_timing_->document_;
 }
 
 // Computes "layout significance" (http://goo.gl/rytlPL) of a layout operation.
@@ -159,8 +159,8 @@ void FirstMeaningfulPaintDetector::RegisterNotifyPresentationTime(
     PaintEvent event) {
   ++outstanding_presentation_promise_count_;
   paint_timing_->RegisterNotifyPresentationTime(
-      WTF::BindOnce(&FirstMeaningfulPaintDetector::ReportPresentationTime,
-                    WrapCrossThreadWeakPersistent(this), event));
+      BindOnce(&FirstMeaningfulPaintDetector::ReportPresentationTime,
+               WrapCrossThreadWeakPersistent(this), event));
 }
 
 void FirstMeaningfulPaintDetector::ReportPresentationTime(

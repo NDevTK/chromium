@@ -880,9 +880,8 @@ void TestRunner::Run(const std::vector<std::string>& test_names) {
 
   {
     AutoLock auto_lock(lock_);
-    tests_to_run_ = test_names;
     // Reverse test order to avoid copying the whole vector when removing tests.
-    std::reverse(tests_to_run_.begin(), tests_to_run_.end());
+    tests_to_run_ = {test_names.rbegin(), test_names.rend()};
   }
 
   job_handle_ = base::PostJob(
@@ -1826,10 +1825,6 @@ bool TestLauncher::Init(CommandLine* command_line) {
 
 #if BUILDFLAG(IS_MAC)
   results_tracker_.AddGlobalTag("OS_MAC");
-#endif
-
-#if BUILDFLAG(IS_NACL)
-  results_tracker_.AddGlobalTag("OS_NACL");
 #endif
 
 #if BUILDFLAG(IS_OPENBSD)

@@ -31,6 +31,8 @@ std::string FillingProductToString(FillingProduct filling_product) {
       return "Iban";
     case FillingProduct::kAutocomplete:
       return "Autocomplete";
+    case FillingProduct::kPasskey:
+      return "Passkey";
     case FillingProduct::kPassword:
       return "Password";
     case FillingProduct::kCompose:
@@ -45,6 +47,8 @@ std::string FillingProductToString(FillingProduct filling_product) {
       return "IdentityCredential";
     case FillingProduct::kDataList:
       return "DataList";
+    case FillingProduct::kOneTimePassword:
+      return "OneTimePassword";
   }
   NOTREACHED();
 }
@@ -84,8 +88,6 @@ FillingProduct GetFillingProductFromSuggestionType(SuggestionType type) {
     case SuggestionType::kFreeformFooter:
     case SuggestionType::kPasswordFieldByFieldFilling:
     case SuggestionType::kViewPasswordDetails:
-    case SuggestionType::kWebauthnCredential:
-    case SuggestionType::kWebauthnSignInWithAnotherDevice:
     case SuggestionType::kPendingStateSignin:
       return FillingProduct::kPassword;
     case SuggestionType::kComposeDisable:
@@ -95,11 +97,8 @@ FillingProduct GetFillingProductFromSuggestionType(SuggestionType type) {
     case SuggestionType::kComposeResumeNudge:
     case SuggestionType::kComposeSavedStateNotification:
       return FillingProduct::kCompose;
-    case SuggestionType::kCreateNewPlusAddress:
-    case SuggestionType::kCreateNewPlusAddressInline:
     case SuggestionType::kFillExistingPlusAddress:
     case SuggestionType::kManagePlusAddress:
-    case SuggestionType::kPlusAddressError:
       return FillingProduct::kPlusAddresses;
     case SuggestionType::kDatalistEntry:
       return FillingProduct::kDataList;
@@ -119,6 +118,11 @@ FillingProduct GetFillingProductFromSuggestionType(SuggestionType type) {
       return FillingProduct::kLoyaltyCard;
     case SuggestionType::kIdentityCredential:
       return FillingProduct::kIdentityCredential;
+    case SuggestionType::kOneTimePasswordEntry:
+      return FillingProduct::kOneTimePassword;
+    case SuggestionType::kWebauthnCredential:
+    case SuggestionType::kWebauthnSignInWithAnotherDevice:
+      return FillingProduct::kPasskey;
   }
   NOTREACHED();
 }
@@ -159,20 +163,14 @@ FillingProduct GetFillingProductFromFieldTypeGroup(
       return FillingProduct::kAutofillAi;
     case kLoyaltyCard:
       return FillingProduct::kLoyaltyCard;
+    case kOneTimePassword:
+      return FillingProduct::kOneTimePassword;
   }
   NOTREACHED();
 }
 
-FillingProduct GetPreferredSuggestionFillingProduct(
-    FieldType trigger_field_type,
-    AutofillSuggestionTriggerSource suggestion_trigger_source) {
-  FillingProduct filling_product = GetFillingProductFromFieldTypeGroup(
-      GroupTypeOfFieldType(trigger_field_type));
-  // Autofill suggestions fallbacks to autocomplete if no product could be
-  // inferred from the suggestion context.
-  return filling_product == FillingProduct::kNone
-             ? FillingProduct::kAutocomplete
-             : filling_product;
-}
-
 }  // namespace autofill
+
+#if BUILDFLAG(IS_ANDROID)
+DEFINE_JNI(FillingProductBridge)
+#endif

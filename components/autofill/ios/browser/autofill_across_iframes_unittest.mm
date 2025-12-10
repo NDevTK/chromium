@@ -322,10 +322,9 @@ class TestAutofillManager : public BrowserAutofillManager {
     BrowserAutofillManager::OnFormsSeen(updated_forms, removed_forms);
   }
 
-  void OnDidFillAutofillFormData(const FormData& form,
-                                 base::TimeTicks timestamp) override {
+  void OnDidAutofillForm(const FormData& form) override {
     filled_forms_.push_back(form);
-    BrowserAutofillManager::OnDidFillAutofillFormData(form, timestamp);
+    BrowserAutofillManager::OnDidAutofillForm(form);
   }
 
   void OnFormSubmitted(const FormData& form,
@@ -387,7 +386,7 @@ class TestAutofillManager : public BrowserAutofillManager {
 
   TestAutofillManagerWaiter did_fill_forms_waiter_{
       *this,
-      {AutofillManagerEvent::kDidFillAutofillFormData}};
+      {AutofillManagerEvent::kDidAutofillForm}};
 
   TestAutofillManagerWaiter did_submit_forms_waiter_{
       *this,
@@ -414,8 +413,7 @@ class MockRegistrarObserver : public autofill::ChildFrameRegistrarObserver {
 class AutofillAcrossIframesTest : public AutofillTestWithWebState {
  public:
   AutofillAcrossIframesTest()
-      : AutofillTestWithWebState(std::make_unique<web::FakeWebClient>()),
-        feature_list_(features::kAutofillAcrossIframesIos) {}
+      : AutofillTestWithWebState(std::make_unique<web::FakeWebClient>()) {}
 
   void SetUp() override {
     AutofillTestWithWebState::SetUp();
@@ -460,9 +458,10 @@ class AutofillAcrossIframesTest : public AutofillTestWithWebState {
     NewFrameCatcher* catcher_ptr = &catcher;
     EXPECT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
         kWaitForJSCompletionTimeout, ^bool {
-          return !!catcher_ptr->latest_new_frame();
+          return !!catcher_ptr->latest_new_frame_id();
         }));
-    return catcher_ptr->latest_new_frame();
+    return web_frames_manager()->GetFrameWithId(
+        catcher.latest_new_frame_id().value_or(""));
   }
 
   // Wait for the browser form to be considered as completed (fully constructed)
@@ -647,7 +646,9 @@ class AutofillAcrossIframesTest : public AutofillTestWithWebState {
         GetDriverForFrame(trigger_frame)
             ->ApplyFormAction(mojom::FormActionType::kFill,
                               mojom::ActionPersistence::kFill, fields,
-                              trigger_origin, field_type_map);
+                              FillId::Create(),
+                              /*supports_refill=*/false, trigger_origin,
+                              field_type_map, Section());
 
     // Verify that filled fields correspond to the expected ones by comparing
     // their global ids.
@@ -676,7 +677,6 @@ class AutofillAcrossIframesTest : public AutofillTestWithWebState {
   std::unique_ptr<autofill::TestAutofillClientIOS> autofill_client_;
   AutofillAgent* autofill_agent_;
   autofill::MockPasswordAutofillAgentDelegate delegate_mock_;
-  base::test::ScopedFeatureList feature_list_;
 
   EmbeddedTestServer test_server_;
   std::string main_frame_html_;
@@ -939,6 +939,9 @@ TEST_F(AutofillAcrossIframesTest, SetAndGetParent) {
 }
 
 TEST_F(AutofillAcrossIframesTest, TriggerExtractionInFrame) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillAcrossIframesIosTriggerFormExtraction};
+
   AddInput("text", "name");
   AddIframe("cf1", "<form><input id='address'></form>");
   StartTestServerAndLoad();
@@ -1024,7 +1027,9 @@ TEST_F(AutofillAcrossIframesTest, Fill_MainFrameForm) {
 
   main_frame_driver()->ApplyFormAction(
       mojom::FormActionType::kFill, mojom::ActionPersistence::kFill,
-      form.fields(), form.main_frame_origin(), field_type_map);
+      form.fields(), FillId::Create(),
+      /*supports_refill=*/false, form.main_frame_origin(), field_type_map,
+      Section());
 
   ASSERT_TRUE(main_frame_manager().WaitForFormsFilled(1));
   ASSERT_EQ(main_frame_manager().filled_forms().size(), 1u);
@@ -1089,7 +1094,8 @@ TEST_F(AutofillAcrossIframesTest, Fill_MultiFrameForm) {
   base::flat_set<FieldGlobalId> filled_field_ids =
       main_frame_driver()->ApplyFormAction(
           mojom::FormActionType::kFill, mojom::ActionPersistence::kFill, fields,
-          form.main_frame_origin(), field_type_map);
+          FillId::Create(), /*supports_refill=*/false, form.main_frame_origin(),
+          field_type_map, Section());
 
   EXPECT_THAT(filled_field_ids, UnorderedElementsAre(name_field->global_id(),
                                                      phone_field->global_id()));
@@ -1228,14 +1234,6 @@ TEST_F(AutofillAcrossIframesTest, SubmitMultiFrameForm) {
 // Tests that that XHR submission can be detected when it happens in a child
 // frame.
 TEST_F(AutofillAcrossIframesTest, SubmitMultiFrameForm_XHR) {
-  // Enable the feature for fixing XHR with autofill across iframes. Disable
-  // the form scans triggered by the forest to test the feature in the same
-  // state autofill across iframes is currently in production.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      /*enabled_features=*/{kAutofillFixXhrForXframe},
-      {features::kAutofillAcrossIframesIosTriggerFormExtraction});
-
   const std::u16string kNamePlaceholder = u"Name";
   const std::u16string kFakeName = u"Bob Bobbertson";
   const std::u16string kPhonePlaceholder = u"Phone";
@@ -1512,7 +1510,8 @@ TEST_F(AutofillAcrossIframesTest, UpdateOnFrameDeletion) {
   // only one.
   ASSERT_THAT(main_frame_driver()->ApplyFormAction(
                   mojom::FormActionType::kFill, mojom::ActionPersistence::kFill,
-                  fields, form.main_frame_origin(), field_type_map),
+                  fields, FillId::Create(), /*supports_refill=*/false,
+                  form.main_frame_origin(), field_type_map, Section()),
               SizeIs(1));
 
   // Wait on the fill to be done.
@@ -1812,11 +1811,12 @@ TEST_F(AutofillAcrossIframesTest, FrameDoubleRegistration_Unregister) {
 
   // Verify that the only the phone field will be filled, where the name field
   // in the unregistered frame shouldn't be filled.
-  EXPECT_THAT(
-      main_frame_driver()->ApplyFormAction(
-          mojom::FormActionType::kFill, mojom::ActionPersistence::kFill,
-          fields_to_fill, browser_form.main_frame_origin(), field_type_map),
-      UnorderedElementsAre(phone_field->global_id()));
+  EXPECT_THAT(main_frame_driver()->ApplyFormAction(
+                  mojom::FormActionType::kFill, mojom::ActionPersistence::kFill,
+                  fields_to_fill, FillId::Create(),
+                  /*supports_refill=*/false, browser_form.main_frame_origin(),
+                  field_type_map, Section()),
+              UnorderedElementsAre(phone_field->global_id()));
 
   main_frame_manager().ResetTestState();
 }
@@ -1824,6 +1824,8 @@ TEST_F(AutofillAcrossIframesTest, FrameDoubleRegistration_Unregister) {
 // Tests that forms aren't parsed when their host frame ID differs from the ID
 // of the frame on which forms extraction was requested.
 TEST_F(AutofillAcrossIframesTest, FrameAndFormIdsDontMatch) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillAcrossIframesIosTriggerFormExtraction};
   // Serve form on main frame.
   AddInput("text", "name");
   AddInput("text", "address");
@@ -1840,7 +1842,7 @@ TEST_F(AutofillAcrossIframesTest, FrameAndFormIdsDontMatch) {
     web::WebFrame* main_frame = WaitForMainFrame();
     std::string new_frame_id = main_frame->GetFrameId();
     // Reverse the main frame id to make it a brand new id.
-    std::reverse(new_frame_id.begin(), new_frame_id.end());
+    std::ranges::reverse(new_frame_id);
 
     // Change the frame ID provided by getFrameId() to simulate a different
     // frame receiving the forms extraction request.
@@ -1863,31 +1865,7 @@ TEST_F(AutofillAcrossIframesTest, FrameAndFormIdsDontMatch) {
   ASSERT_EQ(main_frame_manager().seen_forms().size(), 0u);
 }
 
-// Ensure that disabling the feature actually disables the feature.
-TEST_F(AutofillAcrossIframesTest, FeatureDisabled) {
-  base::test::ScopedFeatureList disable;
-  disable.InitAndDisableFeature(features::kAutofillAcrossIframesIos);
 
-  AddIframe("cf1", "child frame 1");
-  AddInput("text", "name");
-  AddIframe("cf2", "child frame 2");
-  AddInput("text", "address");
-  StartTestServerAndLoad();
-
-  ASSERT_TRUE(main_frame_manager().WaitForFormsSeen(1));
-  ASSERT_EQ(main_frame_manager().seen_forms().size(), 1u);
-
-  const FormData& form = main_frame_manager().seen_forms()[0];
-  EXPECT_EQ(form.child_frames().size(), 0u);
-  {
-    // Disable isolated autofill which uses the registrar as well.
-    base::test::ScopedFeatureList disable_isolated_autofill;
-    disable_isolated_autofill.InitAndDisableFeature(
-        kAutofillIsolatedWorldForJavascriptIos);
-    EXPECT_FALSE(
-        autofill::ChildFrameRegistrar::GetOrCreateForWebState(web_state()));
-  }
-}
 
 // Suite of tests that focuses on testing the security of xframe filling.
 //
@@ -1951,10 +1929,9 @@ TEST_F(AutofillAcrossIframesFillSecurityTest, XoriginTrigger) {
                 cc_form_info.all_fields());
 }
 
-// Test that the shared-autofill permission isn't propagated to the nested
-// frames on the main origin that aren't a direct children of the main
-// frame. Fields on the same origin as the trigger field should be filled even
-// if nested.
+// Test that the "autofill" permission isn't propagated to the nested frames on
+// the main origin that aren't a direct children of the main frame. Fields on
+// the same origin as the trigger field should be filled even if nested.
 //
 // Representation of the tested xframe form structure with the expected outcome
 // in [] next to each input field and the trigger field indicated with <--:
@@ -1973,6 +1950,8 @@ TEST_F(AutofillAcrossIframesFillSecurityTest, XoriginTrigger) {
 //       Input: cvc [filled]
 // =======================================
 TEST_F(AutofillAcrossIframesFillSecurityTest, XoriginTrigger_NestedFrame) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillAcrossIframesIosTriggerFormExtraction};
   EmbeddedTestServer test_server1;
   EmbeddedTestServer test_server2;
 

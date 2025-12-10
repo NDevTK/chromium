@@ -37,25 +37,6 @@
 using ::base::Time;
 using ::country_codes::CountryId;
 
-namespace features {
-BASE_FEATURE(kKeywordTableHashVerification,
-             "KeywordTableHashVerification",
-// Only enable this hash checking feature on Windows. This because the value of
-// OSCrypt::IsEncryptionAvailable can vary and is platform specific. E.g.
-// os_crypt_posix.cc historically returned 'false' for IsEncryptionAvailable. On
-// Linux, OSCrypt::IsEncryptionAvailable can return `false` if v11 encryption is
-// not available, but data could still be encrypted with v10 encryption, and the
-// backend can change for various reasons including command line options or
-// desktop window manager.
-#if BUILDFLAG(IS_WIN)
-             base::FEATURE_ENABLED_BY_DEFAULT
-#else
-             base::FEATURE_DISABLED_BY_DEFAULT
-#endif  // BUILDFLAG(IS_WIN)
-);
-
-}  // namespace features
-
 namespace {
 
 // These values are persisted to logs. Entries should not be renumbered and
@@ -78,7 +59,6 @@ enum class HashValidationStatus {
 
 // Keys used in the meta table.
 constexpr char kBuiltinKeywordDataVersion[] = "Builtin Keyword Version";
-constexpr char kBuiltinKeywordMilestone[] = "Builtin Keyword Milestone";
 constexpr char kBuiltinKeywordCountry[] = "Builtin Keyword Country";
 constexpr char kStarterPackKeywordVersion[] = "Starter Pack Keyword Version";
 
@@ -324,10 +304,6 @@ int KeywordTable::GetBuiltinKeywordDataVersion() {
                                                                       : 0;
 }
 
-bool KeywordTable::ClearBuiltinKeywordMilestone() {
-  return meta_table()->DeleteKey(kBuiltinKeywordMilestone);
-}
-
 bool KeywordTable::SetBuiltinKeywordCountry(CountryId country_id) {
   return meta_table()->SetValue(kBuiltinKeywordCountry, country_id.Serialize());
 }
@@ -524,10 +500,12 @@ bool KeywordTable::MigrateToVersion137AddHashColumn() {
                               all_rows_migrated);
   };
 
+  // See the comment in `GetKeywordDataFromStatement` as to why this code is
+  // only enabled for Windows.
+#if BUILDFLAG(IS_WIN)
   // If there is no platform encryption, nothing left to do, since the
   // `url_hash` column will just be NULL.
-  if (!base::FeatureList::IsEnabled(features::kKeywordTableHashVerification) ||
-      !encryptor()->IsEncryptionAvailable()) {
+  if (!encryptor()->IsEncryptionAvailable()) {
     return transaction.Commit();
   }
 
@@ -570,7 +548,7 @@ bool KeywordTable::MigrateToVersion137AddHashColumn() {
       continue;
     }
   }
-
+#endif  // BUILDFLAG(IS_WIN)
   return transaction.Commit();
 }
 
@@ -616,8 +594,8 @@ std::optional<TemplateURLData> KeywordTable::GetKeywordDataFromStatement(
   data.enforced_by_policy = s.ColumnBool(25);
   data.featured_by_policy = s.ColumnBool(26);
 
-  std::optional<base::Value> value(
-      base::JSONReader::Read(s.ColumnStringView(15)));
+  std::optional<base::Value> value(base::JSONReader::Read(
+      s.ColumnStringView(15), base::JSON_PARSE_CHROMIUM_EXTENSIONS));
   if (value && value->is_list()) {
     for (const base::Value& alternate_url : value->GetList()) {
       if (alternate_url.is_string()) {
@@ -634,9 +612,16 @@ std::optional<TemplateURLData> KeywordTable::GetKeywordDataFromStatement(
                                   status);
   };
 
-  if (!base::FeatureList::IsEnabled(features::kKeywordTableHashVerification)) {
-    status = HashValidationStatus::kNotVerifiedFeatureDisabled;
-  } else if (!encryptor()->IsDecryptionAvailable()) {
+// Only enable this hash checking feature on Windows. This because the value of
+// `OSCrypt::IsEncryptionAvailable` (exposed via the `Encryptor`
+// `IsDecryptionAvailable` API) can vary and is platform specific. E.g.
+// os_crypt_posix.cc historically returned 'false' for `IsEncryptionAvailable`.
+// On Linux, `IsEncryptionAvailable` can return `false` if v11 encryption is
+// not available, but data could still be encrypted with v10 encryption, and the
+// backend can change for various reasons including command line options or
+// desktop window manager.
+#if BUILDFLAG(IS_WIN)
+  if (!encryptor()->IsDecryptionAvailable()) {
     status = HashValidationStatus::kNotVerifiedNoCrypto;
   } else {
     const auto hash = encryptor()->DecryptData(s.ColumnBlob(27));
@@ -659,7 +644,9 @@ std::optional<TemplateURLData> KeywordTable::GetKeywordDataFromStatement(
       return std::nullopt;
     }
   }
-
+#else
+  status = HashValidationStatus::kNotVerifiedFeatureDisabled;
+#endif  // BUILDFLAG(IS_WIN)
   return data;
 }
 
@@ -675,8 +662,8 @@ void KeywordTable::BindURLToStatement(const TemplateURLData& data,
   for (const auto& alternate_url : data.alternate_urls) {
     alternate_urls_value.Append(alternate_url);
   }
-  std::string alternate_urls;
-  base::JSONWriter::Write(alternate_urls_value, &alternate_urls);
+  std::string alternate_urls =
+      base::WriteJson(alternate_urls_value).value_or("");
 
   s->BindInt64(id_column, data.id);
   s->BindString16(starting_column, data.short_name());

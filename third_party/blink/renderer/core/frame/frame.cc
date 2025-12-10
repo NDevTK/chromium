@@ -33,6 +33,7 @@
 #include <memory>
 
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
@@ -61,9 +62,9 @@
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
+#include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_error.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
@@ -648,13 +649,12 @@ base::OnceClosure Frame::ScheduleFormSubmission(
   form_submission->NotifyInspector();
   form_submit_navigation_task_ = PostCancellableTask(
       *scheduler->GetTaskRunner(TaskType::kDOMManipulation), FROM_HERE,
-      WTF::BindOnce(&FormSubmission::Navigate,
-                    WrapPersistent(form_submission)));
+      BindOnce(&FormSubmission::Navigate, WrapPersistent(form_submission)));
   form_submit_navigation_task_version_++;
 
-  return WTF::BindOnce(&Frame::CancelFormSubmissionWithVersion,
-                       WrapWeakPersistent(this),
-                       form_submit_navigation_task_version_);
+  return BindOnce(&Frame::CancelFormSubmissionWithVersion,
+                  WrapWeakPersistent(this),
+                  form_submit_navigation_task_version_);
 }
 
 void Frame::CancelFormSubmission() {
@@ -671,11 +671,15 @@ bool Frame::IsFormSubmissionPending() {
 }
 
 void Frame::FocusPage(LocalFrame* originating_frame) {
-  // We only allow focus to move to the |frame|'s page when the request comes
-  // from a user gesture. (See https://bugs.webkit.org/show_bug.cgi?id=33389.)
+  // To prevent unexpected focus stealing, only allow the focus to move to the
+  // |originating_frame|'s page if the request is initiated by a user
+  // gesture (has transient user activation) or if the |originating_frame|
+  // is specially permitted to change focus without user interaction.
   if (originating_frame &&
-      LocalFrame::HasTransientUserActivation(originating_frame)) {
-    // Ask the broswer process to focus the page.
+      (LocalFrame::HasTransientUserActivation(originating_frame) ||
+       originating_frame->GetSettings()
+           ->GetAllowWindowFocusWithoutUserGesture())) {
+    // Ask the browser process to focus the page.
     GetPage()->GetChromeClient().FocusPage();
 
     // Tattle on the frame that called |window.focus()|.

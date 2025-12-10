@@ -8,6 +8,8 @@ import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -16,6 +18,7 @@ import static org.mockito.Mockito.verify;
 import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 import static org.chromium.base.test.util.CriteriaHelper.pollUiThread;
 import static org.chromium.chrome.browser.autofill.AutofillTestHelper.singleMouseClickView;
+import static org.chromium.ui.test.util.DeviceRestriction.RESTRICTION_TYPE_NON_AUTO;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -43,6 +46,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.ScalableTimeout;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
@@ -51,7 +55,9 @@ import org.chromium.chrome.browser.touch_to_fill.common.BottomSheetFocusHelper;
 import org.chromium.chrome.browser.touch_to_fill.data.Credential;
 import org.chromium.chrome.browser.touch_to_fill.data.WebauthnCredential;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
@@ -86,37 +92,41 @@ public class TouchToFillIntegrationTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private BottomSheetController mBottomSheetController;
+    private WebPageStation mPage;
 
     @Before
     public void setUp() throws InterruptedException {
         sExampleUrl = new GURL("https://www.example.xyz");
         // TODO(crbug.com/40549331): Migrate Credential to GURL.
         sAna =
-                new Credential(
-                        "Ana",
-                        "S3cr3t",
-                        "Ana",
-                        sExampleUrl.getSpec(),
-                        "example.xyz",
-                        GetLoginMatchType.EXACT,
-                        0);
+                new Credential.Builder()
+                        .setUsername("Ana")
+                        .setPassword("S3cr3t")
+                        .setFormattedUsername("Ana")
+                        .setOriginUrl(sExampleUrl.getSpec())
+                        .setDisplayName("example.xyz")
+                        .setMatchType(GetLoginMatchType.EXACT)
+                        .setLastUsedMsSinceEpoch(0)
+                        .build();
         sBob =
-                new Credential(
-                        "Bob",
-                        "*****",
-                        "Bob",
-                        MOBILE_URL,
-                        "m.example.xyz",
-                        GetLoginMatchType.PSL,
-                        0);
+                new Credential.Builder()
+                        .setUsername("Bob")
+                        .setPassword("*****")
+                        .setFormattedUsername("Bob")
+                        .setOriginUrl(MOBILE_URL)
+                        .setDisplayName("m.example.xyz")
+                        .setMatchType(GetLoginMatchType.PSL)
+                        .setLastUsedMsSinceEpoch(0)
+                        .build();
         sCam =
                 new WebauthnCredential(
                         "example.net", new byte[] {1}, new byte[] {2}, "cam@example.net");
 
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
         runOnUiThreadBlocking(
                 () -> {
                     mTouchToFill = new TouchToFillCoordinator();
@@ -141,15 +151,13 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Collections.singletonList(sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
         BottomSheetTestSupport.waitForOpen(mBottomSheetController);
-        assert singleMouseClickView(getCredentials());
+        assertThat(singleMouseClickView(getCredentials())).isTrue();
     }
 
     @Test
@@ -160,10 +168,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Collections.singletonList(sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
@@ -184,10 +190,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.singletonList(sCam),
-                            Collections.singletonList(sAna),
+                            Arrays.asList(sCam, sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
@@ -208,10 +212,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Collections.singletonList(sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
@@ -232,10 +234,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Arrays.asList(sAna, sBob),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
@@ -255,10 +255,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Collections.singletonList(sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
@@ -281,16 +279,15 @@ public class TouchToFillIntegrationTest {
 
     @Test
     @MediumTest
+    @Restriction({RESTRICTION_TYPE_NON_AUTO}) // Flaky test: https://crbug.com/465185902
     public void testClickingHybridButtonTriggersCallback() {
         runOnUiThreadBlocking(
                 () -> {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Collections.singletonList(sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ true,
                             /* showCredManEntry= */ false);
                 });
@@ -397,10 +394,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Arrays.asList(sAna, sBob),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ false);
                 });
@@ -428,10 +423,8 @@ public class TouchToFillIntegrationTest {
                     mTouchToFill.showCredentials(
                             sExampleUrl,
                             true,
-                            Collections.emptyList(),
                             Collections.singletonList(sAna),
                             /* triggerSubmission= */ false,
-                            /* managePasskeysHidesPasswords= */ false,
                             /* showHybridPasskeyOption= */ false,
                             /* showCredManEntry= */ true);
                 });

@@ -32,8 +32,8 @@ namespace {
 
 // TODO(mamir): remove those and adjust the code accordingly. Similarly in
 // tests.
-const char kNigoriStorageKey[] = "NigoriStorageKey";
-const char kRawNigoriClientTagHash[] = "NigoriClientTagHash";
+constexpr char kNigoriStorageKey[] = "NigoriStorageKey";
+constexpr char kRawNigoriClientTagHash[] = "NigoriClientTagHash";
 
 }  // namespace
 
@@ -345,6 +345,7 @@ void NigoriDataTypeProcessor::ModelReadyToSync(
   }
   if (!entity_) {
     // First time syncing or persisted data are corrupted; initialize metadata.
+    data_type_state_ = sync_pb::DataTypeState();
     data_type_state_.mutable_progress_marker()->set_data_type_id(
         sync_pb::EntitySpecifics::kNigoriFieldNumber);
   }
@@ -508,7 +509,7 @@ void NigoriDataTypeProcessor::ClearMetadataIfStopped() {
 void NigoriDataTypeProcessor::ReportBridgeErrorForTest() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(!model_error_.has_value());
-  ReportError(ModelError(FROM_HERE, "Reported error for test"));
+  ReportError({FROM_HERE, ModelError::Type::kNigoriInvalidSpecifics});
 }
 
 }  // namespace syncer

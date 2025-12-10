@@ -6,11 +6,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TIMING_CONTAINER_TIMING_H_
 
 #include "base/time/time.h"
+#include "cc/base/region.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/gfx/geometry/rect_f.h"
 
@@ -19,11 +19,8 @@ namespace blink {
 // ContainerTiming is responsible for aggregating the text and image element
 // timing events for a given window.
 class CORE_EXPORT ContainerTiming final
-    : public GarbageCollected<ContainerTiming>,
-      public Supplement<LocalDOMWindow> {
+    : public GarbageCollected<ContainerTiming> {
  public:
-  static constexpr const char kSupplementName[] = "ContainerTiming";
-
   explicit ContainerTiming(LocalDOMWindow&);
   ContainerTiming(const ContainerTiming&) = delete;
   ContainerTiming& operator=(const ContainerTiming&) = delete;
@@ -36,6 +33,8 @@ class CORE_EXPORT ContainerTiming final
   }
 
   bool CanReportToContainerTiming() const;
+  void MaybeUpdateContainerRootIdentifier(Element* element,
+                                          const AtomicString& new_value);
 
   void EmitPerformanceEntries();
 
@@ -43,7 +42,7 @@ class CORE_EXPORT ContainerTiming final
                         Element* element,
                         const gfx::RectF& intersection_rect);
 
-  void Trace(Visitor* visitor) const override;
+  void Trace(Visitor* visitor) const;
 
  private:
   static Element* GetContainerRoot(Element*);
@@ -55,14 +54,16 @@ class CORE_EXPORT ContainerTiming final
     Record(const Record&) = delete;
     Record& operator=(const Record&) = delete;
 
+    const AtomicString& identifier() const { return identifier_; }
+
     void MaybeUpdateLastNewPaintedArea(
         ContainerTiming* container_timing,
         const DOMPaintTimingInfo& paint_timing_info,
         Element* container_root,
         Element* element,
-        const gfx::RectF& intersection_rect);
+        const gfx::Rect& enclosing_rect);
 
-    void MaybeEmitPerformanceEntry(WindowPerformance*);
+    void MaybeEmitPerformanceEntry(WindowPerformance*, Element* container_root);
 
     void Trace(Visitor*) const;
 

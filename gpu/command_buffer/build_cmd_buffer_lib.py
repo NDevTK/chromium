@@ -1975,20 +1975,7 @@ TEST_P(%(test_name)s, %(name)sValidArgs) {
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
 """
-      if func.GetInfo("gen_func"):
-          valid_test += """
-TEST_P(%(test_name)s, %(name)sValidArgsNewId) {
-  EXPECT_CALL(*gl_, %(gl_func_name)s(kNewServiceId));
-  EXPECT_CALL(*gl_, %(gl_gen_func_name)s(1, _))
-     .WillOnce(SetArgPointee<1>(kNewServiceId));
-  SpecializedSetup<cmds::%(name)s, 0>(true);
-  cmds::%(name)s cmd;
-  cmd.Init(kNewClientId);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  EXPECT_TRUE(Get%(resource_type)s(kNewClientId) != nullptr);
-}
-"""
+
       self.WriteValidUnitTest(func, f, valid_test, {
           'resource_type': func.GetOriginalArgs()[0].resource_type,
           'gl_gen_func_name': func.GetInfo("gen_func"),
@@ -2002,21 +1989,6 @@ TEST_P(%(test_name)s, %(name)sValidArgs) {
   cmd.Init(%(args)s);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
-}
-"""
-      if func.GetInfo("gen_func"):
-        valid_test += """
-TEST_P(%(test_name)s, %(name)sValidArgsNewId) {
-  EXPECT_CALL(*gl_,
-              %(gl_func_name)s(%(gl_args_with_new_id)s));
-  EXPECT_CALL(*gl_, %(gl_gen_func_name)s(1, _))
-     .WillOnce(SetArgPointee<1>(kNewServiceId));
-  SpecializedSetup<cmds::%(name)s, 0>(true);
-  cmds::%(name)s cmd;
-  cmd.Init(%(args_with_new_id)s);
-  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
-  EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  EXPECT_TRUE(Get%(resource_type)s(kNewClientId) != nullptr);
 }
 """
 
@@ -2190,7 +2162,7 @@ class GENnHandler(TypeHandler):
     else:
       alloc_code = ("""\
       GetIdHandler(SharedIdNamespaces::k%(resource_types)s)->
-      MakeIds(this, 0, %(args)s);""" % args)
+      MakeIds(this, %(args)s);""" % args)
     args['alloc_code'] = alloc_code
 
     code = """\
@@ -2199,11 +2171,6 @@ class GENnHandler(TypeHandler):
     %(name)sHelper(%(args)s);
     helper_->%(name)sImmediate(%(args)s);
     """
-    if not not_shared:
-      code += """\
-      if (share_group_->bind_generates_resource())
-      helper_->CommandBufferHelper::Flush();
-      """
     code += """\
     %(log_code)s
     CheckGLError();
@@ -2510,7 +2477,7 @@ TEST_P(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
       else:
         f.write(
             "  GetIdHandler(SharedIdNamespaces::kProgramsAndShaders)->\n")
-      f.write("      MakeIds(this, 0, 1, &client_id);\n")
+      f.write("      MakeIds(this, 1, &client_id);\n")
     f.write("  helper_->%s(%s);\n" %
                (func.name, func.MakeCmdArgString("")))
     f.write('  GPU_CLIENT_LOG("returned " << client_id);\n')
@@ -7220,7 +7187,7 @@ extern const NameToFunc g_gles2_function_table[] = {
           continue
         if named_type.GetValidValues():
           code = """%(pre)s%(name)s(
-            valid_%(name)s_table, std::size(valid_%(name)s_table))"""
+            valid_%(name)s_table)"""
         else:
           code = "%(pre)s%(name)s()"
         f.write(code % {
@@ -7243,14 +7210,14 @@ extern const NameToFunc g_gles2_function_table[] = {
             continue
           if named_type.GetDeprecatedValuesES3():
             code = """  %(name)s.RemoveValues(
-      deprecated_%(name)s_table_es3, std::size(deprecated_%(name)s_table_es3));
+      deprecated_%(name)s_table_es3);
 """
             f.write(code % {
               'name': ToUnderscore(name),
             })
           if named_type.GetValidValuesES3():
             code = """  %(name)s.AddValues(
-      valid_%(name)s_table_es3, std::size(valid_%(name)s_table_es3));
+      valid_%(name)s_table_es3);
 """
             f.write(code % {
               'name': ToUnderscore(name),

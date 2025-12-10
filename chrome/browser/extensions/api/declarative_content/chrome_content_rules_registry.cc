@@ -17,8 +17,11 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/rules_registry_ids.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/declarative/declarative_constants.h"
 #include "extensions/common/extension_id.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -131,6 +134,7 @@ void ChromeContentRulesRegistry::DidFinishNavigation(
 void ChromeContentRulesRegistry::WebContentsDestroyed(
     content::WebContents* web_contents) {
   active_rules_.erase(web_contents);
+  evaluation_pending_.erase(web_contents);
 }
 
 void ChromeContentRulesRegistry::OnWatchedPageChanged(

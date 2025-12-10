@@ -4,9 +4,13 @@
 
 #include "chrome/browser/touch_to_fill/autofill/android/touch_to_fill_delegate_android_impl.h"
 
+#include <optional>
+
+#include "base/functional/callback.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
@@ -19,6 +23,7 @@
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/foundations/test_autofill_driver.h"
 #include "components/autofill/core/browser/foundations/test_browser_autofill_manager.h"
+#include "components/autofill/core/browser/foundations/with_test_autofill_client_driver_manager.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/suggestions/payments/payments_suggestion_generator.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
@@ -192,11 +197,26 @@ class MockBrowserAutofillManager : public TestBrowserAutofillManager {
   MOCK_METHOD(AutofillField*,
               GetAutofillField,
               (const FormData& form, const FormFieldData& field));
+  MOCK_METHOD(void,
+              LogAndRecordLoyaltyCardFill,
+              (const LoyaltyCard&, const FormGlobalId&, const FieldGlobalId&),
+              (override));
 };
 
-class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
+class TouchToFillDelegateAndroidImplUnitTest
+    : public testing::Test,
+      public WithTestAutofillClientDriverManager<
+          NiceMock<MockAutofillClient>,
+          TestAutofillDriver,
+          NiceMock<MockBrowserAutofillManager>,
+          MockPaymentsAutofillClient> {
  public:
   TouchToFillDelegateAndroidImplUnitTest() {
+    features_.InitWithFeatures(
+        {features::kAutofillEnableLoyaltyCardsFilling,
+         features::kAutofillEnableEmailOrLoyaltyCardsFilling,
+         features::kAutofillEnableBuyNowPayLaterSyncing},
+        {});
     // Some date after in the 2000s because Autofill doesn't allow expiration
     // dates before 2000.
     task_environment_.AdvanceClock(base::Days(365 * 50));
@@ -204,26 +224,19 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
 
  protected:
   void SetUp() override {
-    autofill_client_.SetPrefs(test::PrefServiceForTesting());
-    autofill_client_.GetPersonalDataManager().SetPrefService(
-        autofill_client_.GetPrefs());
-    autofill_driver_ = std::make_unique<TestAutofillDriver>(&autofill_client_);
-    browser_autofill_manager_ =
-        std::make_unique<NiceMock<MockBrowserAutofillManager>>(
-            autofill_driver_.get());
+    InitAutofillClient();
+    CreateAutofillDriver();
 
     auto touch_to_fill_delegate =
-        std::make_unique<TouchToFillDelegateAndroidImpl>(
-            browser_autofill_manager_.get());
+        std::make_unique<TouchToFillDelegateAndroidImpl>(&autofill_manager());
     touch_to_fill_delegate_ = touch_to_fill_delegate.get();
     base::WeakPtr<TouchToFillDelegateAndroidImpl> touch_to_fill_delegate_weak =
         touch_to_fill_delegate->GetWeakPtr();
-    browser_autofill_manager_->set_touch_to_fill_delegate(
+    autofill_manager().set_touch_to_fill_delegate(
         std::move(touch_to_fill_delegate));
 
     // Default setup for successful `TryToShowTouchToFill`.
-    ON_CALL(*browser_autofill_manager_, CanShowAutofillUi)
-        .WillByDefault(Return(true));
+    ON_CALL(autofill_manager(), CanShowAutofillUi).WillByDefault(Return(true));
     ON_CALL(payments_autofill_client(), ShowTouchToFillCreditCard)
         .WillByDefault(Return(true));
     ON_CALL(payments_autofill_client(), ShowTouchToFillIban)
@@ -237,12 +250,13 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
     ON_CALL(payments_autofill_client(), HideTouchToFillPaymentMethod)
         .WillByDefault([delegate = touch_to_fill_delegate_weak] {
           if (delegate) {
-            delegate->OnDismissed(/*dismissed_by_user=*/false);
+            delegate->OnDismissed(/*dismissed_by_user=*/false,
+                                  /*should_reshow=*/false);
           }
         });
     autofill::MockFastCheckoutClient* fast_checkout_client =
         static_cast<autofill::MockFastCheckoutClient*>(
-            autofill_client_.GetFastCheckoutClient());
+            autofill_client().GetFastCheckoutClient());
     ON_CALL(*fast_checkout_client, IsNotShownYet)
         .WillByDefault(testing::Return(true));
   }
@@ -252,7 +266,8 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
     form_ = test::CreateTestCreditCardFormData(/*is_https=*/true,
                                                /*use_month_type=*/false);
     test_api(form_).field(0).set_is_focusable(true);
-    autofill_client_.GetPersonalDataManager()
+    autofill_client()
+        .GetPersonalDataManager()
         .payments_data_manager()
         .AddCreditCard(card);
   }
@@ -261,7 +276,8 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
   std::string ConfigureForIbans() {
     Iban iban;
     iban.set_value(std::u16string(test::kIbanValue16));
-    std::string guid = autofill_client_.GetPersonalDataManager()
+    std::string guid = autofill_client()
+                           .GetPersonalDataManager()
                            .test_payments_data_manager()
                            .AddAsLocalIban(std::move(iban));
     form_ = test::CreateTestIbanFormData(/*value=*/"");
@@ -273,18 +289,18 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
     LoyaltyCard loyalty_card = test::CreateLoyaltyCard();
     // The touch-to-fill bottom sheet is shown only if the user has at least
     // 1 saved loyalty card.
-    test_api(*autofill_client_.GetValuablesDataManager())
+    test_api(*autofill_client().GetValuablesDataManager())
         .AddLoyaltyCard(loyalty_card);
     form_ = test::CreateTestLoyaltyCardFormData();
     test_api(form_).field(0).set_is_focusable(true);
     // The current URL matches the loyalty card merchant domain.
-    autofill_client_.set_last_committed_primary_main_frame_url(
+    autofill_client().set_last_committed_primary_main_frame_url(
         GURL("https://domain.example"));
   }
 
   void OnFormsSeen() {
-    if (!browser_autofill_manager_->FindCachedFormById(form_.global_id())) {
-      browser_autofill_manager_->OnFormsSeen({form_}, {});
+    if (!autofill_manager().FindCachedFormById(form_.global_id())) {
+      autofill_manager().OnFormsSeen({form_}, {});
     }
   }
 
@@ -296,7 +312,7 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
   }
 
   void TryToShowTouchToFill(bool expected_success) {
-    EXPECT_CALL(autofill_client_,
+    EXPECT_CALL(autofill_client(),
                 HideAutofillSuggestions(
                     SuggestionHidingReason::kOverlappingWithTouchToFillSurface))
         .Times(expected_success ? 1 : 0);
@@ -308,24 +324,89 @@ class TouchToFillDelegateAndroidImplUnitTest : public testing::Test {
               touch_to_fill_delegate_->IsShowingTouchToFill());
   }
 
-  MockPaymentsAutofillClient& payments_autofill_client() {
-    return *static_cast<MockPaymentsAutofillClient*>(
-        autofill_client_.GetPaymentsAutofillClient());
-  }
-
   FormData form_;
 
   base::test::TaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   test::AutofillUnitTestEnvironment autofill_test_environment_;
-  base::test::ScopedFeatureList features_{
-      features::kAutofillEnableLoyaltyCardsFilling};
-  NiceMock<MockAutofillClient> autofill_client_;
-  std::unique_ptr<TestAutofillDriver> autofill_driver_;
-  std::unique_ptr<MockBrowserAutofillManager> browser_autofill_manager_;
+  base::test::ScopedFeatureList features_;
   raw_ptr<TouchToFillDelegateAndroidImpl> touch_to_fill_delegate_;
   base::HistogramTester histogram_tester_;
 };
+
+TEST_F(TouchToFillDelegateAndroidImplUnitTest,
+       BnplSuggestionSelected_WithValidAmount) {
+  std::optional<int64_t> extracted_amount = 12345;
+  EXPECT_CALL(*autofill_manager().GetPaymentsBnplManager(),
+              OnDidAcceptBnplSuggestion(extracted_amount, _));
+
+  touch_to_fill_delegate_->BnplSuggestionSelected(extracted_amount);
+}
+
+TEST_F(TouchToFillDelegateAndroidImplUnitTest,
+       BnplSuggestionSelected_WithNullAmount) {
+  EXPECT_CALL(*autofill_manager().GetPaymentsBnplManager(),
+              OnDidAcceptBnplSuggestion(testing::Eq(std::nullopt), _));
+
+  touch_to_fill_delegate_->BnplSuggestionSelected(
+      /*extracted_amount=*/std::nullopt);
+}
+
+TEST_F(TouchToFillDelegateAndroidImplUnitTest,
+       BnplSuggestionSelected_CallbackFillsForm) {
+  CreditCard test_card = test::GetCreditCard();
+
+  ConfigureForCreditCards(test_card);
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  base::OnceCallback<void(const CreditCard&)> captured_callback;
+  EXPECT_CALL(*autofill_manager().GetPaymentsBnplManager(),
+              OnDidAcceptBnplSuggestion(_, _))
+      .WillOnce([&](std::optional<uint64_t> amount,
+                    base::OnceCallback<void(const CreditCard&)> callback) {
+        captured_callback = std::move(callback);
+      });
+
+  touch_to_fill_delegate_->BnplSuggestionSelected(
+      /*extracted_amount=*/12345);
+  ASSERT_TRUE(captured_callback);
+
+  EXPECT_CALL(
+      autofill_manager(),
+      FillOrPreviewForm(
+          mojom::ActionPersistence::kFill, form_, form_.fields()[0].global_id(),
+          ::testing::VariantWith<const CreditCard*>(Pointee(test_card)),
+          AutofillTriggerSource::kTouchToFillCreditCard));
+
+  // Run the captured callback, simulating a successful VCN fetch.
+  std::move(captured_callback).Run(test_card);
+}
+
+TEST_F(TouchToFillDelegateAndroidImplUnitTest,
+       BnplSuggestionSelected_CallbackDoesNothingAfterDelegateReset) {
+  CreditCard test_card = test::GetCreditCard();
+
+  ConfigureForCreditCards(test_card);
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  base::OnceCallback<void(const CreditCard&)> captured_callback;
+  EXPECT_CALL(*autofill_manager().GetPaymentsBnplManager(),
+              OnDidAcceptBnplSuggestion(_, _))
+      .WillOnce([&](std::optional<uint64_t> amount,
+                    base::OnceCallback<void(const CreditCard&)> callback) {
+        captured_callback = std::move(callback);
+      });
+
+  touch_to_fill_delegate_->BnplSuggestionSelected(
+      /*extracted_amount=*/12345);
+  ASSERT_TRUE(captured_callback);
+
+  // Expect FillOrPreviewForm is not called after delegate is reset.
+  autofill_manager().set_touch_to_fill_delegate(nullptr);
+  EXPECT_CALL(autofill_manager(), FillOrPreviewForm).Times(0);
+
+  std::move(captured_callback).Run(test_card);
+}
 
 // Params of TouchToFillDelegateAndroidImplPaymentMethodUnitTest:
 // -- FillingProduct: Indicates the Autofill data type to test. Supported data
@@ -382,7 +463,7 @@ TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
        TryToShowTouchToFillFailsForInvalidForm) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
 
-  browser_autofill_manager_->ClearFormStructures();
+  test_api(autofill_manager()).ClearFormStructures();
 
   EXPECT_EQ(false, touch_to_fill_delegate_->TryToShowTouchToFill(
                        form_, form_.fields()[0]));
@@ -440,28 +521,110 @@ TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
        OnDismissSetsTouchToFillToNotShowingState) {
   TryToShowTouchToFill(/*expected_success=*/true);
-  touch_to_fill_delegate_->OnDismissed(false);
 
-  EXPECT_EQ(touch_to_fill_delegate_->IsShowingTouchToFill(), false);
+  EXPECT_TRUE(touch_to_fill_delegate_->IsShowingTouchToFill());
+
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/false,
+                                       /*should_reshow=*/false);
+
+  EXPECT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
 }
 
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
-       TryToShowTouchToFillFailsIfShownBefore) {
+       OnDismissedRunsCancelCallbackWhenDismissedByUser) {
   TryToShowTouchToFill(/*expected_success=*/true);
-  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true);
+  base::MockCallback<base::OnceClosure> mock_cancel_callback;
+  touch_to_fill_delegate_->SetCancelCallback(mock_cancel_callback.Get());
 
-  EXPECT_CALL(autofill_client_,
+  EXPECT_CALL(mock_cancel_callback, Run());
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true,
+                                       /*should_reshow=*/false);
+}
+
+TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
+       OnDismissedDoesNotRunCancelCallbackWhenDismissedBySystem) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+  base::MockCallback<base::OnceClosure> mock_cancel_callback;
+  touch_to_fill_delegate_->SetCancelCallback(mock_cancel_callback.Get());
+
+  EXPECT_CALL(mock_cancel_callback, Run()).Times(0);
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/false,
+                                       /*should_reshow=*/false);
+}
+
+TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
+       TryToShowTouchToFillFailsIfShownBeforeAndShouldNotReshow_FlagOff) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  ASSERT_TRUE(touch_to_fill_delegate_->IsShowingTouchToFill());
+
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true,
+                                       /*should_reshow=*/false);
+
+  EXPECT_CALL(autofill_client(),
               HideAutofillSuggestions(
                   SuggestionHidingReason::kOverlappingWithTouchToFillSurface))
       .Times(0);
   TryToShowTouchToFill(/*expected_success=*/false);
+
+  ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
+}
+
+TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
+       TryToShowTouchToFillFailsIfShownBeforeAndShouldReshow_FlagOff) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  ASSERT_TRUE(touch_to_fill_delegate_->IsShowingTouchToFill());
+
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true,
+                                       /*should_reshow=*/true);
+
+  TryToShowTouchToFill(/*expected_success=*/false);
+
+  ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
+}
+
+TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
+       TryToShowTouchToFillShownIfShownBeforeAndShouldReshow_FlagOn) {
+  base::test::ScopedFeatureList feature;
+  feature.InitAndEnableFeature(
+      features::kAutofillEnableTouchToFillReshowForBnpl);
+
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  ASSERT_TRUE(touch_to_fill_delegate_->IsShowingTouchToFill());
+
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true,
+                                       /*should_reshow=*/true);
+
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  ASSERT_TRUE(touch_to_fill_delegate_->IsShowingTouchToFill());
+}
+
+TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
+       TryToShowTouchToFillFailsIfShownBeforeAndShouldNotReshow_FlagOn) {
+  base::test::ScopedFeatureList feature;
+  feature.InitAndEnableFeature(
+      features::kAutofillEnableTouchToFillReshowForBnpl);
+
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  ASSERT_TRUE(touch_to_fill_delegate_->IsShowingTouchToFill());
+
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true,
+                                       /*should_reshow=*/false);
+
+  TryToShowTouchToFill(/*expected_success=*/false);
+
+  ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
 }
 
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
        TryToShowTouchToFillFailsIfShownCurrently) {
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  EXPECT_CALL(autofill_client_,
+  EXPECT_CALL(autofill_client(),
               HideAutofillSuggestions(
                   SuggestionHidingReason::kOverlappingWithTouchToFillSurface))
       .Times(0);
@@ -473,7 +636,7 @@ TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
        TryToShowTouchToFillSucceeds) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
 
-  EXPECT_CALL(*browser_autofill_manager_, DidShowSuggestions);
+  EXPECT_CALL(autofill_manager(), DidShowSuggestions);
   TryToShowTouchToFill(/*expected_success=*/true);
   histogram_tester_.ExpectUniqueSample(
       GetTriggerOutcomeHistogramName(),
@@ -481,14 +644,15 @@ TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
 }
 
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
-       TryToShowTouchToFillFailsIfWasShown) {
+       TryToShowTouchToFillFailsIfWasShownAndShouldNotBeShownAgain) {
   TryToShowTouchToFill(/*expected_success=*/true);
   touch_to_fill_delegate_->HideTouchToFill();
 
   TryToShowTouchToFill(/*expected_success=*/false);
-  histogram_tester_.ExpectBucketCount(
-      GetTriggerOutcomeHistogramName(),
-      TouchToFillPaymentMethodTriggerOutcome::kShownBefore, 1);
+  histogram_tester_.ExpectBucketCount(GetTriggerOutcomeHistogramName(),
+                                      TouchToFillPaymentMethodTriggerOutcome::
+                                          kShownBeforeAndShouldNotBeShownAgain,
+                                      1);
 }
 
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
@@ -516,10 +680,11 @@ TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
        TryToShowTouchToFillFailsIfNoDataOnFile) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearAllLocalData();
-  test_api(*autofill_client_.GetValuablesDataManager()).ClearLoyaltyCards();
+  test_api(*autofill_client().GetValuablesDataManager()).ClearLoyaltyCards();
 
   TryToShowTouchToFill(/*expected_success=*/false);
   histogram_tester_.ExpectUniqueSample(
@@ -530,7 +695,7 @@ TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
 TEST_P(TouchToFillDelegateAndroidImplPaymentMethodUnitTest,
        TryToShowTouchToFillFailsIfCanNotShowUi) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
-  EXPECT_CALL(*browser_autofill_manager_, CanShowAutofillUi)
+  EXPECT_CALL(autofill_manager(), CanShowAutofillUi)
       .WillRepeatedly(Return(false));
 
   TryToShowTouchToFill(/*expected_success=*/false);
@@ -579,13 +744,13 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillFailsForPrefilledCardNumber) {
   // Force the form to be parsed here to test the case, when form values are
   // changed after the form is added to the cache.
-  browser_autofill_manager_->OnFormsSeen({form_}, {});
+  autofill_manager().OnFormsSeen({form_}, {});
   // Set credit card value.
   // TODO(crbug.com/40900766): Retrieve the card number field by name here.
   ASSERT_EQ(form_.fields()[1].name(), u"cardnumber");
   test_api(form_).field(1).set_value(u"411111111111");
   // Force a cache update so it knows about the field edit.
-  browser_autofill_manager_->OnFormsSeen({form_}, {});
+  autofill_manager().OnFormsSeen({form_}, {});
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
 
   TryToShowTouchToFill(/*expected_success=*/false);
@@ -599,7 +764,7 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillSucceedsForPrefilledYear) {
   // Force the form to be parsed here to test the case, when form values are
   // changed after the form is added to the cache.
-  browser_autofill_manager_->OnFormsSeen({form_}, {});
+  autofill_manager().OnFormsSeen({form_}, {});
   // Set card expiration year.
   // TODO(crbug.com/40900766): Retrieve the card expiry year field by name here.
   ASSERT_EQ(form_.fields()[3].name(), u"ccyear");
@@ -631,7 +796,7 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillFailsIfClientIsNotSecure) {
   // Simulate non-secure client.
-  autofill_client_.set_last_committed_primary_main_frame_url(
+  autofill_client().set_last_committed_primary_main_frame_url(
       GURL("http://example.test"));
 
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
@@ -655,12 +820,14 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillFailsIfCardIsIncomplete) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard cc_no_number = test::GetCreditCard();
   cc_no_number.SetNumber(u"");
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(cc_no_number);
 
@@ -669,7 +836,8 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
   CreditCard cc_no_exp_date = test::GetCreditCard();
   cc_no_exp_date.SetExpirationMonth(0);
   cc_no_exp_date.SetExpirationYear(0);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(cc_no_exp_date);
 
@@ -677,7 +845,8 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
   CreditCard cc_no_name = test::GetCreditCard();
   cc_no_name.SetRawInfo(CREDIT_CARD_NAME_FULL, u"");
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(cc_no_name);
 
@@ -690,10 +859,12 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillFailsIfTheOnlyCardIsExpired) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(test::GetExpiredCreditCard());
 
@@ -706,12 +877,14 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillFailsIfCardNumberIsInvalid) {
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard cc_invalid_number = test::GetCreditCard();
   cc_invalid_number.SetNumber(u"invalid number");
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(cc_invalid_number);
 
@@ -721,7 +894,8 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
       TouchToFillPaymentMethodTriggerOutcome::kNoValidPaymentMethods, 1);
 
   // But succeeds for existing masked server card with incomplete number.
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(test::GetMaskedServerCard());
 
@@ -745,7 +919,7 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
   autofill::MockFastCheckoutClient* fast_checkout_client =
       static_cast<autofill::MockFastCheckoutClient*>(
-          autofill_client_.GetFastCheckoutClient());
+          autofill_client().GetFastCheckoutClient());
   EXPECT_CALL(*fast_checkout_client, IsNotShownYet).WillOnce(Return(false));
 
   TryToShowTouchToFill(/*expected_success=*/false);
@@ -756,15 +930,18 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillSucceedsIfAtLestOneCardIsValid) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card = autofill::test::GetCreditCard();
   CreditCard expired_card = test::GetExpiredCreditCard();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(expired_card);
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
@@ -776,19 +953,22 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillShowsExpiredCards) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card = autofill::test::GetCreditCard();
   CreditCard expired_card = test::GetExpiredCreditCard();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(expired_card);
   std::vector<const CreditCard*> credit_cards = GetCreditCardsToSuggest(
-      autofill_client_.GetPersonalDataManager().payments_data_manager());
+      autofill_client().GetPersonalDataManager().payments_data_manager());
 
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
   EXPECT_CALL(
@@ -812,7 +992,8 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillDoesNotShowDisusedExpiredCards) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card = autofill::test::GetCreditCard();
@@ -820,10 +1001,12 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
   credit_card.usage_history().set_use_date(AutofillClock::Now());
   disused_expired_card.usage_history().set_use_date(
       AutofillClock::Now() - kDisusedDataModelTimeDelta * 2);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(disused_expired_card);
   ASSERT_TRUE(credit_card.IsCompleteValidCard());
@@ -842,18 +1025,20 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        TryToShowTouchToFillShowsVirtualCardSuggestionsForEnrolledCards) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card =
       autofill::test::GetMaskedServerCardEnrolledIntoVirtualCardNumber();
   CreditCard virtual_card = CreditCard::CreateVirtualCard(credit_card);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
   ASSERT_FALSE(touch_to_fill_delegate_->IsShowingTouchToFill());
-  ON_CALL(*static_cast<MockAutofillOptimizationGuide*>(
-              autofill_client_.GetAutofillOptimizationGuide()),
+  ON_CALL(*static_cast<MockAutofillOptimizationGuideDecider*>(
+              autofill_client().GetAutofillOptimizationGuideDecider()),
           ShouldBlockFormFieldSuggestion)
       .WillByDefault(testing::Return(false));
 
@@ -883,31 +1068,35 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
       .ExpectDelegateWeakPtrFromShowInvalidatedOnHideForCards();
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  browser_autofill_manager_.reset();
+  autofill_client().GetAutofillDriverFactory().Delete(autofill_driver());
 }
 
 // Add one IBAN to the PDM and verify that IBAN is not shown for the credit
 // card form.
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        PassTheCreditCardsToTheClient) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   Iban iban1;
   iban1.set_value(base::UTF8ToUTF16(std::string(test::kIbanValue_1)));
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .AddAsLocalIban(std::move(iban1));
   CreditCard credit_card1 = autofill::test::GetCreditCard();
   CreditCard credit_card2 = autofill::test::GetCreditCard2();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card1);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card2);
   std::vector<const CreditCard*> credit_cards = GetCreditCardsToSuggest(
-      autofill_client_.GetPersonalDataManager().payments_data_manager());
+      autofill_client().GetPersonalDataManager().payments_data_manager());
 
   EXPECT_CALL(
       payments_autofill_client(),
@@ -927,7 +1116,7 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  browser_autofill_manager_.reset();
+  autofill_client().GetAutofillDriverFactory().Delete(autofill_driver());
 }
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
@@ -937,7 +1126,7 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
   touch_to_fill_delegate_->ScanCreditCard();
 
   CreditCard credit_card = autofill::test::GetCreditCard();
-  EXPECT_CALL(*browser_autofill_manager_, FillOrPreviewForm);
+  EXPECT_CALL(autofill_manager(), FillOrPreviewForm);
   touch_to_fill_delegate_->OnCreditCardScanned(credit_card);
   EXPECT_EQ(touch_to_fill_delegate_->IsShowingTouchToFill(), false);
 }
@@ -947,7 +1136,7 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
   TryToShowTouchToFill(/*expected_success=*/true);
 
   EXPECT_CALL(
-      autofill_client_,
+      autofill_client(),
       ShowAutofillSettings(testing::Eq(SuggestionType::kManageCreditCard)));
   touch_to_fill_delegate_->ShowPaymentMethodSettings();
 
@@ -956,11 +1145,13 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        CardSelectionClosesTheSheet) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card = autofill::test::GetCreditCard();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
 
@@ -973,35 +1164,39 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        CardSelectionFillsCardForm) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card = autofill::test::GetCreditCard();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
 
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  EXPECT_CALL(*browser_autofill_manager_, FillOrPreviewForm);
+  EXPECT_CALL(autofill_manager(), FillOrPreviewForm);
   touch_to_fill_delegate_->CreditCardSuggestionSelected(credit_card.guid(),
                                                         false);
 }
 
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        VirtualCardSelectionFillsCardForm) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
   CreditCard credit_card =
       autofill::test::GetMaskedServerCardEnrolledIntoVirtualCardNumber();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
 
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  EXPECT_CALL(*browser_autofill_manager_, FillOrPreviewForm);
+  EXPECT_CALL(autofill_manager(), FillOrPreviewForm);
   touch_to_fill_delegate_->CreditCardSuggestionSelected(credit_card.guid(),
                                                         true);
 }
@@ -1009,7 +1204,8 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
 TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
        AutofillUsedAfterTouchToFillDismissal) {
   TryToShowTouchToFill(/*expected_success=*/true);
-  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true);
+  touch_to_fill_delegate_->OnDismissed(/*dismissed_by_user=*/true,
+                                       /*should_reshow=*/false);
 
   // Simulate that the form was autofilled by other means
   FormStructure submitted_form(form_);
@@ -1021,6 +1217,81 @@ TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
   histogram_tester_.ExpectUniqueSample(
       "Autofill.TouchToFill.CreditCard.AutofillUsedAfterTouchToFillDismissal",
       true, 1);
+}
+
+TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
+       OnBnplIssuerSuggestionSelected) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  BnplIssuer issuer =
+      test::GetTestLinkedBnplIssuer(BnplIssuer::IssuerId::kBnplAffirm);
+  autofill_client()
+      .GetPersonalDataManager()
+      .test_payments_data_manager()
+      .AddBnplIssuer(issuer);
+
+  base::MockCallback<base::OnceCallback<void(BnplIssuer)>>
+      mock_selected_issuer_callback;
+  touch_to_fill_delegate_->SetSelectedIssuerCallback(
+      mock_selected_issuer_callback.Get());
+
+  EXPECT_CALL(mock_selected_issuer_callback, Run(issuer)).Times(1);
+
+  touch_to_fill_delegate_->OnBnplIssuerSuggestionSelected(
+      /*issuer_id=*/"affirm");
+}
+
+TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
+       OnBnplIssuerSuggestionSelected_NoCallbackSet) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  BnplIssuer issuer =
+      test::GetTestLinkedBnplIssuer(BnplIssuer::IssuerId::kBnplAffirm);
+  autofill_client()
+      .GetPersonalDataManager()
+      .test_payments_data_manager()
+      .AddBnplIssuer(issuer);
+
+  base::MockCallback<base::OnceCallback<void(BnplIssuer)>>
+      mock_selected_issuer_callback;
+
+  EXPECT_CALL(mock_selected_issuer_callback, Run(issuer)).Times(0);
+
+  touch_to_fill_delegate_->OnBnplIssuerSuggestionSelected(
+      /*issuer_id=*/"affirm");
+}
+
+TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest,
+       OnBnplIssuerSuggestionSelected_NoMatchingIssuer) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  BnplIssuer issuer = test::GetTestLinkedBnplIssuer();
+  autofill_client()
+      .GetPersonalDataManager()
+      .test_payments_data_manager()
+      .AddBnplIssuer(issuer);
+
+  base::MockCallback<base::OnceCallback<void(BnplIssuer)>>
+      mock_selected_issuer_callback;
+  touch_to_fill_delegate_->SetSelectedIssuerCallback(
+      mock_selected_issuer_callback.Get());
+
+  EXPECT_CALL(mock_selected_issuer_callback, Run(issuer)).Times(0);
+
+  touch_to_fill_delegate_->OnBnplIssuerSuggestionSelected(
+      /*issuer_id=*/"invalidIssuerId");
+}
+
+TEST_F(TouchToFillDelegateAndroidImplCreditCardUnitTest, OnBnplTosAccepted) {
+  TryToShowTouchToFill(/*expected_success=*/true);
+
+  base::MockCallback<base::OnceClosure> mock_accept_tos_callback;
+  touch_to_fill_delegate_->SetBnplTosAcceptCallback(
+      mock_accept_tos_callback.Get());
+
+  EXPECT_CALL(mock_accept_tos_callback, Run);
+
+  touch_to_fill_delegate_->OnBnplTosAccepted();
 }
 
 class TouchToFillDelegateAndroidImplIbanUnitTest
@@ -1045,7 +1316,7 @@ TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
 // IBAN form.
 TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest, PassTheIbansToTheClient) {
   TestPaymentsDataManager& paydm =
-      autofill_client_.GetPersonalDataManager().test_payments_data_manager();
+      autofill_client().GetPersonalDataManager().test_payments_data_manager();
   paydm.ClearAllLocalData();
   paydm.AddCreditCard(autofill::test::GetCreditCard());
   Iban iban1;
@@ -1061,7 +1332,7 @@ TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest, PassTheIbansToTheClient) {
 
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  browser_autofill_manager_.reset();
+  autofill_client().GetAutofillDriverFactory().Delete(autofill_driver());
 }
 
 TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
@@ -1079,7 +1350,7 @@ TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
       .ExpectDelegateWeakPtrFromShowInvalidatedOnHideForIbans();
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  browser_autofill_manager_.reset();
+  autofill_client().GetAutofillDriverFactory().Delete(autofill_driver());
 }
 
 TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
@@ -1102,7 +1373,8 @@ TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
        ServerIbanSelectionFillsIbanForm) {
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .SetSyncingForTest(true);
   std::string guid = ConfigureForIbans();
@@ -1111,7 +1383,8 @@ TEST_F(TouchToFillDelegateAndroidImplIbanUnitTest,
   long instrument_id = 123245678L;
   Iban server_iban = test::GetServerIban();
   server_iban.set_identifier(Iban::InstrumentId(instrument_id));
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .AddServerIban(server_iban);
 
@@ -1146,9 +1419,9 @@ TEST_F(TouchToFillDelegateAndroidImplLoyaltyCardUnitTest,
   LoyaltyCard card2 = test::CreateLoyaltyCard2();
   std::vector<LoyaltyCard> loyalty_cards{card2, card1};
   // Makes sure there is at least one affiliated card available.
-  autofill_client_.set_last_committed_primary_main_frame_url(
+  autofill_client().set_last_committed_primary_main_frame_url(
       card1.merchant_domains()[0]);
-  test_api(*autofill_client_.GetValuablesDataManager())
+  test_api(*autofill_client().GetValuablesDataManager())
       .SetLoyaltyCards(loyalty_cards);
 
   // Cards must be sorted by merchant name.
@@ -1160,10 +1433,10 @@ TEST_F(TouchToFillDelegateAndroidImplLoyaltyCardUnitTest,
 
 TEST_F(TouchToFillDelegateAndroidImplLoyaltyCardUnitTest,
        TryToShowTouchToFillFailsIfNoMatchingDomains) {
-  autofill_client_.set_last_committed_primary_main_frame_url(
+  autofill_client().set_last_committed_primary_main_frame_url(
       GURL("https://non-matching.domain"));
   std::vector<LoyaltyCard> loyalty_cards{test::CreateLoyaltyCard()};
-  test_api(*autofill_client_.GetValuablesDataManager())
+  test_api(*autofill_client().GetValuablesDataManager())
       .SetLoyaltyCards(loyalty_cards);
 
   EXPECT_CALL(payments_autofill_client(), ShowTouchToFillLoyaltyCard).Times(0);
@@ -1177,30 +1450,75 @@ TEST_F(TouchToFillDelegateAndroidImplLoyaltyCardUnitTest,
       .ExpectDelegateWeakPtrFromShowInvalidatedOnHideForLoyaltyCards();
   TryToShowTouchToFill(/*expected_success=*/true);
 
-  browser_autofill_manager_.reset();
+  autofill_client().GetAutofillDriverFactory().Delete(autofill_driver());
 }
 
 TEST_F(TouchToFillDelegateAndroidImplLoyaltyCardUnitTest,
        LoyaltyCardSelectionFillsFormAndHidesSheet) {
-  const std::string kLoyaltyCardNumber = "1234";
+  const LoyaltyCard kLoyaltyCard = test::CreateLoyaltyCard();
   TryToShowTouchToFill(/*expected_success=*/true);
 
   EXPECT_CALL(payments_autofill_client(), HideTouchToFillPaymentMethod);
-  EXPECT_CALL(*browser_autofill_manager_,
-              FillOrPreviewField(mojom::ActionPersistence::kFill,
-                                 mojom::FieldActionType::kReplaceAll, _, _,
-                                 base::UTF8ToUTF16(kLoyaltyCardNumber),
-                                 SuggestionType::kLoyaltyCardEntry,
-                                 Optional(LOYALTY_MEMBERSHIP_ID)));
-  touch_to_fill_delegate_->LoyaltyCardSuggestionSelected(kLoyaltyCardNumber);
+  EXPECT_CALL(
+      autofill_manager(),
+      FillOrPreviewField(
+          mojom::ActionPersistence::kFill, mojom::FieldActionType::kReplaceAll,
+          _, _, base::UTF8ToUTF16(kLoyaltyCard.loyalty_card_number()),
+          SuggestionType::kLoyaltyCardEntry, Optional(LOYALTY_MEMBERSHIP_ID)));
+  EXPECT_CALL(autofill_manager(),
+              LogAndRecordLoyaltyCardFill(kLoyaltyCard, _, _));
+  touch_to_fill_delegate_->LoyaltyCardSuggestionSelected(kLoyaltyCard);
+}
+
+class TouchToFillDelegateAndroidImplEmailOrLoyaltyCardUnitTest
+    : public TouchToFillDelegateAndroidImplUnitTest {
+ protected:
+  void SetUp() override {
+    TouchToFillDelegateAndroidImplUnitTest::SetUp();
+    ConfigureForEmailOrLoyaltyCards();
+  }
+
+  void ConfigureForEmailOrLoyaltyCards() {
+    LoyaltyCard loyalty_card = test::CreateLoyaltyCard();
+    // The touch-to-fill bottom sheet is shown only if the user has at least
+    // 1 saved loyalty card.
+    test_api(*autofill_client().GetValuablesDataManager())
+        .AddLoyaltyCard(loyalty_card);
+    form_ = test::CreateTestEmailOrLoyaltyCardFormData();
+    test_api(form_).field(0).set_is_focusable(true);
+    // The current URL matches the loyalty card merchant domain.
+    autofill_client().set_last_committed_primary_main_frame_url(
+        GURL("https://domain.example"));
+  }
+};
+
+// Make sure the TTF bottom sheet if offered on EMAIL_OR_LOYALTY_MEMBERSHIP_ID
+// fields.
+TEST_F(TouchToFillDelegateAndroidImplEmailOrLoyaltyCardUnitTest,
+       PassTheLoyaltyCardsToTheClient) {
+  LoyaltyCard card1 = test::CreateLoyaltyCard();
+  LoyaltyCard card2 = test::CreateLoyaltyCard2();
+  std::vector<LoyaltyCard> loyalty_cards{card2, card1};
+  // Makes sure there is at least one affiliated card available.
+  autofill_client().set_last_committed_primary_main_frame_url(
+      card1.merchant_domains()[0]);
+  test_api(*autofill_client().GetValuablesDataManager())
+      .SetLoyaltyCards(loyalty_cards);
+
+  // Cards must be sorted by merchant name.
+  EXPECT_CALL(payments_autofill_client(),
+              ShowTouchToFillLoyaltyCard(_, ElementsAre(card1, card2)));
+
+  TryToShowTouchToFill(/*expected_success=*/true);
 }
 
 class TouchToFillDelegateAndroidImplVcnGrayOutForMerchantOptOutUnitTest
     : public TouchToFillDelegateAndroidImplCreditCardUnitTest {
  public:
-  TouchToFillDelegateAndroidImplVcnGrayOutForMerchantOptOutUnitTest() {
-    ON_CALL(*static_cast<MockAutofillOptimizationGuide*>(
-                autofill_client_.GetAutofillOptimizationGuide()),
+  void SetUp() override {
+    TouchToFillDelegateAndroidImplCreditCardUnitTest::SetUp();
+    ON_CALL(*static_cast<MockAutofillOptimizationGuideDecider*>(
+                autofill_client().GetAutofillOptimizationGuideDecider()),
             ShouldBlockFormFieldSuggestion)
         .WillByDefault(testing::Return(true));
   }
@@ -1211,10 +1529,12 @@ TEST_F(TouchToFillDelegateAndroidImplVcnGrayOutForMerchantOptOutUnitTest,
   CreditCard credit_card =
       test::GetMaskedServerCardEnrolledIntoVirtualCardNumber();
   credit_card.set_record_type(CreditCard::RecordType::kMaskedServerCard);
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .test_payments_data_manager()
       .ClearCreditCards();
-  autofill_client_.GetPersonalDataManager()
+  autofill_client()
+      .GetPersonalDataManager()
       .payments_data_manager()
       .AddCreditCard(credit_card);
   CreditCard virtual_card = CreditCard::CreateVirtualCard(credit_card);

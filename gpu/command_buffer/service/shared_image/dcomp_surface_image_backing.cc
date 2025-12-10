@@ -20,7 +20,6 @@
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
-#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/color_space_win.h"
 #include "ui/gl/debug_utils.h"
 #include "ui/gl/direct_composition_support.h"
@@ -222,17 +221,16 @@ DCompSurfaceImageBacking::DCompSurfaceImageBacking(
     gpu::SharedImageUsageSet usage,
     std::string debug_label,
     Microsoft::WRL::ComPtr<IDCompositionSurface> dcomp_surface)
-    : ClearTrackingSharedImageBacking(
-          mailbox,
-          format,
-          size,
-          color_space,
-          surface_origin,
-          alpha_type,
-          usage,
-          std::move(debug_label),
-          gfx::BufferSizeForBufferFormat(size, ToBufferFormat(format)),
-          /*is_thread_safe=*/false),
+    : ClearTrackingSharedImageBacking(mailbox,
+                                      format,
+                                      size,
+                                      color_space,
+                                      surface_origin,
+                                      alpha_type,
+                                      usage,
+                                      std::move(debug_label),
+                                      format.EstimatedSizeInBytes(size),
+                                      /*is_thread_safe=*/false),
       gl_surface_(scoped_refptr(
           new D3DTextureGLSurfaceEGL(gl::GLSurfaceEGL::GetGLDisplayEGL(),
                                      size))),
@@ -475,8 +473,7 @@ wgpu::Texture DCompSurfaceImageBacking::BeginDrawDawn(
   // Import the texture into dawn
   if (!shared_texture_memory_) {
     shared_texture_memory_ =
-        CreateDawnSharedTextureMemory(device, dcomp_surface_draw_texture_copy_,
-                                      /*requires_dawn_signal_fence=*/false);
+        CreateDawnSharedTextureMemory(device, dcomp_surface_draw_texture_copy_);
     if (!shared_texture_memory_) {
       LOG(ERROR) << "Failed to create shared texture memory.";
       return nullptr;
@@ -485,6 +482,10 @@ wgpu::Texture DCompSurfaceImageBacking::BeginDrawDawn(
 
   wgpu::SharedTextureMemoryD3DSwapchainBeginState swapchain_begin_state = {};
   swapchain_begin_state.isSwapchain = true;
+
+  wgpu::SharedTextureMemoryD3D11BeginState d3d11_begin_state = {};
+  d3d11_begin_state.requiresEndAccessFence = false;
+  swapchain_begin_state.nextInChain = &d3d11_begin_state;
 
   wgpu::SharedTextureMemoryBeginAccessDescriptor desc = {};
   desc.initialized = true;

@@ -9,7 +9,6 @@ import static org.chromium.build.NullUtil.assumeNonNull;
 import android.content.Context;
 
 import org.chromium.base.CallbackController;
-import org.chromium.base.Token;
 import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
@@ -39,7 +38,6 @@ import org.chromium.components.collaboration.messaging.PersistentMessage;
 import org.chromium.components.collaboration.messaging.PersistentNotificationType;
 
 import java.util.List;
-import java.util.Optional;
 
 /** Pushes whether a notification dot should be shown for a tab model. */
 @NullMarked
@@ -82,7 +80,7 @@ public class TabModelNotificationDotManager implements Destroyable {
     private final TabGroupModelFilterObserver mTabGroupModelFilterObserver =
             new TabGroupModelFilterObserver() {
                 @Override
-                public void didMergeTabToGroup(Tab movedTab) {
+                public void didMergeTabToGroup(Tab movedTab, boolean isDestinationTab) {
                     maybeUpdateForTab(movedTab, /* mayAddDot= */ true);
                 }
             };
@@ -211,18 +209,16 @@ public class TabModelNotificationDotManager implements Destroyable {
         TabModel tabModel = mTabGroupModelFilter.getTabModel();
 
         List<PersistentMessage> messages =
-                mMessagingBackendService.getMessages(
-                        Optional.of(PersistentNotificationType.DIRTY_TAB));
+                mMessagingBackendService.getMessages(PersistentNotificationType.DIRTY_TAB);
         for (PersistentMessage message : messages) {
             int tabId = MessageUtils.extractTabId(message);
             if (tabId == Tab.INVALID_TAB_ID) continue;
 
-            @Nullable Tab tab = tabModel.getTabById(tabId);
+            Tab tab = tabModel.getTabById(tabId);
             if (tab != null && !tab.isClosing()) {
-                Token groupId = mTabGroupModelFilter.getTabGroupIdFromRootId(tab.getRootId());
                 String title =
                         TabGroupTitleUtils.getDisplayableTitle(
-                                mContext, mTabGroupModelFilter, groupId);
+                                mContext, mTabGroupModelFilter, tab.getTabGroupId());
                 return new TabModelDotInfo(true, title);
             }
         }

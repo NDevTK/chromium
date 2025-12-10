@@ -14,6 +14,8 @@ static_library("handlers") {
     "app_launch_automation_policy_handler.h",
     "bluetooth_policy_handler.cc",
     "bluetooth_policy_handler.h",
+    "camera_save_location_policy_handler.cc",
+    "camera_save_location_policy_handler.h",
     "configuration_policy_handler_ash.cc",
     "configuration_policy_handler_ash.h",
     "contextual_google_integrations_policies_handler.cc",
@@ -80,6 +82,7 @@ static_library("handlers") {
     "//chromeos/ash/components/dbus/userdataauth",
     "//chromeos/ash/components/dbus/userdataauth:userdataauth_proto",
     "//chromeos/ash/components/install_attributes",
+    "//chromeos/ash/components/login/login_state",
     "//chromeos/ash/components/login/session",
     "//chromeos/ash/components/network",
     "//chromeos/ash/components/settings",
@@ -171,6 +174,7 @@ source_set("unit_tests") {
     "//chrome/browser/ash/app_list/arc:test_support",
     "//chrome/browser/ash/arc/session",
     "//chrome/browser/ash/arc/test:arc_test_support",
+    "//chrome/browser/ash/browser_delegate:impl",
     "//chrome/browser/ash/login/users:test_support",
     "//chrome/browser/ash/net",
     "//chrome/browser/ash/notifications:unit_tests",
@@ -256,7 +260,6 @@ source_set("browser_tests") {
     "//ash/constants",
     "//ash/public/cpp",
     "//base",
-    "//base",
     "//base/test:test_support",
     "//chrome/browser",
     "//chrome/browser:browser_process",
@@ -320,4 +323,8 @@ source_set("browser_tests") {
     "//ui/base:features",
     "//url",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

@@ -29,14 +29,13 @@
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using base::android::ToJavaByteArray;
 
 namespace {
 
-ScopedJavaLocalRef<jobject> JNI_LogoBridge_MakeJavaLogo(
+static ScopedJavaLocalRef<jobject> JNI_LogoBridge_MakeJavaLogo(
     JNIEnv* env,
     const SkBitmap& bitmap,
     const GURL& on_click_url,
@@ -64,7 +63,7 @@ ScopedJavaLocalRef<jobject> JNI_LogoBridge_MakeJavaLogo(
 }
 
 // Converts a C++ Logo to a Java Logo.
-ScopedJavaLocalRef<jobject> JNI_LogoBridge_ConvertLogoToJavaObject(
+static ScopedJavaLocalRef<jobject> JNI_LogoBridge_ConvertLogoToJavaObject(
     JNIEnv* env,
     const search_provider_logos::Logo* logo) {
   if (!logo) {
@@ -80,7 +79,7 @@ class LogoObserverAndroid : public search_provider_logos::LogoObserver {
  public:
   LogoObserverAndroid(base::WeakPtr<LogoBridge> logo_bridge,
                       JNIEnv* env,
-                      jobject j_logo_observer)
+                      const base::android::JavaRef<jobject>& j_logo_observer)
       : logo_bridge_(logo_bridge) {
     j_logo_observer_.Reset(env, j_logo_observer);
   }
@@ -117,7 +116,6 @@ class LogoObserverAndroid : public search_provider_logos::LogoObserver {
 }  // namespace
 
 static jlong JNI_LogoBridge_Init(JNIEnv* env,
-                                 const JavaParamRef<jobject>& obj,
                                  Profile* profile) {
   LogoBridge* logo_bridge = new LogoBridge(profile);
   return reinterpret_cast<intptr_t>(logo_bridge);
@@ -131,15 +129,16 @@ LogoBridge::LogoBridge(Profile* profile) : logo_service_(nullptr) {
 
 LogoBridge::~LogoBridge() = default;
 
-void LogoBridge::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+void LogoBridge::Destroy(JNIEnv* env) {
   delete this;
 }
 
 void LogoBridge::GetCurrentLogo(JNIEnv* env,
-                                const JavaParamRef<jobject>& obj,
-                                const JavaParamRef<jobject>& j_logo_observer) {
+                                const JavaRef<jobject>& j_logo_observer) {
   // |observer| is deleted in LogoObserverAndroid::OnObserverRemoved().
   LogoObserverAndroid* observer = new LogoObserverAndroid(
       weak_ptr_factory_.GetWeakPtr(), env, j_logo_observer);
   logo_service_->GetLogo(observer);
 }
+
+DEFINE_JNI(LogoBridge)

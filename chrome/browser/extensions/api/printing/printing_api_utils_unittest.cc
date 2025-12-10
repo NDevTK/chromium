@@ -30,7 +30,7 @@ namespace {
 constexpr char kId[] = "id";
 constexpr char kName[] = "name";
 constexpr char kDescription[] = "description";
-constexpr char kUri[] = "ipp://192.168.1.5";
+constexpr char kUri[] = "ipp://192.168.1.5:631";
 constexpr int kRank = 2;
 
 constexpr int kCopies = 5;
@@ -262,6 +262,21 @@ constexpr char kCjtNoFitToPageAndMargins[] = R"(
       }
     })";
 
+chromeos::Printer PrinterFrom(const std::string& id,
+                              const std::string& name,
+                              const std::string& description,
+                              bool via_policy,
+                              std::string uri) {
+  chromeos::Printer printer(id);
+  printer.set_display_name(name);
+  printer.set_description(description);
+  if (via_policy) {
+    printer.set_source(chromeos::Printer::SRC_POLICY);
+  }
+  EXPECT_TRUE(printer.SetUri(uri));
+  return printer;
+}
+
 std::unique_ptr<printing::PrintSettings> ConstructPrintSettings() {
   auto settings = std::make_unique<printing::PrintSettings>();
   settings->set_color(printing::mojom::ColorModel::kColor);
@@ -340,8 +355,7 @@ TEST(PrintingApiUtilsTest, GetDefaultPrinterRules_EmptyPref) {
 }
 
 TEST(PrintingApiUtilsTest, PrinterToIdl) {
-  crosapi::mojom::LocalDestinationInfo printer(kId, kName, kDescription, true,
-                                               kUri);
+  chromeos::Printer printer = PrinterFrom(kId, kName, kDescription, true, kUri);
 
   std::optional<DefaultPrinterRules> default_printer_rules =
       DefaultPrinterRules();
@@ -405,7 +419,7 @@ TEST(PrintingApiUtilsTest, ParsePrintTicket) {
               settings->print_scaling());
 
     EXPECT_EQ(settings->margin_type(),
-              printing::mojom::MarginType::kCustomMargins);
+              printing::mojom::MarginType::kPrecomputedMarginsForBackend);
     const printing::PageMargins kExpectedPageMargins = {
         /*header=*/0,
         /*footer=*/0,
@@ -525,10 +539,10 @@ TEST(PrintingApiUtilsTest, ParsePrintTicket_MixedMargins) {
       ParsePrintTicket(base::test::ParseJsonDict(kMixedMarginsCjt));
 
   ASSERT_TRUE(settings);
-  // With mixed margins (some 0, some non-0), we should get custom margins but
-  // not borderless
+  // With mixed margins (some 0, some non-0), we should get precomputed margins
+  // but not borderless
   EXPECT_EQ(settings->margin_type(),
-            printing::mojom::MarginType::kCustomMargins);
+            printing::mojom::MarginType::kPrecomputedMarginsForBackend);
   EXPECT_FALSE(settings->borderless());
 
   const printing::PageMargins kExpectedPageMargins = {/*header=*/0,
@@ -762,8 +776,9 @@ TEST(PrintingApiUtilsTest, CheckSettingsAndCapabilitiesCompatibility_Margins) {
       /*header=*/0,  /*footer=*/0,
       /*left=*/1500, /*right=*/500,
       /*top=*/3530,  /*bottom=*/5525};
-  settings->SetCustomMargins(kMargins);
-  settings->set_margin_type(printing::mojom::MarginType::kCustomMargins);
+  settings->SetCustomMarginsForBackend(kMargins);
+  ASSERT_EQ(settings->margin_type(),
+            printing::mojom::MarginType::kPrecomputedMarginsForBackend);
 
   // There must be no supported margins for the check to pass.
   for (const auto& paper : capabilities.papers) {
@@ -804,15 +819,14 @@ TEST(PrintingApiUtilsTest, CheckSettingsAndCapabilitiesCompatibility_Margins) {
   // Set supported margins and settings to different values. The check should
   // fail.
   {
-    settings->SetCustomMargins(kMargins);
-    settings->set_margin_type(printing::mojom::MarginType::kCustomMargins);
+    settings->SetCustomMarginsForBackend(kMargins);
     EXPECT_FALSE(
         CheckSettingsAndCapabilitiesCompatibility(*settings, capabilities));
   }
 
   // Now, update the settings to have supported margins. The check should pass.
   {
-    settings->SetCustomMargins(printing::PageMargins(
+    settings->SetCustomMarginsForBackend(printing::PageMargins(
         /*header=*/0, /*footer=*/0,
         /*left=*/kSupportedMargins.left_margin_um,
         /*right=*/kSupportedMargins.right_margin_um,
@@ -824,7 +838,7 @@ TEST(PrintingApiUtilsTest, CheckSettingsAndCapabilitiesCompatibility_Margins) {
 
   // Test borderless variant.
   {
-    settings->SetCustomMargins(printing::PageMargins());
+    settings->SetCustomMarginsForBackend(printing::PageMargins());
     settings->set_margin_type(printing::mojom::MarginType::kNoMargins);
     settings->set_borderless(true);
     EXPECT_FALSE(
@@ -844,8 +858,7 @@ TEST(PrintingApiUtilsTest, CheckSettingsAndCapabilitiesCompatibility_Margins) {
   // values. This must be invalid.
   {
     settings->set_borderless(true);
-    settings->SetCustomMargins(kMargins);
-    settings->set_margin_type(printing::mojom::MarginType::kCustomMargins);
+    settings->SetCustomMarginsForBackend(kMargins);
     EXPECT_FALSE(
         CheckSettingsAndCapabilitiesCompatibility(*settings, capabilities));
   }
@@ -929,8 +942,7 @@ TEST(PrintingApiUtilsTest, CheckSettingsAndCapabilities_MarginHistogram) {
       /*right=*/kSupportedMargins.right_margin_um,
       /*top=*/kSupportedMargins.top_margin_um,
       /*bottom=*/kSupportedMargins.bottom_margin_um};
-  settings->SetCustomMargins(kMargins);
-  settings->set_margin_type(printing::mojom::MarginType::kCustomMargins);
+  settings->SetCustomMarginsForBackend(kMargins);
 
   // Try with the feature disabled first - no matter if the margins are correct
   // or not, the histogram should not be recorded.

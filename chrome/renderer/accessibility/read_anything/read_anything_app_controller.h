@@ -31,6 +31,7 @@
 #include "ui/accessibility/ax_position.h"
 #include "ui/accessibility/ax_tree_observer.h"
 #include "ui/accessibility/ax_tree_update_forward.h"
+#include "v8/include/cppgc/persistent.h"
 
 namespace content {
 class RenderFrame;
@@ -69,20 +70,32 @@ class ReadAnythingAppControllerScreen2xDataCollectionModeTest;
 //  1. If the AXTreeUpdate has a selection, display a subtree containing all of
 //     the nodes between the selection start and end.
 //  2. If the AXTreeUpdate has no selection, display a subtree containing all of
-//     the content nodes, their descendants, and their ancestors.
+// the distilled content.
 //
 class ReadAnythingAppController
-    : public content::RenderFrameObserver,
-      public gin::Wrappable<ReadAnythingAppController>,
+    : public gin::Wrappable<ReadAnythingAppController>,
+      public content::RenderFrameObserver,
       public ReadAnythingAppModel::ModelObserver,
       public read_anything::mojom::UntrustedPage,
       public ui::AXTreeObserver {
  public:
   static gin::WrapperInfo kWrapperInfo;
 
+  static constexpr char kWordsSeenHistogramName[] =
+      "Accessibility.ReadAnything.WordsSeen";
+
+  static constexpr char kWordsHeardHistogramName[] =
+      "Accessibility.ReadAnything.WordsHeard";
+
+  static const int kMaxWordsConsumed = 25000;
+  static const int kWordsConsumedBuckets = 100;
+
   ReadAnythingAppController(const ReadAnythingAppController&) = delete;
   ReadAnythingAppController& operator=(const ReadAnythingAppController&) =
       delete;
+
+  explicit ReadAnythingAppController(content::RenderFrame* render_frame);
+  ~ReadAnythingAppController() override;
 
   // Installs v8 context for Read Anything and adds chrome.readingMode binding
   // to page.
@@ -92,6 +105,7 @@ class ReadAnythingAppController
   void OnDestruct() override;
 
   // gin::WrappableBase:
+  const gin::WrapperInfo* wrapper_info() const override;
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override;
 
@@ -134,7 +148,7 @@ class ReadAnythingAppController
   void ScreenAIServiceReady() override;
   void OnGetVoicePackInfo(
       read_anything::mojom::VoicePackInfoPtr voice_pack_info) override;
-  void OnReadingModeHidden() override;
+  void OnReadingModeHidden(bool tab_active) override;
   void OnTabWillDetach() override;
   void OnTabMuteStateChange(bool muted) override;
 #if BUILDFLAG(IS_CHROMEOS)
@@ -151,6 +165,16 @@ class ReadAnythingAppController
   void OnNodeWillBeDeleted(ui::AXTree* tree, ui::AXNode* node) override;
 
   void OnNodeDeleted(ui::AXTree* tree, ui::AXNodeID node) override;
+
+  void OnTreeDataChanged(ui::AXTree* tree,
+                         const ui::AXTreeData& old_data,
+                         const ui::AXTreeData& new_data) override;
+
+  void OnStringAttributeChanged(ui::AXTree* tree,
+                                ui::AXNode* node,
+                                ax::mojom::StringAttribute attr,
+                                const std::string& old_value,
+                                const std::string& new_value) override;
 
   // gin templates:
   ui::AXNodeID RootId() const;
@@ -184,6 +208,10 @@ class ReadAnythingAppController
   int DarkTheme() const;
   int YellowTheme() const;
   int BlueTheme() const;
+  int HighContrastTheme() const;
+  int LowContrastTheme() const;
+  int SepiaLightTheme() const;
+  int SepiaDarkTheme() const;
   int AutoHighlighting() const;
   int WordHighlighting() const;
   int PhraseHighlighting() const;
@@ -195,6 +223,7 @@ class ReadAnythingAppController
   int EngineErrorStopSource() const;
   int ContentFinishedStopSource() const;
   int UnexpectedUpdateContentStopSource() const;
+  int MaxLineWidth() const;
   std::string GetStoredVoice() const;
   std::vector<std::string> GetLanguagesEnabledInPref() const;
   std::vector<ui::AXNodeID> GetChildren(ui::AXNodeID ax_node_id) const;
@@ -202,6 +231,7 @@ class ReadAnythingAppController
   std::string GetHtmlTag(ui::AXNodeID ax_node_id) const;
   std::string GetLanguage(ui::AXNodeID ax_node_id) const;
   std::u16string GetTextContent(ui::AXNodeID ax_node_id) const;
+  std::u16string GetPrefixText(ui::AXNodeID ax_node_id) const;
   std::string GetTextDirection(ui::AXNodeID ax_node_id) const;
   std::string GetUrl(ui::AXNodeID ax_node_id) const;
   std::string GetAltText(ui::AXNodeID ax_node_id) const;
@@ -223,8 +253,12 @@ class ReadAnythingAppController
                          ui::AXNodeID focus_node_id,
                          int focus_offset);
   void OnCollapseSelection() const;
+  void OnDistilled(int word_count);
   bool IsGoogleDocs() const;
   bool IsReadAloudEnabled() const;
+  bool IsImmersiveEnabled() const;
+  bool IsTsTextSegmentationEnabled() const;
+  bool IsReadabilityEnabled() const;
   bool IsChromeOsAsh() const;
   bool IsPhraseHighlightingEnabled() const;
   void OnLetterSpacingChange(int value);
@@ -233,14 +267,14 @@ class ReadAnythingAppController
   void OnFontChange(const std::string& font);
   void OnSpeechRateChange(double rate);
   void OnVoiceChange(const std::string& voice, const std::string& lang);
+  void LogExtensionState();
   void OnLanguagePrefChange(const std::string& lang, bool enabled);
   bool RequiresDistillation();
   void OnHighlightGranularityChanged(int granularity);
   double GetLineSpacingValue(int line_spacing) const;
   double GetLetterSpacingValue(int letter_spacing) const;
   std::vector<std::string> GetSupportedFonts();
-  void RequestImageDataUrl(ui::AXNodeID node_id) const;
-  std::string GetImageDataUrl(ui::AXNodeID node_id) const;
+  void RequestImageData(ui::AXNodeID node_id) const;
   v8::Local<v8::Value> GetImageBitmap(ui::AXNodeID node_id);
   void OnIsSpeechActiveChanged(bool is_speech_active);
   void OnIsAudioCurrentlyPlayingChanged(bool is_audio_currently_playing);
@@ -248,7 +282,10 @@ class ReadAnythingAppController
   std::vector<std::string> GetAllFonts() const;
   void OnScrolledToBottom();
   bool IsDocsLoadMoreButtonVisible() const;
-  void OnNoTextContent(bool previouslyHadContent);
+  void OnNoTextContent();
+  void UpdateWordsSeen(int words_seen);
+  void UpdateWordsHeard(int words_heard);
+  void LogEmptyState();
 
   // The language code that should be used to determine which voices are
   // supported for speech.
@@ -258,28 +295,18 @@ class ReadAnythingAppController
       const std::string& locale,
       const std::string& display_locale) const;
 
-  // Returns a list of AXNodeIds representing the next nodes that should be
-  // spoken and highlighted with Read Aloud.
-  // This defaults to returning the first granularity until
-  // MovePositionTo<Next,Previous>Granularity() moves the position.
-  // If the the current processed_granularity_index_ has not been calculated
-  // yet, GetNextNodes() is called which updates the AXPosition.
-  // GetCurrentTextStartIndex and GetCurrentTextEndIndex called with an AXNodeID
-  // return by GetCurrentText will return the starting text and ending text
-  // indices for specific text that should be referenced within the node.
-  std::vector<ui::AXNodeID> GetCurrentText();
+  // Returns a list of nodes and ranges representing the next nodes that should
+  // be spoken and highlighted with Read Aloud. The ranges are represented as a
+  // start offset and a length. Multiple nodes are returned if the segment spans
+  // over more than one node. This defaults to returning the first granularity
+  // until MovePositionTo<Next,Previous>Granularity() moves the position. If the
+  // the current processed_granularity_index_ has not been calculated yet,
+  // GetNextNodes() is called which updates the AXPosition.
+  v8::Local<v8::Value> GetCurrentTextSegments();
 
-  // Returns the Read Aloud starting text index for a node. For example,
-  // if the entire text of the node should be read by Read Aloud at a particular
-  // moment, this will return 0. Returns -1 if the node isn't in the current
-  // segment.
-  int GetCurrentTextStartIndex(ui::AXNodeID node_id);
-
-  // Returns the Read Aloud ending text index for a node. For example,
-  // if the entire text of the node should be read by Read Aloud at a particular
-  // moment, this will return the length of the node's text. Returns -1 if the
-  // node isn't in the current segment.
-  int GetCurrentTextEndIndex(ui::AXNodeID node_id);
+  // Returns the actual text content representing by the nodes returned by
+  // GetCurrentTextSegments().
+  std::u16string GetCurrentTextContent();
 
   int GetAccessibleBoundary(const std::u16string& text, int max_text_length);
 
@@ -339,10 +366,6 @@ class ReadAnythingAppController
  private:
   friend ReadAnythingAppControllerTest;
   friend ReadAnythingAppControllerScreen2xDataCollectionModeTest;
-
-  explicit ReadAnythingAppController(content::RenderFrame* render_frame);
-  ~ReadAnythingAppController() override;
-
   // The fallback language code if GetLanguageCodeForSpeech has an error.
   // However, this may be the same value as GetLanguageCodeForSpeech.
   const std::string& GetDefaultLanguageCodeForSpeech() const;
@@ -364,9 +387,25 @@ class ReadAnythingAppController
   // processed accessibility events.
   void SendEventUpdates();
 
+  // Helper for forwarding reading mode hide events to the webui so we can
+  // perform cleaning operations on it.
+  void ReadingModeWillClose();
+
   // Records the number of selections that occurred for the active page. Called
   // when the active tree changes.
   void RecordNumSelections();
+
+  // Records the number of words consumed on the active page via reading mode.
+  // This number is an estimate based on scrolling position and does not work
+  // for languages that don't use whitespace to separate words.
+  void RecordEstimatedWordsSeen();
+
+  // Records the number of words consumed on the active page via read aloud.
+  // This number is an estimate based on word boundaries and may be less
+  // accurate for voices that don't support word boundaries.
+  void RecordEstimatedWordsHeard();
+
+  void RecordDistillationSuccess();
 
   // Given a boundary position within the current granularity, identifies the
   // nodes that needs to be highlighted (e.g. until the word boundary), and
@@ -414,6 +453,8 @@ class ReadAnythingAppController
   // occur when the set becomes empty.
   std::set<ui::AXNodeID> displayed_nodes_pending_deletion_;
 
+  bool waiting_for_tree_id_ = false;
+
   // Model that holds Reading mode state for this controller.
   ReadAnythingAppModel model_;
 
@@ -440,6 +481,23 @@ class ReadAnythingAppController
   // A timer that causes a distillation after a user stops typing for a set
   // number of seconds.
   std::unique_ptr<base::RetainingOneShotTimer> post_user_entry_draw_timer_;
+
+  base::OneShotTimer timer_;
+
+  // The number of times distillation completes successfully after a page
+  // change. Used for logging.
+  int distillationsCompleted_;
+
+  // As a subclass of RenderFrameObserver, all objects of this class are stored
+  // in data structure and should not get deallocated as long as the object is
+  // in that structure. Once an object gets removed from the data structure,
+  // OnDestruct() is called and the object can be deallocated. The memory of
+  // this object, though, and by having this persistent self reference here, we
+  // make sure that the GC keeps the object alive as long as this self reference
+  // exists. Once the self reference is cleared in OnDestruct(), the garbage
+  // collector will free the object if it is not referenced by any other
+  // object.
+  cppgc::Persistent<ReadAnythingAppController> self_;
 
   base::WeakPtrFactory<ReadAnythingAppController> weak_ptr_factory_{this};
 };

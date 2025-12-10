@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -30,6 +31,7 @@
 #include "base/logging.h"
 #include "base/process/process_iterator.h"
 #include "base/scoped_generic.h"
+#include "base/strings/cstring_view.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/version.h"
@@ -215,6 +217,15 @@ std::optional<CSecurityDesc> GetCurrentUserDefaultSecurityDescriptor();
 // Get security descriptor containing a DACL that grants the ACCESS_MASK access
 // to admins and system.
 CSecurityDesc GetAdminDaclSecurityDescriptor(ACCESS_MASK accessmask);
+
+// Returns an SDDL string derived from `sddl`, with the addition of an allowed
+// ACE entry for the current user with the `required_permissions` and
+// `required_ace_flags`. If the addition already exists, `sddl` is returned
+// unchanged.
+std::optional<std::wstring> AddCurrentUserAllowedAce(
+    const std::wstring& sddl,
+    ACCESS_MASK required_permissions,
+    UINT8 required_ace_flags);
 
 // Returns the registry path `Software\{CompanyName}\Update\Clients\{app_id}`.
 std::wstring GetAppClientsKey(const std::string& app_id);
@@ -445,6 +456,9 @@ std::optional<std::wstring> GetRegKeyContents(const std::wstring& reg_key);
 // or it defaults to US English.
 std::wstring GetTextForSystemError(int error);
 
+// Returns the first instance found of explorer.exe.
+std::optional<DWORD> GetExplorerPid();
+
 // Retrieves the logged on user token for the active explorer process if one
 // exists.
 HResultOr<ScopedKernelHANDLE> GetLoggedOnUserToken();
@@ -472,8 +486,11 @@ bool StoreRunTimeEnrollmentToken(const std::string& enrollment_token);
 // Returns `true` if the service exists and is not deleted or disabled.
 [[nodiscard]] bool IsServiceEnabled(const std::wstring& service_name);
 
+// Get the command line of a process, given the process id.
+HResultOr<std::wstring> GetCommandLineForPid(DWORD process_id);
+
 // Logs the COM client PID when called from a COM server.
-void LogComCaller(const std::string& caller_func);
+void LogComCaller(base::cstring_view caller_func);
 
 }  // namespace updater
 

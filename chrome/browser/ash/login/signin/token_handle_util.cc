@@ -231,10 +231,20 @@ void TokenHandleUtil::StoreTokenHandle(const AccountId& account_id,
 }
 
 void TokenHandleUtil::MaybeFetchTokenHandle(
+    PrefService* token_handle_mapping_store,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const AccountId& account_id,
     const std::string& access_token,
     const std::string& refresh_token_hash) {
+  NOTREACHED() << "This is a new interface method not defined for the legacy"
+               << "implementation and should not be accessed";
+}
+
+void TokenHandleUtil::DiagnoseTokenHandleMapping(
+    PrefService* token_handle_mapping_store,
+    account_manager::AccountManager* account_manager,
+    const AccountId& account_id,
+    const std::string& token) const {
   NOTREACHED() << "This is a new interface method not defined for the legacy"
                << "implementation and should not be accessed";
 }
@@ -329,6 +339,11 @@ void TokenHandleUtil::TokenDelegate::OnGetTokenInfoResponse(
 
   std::move(callback_).Run(account_id_, token_, outcome);
   NotifyDone(/*request_completed=*/true);
+}
+
+void TokenHandleUtil::SetTokenHandleStale(const AccountId& account_id) {
+  NOTREACHED() << "This is a new interface method not defined for the legacy"
+               << "implementation and should not be accessed";
 }
 
 }  // namespace ash

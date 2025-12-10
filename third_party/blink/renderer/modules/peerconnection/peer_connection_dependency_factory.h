@@ -5,7 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_PEER_CONNECTION_DEPENDENCY_FACTORY_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_PEER_CONNECTION_DEPENDENCY_FACTORY_H_
 
-#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
@@ -13,15 +12,14 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/types/pass_key.h"
+#include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
-#include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_transport.h"
 #include "third_party/blink/renderer/modules/peerconnection/webrtc_video_perf_reporter.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 #include "third_party/blink/renderer/platform/mojo/mojo_binding_context.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/webrtc/api/async_dns_resolver.h"
@@ -35,10 +33,14 @@ class WaitableEvent;
 namespace media {
 class GpuVideoAcceleratorFactories;
 class MojoVideoEncoderMetricsProviderFactory;
-}
+}  // namespace media
 
 namespace gfx {
 class ColorSpace;
+}
+
+namespace webrtc {
+class LocalNetworkAccessPermissionFactoryInterface;
 }
 
 namespace blink {
@@ -52,17 +54,33 @@ class RTCPeerConnectionHandler;
 class WebLocalFrame;
 class WebRtcAudioDeviceImpl;
 
+// The enum is used for logging. Entries should not be renumbered or reused.
+// Keep in sync with the corresponding enum in
+// tools/metrics/histograms/metadata/web_rtc/enums.xml.
+// LINT.IfChange(LocalNetworkAccessRequestType)
+enum class LocalNetworkAccessRequestType {
+  kUnknown = 0,
+  kLoopbackToLoopback = 1,
+  kLoopbackToLocal = 2,
+  kLoopbackToPublic = 3,
+  kLocalToLoopback = 4,
+  kLocalToLocal = 5,
+  kLocalToPublic = 6,
+  kPublicToLoopback = 7,
+  kPublicToLocal = 8,
+  kPublicToPublic = 9,
+  kMaxValue = kPublicToPublic,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/web_rtc/enums.xml:LocalNetworkAccessRequestType)
+
 // Object factory for RTC PeerConnections.
 class MODULES_EXPORT PeerConnectionDependencyFactory
     : public GarbageCollected<PeerConnectionDependencyFactory>,
-      public Supplement<ExecutionContext>,
       public ExecutionContextLifecycleObserver {
   USING_PRE_FINALIZER(PeerConnectionDependencyFactory,
                       CleanupPeerConnectionFactory);
 
  public:
-  static const char kSupplementName[];
-
   static PeerConnectionDependencyFactory& From(ExecutionContext& context);
   PeerConnectionDependencyFactory(
       ExecutionContext& context,
@@ -103,8 +121,7 @@ class MODULES_EXPORT PeerConnectionDependencyFactory
       const webrtc::PeerConnectionInterface::RTCConfiguration& config,
       blink::WebLocalFrame* web_frame,
       webrtc::PeerConnectionObserver* observer,
-      ExceptionState& exception_state,
-      RTCRtpTransport* rtp_transport);
+      ExceptionState& exception_state);
 
   // Creates a PortAllocator that uses Chrome IPC sockets and enforces privacy
   // controls according to the permissions granted on the page.
@@ -116,10 +133,9 @@ class MODULES_EXPORT PeerConnectionDependencyFactory
   CreateAsyncDnsResolverFactory();
 
   // Creates a libjingle representation of an ice candidate.
-  virtual webrtc::IceCandidateInterface* CreateIceCandidate(
-      const String& sdp_mid,
-      int sdp_mline_index,
-      const String& sdp);
+  virtual webrtc::IceCandidate* CreateIceCandidate(const String& sdp_mid,
+                                                   int sdp_mline_index,
+                                                   const String& sdp);
 
   // Returns the most optimistic view of the capabilities of the system for
   // sending or receiving media of the given kind ("audio" or "video").
@@ -148,6 +164,14 @@ class MODULES_EXPORT PeerConnectionDependencyFactory
   // passed to the WebRTC PeerConnection, allowing blink events to be coalesced
   // around the same ticks.
   virtual std::unique_ptr<webrtc::Metronome> CreateDecodeMetronome();
+
+  void BindPermissionService(
+      mojo::PendingReceiver<mojom::blink::PermissionService>
+          permission_service);
+  void CountLocalNetworkAccess(LocalNetworkAccessRequestType);
+
+  std::unique_ptr<webrtc::LocalNetworkAccessPermissionFactoryInterface>
+  CreateLocalNetworkAccessPermissionFactoryForTesting();
 
   void Trace(Visitor*) const override;
 
@@ -188,6 +212,8 @@ class MODULES_EXPORT PeerConnectionDependencyFactory
       std::unique_ptr<IpcNetworkManager> network_manager,
       base::WaitableEvent* event);
   void CleanupPeerConnectionFactory();
+
+  Member<ExecutionContext> execution_context_;
 
   void DoGetDevtoolsToken(
       base::OnceCallback<void(std::optional<base::UnguessableToken>)> then);

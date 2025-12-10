@@ -7,10 +7,13 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/omnibox/public/omnibox_presentation_context.h"
+
 @protocol AutocompleteResultWrapperDelegate;
 @protocol AutocompleteSuggestion;
 @protocol AutocompleteSuggestionGroup;
 @class AutocompleteMatchFormatter;
+class AutocompleteProviderClient;
 class AutocompleteResult;
 class OmniboxClient;
 @class OmniboxPedalAnnotator;
@@ -22,6 +25,7 @@ class TemplateURLService;
 
 /// Initializes the wrapper with the given omnibox client.
 - (instancetype)initWithOmniboxClient:(OmniboxClient*)omniboxClient
+           autocompleteProviderClient:(AutocompleteProviderClient*)acClient
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -40,6 +44,9 @@ class TemplateURLService;
 
 /// Whether the omnibox has a thumbnail.
 @property(nonatomic, assign) BOOL hasThumbnail;
+
+/// The context in which the omnibox is presented.
+@property(nonatomic, assign) OmniboxPresentationContext presentationContext;
 
 /// Disconnects the wrapper.
 - (void)disconnect;

@@ -21,7 +21,7 @@
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/focus/focus_manager_delegate.h"
 #include "ui/views/focus/focus_search.h"
-#include "ui/views/focus/widget_focus_manager.h"
+#include "ui/views/focus/native_view_focus_manager.h"
 #include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_tracker.h"
@@ -89,8 +89,19 @@ bool FocusManager::OnKeyEvent(const ui::KeyEvent& event) {
         (is_left || is_right)) {
       bool next = is_right;
       View::Views views;
-      focused_view_->parent()->GetViewsInGroup(focused_view_->GetGroup(),
-                                               &views);
+
+      // Default to the parent if no owner is set.
+      View* group_owner = focused_view_->parent();
+      // Search for the owner in the focused view's hierarchy.
+      for (View* potential_owner = focused_view_->parent();
+           potential_owner != nullptr;
+           potential_owner = potential_owner->parent()) {
+        if (potential_owner->GetOwnedGroup() == focused_view_->GetGroup()) {
+          group_owner = potential_owner;
+          break;
+        }
+      }
+      group_owner->GetViewsInGroup(focused_view_->GetGroup(), &views);
       // Remove any views except current, which are disabled or hidden.
       std::erase_if(views, [this](View* v) {
         return v != focused_view_ &&
@@ -402,8 +413,8 @@ void FocusManager::StoreFocusedView(bool clear_native_focus) {
   if (clear_native_focus) {
     // Temporarily disable notification.  ClearFocus() will set the focus to the
     // main browser window.  This extra focus bounce which happens during
-    // deactivation can confuse registered WidgetFocusListeners, as the focus
-    // is not changing due to a user-initiated event.
+    // deactivation can confuse registered NativeViewFocusListeners, as the
+    // focus is not changing due to a user-initiated event.
     AutoNativeNotificationDisabler local_notification_disabler;
     // ClearFocus() also stores the focused view.
     ClearFocus();
@@ -537,7 +548,6 @@ void FocusManager::ViewRemoved(View* removed) {
   if (removed->Contains(focused_view_)) {
     SetFocusedView(nullptr);
   }
-  removed->PropagateWillClearFocusManager();
 }
 
 void FocusManager::AddFocusChangeListener(FocusChangeListener* listener) {

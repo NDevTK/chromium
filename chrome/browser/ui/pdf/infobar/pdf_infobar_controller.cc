@@ -120,7 +120,8 @@ void PdfInfoBarController::OnActiveTabChanged(BrowserWindowInterface* browser) {
 
 void PdfInfoBarController::OnBrowserClosed(BrowserWindowInterface* browser) {
   if (infobar_) {
-    infobar_manager_->RemoveInfoBar(infobar_);
+    CHECK(infobar_scoped_observation_.IsObserving());
+    infobar_scoped_observation_.GetSource()->RemoveInfoBar(infobar_);
   }
 }
 
@@ -139,8 +140,7 @@ void PdfInfoBarController::OnInfoBarRemoved(infobars::InfoBar* infobar,
     return;
   }
   infobar_ = nullptr;
-  infobar_manager_->RemoveObserver(this);
-  infobar_manager_ = nullptr;
+  infobar_scoped_observation_.Reset();
 }
 
 void PdfInfoBarController::MaybeShowInfoBar() {
@@ -192,14 +192,17 @@ void PdfInfoBarController::MaybeShowInfoBarCallback(
       higher_priority_infobar_shown_.value()) {
     return;
   }
-
-  // Show the PDF infobar.
   content::WebContents* web_contents =
       browser_->GetTabStripModel()->GetActiveWebContents();
-  infobar_manager_ =
+  if (!web_contents) {
+    return;
+  }
+
+  // Show the PDF infobar.
+  auto* infobar_manager =
       infobars::ContentInfoBarManager::FromWebContents(web_contents);
-  infobar_manager_->AddObserver(this);
-  infobar_ = PdfInfoBarDelegate::Create(infobar_manager_);
+  infobar_scoped_observation_.Observe(infobar_manager);
+  infobar_ = PdfInfoBarDelegate::Create(infobar_manager);
   SetInfoBarShownRecently();
 }
 

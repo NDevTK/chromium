@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/ash/crosapi/keystore_service_ash.h"
 
 #include <stdint.h>
@@ -16,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
@@ -28,9 +24,9 @@
 #include "chrome/browser/ash/platform_keys/platform_keys_service_factory.h"
 #include "chrome/browser/chromeos/platform_keys/extension_platform_keys_service.h"
 #include "chrome/browser/chromeos/platform_keys/extension_platform_keys_service_factory.h"
-#include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chromeos/ash/components/dbus/attestation/attestation_ca.pb.h"
+#include "chromeos/ash/components/platform_keys/platform_keys.h"
 #include "chromeos/crosapi/cpp/keystore_service_util.h"
 #include "chromeos/crosapi/mojom/keystore_error.mojom.h"
 #include "chromeos/crosapi/mojom/keystore_service.mojom-shared.h"
@@ -414,7 +410,7 @@ void KeystoreServiceAsh::DidSelectClientCertificates(
       CRYPTO_BUFFER* der_buffer = cert->cert_buffer();
       const uint8_t* data = CRYPTO_BUFFER_data(der_buffer);
       std::vector<uint8_t> der_x509_certificate(
-          data, data + CRYPTO_BUFFER_len(der_buffer));
+          data, UNSAFE_TODO(data + CRYPTO_BUFFER_len(der_buffer)));
       output.push_back(std::move(der_x509_certificate));
     }
     result_ptr = mojom::KeystoreSelectClientCertificatesResult::NewCertificates(
@@ -460,7 +456,7 @@ void KeystoreServiceAsh::DidGetCertificates(
       CRYPTO_BUFFER* der_buffer = cert->cert_buffer();
       const uint8_t* data = CRYPTO_BUFFER_data(der_buffer);
       std::vector<uint8_t> der_x509_certificate(
-          data, data + CRYPTO_BUFFER_len(der_buffer));
+          data, UNSAFE_TODO(data + CRYPTO_BUFFER_len(der_buffer)));
       output.push_back(std::move(der_x509_certificate));
     }
     result_ptr =

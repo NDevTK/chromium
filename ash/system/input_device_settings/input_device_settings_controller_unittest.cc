@@ -74,6 +74,9 @@ using DeviceId = InputDeviceSettingsController::DeviceId;
 
 namespace {
 
+constexpr char kInternalChromeOSKeyboardName[] =
+    "kSampleKeyboardInternalChromeOS";
+
 const ui::KeyboardDevice kSampleKeyboardInternal(5,
                                                  ui::INPUT_DEVICE_INTERNAL,
                                                  "kSampleKeyboardInternal",
@@ -91,6 +94,16 @@ const ui::KeyboardDevice kSampleKeyboardInternal2(4,
                                                   0x1111,
                                                   0x1111,
                                                   0);
+
+const ui::KeyboardDevice kSampleKeyboardInternalChromeOS(
+    5,
+    ui::INPUT_DEVICE_INTERNAL,
+    kInternalChromeOSKeyboardName,
+    "",
+    base::FilePath("path5"),
+    0x1,
+    0x1,
+    0);
 
 const ui::KeyboardDevice kSampleKeyboardBluetooth(10,
                                                   ui::INPUT_DEVICE_BLUETOOTH,
@@ -343,6 +356,10 @@ class FakeKeyboardPrefHandler : public KeyboardPrefHandler {
       const mojom::KeyboardPolicies& keyboard_policies,
       mojom::Keyboard* keyboard) override {
     keyboard->settings = CreateNewKeyboardSettings();
+    if (keyboard->name == kInternalChromeOSKeyboardName) {
+      keyboard->meta_key = ui::mojom::MetaKey::kSearch;
+    }
+
     num_keyboard_settings_initialized_++;
   }
 
@@ -647,7 +664,6 @@ class InputDeviceSettingsControllerTest : public NoSessionAshTestBase {
     image_downloader_ = std::make_unique<TestImageDownloader>();
     scoped_feature_list_.InitWithFeatures(
         {features::kPeripheralCustomization,
-         features::kInputDeviceSettingsSplit,
          features::kAltClickAndSixPackCustomization,
          features::kPeripheralNotification, features::kWelcomeExperience,
          ::features::kSupportF11AndF12KeyShortcuts, features::kModifierSplit},
@@ -800,40 +816,6 @@ TEST_F(InputDeviceSettingsControllerTest, KeyboardAddingAndRemoving) {
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 2u);
 }
 
-// Test the scenario that these pref data is deleted with a split flag disabled
-// upon login.
-TEST_F(InputDeviceSettingsControllerTest,
-       DeletesPrefsWhenInputDeviceSettingsSplitFlagDisabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(features::kInputDeviceSettingsSplit);
-
-  auto pref_service = TestPrefServiceProvider::CreateUserPrefServiceSimple();
-  base::Value::Dict test_pref_value;
-  test_pref_value.Set("Fake Key", base::Value::Dict());
-  pref_service->SetDict(prefs::kKeyboardDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-  pref_service->SetDict(prefs::kMouseDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-  pref_service->SetDict(prefs::kPointingStickDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-  pref_service->SetDict(prefs::kTouchpadDeviceSettingsDictPref,
-                        test_pref_value.Clone());
-
-  SimulateUserLogin({}, kAccountId3, std::move(pref_service));
-
-  PrefService* active_pref_service =
-      Shell::Get()->session_controller()->GetActivePrefService();
-  EXPECT_EQ(base::Value::Dict(), active_pref_service->GetDict(
-                                     prefs::kKeyboardDeviceSettingsDictPref));
-  EXPECT_EQ(base::Value::Dict(),
-            active_pref_service->GetDict(prefs::kMouseDeviceSettingsDictPref));
-  EXPECT_EQ(base::Value::Dict(),
-            active_pref_service->GetDict(
-                prefs::kPointingStickDeviceSettingsDictPref));
-  EXPECT_EQ(base::Value::Dict(), active_pref_service->GetDict(
-                                     prefs::kTouchpadDeviceSettingsDictPref));
-}
-
 TEST_F(InputDeviceSettingsControllerTest,
        DeletesPrefsWhenPeripheralCustomizationFlagDisabled) {
   base::test::ScopedFeatureList feature_list;
@@ -929,10 +911,10 @@ TEST_F(InputDeviceSettingsControllerTest,
   EXPECT_EQ(observer_->num_keyboards_connected(), 1u);
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 1u);
 
-  SimulateUserLogin(kAccountId2);
+  SwitchActiveUser(kAccountId2);
   task_runner_->RunUntilIdle();
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 2u);
-  SimulateUserLogin(kAccountId1);
+  SwitchActiveUser(kAccountId1);
   task_runner_->RunUntilIdle();
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 3u);
 }
@@ -1349,7 +1331,7 @@ TEST_F(InputDeviceSettingsControllerTest, RecordsMetricsSettings) {
       "ChromeOS.Settings.Device.Keyboard.ExternalChromeOS.TopRowAreFKeys."
       "Initial",
       /*expected_count=*/4u);
-  SimulateUserLogin(kAccountId2);
+  SwitchActiveUser(kAccountId2);
   task_runner_->RunUntilIdle();
 
   histogram_tester.ExpectTotalCount(
@@ -1516,26 +1498,54 @@ TEST_F(InputDeviceSettingsControllerTest,
 TEST_F(InputDeviceSettingsControllerTest, RestoreDefaultKeyboardRemappings) {
   base::HistogramTester histogram_tester;
 
-  ui::DeviceDataManagerTestApi().SetKeyboardDevices({kSampleKeyboardInternal});
+  ui::DeviceDataManagerTestApi().SetKeyboardDevices(
+      {kSampleKeyboardInternalChromeOS});
   const mojom::KeyboardSettingsPtr settings = CreateNewKeyboardSettings();
   settings->top_row_are_fkeys = kDefaultTopRowAreFKeys;
   settings->modifier_remappings[ui::mojom::ModifierKey::kMeta] =
       ui::mojom::ModifierKey::kAlt;
-  controller_->SetKeyboardSettings((DeviceId)kSampleKeyboardInternal.id,
+  settings->f11 = ui::mojom::ExtendedFkeysModifier::kAlt;
+  settings->f12 = ui::mojom::ExtendedFkeysModifier::kShift;
+  controller_->SetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id,
                                    settings->Clone());
 
   EXPECT_EQ(observer_->num_keyboards_connected(), 1u);
   EXPECT_EQ(keyboard_pref_handler_->num_keyboard_settings_initialized(), 1u);
   EXPECT_EQ(
-      controller_->GetKeyboardSettings((DeviceId)kSampleKeyboardInternal.id)
+      controller_
+          ->GetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id)
           ->modifier_remappings.size(),
       1u);
-  controller_->RestoreDefaultKeyboardRemappings(
-      (DeviceId)kSampleKeyboardInternal.id);
   EXPECT_EQ(
-      controller_->GetKeyboardSettings((DeviceId)kSampleKeyboardInternal.id)
+      controller_
+          ->GetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id)
+          ->f11,
+      ui::mojom::ExtendedFkeysModifier::kAlt);
+  EXPECT_EQ(
+      controller_
+          ->GetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id)
+          ->f12,
+      ui::mojom::ExtendedFkeysModifier::kShift);
+
+  controller_->RestoreDefaultKeyboardRemappings(
+      (DeviceId)kSampleKeyboardInternalChromeOS.id);
+
+  EXPECT_EQ(
+      controller_
+          ->GetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id)
           ->modifier_remappings.size(),
       0u);
+  EXPECT_EQ(
+      controller_
+          ->GetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id)
+          ->f11,
+      ui::mojom::ExtendedFkeysModifier::kDisabled);
+  EXPECT_EQ(
+      controller_
+          ->GetKeyboardSettings((DeviceId)kSampleKeyboardInternalChromeOS.id)
+          ->f12,
+      ui::mojom::ExtendedFkeysModifier::kDisabled);
+
   histogram_tester.ExpectUniqueSample(
       "ChromeOS.Settings.Device.Keyboard.Internal.Modifiers.NumberOfKeysReset",
       /*sample=*/1u, /*expected_bucket_count=*/1u);

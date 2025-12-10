@@ -10,13 +10,16 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/browser_container/ui_bundled/edit_menu_app_interface.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
-#import "ios/chrome/browser/settings/ui_bundled/cells/clear_browsing_data_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/quick_delete_constants.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_constants.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
+#import "ios/chrome/test/earl_grey/chrome_earl_grey_app_interface.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/chrome/test/earl_grey/chrome_xcui_actions.h"
 #import "ios/chrome/test/earl_grey/scoped_disable_timer_tracking.h"
 #import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
@@ -34,6 +37,7 @@
 #define EarlGrey [self earlGrey]
 #pragma clang diagnostic pop
 
+using base::test::ios::kWaitForClearBrowsingDataTimeout;
 using base::test::ios::kWaitForUIElementTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
 using chrome_test_util::BrowsingDataButtonMatcher;
@@ -70,9 +74,20 @@ id<GREYAction> PageSheetScrollDown() {
   // expand.
   CGFloat menu_scroll_displacement = 500;
 
+  // On iPad we do not need the page sheet to expand to full screen and the
+  // current large size may miss items in the middle of the page menu.
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    menu_scroll_displacement = 250;
+  }
+
   // But for very small devices (like the SE), this is too big.
-  UIWindow* currentWindow = chrome_test_util::GetAnyKeyWindow();
+  UIWindow* currentWindow = [ChromeEarlGreyAppInterface keyWindow];
   if (currentWindow.rootViewController.view.frame.size.height < 600) {
+    menu_scroll_displacement = 250;
+  }
+
+  // And for iOS 26, the updated table view layout also makes this too big.
+  if (@available(iOS 19.0, *)) {
     menu_scroll_displacement = 250;
   }
   return grey_scrollInDirection(kGREYDirectionDown, menu_scroll_displacement);
@@ -140,6 +155,15 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
       [[EarlGrey selectElementWithMatcher:chrome_test_util::ToolsMenuView()]
           performAction:grey_swipeFastInDirection(kGREYDirectionDown)];
     }
+    return;
+  }
+  if (@available(iOS 26.0, *)) {
+    // In iOS26, the assumption that a scrim coverts the whole window is
+    // violated. Therefore, the solution is to tap on the PopoverDismissRegion
+    // embedded within the ToolsMenu to dismiss the popover.
+    [[EarlGrey
+        selectElementWithMatcher:grey_accessibilityID(@"PopoverDismissRegion")]
+        performAction:grey_tap()];
   } else {
     // A scrim covers the whole window and tapping on this scrim dismisses the
     // tools menu.  The "Tools Menu" button happens to be outside of the bounds
@@ -154,15 +178,8 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
                 chrome_test_util::WindowWithNumber(windowNumber)];
   // TODO(crbug.com/41271107): Add logic to ensure the app is in the correct
   // state, for example DCHECK if no tabs are displayed.
-  [[[EarlGrey
-      selectElementWithMatcher:grey_allOf(chrome_test_util::ToolsMenuButton(),
-                                          grey_sufficientlyVisible(), nil)]
-         usingSearchAction:grey_swipeSlowInDirection(kGREYDirectionDown)
-      onElementWithMatcher:chrome_test_util::
-                               WebStateScrollViewMatcherInWindowWithNumber(
-                                   windowNumber)] performAction:grey_tap()];
-  // TODO(crbug.com/41271101): Add webViewScrollView matcher so we don't have
-  // to always find it.
+  chrome_test_util::TapAtOffsetOf(kToolbarToolsMenuButtonIdentifier,
+                                  windowNumber, CGVectorMake(0.5, 0.5));
 }
 
 - (void)openSettingsMenu {
@@ -269,7 +286,7 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
 
   // Make sure there are no history entry cells.
   id<GREYMatcher> historyEntryMatcher =
-      grey_allOf(grey_kindOfClassName(@"TableViewURLCell"),
+      grey_allOf(grey_kindOfClassName(@"UITableViewCell"),
                  grey_sufficientlyVisible(), nil);
   [[EarlGrey selectElementWithMatcher:historyEntryMatcher]
       assertWithMatcher:grey_nil()];
@@ -333,13 +350,25 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
   }
 }
 
-- (void)focusOmniboxAndReplaceText:(NSString*)text {
-  [self focusOmnibox];
+- (void)pressEnter {
+  // Press enter to navigate.
+  // TODO(crbug.com/40916974): Use simulatePhysicalKeyboardEvent until
+  // replaceText can properly handle \n.
+  [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"\n" flags:0];
+}
 
+- (void)replaceTextInOmnibox:(NSString*)text {
   if (text.length) {
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
+        performAction:chrome_test_util::NotifyChangeTextInRange(text)];
     [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
         performAction:grey_replaceText(text)];
   }
+}
+
+- (void)focusOmniboxAndReplaceText:(NSString*)text {
+  [self focusOmnibox];
+  [self replaceTextInOmnibox:text];
 }
 
 - (void)focusOmnibox {
@@ -442,17 +471,6 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
   return err == nil;
 }
 
-- (void)cleanupAfterShowingAlert {
-  // Workaround for an Earl Grey crash in iOS 15.5 on iPad when traversing the
-  // view hierarchy with accessibility. Likely due to the system alert view, the
-  // traversal will crash because some system view cannot provide the correct
-  // accessibility result. Background and Foreground the app removes the system
-  // alert view's residues from the view hierarchy.
-  if (!base::ios::IsRunningOnIOS16OrLater()) {
-    [[AppLaunchManager sharedManager] backgroundAndForegroundApp];
-  }
-}
-
 - (void)dismissByTappingOnTheWindowOfPopover:(id<GREYMatcher>)matcher {
   id<GREYMatcher> classMatcher = grey_kindOfClass([UIWindow class]);
   id<GREYMatcher> parentMatcher = grey_descendant(matcher);
@@ -500,6 +518,41 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
     [self longPressElementOnWebView:selector];
     [[EarlGrey selectElementWithMatcher:[EditMenuAppInterface editMenuMatcher]]
         assertWithMatcher:grey_sufficientlyVisible()];
+  }
+}
+
+- (void)clearAndDismissSearchBar {
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    // On iPad, when running on iOS 26+ and building with the iOS 26+ SDK, the
+    // search bar is dismissed after clearing the text. The button for clearing
+    // text is always displayed.
+    if (@available(iOS 26, *)) {
+      [[EarlGrey
+          selectElementWithMatcher:chrome_test_util::SearchBarClearTextButton()]
+          performAction:grey_tap()];
+      return;
+    }
+
+    // On iPad, when running on iOS < 26 or building with an SDK older than
+    // iOS 26, the search bar is cleared and dismissed via the "Cancel" button.
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::CancelButton()]
+        performAction:grey_tap()];
+  } else {
+    // On iPhone, the search text is cleared and the search bar is dismissed via
+    // a single button press.
+
+    // When running on iOS 26+ and building with the iOS 26+ SDK, tap the
+    // "Close" button.
+    if (@available(iOS 26, *)) {
+      [[EarlGrey selectElementWithMatcher:chrome_test_util::CloseButton()]
+          performAction:grey_tap()];
+      return;
+    }
+
+    // When running on iOS < 26 or building with an SDK older than iOS 26, tap
+    // the "Cancel" button.
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::CancelButton()]
+        performAction:grey_tap()];
   }
 }
 
@@ -570,8 +623,8 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
                                ? @"Clear browsing data view was not visible"
                                : @"Clear browsing data view was visible";
   bool clearBrowsingDataViewVisibility =
-      base::test::ios::WaitUntilConditionOrTimeout(kWaitForUIElementTimeout,
-                                                   condition);
+      base::test::ios::WaitUntilConditionOrTimeout(
+          kWaitForClearBrowsingDataTimeout, condition);
   EG_TEST_HELPER_ASSERT_TRUE(clearBrowsingDataViewVisibility, errorMessage);
 }
 
@@ -582,11 +635,7 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
   while (!textHasBeenTypedProperly &&
          numberOfAttemptsPerformed <
              kMaxNumberOfAttemptsAtTypingTextInOmnibox) {
-    [ChromeEarlGreyUI focusOmnibox];
-
-    // Type the text.
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-        performAction:grey_replaceText(base::SysUTF8ToNSString(text))];
+    [self focusOmniboxAndReplaceText:base::SysUTF8ToNSString(text)];
     numberOfAttemptsPerformed++;
 
     // Check that the omnibox contains the typed text.
@@ -612,10 +661,7 @@ const int kMaxNumberOfAttemptsAtTypingTextInOmnibox = 3;
   }
 
   if (textHasBeenTypedProperly && shouldPressEnter) {
-    // Press enter to navigate.
-    // TODO(crbug.com/40916974): Use simulatePhysicalKeyboardEvent until
-    // replaceText can properly handle \n.
-    [ChromeEarlGrey simulatePhysicalKeyboardEvent:@"\n" flags:0];
+    [self pressEnter];
   }
 
   // Assert the text has been typed properly.

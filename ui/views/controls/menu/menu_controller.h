@@ -363,7 +363,7 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
     ~State();
 
     // The selected menu item.
-    raw_ptr<MenuItemView, DanglingUntriaged> item = nullptr;
+    raw_ptr<MenuItemView> item = nullptr;
 
     // Used to capture a hot tracked child button when a nested menu is opened
     // and to restore the hot tracked state when exiting a nested menu.
@@ -565,6 +565,10 @@ class VIEWS_EXPORT MenuController final : public gfx::AnimationDelegate,
 
   // If possible, closes the submenu.
   void CloseSubmenu();
+
+  // Show a context menu for the currently hot-tracked view if available.
+  // Triggered by keyboard events, e.g., APPS key, Shift+F10.
+  void ShowContextMenu();
 
   // Returns details about which menu items match the mnemonic |key|.
   // |match_function| is used to determine which menus match.

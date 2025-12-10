@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include <memory>
 #include <tuple>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -40,6 +36,7 @@
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
@@ -94,14 +91,10 @@ SharedQuadState* CreateSharedQuadState(AggregatedRenderPass* render_pass,
 }
 
 void DeleteSharedImage(
-    scoped_refptr<RasterContextProvider> context_provider,
     scoped_refptr<gpu::ClientSharedImage> client_shared_image,
     const gpu::SyncToken& sync_token,
     bool is_lost) {
-  DCHECK(context_provider);
-  gpu::SharedImageInterface* sii = context_provider->SharedImageInterface();
-  DCHECK(sii);
-  sii->DestroySharedImage(sync_token, std::move(client_shared_image));
+  client_shared_image->UpdateDestructionSyncToken(sync_token);
 }
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -257,8 +250,9 @@ void ReadbackResultRGBA(TestGpuServiceHolder* gpu_service_holder,
                               ->shared_image_manager()
                               ->ProduceMemory(mailbox, memory_tracker.get());
     auto access = representation->BeginScopedReadAccess();
-    memcpy(out_plane.pixmap().writable_addr(), access->pixmap().addr(),
-           out_plane.pixmap().computeByteSize());
+    UNSAFE_TODO(memcpy(out_plane.pixmap().writable_addr(),
+                       access->pixmap().addr(),
+                       out_plane.pixmap().computeByteSize()));
     return;
   }
 
@@ -444,8 +438,8 @@ class ReadbackPixelTest : public VizPixelTest {
           {format, size, color_space, gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY,
            "TestLabels"});
       auto scoped_mapping = shared_image->Map();
-      memcpy(scoped_mapping->GetMemoryForPlane(0).data(), pixels.data(),
-             pixels.size());
+      UNSAFE_TODO(memcpy(scoped_mapping->GetMemoryForPlane(0).data(),
+                         pixels.data(), pixels.size()));
       return shared_image;
     } else {
       return sii->CreateSharedImage(
@@ -471,7 +465,8 @@ class ReadbackPixelTest : public VizPixelTest {
     std::unordered_map<ResourceId, ResourceId, ResourceIdHasher> resource_map =
         cc::SendResourceAndGetChildToParentMap(
             {resource_id}, resource_provider_.get(),
-            child_resource_provider_.get(), child_context_provider_.get());
+            child_resource_provider_.get(),
+            child_context_provider_->SharedImageInterface());
     ResourceId mapped_resource_id = resource_map[resource_id];
 
     const gfx::Rect output_rect(source_size);
@@ -502,8 +497,7 @@ class ReadbackPixelTest : public VizPixelTest {
         client_shared_image->creation_sync_token());
 
     auto release_callback =
-        base::BindOnce(&DeleteSharedImage, child_context_provider_,
-                       std::move(client_shared_image));
+        base::BindOnce(&DeleteSharedImage, std::move(client_shared_image));
     return child_resource_provider_->ImportResource(
         resource, std::move(release_callback));
   }
@@ -681,34 +675,32 @@ TEST_P(ReadbackPixelTestRGBAWithBlit, ExecutesCopyRequestWithBlit) {
   const std::vector<uint8_t> pattern = {255, 0, 0, 255};
   const gfx::ColorSpace color_space = gfx::ColorSpace::CreateSRGB();
 
-  auto* sii = child_context_provider_->SharedImageInterface();
-
   // Create the dest shared image and pass the pixel data.
   constexpr auto format = SinglePlaneFormat::kRGBA_8888;
   std::vector<uint8_t> pixels =
       GeneratePixels(format.EstimatedSizeInBytes(source_size), pattern);
-  scoped_refptr<gpu::ClientSharedImage> blit_dest_shared_image =
+  scoped_refptr<gpu::ClientSharedImage> shared_image =
       CreateSharedImageWithPixels(format, source_size, color_space, pixels);
-
-  ASSERT_TRUE(blit_dest_shared_image);
-  gpu::Mailbox mailbox = blit_dest_shared_image->mailbox();
+  ASSERT_TRUE(shared_image);
 
   std::unique_ptr<CopyOutputResult> result = IssueCopyOutputRequestAndRender(
       RequestFormat(), RequestDestination(),
-      base::BindLambdaForTesting([this, &result_selection,
-                                  &destination_subregion,
-                                  &mailbox](CopyOutputRequest& request) {
-        // Build CopyOutputRequest based on test parameters.
-        if (ScaleByHalf()) {
-          request.SetUniformScaleRatio(2, 1);
-        }
+      base::BindLambdaForTesting(
+          // Take `shared_image` by copy to keep alive on main thread.
+          [this, shared_image, &result_selection,
+           &destination_subregion](CopyOutputRequest& request) {
+            // Build CopyOutputRequest based on test parameters.
+            if (ScaleByHalf()) {
+              request.SetUniformScaleRatio(2, 1);
+            }
 
-        request.set_result_selection(result_selection);
+            request.set_result_selection(result_selection);
 
-        request.set_blit_request(BlitRequest(
-            destination_subregion.origin(), GetLetterboxingBehavior(), mailbox,
-            gpu::SyncToken(), populates_gpu_memory_buffer()));
-      }));
+            request.set_blit_request(
+                BlitRequest(destination_subregion.origin(),
+                            GetLetterboxingBehavior(), std::move(shared_image),
+                            gpu::SyncToken(), populates_gpu_memory_buffer()));
+          }));
 
   // Check that a result was produced and is of the expected rect/size.
   ASSERT_TRUE(result);
@@ -726,10 +718,8 @@ TEST_P(ReadbackPixelTestRGBAWithBlit, ExecutesCopyRequestWithBlit) {
   ReadbackResultRGBA(gpu_service_holder_, is_software_renderer(), *result,
                      source_size, actual);
 
-  sii->DestroySharedImage(gpu::SyncToken(), std::move(blit_dest_shared_image));
-
-  // Load the expected subregion from a file - we will then write it on top of
-  // a new, all-red bitmap:
+  // Load the expected subregion from a file - we will then write it on top
+  // of a new, all-red bitmap:
   SkBitmap expected_subregion =
       GLScalerTestUtil::CopyAndConvertToRGBA(GetExpectedOutputBitmap());
 
@@ -1023,7 +1013,6 @@ TEST_P(ReadbackPixelTestNV12WithBlit, ExecutesCopyRequestWithBlit) {
       SkYUVAPixmaps::FromExternalPixmaps(info, pixmaps.data());
   ri->WritePixelsYUV(shared_image->mailbox(), yuv_pixmap);
 
-  gpu::Mailbox mailbox = shared_image->mailbox();
   // Create and wait on raster interface sync token for write pixels YUV.
   gpu::SyncToken sync_token =
       gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
@@ -1031,7 +1020,7 @@ TEST_P(ReadbackPixelTestNV12WithBlit, ExecutesCopyRequestWithBlit) {
   std::unique_ptr<CopyOutputResult> result = IssueCopyOutputRequestAndRender(
       RequestFormat(), RequestDestination(),
       base::BindLambdaForTesting([this, &result_selection,
-                                  &destination_subregion, &mailbox,
+                                  &destination_subregion, &shared_image,
                                   &sync_token](CopyOutputRequest& request) {
         // Build CopyOutputRequest based on test parameters.
         if (ScaleByHalf()) {
@@ -1041,8 +1030,8 @@ TEST_P(ReadbackPixelTestNV12WithBlit, ExecutesCopyRequestWithBlit) {
         request.set_result_selection(result_selection);
 
         request.set_blit_request(BlitRequest(
-            destination_subregion.origin(), GetLetterboxingBehavior(), mailbox,
-            sync_token, populates_gpu_memory_buffer()));
+            destination_subregion.origin(), GetLetterboxingBehavior(),
+            shared_image, sync_token, populates_gpu_memory_buffer()));
       }));
 
   // Check that a result was produced and is of the expected rect/size.
@@ -1065,8 +1054,6 @@ TEST_P(ReadbackPixelTestNV12WithBlit, ExecutesCopyRequestWithBlit) {
 
   ReadbackNV12Planes(gpu_service_holder_, *result, source_size, luma_plane,
                      chroma_planes);
-
-  sii->DestroySharedImage(sync_token, std::move(shared_image));
 
   // Allocate new bitmap & populate it with Y & UV data.
   SkBitmap actual = GLScalerTestUtil::AllocateRGBABitmap(source_size);

@@ -4,8 +4,8 @@
 
 #include "chrome/browser/navigation_predictor/preloading_model_keyed_service.h"
 
-#include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "base/strings/strcat.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/navigation_predictor/preloading_model_keyed_service_factory.h"
 #include "chrome/browser/optimization_guide/browser_test_util.h"
@@ -30,8 +30,7 @@ class PreloadingModelKeyedServiceTest : public InProcessBrowserTest {
     scoped_feature_list_.InitWithFeatures(
         {blink::features::kPreloadingHeuristicsMLModel,
          optimization_guide::features::kOptimizationHints,
-         optimization_guide::features::kOptimizationTargetPrediction,
-         optimization_guide::features::kOptimizationGuideModelDownloading},
+         optimization_guide::features::kOptimizationTargetPrediction},
         {});
 
     base::FilePath source_root_dir;

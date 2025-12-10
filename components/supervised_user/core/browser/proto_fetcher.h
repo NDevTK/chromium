@@ -16,6 +16,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/timer/timer.h"
 #include "base/types/expected.h"
 #include "base/version_info/channel.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
@@ -27,11 +28,8 @@
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/backoff_entry.h"
-#include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
-#include "services/network/public/mojom/fetch_api.mojom-shared.h"
-#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/protobuf/src/google/protobuf/message_lite.h"
 
 namespace supervised_user {
@@ -111,7 +109,7 @@ class FetchProcess {
   virtual void OnResponse(std::optional<std::string> response_body) = 0;
   virtual void OnError(const ProtoFetcherStatus& status) = 0;
 
-  const raw_ref<signin::IdentityManager> identity_manager_;
+  const raw_ref<signin::IdentityManager, DanglingUntriaged> identity_manager_;
   const Payload payload_;
   const raw_ref<const FetcherConfig> config_;
   const FetcherConfig::PathArgs args_;

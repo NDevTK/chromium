@@ -5,23 +5,26 @@
 #import <Foundation/Foundation.h>
 
 #import "base/feature_list.h"
+#import "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "components/collaboration/public/features.h"
 #import "components/data_sharing/public/features.h"
 #import "components/data_sharing/public/group_data.h"
 #import "components/data_sharing/test_support/test_utils.h"
+#import "components/signin/public/base/signin_pref_names.h"
+#import "components/strings/grit/components_strings.h"
 #import "components/sync/base/command_line_switches.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_matchers.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_matchers.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_group_app_interface.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_groups_constants.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_groups_eg_utils.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/test/query_title_server_util.h"
-#import "ios/chrome/common/ui/confirmation_alert/constants.h"
 #import "ios/chrome/common/ui/promo_style/constants.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -37,39 +40,23 @@
 #import "ui/base/l10n/l10n_util.h"
 
 using ::base::test::ios::kWaitForActionTimeout;
+using chrome_test_util::ButtonStackPrimaryButton;
+using chrome_test_util::ConsistencySigninPrimaryButtonMatcher;
 using chrome_test_util::CreateTabGroupAtIndex;
 using chrome_test_util::FakeJoinFlowView;
 using chrome_test_util::FakeShareFlowView;
+using chrome_test_util::LongPressTabGroupCellAtIndex;
 using chrome_test_util::ManageGroupButton;
 using chrome_test_util::NavigationBarCancelButton;
 using chrome_test_util::NavigationBarSaveButton;
-using chrome_test_util::PromoScreenPrimaryButtonMatcher;
 using chrome_test_util::ShareGroupButton;
 using chrome_test_util::TabGridGroupCellAtIndex;
-using chrome_test_util::WebSigninPrimaryButtonMatcher;
 
 namespace {
 
 // Put the number at the beginning to avoid issues with sentence case, as the
 // keyboard default can differ iPhone vs iPad, simulator vs device.
 NSString* const kGroup1Name = @"1group";
-
-// Long press on the given matcher.
-void LongPressOn(id<GREYMatcher> matcher) {
-  // Ensure the element is visible.
-  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:matcher];
-  [ChromeEarlGreyUI waitForAppToIdle];
-  ConditionBlock condition = ^{
-    NSError* error = nil;
-    [[EarlGrey selectElementWithMatcher:matcher] performAction:grey_longPress()
-                                                         error:&error];
-    return error == nil;
-  };
-
-  GREYAssert(base::test::ios::WaitUntilConditionOrTimeout(
-                 base::test::ios::kWaitForUIElementTimeout, condition),
-             @"Long press failed.");
-}
 
 // Waits for the fake join flow view to appear.
 void WaitForFakeJoinFlowView() {
@@ -87,14 +74,6 @@ void WaitForFakeJoinFlowView() {
                  @"The fake join flow view did not appear.");
 }
 
-// Long presses a tab group cell.
-void LongPressTabGroupCellAtIndex(unsigned int index) {
-  // Make sure the cell has appeared. Otherwise, long pressing can be flaky.
-  [ChromeEarlGrey
-      waitForUIElementToAppearWithMatcher:TabGridGroupCellAtIndex(index)];
-  LongPressOn(TabGridGroupCellAtIndex(index));
-}
-
 // Returns the completely configured AppLaunchConfiguration (i.e. setting all
 // the underlying feature dependencies), with the Shared Tab Groups flavor as a
 // parameter.
@@ -105,6 +84,7 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
       collaboration::features::kCollaborationMessaging);
   config.features_enabled.push_back(
       data_sharing::features::kDataSharingFeature);
+  config.features_disabled.push_back(kIOSAutoOpenRemoteTabGroupsSettings);
 
   // Add the flag to use FakeTabGroupSyncService.
   config.additional_args.push_back(
@@ -144,10 +124,6 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
 
 // Checks sharing a group without being signed in.
 - (void)testShareGroupNotSignedIn {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
-  }
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -163,28 +139,30 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
       performAction:grey_tap()];
 
   // Check that a custom sign promo is displayed.
-  [ChromeEarlGrey waitForMatcher:WebSigninPrimaryButtonMatcher()];
+  [ChromeEarlGrey waitForMatcher:ConsistencySigninPrimaryButtonMatcher()];
   [[EarlGrey selectElementWithMatcher:
                  grey_text(l10n_util::GetNSString(
                      IDS_IOS_SIGNIN_GROUP_COLLABORATION_HALF_SHEET_SUBTITLE))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Sign-in.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          WebSigninPrimaryButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ConsistencySigninPrimaryButtonMatcher()]
       performAction:grey_tap()];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
+  [SigninEarlGreyUI dismissSigninConfirmationSnackbarForIdentity:fakeIdentity
+                                                   assertVisible:NO];
 
   // Check that a custom history & sync promo is displayed.
-  [ChromeEarlGrey waitForMatcher:PromoScreenPrimaryButtonMatcher()];
+  [ChromeEarlGrey waitForMatcher:ButtonStackPrimaryButton()];
   [[EarlGrey selectElementWithMatcher:
                  grey_text(l10n_util::GetNSString(
                      IDS_IOS_HISTORY_SYNC_GROUP_COLLABORATION_TITLE))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Accept history & sync.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          PromoScreenPrimaryButtonMatcher()]
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonStackPrimaryButton()]
       performAction:grey_tap()];
   GREYAssertTrue([ChromeEarlGrey isSyncHistoryDataTypeSelected],
                  @"History sync is disabled.");
@@ -212,10 +190,6 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
 
 // Checks sharing a group without being synced.
 - (void)testShareGroupNotSynced {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
-  }
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeIdentity enableHistorySync:NO];
 
@@ -225,21 +199,26 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
   // Create a tab group with an item at 0.
   CreateTabGroupAtIndex(0, kGroup1Name);
 
+  // On iOS26 the grey_longPress action doesn't return an error for EarlGrey,
+  // but the tab group doesn't open accordingly. Waiting has been seen as fixing
+  // this.
+  base::PlatformThread::Sleep(base::Seconds(1));
+
   // Share the first group.
   LongPressTabGroupCellAtIndex(0);
   [[EarlGrey selectElementWithMatcher:ShareGroupButton()]
       performAction:grey_tap()];
 
   // Check that a custom history & sync promo is displayed.
-  [ChromeEarlGrey waitForMatcher:PromoScreenPrimaryButtonMatcher()];
+  [ChromeEarlGrey waitForMatcher:ButtonStackPrimaryButton()];
   [[EarlGrey selectElementWithMatcher:
                  grey_text(l10n_util::GetNSString(
                      IDS_IOS_HISTORY_SYNC_GROUP_COLLABORATION_TITLE))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Accept history & sync.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          PromoScreenPrimaryButtonMatcher()]
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonStackPrimaryButton()]
       performAction:grey_tap()];
   GREYAssertTrue([ChromeEarlGrey isSyncHistoryDataTypeSelected],
                  @"History sync is disabled.");
@@ -267,10 +246,6 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
 
 // Checks joining a group without being signed in.
 - (void)testJoinGroupNotSignedIn {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
-  }
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
@@ -280,7 +255,7 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
   [ChromeEarlGrey loadURL:joinGroupURL waitForCompletion:NO];
 
   // Check that a custom sign promo is displayed.
-  [ChromeEarlGrey waitForMatcher:PromoScreenPrimaryButtonMatcher()];
+  [ChromeEarlGrey waitForMatcher:ButtonStackPrimaryButton()];
   [[EarlGrey
       selectElementWithMatcher:grey_text(l10n_util::GetNSString(
                                    IDS_IOS_SIGNIN_GROUP_COLLABORATION_TITLE))]
@@ -291,20 +266,20 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Sign-in.
-  [[EarlGrey selectElementWithMatcher:PromoScreenPrimaryButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:ButtonStackPrimaryButton()]
       performAction:grey_tap()];
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 
   // Check that a custom history & sync promo is displayed.
-  [ChromeEarlGrey waitForMatcher:PromoScreenPrimaryButtonMatcher()];
+  [ChromeEarlGrey waitForMatcher:ButtonStackPrimaryButton()];
   [[EarlGrey selectElementWithMatcher:
                  grey_text(l10n_util::GetNSString(
                      IDS_IOS_HISTORY_SYNC_GROUP_COLLABORATION_TITLE))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Accept history & sync.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          PromoScreenPrimaryButtonMatcher()]
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonStackPrimaryButton()]
       performAction:grey_tap()];
   GREYAssertTrue([ChromeEarlGrey isSyncHistoryDataTypeSelected],
                  @"History sync is disabled.");
@@ -325,10 +300,6 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
 
 // Checks joining a group without being synced.
 - (void)testJoinGroupNotSynced {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
-  }
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeIdentity enableHistorySync:NO];
 
@@ -338,15 +309,15 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
   [ChromeEarlGrey loadURL:joinGroupURL waitForCompletion:NO];
 
   // Check that a custom history & sync promo is displayed.
-  [ChromeEarlGrey waitForMatcher:PromoScreenPrimaryButtonMatcher()];
+  [ChromeEarlGrey waitForMatcher:ButtonStackPrimaryButton()];
   [[EarlGrey selectElementWithMatcher:
                  grey_text(l10n_util::GetNSString(
                      IDS_IOS_HISTORY_SYNC_GROUP_COLLABORATION_TITLE))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Accept history & sync.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::
-                                          PromoScreenPrimaryButtonMatcher()]
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::ButtonStackPrimaryButton()]
       performAction:grey_tap()];
   GREYAssertTrue([ChromeEarlGrey isSyncHistoryDataTypeSelected],
                  @"History sync is disabled.");
@@ -365,4 +336,37 @@ AppLaunchConfiguration SharedTabGroupAppLaunchConfiguration(
   [ChromeEarlGrey waitForMainTabCount:2];
 }
 
+// Tests joining a group when sign in is disabled.
+- (void)testJoinGroupSignedInDisabled {
+  [ChromeEarlGrey setBoolValue:NO forUserPref:prefs::kSigninAllowed];
+
+  [TabGroupAppInterface mockSharedEntitiesPreview];
+  GURL joinGroupURL = data_sharing::GetDataSharingUrl(data_sharing::GroupToken(
+      data_sharing::GroupId("resources%2F3be"), "CggHBicxA_slvx"));
+  [ChromeEarlGrey loadURL:joinGroupURL waitForCompletion:NO];
+
+  // Check that a sign in disabled alert is presented.
+  [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
+                      grey_text(l10n_util::GetNSString(
+                          IDS_COLLABORATION_SIGNED_OUT_HEADER))];
+  [[EarlGrey selectElementWithMatcher:grey_text(l10n_util::GetNSString(
+                                          IDS_COLLABORATION_SIGNED_OUT_BODY))]
+      assertWithMatcher:grey_sufficientlyVisible()];
+}
+
+// Tests sharing a group when sign in is disabled.
+- (void)testShareGroupSignedInDisabled {
+  [ChromeEarlGrey setBoolValue:NO forUserPref:prefs::kSigninAllowed];
+
+  // Open the tab grid.
+  [ChromeEarlGreyUI openTabGrid];
+
+  // Create a tab group with an item at 0.
+  CreateTabGroupAtIndex(0, kGroup1Name);
+
+  // Check that the share action is not available.
+  LongPressTabGroupCellAtIndex(0);
+  [[EarlGrey selectElementWithMatcher:ShareGroupButton()]
+      assertWithMatcher:grey_notVisible()];
+}
 @end

@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/byte_count.h"
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/numerics/safe_conversions.h"
@@ -22,6 +23,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "content/public/common/result_codes.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -81,7 +83,7 @@ RendererTask::RendererTask(const std::u16string& title,
           CreateRendererResourcesSampler(render_process_host_)),
       render_process_id_(render_process_host_->GetDeprecatedID()),
       profile_name_(GetRendererProfileName(render_process_host_)) {
-  OnNetworkBytesRead(0);
+  OnNetworkBytesRead(base::ByteCount(0));
 
   // Tag the web_contents with a |ContentFaviconDriver| (if needed) so that
   // we can use it to observe favicons changes.
@@ -102,6 +104,26 @@ void RendererTask::Activate() {
   web_contents_->GetDelegate()->ActivateContents(web_contents_);
 }
 
+bool RendererTask::IsKillable() {
+  return Task::IsKillable();
+}
+
+bool RendererTask::Kill() {
+  if (!IsKillable()) {
+    return false;
+  }
+
+#if BUILDFLAG(IS_ANDROID)
+  // On Android, the renderer process is an isolated service. Sending SIGKILL
+  // (via base::Process::Terminate) fails due to permission restrictions.
+  // Shutdown() triggers unbinding the service, which is the correct way
+  // to kill a process on Android.
+  return render_process_host_->Shutdown(content::RESULT_CODE_KILLED);
+#else
+  return Task::Kill();
+#endif
+}
+
 void RendererTask::Refresh(const base::TimeDelta& update_interval,
                            int64_t refresh_flags) {
   Task::Refresh(update_interval, refresh_flags);
@@ -115,10 +137,10 @@ void RendererTask::Refresh(const base::TimeDelta& update_interval,
   // having valid values).
   renderer_resources_sampler_->Refresh(base::DoNothing());
 
-  v8_memory_allocated_ = base::saturated_cast<int64_t>(
-      renderer_resources_sampler_->GetV8MemoryAllocated());
-  v8_memory_used_ = base::saturated_cast<int64_t>(
-      renderer_resources_sampler_->GetV8MemoryUsed());
+  v8_memory_allocated_ =
+      base::ByteCount(renderer_resources_sampler_->GetV8MemoryAllocated());
+  v8_memory_used_ =
+      base::ByteCount(renderer_resources_sampler_->GetV8MemoryUsed());
   webcache_stats_ = renderer_resources_sampler_->GetBlinkMemoryCacheStats();
 }
 
@@ -147,11 +169,11 @@ SessionID RendererTask::GetTabId() const {
   return sessions::SessionTabHelper::IdForTab(web_contents_);
 }
 
-int64_t RendererTask::GetV8MemoryAllocated() const {
+base::ByteCount RendererTask::GetV8MemoryAllocated() const {
   return v8_memory_allocated_;
 }
 
-int64_t RendererTask::GetV8MemoryUsed() const {
+base::ByteCount RendererTask::GetV8MemoryUsed() const {
   return v8_memory_used_;
 }
 

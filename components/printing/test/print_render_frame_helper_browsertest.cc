@@ -13,7 +13,6 @@
 
 #include "base/base_paths.h"
 #include "base/command_line.h"
-#include "base/files/file_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -29,7 +28,6 @@
 #include "content/public/renderer/render_frame.h"
 #include "content/public/test/mock_render_thread.h"
 #include "content/public/test/render_view_test.h"
-#include "ipc/ipc_listener.h"
 #include "printing/buildflags/buildflags.h"
 #include "printing/image.h"
 #include "printing/mojom/print.mojom.h"

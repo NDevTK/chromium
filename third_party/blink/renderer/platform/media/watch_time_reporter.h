@@ -5,8 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIA_WATCH_TIME_REPORTER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIA_WATCH_TIME_REPORTER_H_
 
-#include <vector>
-
 #include "base/functional/callback.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/task/sequenced_task_runner.h"
@@ -16,13 +14,13 @@
 #include "media/base/media_log.h"
 #include "media/base/timestamp_constants.h"
 #include "media/base/video_codecs.h"
-#include "media/mojo/mojom/media_metrics_provider.mojom.h"
-#include "media/mojo/mojom/watch_time_recorder.mojom.h"
+#include "media/mojo/mojom/media_metrics_provider.mojom-blink.h"
+#include "media/mojo/mojom/watch_time_recorder.mojom-blink.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/platform/web_media_player.h"
-#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
 #include "third_party/blink/renderer/platform/media/watch_time_component.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/origin.h"
 
@@ -67,26 +65,26 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
   // before attempting construction as incorrect values will result in the wrong
   // watch time metrics being reported.
   //
-  // |properties| Properties describing the playback; these are considered
+  // `properties` Properties describing the playback; these are considered
   // immutable over the lifetime of the reporter. If any of them change a new
   // WatchTimeReporter should be created with updated properties.
   //
-  // |get_media_time_cb| must return the current playback time in terms of media
+  // `get_media_time_cb` must return the current playback time in terms of media
   // time, not wall clock time! Using media time instead of wall clock time
   // allows us to avoid a whole class of issues around clock changes during
   // suspend and resume.
   //
-  // |provider| A provider of mojom::WatchTimeRecorder instances which will be
-  // created and used to handle caching of metrics outside of the current
-  // process.
+  // `provider` A provider of mojom::blink::WatchTimeRecorder instances which
+  // will be created and used to handle caching of metrics outside of the
+  // current process.
   //
   // TODO(dalecurtis): Should we only report when rate == 1.0? Should we scale
   // the elapsed media time instead?
-  WatchTimeReporter(media::mojom::PlaybackPropertiesPtr properties,
+  WatchTimeReporter(media::mojom::blink::PlaybackPropertiesPtr properties,
                     const gfx::Size& natural_size,
                     GetMediaTimeCB get_media_time_cb,
                     GetPipelineStatsCB get_pipeline_stats_cb,
-                    media::mojom::MediaMetricsProvider* provider,
+                    media::mojom::blink::MediaMetricsProvider* provider,
                     scoped_refptr<base::SequencedTaskRunner> task_runner,
                     const base::TickClock* tick_clock = nullptr);
   WatchTimeReporter(const WatchTimeReporter&) = delete;
@@ -129,6 +127,10 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
   void OnUnderflow();
   void OnUnderflowComplete(base::TimeDelta elapsed);
 
+  // This method is used to ensure that watch time is reported relative to
+  // whether the media is the dominant content on screen or not.
+  void OnDominantVisibleContentChanged(bool is_dominant);
+
   // These methods are used to ensure that the watch time is reported relative
   // to whether the media is using native controls.
   void OnNativeControlsEnabled();
@@ -148,7 +150,7 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
   // Note: Both UMA and UMK watch time will be interrupted if the natural size
   // transitions above/below kMinimumVideoSize.
   void UpdateSecondaryProperties(
-      media::mojom::SecondaryPlaybackPropertiesPtr secondary_properties);
+      media::mojom::blink::SecondaryPlaybackPropertiesPtr secondary_properties);
 
   // Notifies the autoplay status of the playback. Must not be called multiple
   // times with different values.
@@ -158,17 +160,20 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
   // of times during playback.
   void OnDurationChanged(base::TimeDelta duration);
 
+  // Updates whether HDR is enabled for the video.
+  void OnHdrChanged(bool is_hdr);
+
  private:
   friend class WatchTimeReporterTest;
 
   // Internal constructor for marking background status.
-  WatchTimeReporter(media::mojom::PlaybackPropertiesPtr properties,
+  WatchTimeReporter(media::mojom::blink::PlaybackPropertiesPtr properties,
                     bool is_background,
                     bool is_muted,
                     const gfx::Size& natural_size,
                     GetMediaTimeCB get_media_time_cb,
                     GetPipelineStatsCB get_pipeline_stats_cb,
-                    media::mojom::MediaMetricsProvider* provider,
+                    media::mojom::blink::MediaMetricsProvider* provider,
                     scoped_refptr<base::SequencedTaskRunner> task_runner,
                     const base::TickClock* tick_clock);
 
@@ -201,21 +206,25 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
   // and a conversion method to get the correct WatchTimeKey.
   std::unique_ptr<WatchTimeComponent<bool>> CreateBaseComponent();
   std::unique_ptr<WatchTimeComponent<bool>> CreatePowerComponent();
-  media::WatchTimeKey GetPowerKey(bool is_on_battery_power);
+  Vector<media::WatchTimeKey> GetPowerKeys(bool is_on_battery_power);
+  std::unique_ptr<WatchTimeComponent<bool>> CreateDominantComponent();
+  Vector<media::WatchTimeKey> GetDominantKey(bool is_dominant);
   std::unique_ptr<WatchTimeComponent<bool>> CreateControlsComponent();
-  media::WatchTimeKey GetControlsKey(bool has_native_controls);
+  Vector<media::WatchTimeKey> GetControlsKeys(bool has_native_controls);
   std::unique_ptr<WatchTimeComponent<WebMediaPlayer::DisplayType>>
   CreateDisplayTypeComponent();
-  media::WatchTimeKey GetDisplayTypeKey(
+  Vector<media::WatchTimeKey> GetDisplayTypeKeys(
       WebMediaPlayer::DisplayType display_type);
+  std::unique_ptr<WatchTimeComponent<bool>> CreateHdrComponent();
+  Vector<media::WatchTimeKey> GetHdrKeys(bool is_hdr);
 
   // Initialized during construction.
-  const media::mojom::PlaybackPropertiesPtr properties_;
+  const media::mojom::blink::PlaybackPropertiesPtr properties_;
   const bool is_background_;
   const bool is_muted_;
   const GetMediaTimeCB get_media_time_cb_;
   const GetPipelineStatsCB get_pipeline_stats_cb_;
-  mojo::Remote<media::mojom::WatchTimeRecorder> recorder_;
+  mojo::Remote<media::mojom::blink::WatchTimeRecorder> recorder_;
 
   // The amount of time between each UpdateWatchTime(); this is the frequency by
   // which the watch times are updated. In the event of a process crash or kill
@@ -244,8 +253,7 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
     base::TimeDelta timestamp = media::kNoTimestamp;
     base::TimeDelta duration = media::kNoTimestamp;
   };
-  std::vector<UnderflowEvent> pending_underflow_events_
-      ALLOW_DISCOURAGED_TYPE("TODO(crbug.com/40760651): Pending migration");
+  Vector<UnderflowEvent> pending_underflow_events_;
 
   media::PipelineStatistics initial_stats_;
   media::PipelineStatistics last_stats_;
@@ -259,9 +267,11 @@ class PLATFORM_EXPORT WatchTimeReporter : base::PowerStateObserver {
   // to add a new template class definition or you will get linking errors.
   std::unique_ptr<WatchTimeComponent<bool>> base_component_;
   std::unique_ptr<WatchTimeComponent<bool>> power_component_;
+  std::unique_ptr<WatchTimeComponent<bool>> dominant_component_;
   std::unique_ptr<WatchTimeComponent<WebMediaPlayer::DisplayType>>
       display_type_component_;
   std::unique_ptr<WatchTimeComponent<bool>> controls_component_;
+  std::unique_ptr<WatchTimeComponent<bool>> hdr_component_;
 
   // Special case reporter for handling background video watch time. Configured
   // as an audio only WatchTimeReporter with |is_background_| set to true.

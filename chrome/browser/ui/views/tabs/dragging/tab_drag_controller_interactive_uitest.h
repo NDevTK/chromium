@@ -8,11 +8,13 @@
 #include <string>
 
 #include "base/memory/raw_ptr.h"
+#include "chrome/browser/ui/views/tabs/dragging/tab_drag_controller.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "url/url_constants.h"
 
 class Browser;
 class BrowserList;
+class BrowserWindowInterface;
 class TabStrip;
 class TabStripModel;
 class WindowFinder;
@@ -60,6 +62,8 @@ class TabDragControllerTest : public InProcessBrowserTest {
 
   bool HasDragStarted(TabStrip* tab_strip) const;
 
+  void SetTabDragPointResolver(TabDragPointResolver& resolver);
+
   // InProcessBrowserTest:
   void SetUp() override;
 
@@ -70,7 +74,7 @@ class TabDragControllerTest : public InProcessBrowserTest {
 namespace test {
 
 // Returns the TabStrip for `browser`.
-TabStrip* GetTabStripForBrowser(Browser* browser);
+TabStrip* GetTabStripForBrowser(BrowserWindowInterface* browser);
 
 // Sets the id of `web_contents` to `id`.
 void SetID(content::WebContents* web_contents, int id);

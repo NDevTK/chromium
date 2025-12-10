@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "ash/webui/print_management/print_management_ui.h"
 
@@ -26,7 +22,6 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "ui/base/webui/web_ui_util.h"
-#include "ui/webui/color_change_listener/color_change_handler.h"
 #include "ui/webui/resources/grit/webui_resources.h"
 
 namespace ash {
@@ -171,12 +166,6 @@ void PrintManagementUI::BindInterface(
         chromeos::printing::printing_manager::mojom::PrintManagementHandler>
         receiver) {
   print_management_handler_->BindInterface(std::move(receiver));
-}
-
-void PrintManagementUI::BindInterface(
-    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
-  color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
-      web_ui()->GetWebContents(), std::move(receiver));
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(PrintManagementUI)

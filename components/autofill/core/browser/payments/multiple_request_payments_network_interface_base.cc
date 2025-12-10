@@ -5,7 +5,9 @@
 #include "components/autofill/core/browser/payments/multiple_request_payments_network_interface_base.h"
 
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/functional/bind.h"
@@ -24,6 +26,7 @@
 #include "components/variations/net/variations_http_headers.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/load_flags.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -137,6 +140,11 @@ const RequestId& MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
 }
 
 void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
+    InvalidateOperation() {
+  request_.reset();
+}
+
+void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
     AccessTokenFetchFinished(
         const std::variant<GoogleServiceAuthError, std::string>& result) {
   if (std::holds_alternative<GoogleServiceAuthError>(result)) {
@@ -207,7 +215,7 @@ MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
 }
 
 void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
-    OnSimpleLoaderComplete(std::unique_ptr<std::string> response_body) {
+    OnSimpleLoaderComplete(std::optional<std::string> response_body) {
   int response_code = -1;
   if (simple_url_loader_->ResponseInfo() &&
       simple_url_loader_->ResponseInfo()->headers) {
@@ -217,12 +225,8 @@ void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
     response_code = net::ERR_TIMED_OUT;
   }
 
-  std::string data;
-  if (response_body) {
-    data = std::move(*response_body);
-  }
-
-  OnSimpleLoaderCompleteInternal(response_code, data);
+  OnSimpleLoaderCompleteInternal(response_code,
+                                 std::move(response_body).value_or(""));
 }
 
 void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
@@ -232,6 +236,7 @@ void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
   PaymentsRpcResult result = PaymentsRpcResult::kSuccess;
 
   if (!request_) {
+    payments_network_interface_->OnRequestFinished(request_operation_id_);
     return;
   }
 
@@ -255,7 +260,8 @@ void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
     case net::HTTP_OK: {
       std::string error_code;
       std::string error_api_error_reason;
-      std::optional<base::Value> message_value = base::JSONReader::Read(data);
+      std::optional<base::Value> message_value =
+          base::JSONReader::Read(data, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
       if (message_value && message_value->is_dict()) {
         const auto* found_error_code =
             message_value->GetDict().FindStringByDottedPath("error.code");
@@ -343,6 +349,7 @@ void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
 
 void MultipleRequestPaymentsNetworkInterfaceBase::RequestOperation::
     ReportOperationResult(PaymentsRpcResult result) {
+  CHECK(request_);
   request_->RespondToDelegate(result);
   payments_network_interface_->OnRequestFinished(request_operation_id_);
 }
@@ -368,13 +375,15 @@ RequestId MultipleRequestPaymentsNetworkInterfaceBase::IssueRequest(
   return id;
 }
 
-void MultipleRequestPaymentsNetworkInterfaceBase::CancelRequests() {
-  operations_.clear();
-}
-
 void MultipleRequestPaymentsNetworkInterfaceBase::CancelRequestWithId(
     const RequestId& id) {
-  operations_.erase(id);
+  // Instead of deleting the operation with `id` directly, we will mark it
+  // as invalidated so it does not report any result. The lifecycle of the
+  // operation should only be managed by the PaymentsNetworkInterface (i.e. by
+  // OnRequestFinished) internally to avoid accidental use-after-free.
+  if (operations_.contains(id)) {
+    operations_[id]->InvalidateOperation();
+  }
 }
 
 void MultipleRequestPaymentsNetworkInterfaceBase::OnRequestFinished(

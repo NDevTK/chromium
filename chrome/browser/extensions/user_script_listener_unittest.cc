@@ -14,8 +14,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
 #include "build/chromeos_buildflags.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/common/chrome_paths.h"
@@ -69,6 +71,8 @@ std::optional<base::Value::Dict> LoadManifestFile(const base::FilePath path,
   return std::move(*manifest).TakeDict();
 }
 
+// TODO(crbug.com/41317803): Continue removing std::string error and
+// replacing with std::u16string.
 scoped_refptr<Extension> LoadExtension(const std::string& filename,
                                        std::string* error) {
   base::FilePath path;
@@ -80,8 +84,12 @@ scoped_refptr<Extension> LoadExtension(const std::string& filename,
   if (!manifest) {
     return nullptr;
   }
-  return Extension::Create(path.DirName(), mojom::ManifestLocation::kUnpacked,
-                           *manifest, Extension::NO_FLAGS, error);
+  std::u16string utf16_error;
+  scoped_refptr<Extension> extension =
+      Extension::Create(path.DirName(), mojom::ManifestLocation::kUnpacked,
+                        *manifest, Extension::NO_FLAGS, &utf16_error);
+  *error = base::UTF16ToUTF8(utf16_error);
+  return extension;
 }
 
 }  // namespace
@@ -186,6 +194,9 @@ class UserScriptListenerTest : public testing::Test {
 #if BUILDFLAG(IS_CHROMEOS)
   std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
 #endif
+  // TODO(https://crbug.com/40804030): Migrate this to only rely on MV3
+  // extensions.
+  ScopedTestMV2Enabler mv2_enabler_;
 };
 
 namespace {

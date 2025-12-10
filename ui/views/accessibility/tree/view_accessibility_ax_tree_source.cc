@@ -80,7 +80,7 @@ int32_t ViewAccessibilityAXTreeSource::GetId(ViewAccessibility* node) const {
 
 void ViewAccessibilityAXTreeSource::CacheChildrenIfNeeded(
     ViewAccessibility* node) {
-  if (!node || cache_->HasCachedChildren(node)) {
+  if (!node) {
     return;
   }
   cache_->CacheChildrenIfNeeded(node);
@@ -91,7 +91,7 @@ size_t ViewAccessibilityAXTreeSource::GetChildCount(
   if (!node) {
     return 0;
   }
-  return node->GetChildren().size();
+  return cache_->CachedChildCount(node);
 }
 
 ViewAccessibility* ViewAccessibilityAXTreeSource::ChildAt(
@@ -101,12 +101,7 @@ ViewAccessibility* ViewAccessibilityAXTreeSource::ChildAt(
     return nullptr;
   }
 
-  auto children = node->GetChildren();
-  if (index >= children.size()) {
-    return nullptr;
-  }
-
-  return children[index];
+  return cache_->CachedChildAt(node, index);
 }
 
 void ViewAccessibilityAXTreeSource::ClearChildCache(ViewAccessibility* node) {
@@ -154,7 +149,10 @@ std::string ViewAccessibilityAXTreeSource::GetDebugString(
 void ViewAccessibilityAXTreeSource::SerializeNode(
     ViewAccessibility* node,
     ui::AXNodeData* out_data) const {
-  // TODO(accessibility): Implement.
+  if (!node || !out_data) {
+    return;
+  }
+  node->GetAccessibleNodeData(out_data);
 }
 
 std::string ViewAccessibilityAXTreeSource::ToString(ViewAccessibility* root,

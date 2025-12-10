@@ -42,8 +42,8 @@ class TabMatcherDesktopTest : public InProcessBrowserTest {
 
 constexpr auto kServiceInitializers =
     std::to_array<TemplateURLService::Initializer>({
-        {"kwa", "a.chromium.org/?a={searchTerms}", "ca"},
-        {"kwb", "b.chromium.org/?b={searchTerms}", "cb"},
+        {"kwa", "https://a.chromium.org/?a={searchTerms}", "ca"},
+        {"kwb", "https://b.chromium.org/?b={searchTerms}", "cb"},
     });
 
 IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest,
@@ -53,9 +53,9 @@ IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest,
           GetProfile(), kServiceInitializers);
   TabMatcherDesktop matcher(service.get(), GetProfile());
 
-  GURL foo("http://foo.chromium.org");
-  GURL bar("http://bar.chromium.org");
-  GURL baz("http://baz.chromium.org");
+  GURL foo("https://foo.chromium.org");
+  GURL bar("https://bar.chromium.org");
+  GURL baz("https://baz.chromium.org");
 
   for (auto url : {foo, bar, baz}) {
     ui_test_utils::NavigateToURLWithDisposition(
@@ -66,14 +66,14 @@ IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest,
   EXPECT_TRUE(matcher.IsTabOpenWithURL(foo, nullptr));
   EXPECT_TRUE(matcher.IsTabOpenWithURL(bar, nullptr));
   EXPECT_FALSE(matcher.IsTabOpenWithURL(baz, nullptr));
-  EXPECT_FALSE(matcher.IsTabOpenWithURL(GURL("http://chromium.org"), nullptr));
+  EXPECT_FALSE(matcher.IsTabOpenWithURL(GURL("https://chromium.org"), nullptr));
 }
 
 IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest, GetOpenTabsOnlyWithinProfile) {
-  ASSERT_TRUE(
-      ui_test_utils::NavigateToURL(browser(), GURL("http://bar.chromium.org")));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(),
+                                           GURL("https://bar.chromium.org")));
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL("http://foo.chromium.org"),
+      browser(), GURL("https://foo.chromium.org"),
       WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
@@ -82,7 +82,7 @@ IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest, GetOpenTabsOnlyWithinProfile) {
       profile_manager, profile_manager->GenerateNextProfileDirectoryPath());
   Browser* browser_with_second_profile = CreateBrowser(second_profile);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser_with_second_profile,
-                                           GURL("http://baz.chromium.org")));
+                                           GURL("https://baz.chromium.org")));
 
   std::unique_ptr<TemplateURLService> service =
       TemplateURLServiceTestUtil::CreateTemplateURLServiceForTesting(
@@ -103,7 +103,7 @@ IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest, IsTabOpenUsesCanonicalSearchURL) {
   TabMatcherDesktop matcher(turl_service.get(), GetProfile());
 
   TemplateURLData data;
-  data.SetURL("http://example.com/search?q={searchTerms}");
+  data.SetURL("https://example.com/search?q={searchTerms}");
   data.search_intent_params = {"intent"};
   TemplateURL turl(data);
   auto* default_turl = turl_service->Add(std::make_unique<TemplateURL>(data));
@@ -114,22 +114,22 @@ IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest, IsTabOpenUsesCanonicalSearchURL) {
     search_terms_args.additional_query_params = "wiz=baz";
     std::string foo_url = default_turl->url_ref().ReplaceSearchTerms(
         search_terms_args, turl_service->search_terms_data());
-    EXPECT_EQ("http://example.com/search?wiz=baz&q=foo", foo_url);
+    EXPECT_EQ("https://example.com/search?wiz=baz&q=foo", foo_url);
     ui_test_utils::NavigateToURLWithDisposition(
         browser(), GURL(foo_url), WindowOpenDisposition::NEW_FOREGROUND_TAB,
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
     // The last tab is active. IsTabOpenWithURL() does not match the active tab.
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), GURL("http://active.chromium.org"),
+        browser(), GURL("https://active.chromium.org"),
         WindowOpenDisposition::NEW_FOREGROUND_TAB,
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
     EXPECT_TRUE(matcher.IsTabOpenWithURL(
-        GURL("http://example.com/search?q=foo"), nullptr));
+        GURL("https://example.com/search?q=foo"), nullptr));
     EXPECT_TRUE(matcher.IsTabOpenWithURL(
-        GURL("http://example.com/search?wiz=baz&q=foo"), nullptr));
+        GURL("https://example.com/search?wiz=baz&q=foo"), nullptr));
     EXPECT_FALSE(matcher.IsTabOpenWithURL(
-        GURL("http://example.com/search?wiz=baz&intent=INTENT&q=foo"),
+        GURL("https://example.com/search?wiz=baz&intent=INTENT&q=foo"),
         nullptr));
   }
   {
@@ -137,22 +137,22 @@ IN_PROC_BROWSER_TEST_F(TabMatcherDesktopTest, IsTabOpenUsesCanonicalSearchURL) {
     search_terms_args.additional_query_params = "intent=INTENT";
     std::string bar_url = default_turl->url_ref().ReplaceSearchTerms(
         search_terms_args, turl_service->search_terms_data());
-    EXPECT_EQ("http://example.com/search?intent=INTENT&q=bar", bar_url);
+    EXPECT_EQ("https://example.com/search?intent=INTENT&q=bar", bar_url);
     ui_test_utils::NavigateToURLWithDisposition(
         browser(), GURL(bar_url), WindowOpenDisposition::NEW_FOREGROUND_TAB,
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
     // The last tab is active. IsTabOpenWithURL() does not match the active tab.
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), GURL("http://active.chromium.org"),
+        browser(), GURL("https://active.chromium.org"),
         WindowOpenDisposition::NEW_FOREGROUND_TAB,
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
     EXPECT_FALSE(matcher.IsTabOpenWithURL(
-        GURL("http://example.com/search?q=bar"), nullptr));
+        GURL("https://example.com/search?q=bar"), nullptr));
     EXPECT_FALSE(matcher.IsTabOpenWithURL(
-        GURL("http://example.com/search?wiz=baz&q=bar"), nullptr));
+        GURL("https://example.com/search?wiz=baz&q=bar"), nullptr));
     EXPECT_TRUE(matcher.IsTabOpenWithURL(
-        GURL("http://example.com/search?wiz=baz&intent=INTENT&q=bar"),
+        GURL("https://example.com/search?wiz=baz&intent=INTENT&q=bar"),
         nullptr));
   }
 }

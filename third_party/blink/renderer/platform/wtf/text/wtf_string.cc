@@ -52,7 +52,7 @@
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value.h"
 
-namespace WTF {
+namespace blink {
 
 ASSERT_SIZE(String, void*);
 
@@ -92,12 +92,12 @@ UChar32 String::CharacterStartingAt(unsigned i) const {
   return impl_->CharacterStartingAt(i);
 }
 
-blink::CodePointIterator String::begin() const {
-  return blink::CodePointIterator(*this);
+CodePointIterator String::begin() const {
+  return CodePointIterator(*this);
 }
 
-blink::CodePointIterator String::end() const {
-  return blink::CodePointIterator::End(*this);
+CodePointIterator String::end() const {
+  return CodePointIterator::End(*this);
 }
 
 void String::Ensure16Bit() {
@@ -258,19 +258,19 @@ String String::Number(float number) {
 }
 
 String String::Number(double number, unsigned precision) {
-  NumberToStringBuffer buffer;
-  return String(NumberToFixedPrecisionString(number, precision, buffer));
+  DoubleToStringConverter converter;
+  return String(converter.ToStringWithFixedPrecision(number, precision));
 }
 
 String String::NumberToStringECMAScript(double number) {
-  NumberToStringBuffer buffer;
-  return String(NumberToString(number, buffer));
+  DoubleToStringConverter converter;
+  return String(converter.ToString(number));
 }
 
 String String::NumberToStringFixedWidth(double number,
                                         unsigned decimal_places) {
-  NumberToStringBuffer buffer;
-  return String(NumberToFixedWidthString(number, decimal_places, buffer));
+  DoubleToStringConverter converter;
+  return String(converter.ToStringWithFixedWidth(number, decimal_places));
 }
 
 int String::ToIntStrict(bool* ok) const {
@@ -441,7 +441,7 @@ String String::Make8BitFrom16BitSource(base::span<const UChar> source) {
   base::span<LChar> destination;
   String result = String::CreateUninitialized(length, destination);
 
-  CopyLCharsFromUCharSource(destination.data(), source.data(), length);
+  CopyLCharsFromUCharSource(destination, source);
 
   return result;
 }
@@ -516,9 +516,9 @@ void String::WriteIntoTrace(perfetto::TracedValue context) const {
   // Avoid the default String to StringView conversion since it calls
   // AddRef() on the StringImpl and this method is sometimes called in
   // places where that triggers DCHECKs.
-  StringUTF8Adaptor adaptor(Is8Bit() ? StringView(Span8())
+  StringUtf8Adaptor adaptor(Is8Bit() ? StringView(Span8())
                                      : StringView(Span16()));
   std::move(context).WriteString(adaptor.data(), adaptor.size());
 }
 
-}  // namespace WTF
+}  // namespace blink

@@ -5,9 +5,10 @@
 #include "chrome/browser/glic/host/guest_util.h"
 
 #include "base/command_line.h"
+#include "base/metrics/histogram_functions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
@@ -24,7 +25,19 @@
 
 namespace glic {
 
+BASE_FEATURE(kGlicGuestUrlMultiInstanceParam, base::FEATURE_ENABLED_BY_DEFAULT);
+
 namespace {
+
+// LINT.IfChange(WebViewAutoPlayProgress)
+enum class WebViewAutoPlayProgress {
+  kWebContentsObserverRegistered = 0,
+  kAutoPlayGrantedForPrimaryRFH = 1,
+  kAutoPlayGrantedForOtherRFH = 2,
+  kMaxValue = kAutoPlayGrantedForOtherRFH,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:WebViewAutoPlayProgress)
+
 // Observes the glic webview's `WebContents`.
 class WebviewWebContentsObserver : public content::WebContentsObserver,
                                    public base::SupportsUserData::Data {
@@ -38,7 +51,15 @@ class WebviewWebContentsObserver : public content::WebContentsObserver,
     mojo::AssociatedRemote<blink::mojom::AutoplayConfigurationClient> client;
     frame->GetRemoteAssociatedInterfaces()->GetInterface(&client);
     client->AddAutoplayFlags(GetGuestOrigin(),
-                             blink::mojom::kAutoplayFlagHighMediaEngagement);
+                             blink::mojom::kAutoplayFlagForceAllow);
+    VLOG(1) << "Granted Glic AutoPlay for origin=\"" << GetGuestOrigin()
+            << "\" at " << (handle->IsInPrimaryMainFrame() ? "main " : "")
+            << "RFH with url=\"" << handle->GetURL() << "\"";
+    base::UmaHistogramEnumeration(
+        "Glic.Host.WebView.AutoPlay",
+        handle->IsInPrimaryMainFrame()
+            ? WebViewAutoPlayProgress::kAutoPlayGrantedForPrimaryRFH
+            : WebViewAutoPlayProgress::kAutoPlayGrantedForOtherRFH);
   }
 };
 
@@ -55,6 +76,9 @@ GURL GetGuestURL() {
     LOG(ERROR) << "No glic guest url";
     return GURL();
   }
+
+  url = MaybeAddMultiInstanceParameter(url);
+
   return GetLocalizedGuestURL(url);
 }
 
@@ -70,6 +94,14 @@ GURL GetLocalizedGuestURL(const GURL& guest_url) {
   std::string locale = g_browser_process->GetApplicationLocale();
   language::ToTranslateLanguageSynonym(&locale);
   return net::AppendQueryParameter(guest_url, "hl", locale);
+}
+
+GURL MaybeAddMultiInstanceParameter(const GURL& guest_url) {
+  if (GlicEnabling::IsMultiInstanceEnabled() &&
+      base::FeatureList::IsEnabled(kGlicGuestUrlMultiInstanceParam)) {
+    return net::AppendOrReplaceQueryParameter(guest_url, "mode", "mi");
+  }
+  return guest_url;
 }
 
 bool IsGlicWebUI(const content::WebContents* web_contents) {
@@ -100,6 +132,12 @@ bool OnGuestAdded(content::WebContents* guest_contents) {
   guest_contents->SetUserData(
       "glic::WebviewWebContentsObserver",
       std::make_unique<WebviewWebContentsObserver>(guest_contents));
+  VLOG(1) << "Registered glic::WebviewWebContentsObserver for guest "
+             "WebContents with url=\""
+          << guest_contents->GetVisibleURL() << "\"";
+  base::UmaHistogramEnumeration(
+      "Glic.Host.WebView.AutoPlay",
+      WebViewAutoPlayProgress::kWebContentsObserverRegistered);
   return true;
 }
 

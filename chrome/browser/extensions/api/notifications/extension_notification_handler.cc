@@ -51,7 +51,7 @@ ExtensionId ExtensionNotificationHandler::GetExtensionId(const GURL& url) {
   if (!url.is_valid() || !url.SchemeIs(kExtensionScheme)) {
     return "";
   }
-  return ExtensionId(url.DeprecatedGetOriginAsURL().host_piece());
+  return ExtensionId(url.DeprecatedGetOriginAsURL().host());
 }
 
 void ExtensionNotificationHandler::OnClose(
@@ -105,10 +105,13 @@ void ExtensionNotificationHandler::OnClick(
   std::move(completed_closure).Run();
 }
 
-void ExtensionNotificationHandler::DisableNotifications(Profile* profile,
-                                                        const GURL& origin) {
+void ExtensionNotificationHandler::DisableNotifications(
+    Profile* profile,
+    const GURL& origin,
+    const std::optional<std::string>& notification_id,
+    const std::optional<bool>& is_suspicious) {
   message_center::NotifierId notifier_id(
-      message_center::NotifierType::APPLICATION, origin.host());
+      message_center::NotifierType::APPLICATION, origin.GetHost());
   NotifierStateTrackerFactory::GetForProfile(profile)->SetNotifierEnabled(
       notifier_id, false /* enabled */);
 }

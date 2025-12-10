@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.feed;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
@@ -11,8 +14,6 @@ import android.os.Handler;
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.LayoutManager;
@@ -24,10 +25,13 @@ import org.chromium.base.ObserverList;
 import org.chromium.base.memory.MemoryPressureCallback;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.app.feed.feedmanagement.FeedManagementActivity;
 import org.chromium.chrome.browser.feed.FeedSurfaceProvider.RestoringState;
 import org.chromium.chrome.browser.feed.Stream.ContentChangedListener;
+import org.chromium.chrome.browser.feed.componentinterfaces.SurfaceCoordinator;
 import org.chromium.chrome.browser.feed.sections.OnSectionHeaderSelectedListener;
 import org.chromium.chrome.browser.feed.sections.SectionHeaderListProperties;
 import org.chromium.chrome.browser.feed.sections.SectionHeaderProperties;
@@ -65,6 +69,8 @@ import org.chromium.components.prefs.PrefChangeRegistrar;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
+import org.chromium.components.signin.SigninFeatureMap;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.identitymanager.PrimaryAccountChangeEvent;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
@@ -80,15 +86,18 @@ import org.chromium.ui.modelutil.PropertyListModel;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * A mediator for the {@link FeedSurfaceCoordinator} responsible for interacting with the native
  * library and handling business logic.
  */
 @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+@NullMarked
 public class FeedSurfaceMediator
         implements FeedSurfaceScrollDelegate,
                 TouchEnabledDelegate,
@@ -108,10 +117,12 @@ public class FeedSurfaceMediator
 
         @Override
         public void onSectionHeaderUnselected(int index) {
+            assumeNonNull(mSectionHeaderModel);
             PropertyListModel<PropertyModel, PropertyKey> headerList =
                     mSectionHeaderModel.get(SectionHeaderListProperties.SECTION_HEADERS_KEY);
             PropertyModel headerModel = headerList.get(index);
-            if (mTabToStreamMap.get(index).supportsOptions()) {
+            if (mTabToStreamMap.containsKey(index)
+                    && mTabToStreamMap.get(index).supportsOptions()) {
                 headerModel.set(
                         SectionHeaderProperties.OPTIONS_INDICATOR_VISIBILITY_KEY,
                         ViewVisibility.INVISIBLE);
@@ -122,9 +133,10 @@ public class FeedSurfaceMediator
 
         @Override
         public void onSectionHeaderReselected(int index) {
-            Stream stream = mTabToStreamMap.get(index);
+            Stream stream = assumeNonNull(mTabToStreamMap.get(index));
             if (!stream.supportsOptions()) return;
 
+            assumeNonNull(mSectionHeaderModel);
             PropertyListModel<PropertyModel, PropertyKey> headerList =
                     mSectionHeaderModel.get(SectionHeaderListProperties.SECTION_HEADERS_KEY);
             PropertyModel headerModel = headerList.get(index);
@@ -185,11 +197,12 @@ public class FeedSurfaceMediator
 
     /**
      * Wrapper class on top of {@link SigninPromoCoordinator} to also account for suggestions
-     * available signal.
+     * available signal. TODO(crbug.com/448227402): remove this class once Seamless Sign-in is
+     * launched.
      */
     private class FeedSigninPromo {
         private final SigninPromoCoordinator mSigninPromoCoordinator;
-        @Nullable private View mPromoView;
+        private @Nullable View mPromoView;
         private boolean mCanShowPersonalizedSuggestions;
         private boolean mCanShowPromo;
 
@@ -218,8 +231,7 @@ public class FeedSurfaceMediator
             return mCanShowPromo;
         }
 
-        @Nullable
-        View getPromoView() {
+        @Nullable View getPromoView() {
             return mPromoView;
         }
 
@@ -254,7 +266,7 @@ public class FeedSurfaceMediator
     }
 
     /** Internal implementation of Stream.StreamsMediator. */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public class StreamsMediatorImpl implements Stream.StreamsMediator {
         @Override
         public void switchToStreamKind(@StreamKind int streamKind) {
@@ -277,8 +289,8 @@ public class FeedSurfaceMediator
         sPrefServiceForTest = prefService;
     }
 
-    private static PrefChangeRegistrar sTestPrefChangeRegistar;
-    private static PrefService sPrefServiceForTest;
+    private static @Nullable PrefChangeRegistrar sTestPrefChangeRegistar;
+    private static @Nullable PrefService sPrefServiceForTest;
     private static final int SPAN_COUNT_SMALL_WIDTH = 1;
     private static final int SPAN_COUNT_LARGE_WIDTH = 2;
     private static final int SMALL_WIDTH_DP = 700;
@@ -290,7 +302,7 @@ public class FeedSurfaceMediator
     private final PrefChangeRegistrar mPrefChangeRegistrar;
     private final SigninManager mSigninManager;
     private final TemplateUrlService mTemplateUrlService;
-    private final PropertyModel mSectionHeaderModel;
+    private final @Nullable PropertyModel mSectionHeaderModel;
     private final FeedActionDelegate mActionDelegate;
     private final FeedOptionsCoordinator mOptionsCoordinator;
 
@@ -300,11 +312,11 @@ public class FeedSurfaceMediator
     private final ObservableSupplierImpl<Integer> mGetRestoringStateSupplier =
             new ObservableSupplierImpl<>(RestoringState.WAITING_TO_RESTORE);
 
-    private @Nullable RecyclerView.OnScrollListener mStreamScrollListener;
+    private RecyclerView.@Nullable OnScrollListener mStreamScrollListener;
     private final ObserverList<ScrollListener> mScrollListeners = new ObserverList<>();
     private final HasContentListener mHasContentListener;
-    private ContentChangedListener mStreamContentChangedListener;
-    private MemoryPressureCallback mMemoryPressureCallback;
+    private @Nullable ContentChangedListener mStreamContentChangedListener;
+    private @Nullable MemoryPressureCallback mMemoryPressureCallback;
     private @Nullable FeedSigninPromo mSigninPromo;
     private @Nullable SignInPromo mLegacySignInPromo;
     private final RecyclerViewAnimationFinishDetector mRecyclerViewAnimationFinishDetector =
@@ -320,19 +332,19 @@ public class FeedSurfaceMediator
     private int mHeaderCount;
 
     /** The model representing feed-related cog menu items. */
-    private ModelList mFeedMenuModel;
+    private @Nullable ModelList mFeedMenuModel;
 
     /** Whether the Feed content is loading. */
     private boolean mIsLoadingFeed;
 
-    private FeedScrollState mRestoreScrollState;
+    private @Nullable FeedScrollState mRestoreScrollState;
     private int mPositionToRestore = RecyclerView.NO_POSITION;
 
     // Track multiple streams when section header is supported.
-    private HashMap<Integer, Stream> mTabToStreamMap;
+    private final HashMap<Integer, Stream> mTabToStreamMap = new HashMap<>();
     // Track single main stream when section header is not supported.
-    private Stream mStreamHolder;
-    private Stream mCurrentStream;
+    private @Nullable Stream mStreamHolder;
+    private @Nullable Stream mCurrentStream;
     // Whether we're currently adding the streams. If this is true, streams should not be bound yet.
     // This avoids automatically binding the first stream when it's added.
     private boolean mSettingUpStreams;
@@ -355,8 +367,8 @@ public class FeedSurfaceMediator
             FeedSurfaceCoordinator coordinator,
             Context context,
             @Nullable SnapScrollHelper snapScrollHelper,
-            PropertyModel headerModel,
-            @FeedSurfaceCoordinator.StreamTabId int openingTabId,
+            @Nullable PropertyModel headerModel,
+            @SurfaceCoordinator.StreamTabId int openingTabId,
             FeedActionDelegate actionDelegate,
             FeedOptionsCoordinator optionsCoordinator,
             @Nullable UiConfig uiConfig,
@@ -367,7 +379,9 @@ public class FeedSurfaceMediator
         mSnapScrollHelper = snapScrollHelper;
         mSectionHeaderModel = headerModel;
         mProfile = profile;
-        mSigninManager = IdentityServicesProvider.get().getSigninManager(mProfile);
+        var signinManager = IdentityServicesProvider.get().getSigninManager(mProfile);
+        assertNonNull(signinManager);
+        mSigninManager = signinManager;
         mTemplateUrlService = TemplateUrlServiceFactory.getForProfile(mProfile);
         mActionDelegate = actionDelegate;
         mOptionsCoordinator = optionsCoordinator;
@@ -376,10 +390,6 @@ public class FeedSurfaceMediator
                 DseNewTabUrlManager.isNewTabSearchEngineUrlAndroidEnabled();
         mIsNewTabPageCustomizationEnabled = ChromeFeatureList.sNewTabPageCustomization.isEnabled();
         mUiConfig = uiConfig;
-
-        if (mSectionHeaderModel != null) {
-            mTabToStreamMap = new HashMap<>();
-        }
 
         /*
          * When feature flag isNewTabSearchEngineUrlAndroidEnabled is enabled, the Feeds may be
@@ -451,6 +461,7 @@ public class FeedSurfaceMediator
     }
 
     private boolean shouldUseSingleSpan(boolean isSmallLayoutWidth) {
+        assumeNonNull(mCurrentStream);
         boolean supportsOptions = mCurrentStream.supportsOptions();
         boolean isFollowingFeedSortDisabled =
                 (!ChromeFeatureList.isEnabled(ChromeFeatureList.WEB_FEED_SORT)
@@ -475,7 +486,7 @@ public class FeedSurfaceMediator
 
         FeedFeatures.setLastSeenFeedTabId(mProfile, headerIndex);
 
-        Stream newStream = mTabToStreamMap.get(headerIndex);
+        Stream newStream = assumeNonNull(mTabToStreamMap.get(headerIndex));
         if (newStream.supportsOptions()) {
             headerList
                     .get(headerIndex)
@@ -532,9 +543,7 @@ public class FeedSurfaceMediator
         if (ApplicationStatus.isEveryActivityDestroyed()) return;
 
         mFeedEnabled = FeedFeatures.isFeedEnabled(mProfile);
-        if (mFeedEnabled
-                && (mStreamHolder != null
-                        || (mTabToStreamMap != null && !mTabToStreamMap.isEmpty()))) {
+        if (mFeedEnabled && (mStreamHolder != null || !mTabToStreamMap.isEmpty())) {
             return;
         }
 
@@ -571,6 +580,7 @@ public class FeedSurfaceMediator
         if (layoutManager != null) {
             ListLayoutHelper layoutHelper =
                     mCoordinator.getHybridListRenderer().getListLayoutHelper();
+            assumeNonNull(layoutHelper);
             state.position = layoutHelper.findFirstVisibleItemPosition();
             state.lastPosition = layoutHelper.findLastVisibleItemPosition();
             if (state.position != RecyclerView.NO_POSITION) {
@@ -587,7 +597,7 @@ public class FeedSurfaceMediator
     }
 
     /** Restores a previously saved state. */
-    void restoreSavedInstanceState(String json) {
+    void restoreSavedInstanceState(@Nullable String json) {
         FeedScrollState state = FeedScrollState.fromJson(json);
         if (state == null) {
             mPositionToRestore = RecyclerView.NO_POSITION;
@@ -669,8 +679,7 @@ public class FeedSurfaceMediator
                             new RecyclerViewAnimationFinishDetector();
 
                     @Override
-                    public void onScrollStateChanged(
-                            @NonNull RecyclerView recyclerView, int newState) {
+                    public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
                         for (ScrollListener listener : mScrollListeners) {
                             listener.onScrollStateChanged(newState);
                         }
@@ -687,15 +696,16 @@ public class FeedSurfaceMediator
                                         listener.onScrolled(dx, dy);
                                     }
                                     // Null if the stream has not been binded yet.
-                                    if (GestureNavigationUtils.areBackForwardTransitionsEnabled()
+                                    if (GestureNavigationUtils.shouldAnimateBackForwardTransitions()
                                             && mCoordinator.getHybridListRenderer() != null
                                             && mCoordinator
                                                             .getHybridListRenderer()
                                                             .getListLayoutHelper()
                                                     != null
                                             && mPositionToRestore != RecyclerView.NO_POSITION
-                                            && mGetRestoringStateSupplier.get()
-                                                    == RestoringState.WAITING_TO_RESTORE) {
+                                            && Objects.equals(
+                                                    mGetRestoringStateSupplier.get(),
+                                                    RestoringState.WAITING_TO_RESTORE)) {
                                         final boolean restored =
                                                 mCoordinator
                                                                 .getHybridListRenderer()
@@ -730,12 +740,12 @@ public class FeedSurfaceMediator
                         mCoordinator.getView().postOnAnimation(callback);
                     }
                 };
-        mCoordinator.getRecyclerView().addOnScrollListener(mStreamScrollListener);
+        var view = mCoordinator.getRecyclerView();
+        view.addOnScrollListener(mStreamScrollListener);
 
         initStreamHeaderViews();
 
-        mMemoryPressureCallback =
-                pressure -> mCoordinator.getRecyclerView().getRecycledViewPool().clear();
+        mMemoryPressureCallback = pressure -> view.getRecycledViewPool().clear();
         MemoryPressureListener.addCallback(mMemoryPressureCallback);
 
         mIsPropertiesInitializedForStream = true;
@@ -749,7 +759,8 @@ public class FeedSurfaceMediator
         mScrollListeners.removeObserver(listener);
     }
 
-    private void addHeaderAndStream(String headerText, Stream stream) {
+    private void addHeaderAndStream(@Nullable String headerText, Stream stream) {
+        assumeNonNull(mSectionHeaderModel);
         int tabId = mSectionHeaderModel.get(SectionHeaderListProperties.SECTION_HEADERS_KEY).size();
         mTabToStreamMap.put(tabId, stream);
 
@@ -774,12 +785,14 @@ public class FeedSurfaceMediator
                     headerModel.set(SectionHeaderProperties.UNREAD_CONTENT_KEY, hasUnreadContent);
                     mHasContentListener.hasContentChanged(stream.getStreamKind(), hasUnreadContent);
                 };
-        callback.onResult(stream.hasUnreadContent().addObserver(callback));
+        Boolean hasUnreadContent = stream.hasUnreadContent().addObserver(callback);
+        callback.onResult(Boolean.TRUE.equals(hasUnreadContent));
     }
 
     private int getTabIdForSection(@StreamKind int streamKind) {
         for (int tabId : mTabToStreamMap.keySet()) {
-            if (mTabToStreamMap.get(tabId).getStreamKind() == streamKind) {
+            Stream stream = assumeNonNull(mTabToStreamMap.get(tabId));
+            if (stream.getStreamKind() == streamKind) {
                 return tabId;
             }
         }
@@ -801,6 +814,7 @@ public class FeedSurfaceMediator
                     mContext.getString(R.string.ntp_following),
                     mCoordinator.createFeedStream(StreamKind.FOLLOWING, new StreamsMediatorImpl()));
             if (FeedFeatures.shouldUseNewIndicator(mProfile)) {
+                assumeNonNull(mSectionHeaderModel);
                 PropertyModel followingHeaderModel =
                         mSectionHeaderModel
                                 .get(SectionHeaderListProperties.SECTION_HEADERS_KEY)
@@ -812,12 +826,15 @@ public class FeedSurfaceMediator
                 // Set up a content changed listener on the main feed to start animation
                 // after main feed loads more than 1 feed card.
                 Stream mainFeedStream = mTabToStreamMap.get(getTabIdForSection(StreamKind.FOR_YOU));
+                assumeNonNull(mainFeedStream);
                 mainFeedStream.addOnContentChangedListener(
                         new ContentChangedListener() {
                             @Override
                             public void onContentChanged(
-                                    List<FeedListContentManager.FeedContent> feedContents) {
-                                if (feedContents.size() > mHeaderCount + 1) {
+                                    @Nullable List<FeedListContentManager.FeedContent>
+                                            feedContents) {
+                                if (feedContents != null
+                                        && feedContents.size() > mHeaderCount + 1) {
                                     followingHeaderModel.set(
                                             SectionHeaderProperties.ANIMATION_START_KEY, true);
                                     FeedFeatures.updateNewIndicatorTimestamp(mProfile);
@@ -834,7 +851,7 @@ public class FeedSurfaceMediator
      * different from new stream. Once bound, the stream can add/remove contents.
      */
     @VisibleForTesting
-    void bindStream(Stream stream) {
+    void bindStream(@Nullable Stream stream) {
         if (mCurrentStream == stream) return;
         if (mCurrentStream != null) {
             unbindStream(/* shouldPlaceSpacer= */ true, /* switchingStream= */ true);
@@ -849,6 +866,8 @@ public class FeedSurfaceMediator
         }
         mCurrentStream = stream;
         updateLayout(false);
+        assumeNonNull(mCurrentStream);
+        assumeNonNull(mStreamContentChangedListener);
         mCurrentStream.addOnContentChangedListener(mStreamContentChangedListener);
 
         mGetRestoringStateSupplier.set(RestoringState.WAITING_TO_RESTORE);
@@ -878,6 +897,10 @@ public class FeedSurfaceMediator
         return mIsLoadingFeed;
     }
 
+    public List<String> getFeedUrls() {
+        return (mCurrentStream != null) ? mCurrentStream.getFeedUrls() : new ArrayList<String>();
+    }
+
     /** Unbinds the stream and clear all the stream's contents. */
     private void unbindStream() {
         unbindStream(false, false);
@@ -889,6 +912,7 @@ public class FeedSurfaceMediator
         mClosedReason = mCurrentStream.getClosedReason();
         mCoordinator.getHybridListRenderer().onSurfaceClosed();
         mCurrentStream.unbind(shouldPlaceSpacer, switchingStream);
+        assumeNonNull(mStreamContentChangedListener);
         mCurrentStream.removeOnContentChangedListener(mStreamContentChangedListener);
         mCurrentStream = null;
     }
@@ -905,7 +929,7 @@ public class FeedSurfaceMediator
      * @return The stream that represents the 1st tab.
      */
     boolean hasStreams() {
-        return mStreamHolder != null || (mTabToStreamMap != null && !mTabToStreamMap.isEmpty());
+        return mStreamHolder != null || !mTabToStreamMap.isEmpty();
     }
 
     long getLastFetchTimeMsForCurrentStream() {
@@ -913,7 +937,7 @@ public class FeedSurfaceMediator
         return mCurrentStream.getLastFetchTimeMs();
     }
 
-    Stream getCurrentStreamForTesting() {
+    @Nullable Stream getCurrentStreamForTesting() {
         return mCurrentStream;
     }
 
@@ -923,7 +947,7 @@ public class FeedSurfaceMediator
         // Find the stream that should be bound and bind it. If no stream matches, then we haven't
         // fully set up yet. This will be taken care of by setup.
         Stream stream = null;
-        if (mTabToStreamMap != null) {
+        if (mSectionHeaderModel != null) {
             stream =
                     mTabToStreamMap.get(
                             mSectionHeaderModel.get(
@@ -939,6 +963,7 @@ public class FeedSurfaceMediator
 
     /**
      * Notifies a bound stream of new header count number.
+     *
      * @param newHeaderCount Number of headers in the {@link RecyclerView}.
      */
     void notifyHeadersChanged(int newHeaderCount) {
@@ -965,8 +990,11 @@ public class FeedSurfaceMediator
      * @return Whether the SignPromo should be visible.
      */
     private boolean shouldShowSigninPromo() {
+        if (SigninFeatureMap.isEnabled(SigninFeatures.ENABLE_SEAMLESS_SIGNIN)) {
+            return false;
+        }
         // TODO(crbug.com/352735671): Move SignInPromo.shouldCreatePromo inside FeedSigninPromo
-        //  after phase 2 follow-up launch.
+        //  after phase 2 follow-up launch.§
         boolean shouldCreatePromo = SignInPromo.shouldCreatePromo();
         if (ChromeFeatureList.isEnabled(ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP)) {
             if (!shouldCreatePromo) {
@@ -979,7 +1007,8 @@ public class FeedSurfaceMediator
         } else {
             AccountPickerBottomSheetStrings bottomSheetStrings =
                     new AccountPickerBottomSheetStrings.Builder(
-                                    R.string.signin_account_picker_bottom_sheet_title)
+                                    mContext.getString(
+                                            R.string.signin_account_picker_bottom_sheet_title))
                             .build();
             SyncPromoController promoController =
                     new SyncPromoController(
@@ -1023,6 +1052,7 @@ public class FeedSurfaceMediator
         if (mSectionHeaderModel != null) {
             if (!mTabToStreamMap.isEmpty()) {
                 mSectionHeaderModel.get(SectionHeaderListProperties.SECTION_HEADERS_KEY).clear();
+                assumeNonNull(mStreamContentChangedListener);
                 for (Stream s : mTabToStreamMap.values()) {
                     s.removeOnContentChangedListener(mStreamContentChangedListener);
                     s.destroy();
@@ -1031,6 +1061,7 @@ public class FeedSurfaceMediator
             }
         } else {
             if (mStreamHolder != null) {
+                assumeNonNull(mStreamContentChangedListener);
                 mStreamHolder.removeOnContentChangedListener(mStreamContentChangedListener);
                 mStreamHolder = null;
             }
@@ -1123,7 +1154,9 @@ public class FeedSurfaceMediator
         if (mSigninPromo != null) {
             mSigninPromo.setCanShowPersonalizedSuggestions(suggestionsVisible);
         }
-        if (suggestionsVisible) mCoordinator.getSurfaceLifecycleManager().show();
+        if (suggestionsVisible) {
+            assumeNonNull(mCoordinator.getSurfaceLifecycleManager()).show();
+        }
         mStreamContentChanged = true;
 
         String headerText = getHeaderText(suggestionsVisible);
@@ -1151,7 +1184,7 @@ public class FeedSurfaceMediator
                     mTabToStreamMap.get(
                             mSectionHeaderModel.get(
                                     SectionHeaderListProperties.CURRENT_TAB_INDEX_KEY));
-            if (currentStream.supportsOptions()) {
+            if (currentStream != null && currentStream.supportsOptions()) {
                 currentStreamHeaderModel.set(
                         SectionHeaderProperties.OPTIONS_INDICATOR_VISIBILITY_KEY,
                         suggestionsVisible ? ViewVisibility.VISIBLE : ViewVisibility.INVISIBLE);
@@ -1191,10 +1224,10 @@ public class FeedSurfaceMediator
         }
 
         int streamType =
-                mTabToStreamMap
-                        .get(
-                                mSectionHeaderModel.get(
-                                        SectionHeaderListProperties.CURRENT_TAB_INDEX_KEY))
+                assumeNonNull(
+                                mTabToStreamMap.get(
+                                        mSectionHeaderModel.get(
+                                                SectionHeaderListProperties.CURRENT_TAB_INDEX_KEY)))
                         .getStreamKind();
         FeedServiceBridge.reportOtherUserAction(
                 streamType,
@@ -1204,13 +1237,13 @@ public class FeedSurfaceMediator
     }
 
     /** Returns the feed header text. */
-    private String getHeaderText(boolean isExpanded) {
-        if (isExpanded) {
+    private @Nullable String getHeaderText(boolean isExpanded) {
+        if (isExpanded && ChromeFeatureList.isEnabled(ChromeFeatureList.FEED_HEADER_REMOVAL)) {
             String treatment =
                     ChromeFeatureList.getFieldTrialParamByFeature(
                             ChromeFeatureList.FEED_HEADER_REMOVAL, "treatment");
             // Returns null to indicate that no feed header is shown.
-            if (treatment.equals("none")) return null;
+            if (!treatment.equals("label")) return null;
         }
 
         Resources res = mContext.getResources();
@@ -1302,8 +1335,8 @@ public class FeedSurfaceMediator
     }
 
     /**
-     * @return Whether the touch events are enabled.
-     * TODO(huayinz): Move this method to a Model once a Model is introduced.
+     * @return Whether the touch events are enabled. TODO(huayinz): Move this method to a Model once
+     *     a Model is introduced.
      */
     boolean getTouchEnabled() {
         return mTouchEnabled;
@@ -1325,7 +1358,7 @@ public class FeedSurfaceMediator
     @Override
     public boolean isScrollViewInitialized() {
         RecyclerView recyclerView = mCoordinator.getRecyclerView();
-        return recyclerView != null && recyclerView.getHeight() > 0;
+        return recyclerView != null && (!mFeedEnabled || recyclerView.getHeight() > 0);
     }
 
     @Override
@@ -1354,6 +1387,13 @@ public class FeedSurfaceMediator
     @Override
     public boolean isChildVisibleAtPosition(int position) {
         if (!isScrollViewInitialized()) return false;
+
+        // When feed is disabled on tablet, the existing implementation of ListLayoutHelper for
+        // staggered layout doesn't return the first and last visible item positions correctly. To
+        // work around this, we check for the header explicitly.
+        if (!mFeedEnabled && position == 0) {
+            return mHeaderCount > 0;
+        }
 
         ListLayoutHelper layoutHelper = mCoordinator.getHybridListRenderer().getListLayoutHelper();
         if (layoutHelper == null) {
@@ -1386,6 +1426,7 @@ public class FeedSurfaceMediator
 
     /**
      * Scrolls the page to show the view at the given {@code viewPosition} if not already visible.
+     *
      * @param viewPosition The position of the view that should be visible or scrolled to.
      */
     void scrollToViewIfNecessary(int viewPosition) {
@@ -1408,14 +1449,14 @@ public class FeedSurfaceMediator
     }
 
     @Override
-    public void onItemSelected(PropertyModel item) {
+    public void onItemSelected(PropertyModel item, View view) {
         assert mSectionHeaderModel != null;
         int itemId = item.get(ListMenuItemProperties.MENU_ITEM_ID);
         int feedType =
-                mTabToStreamMap
-                        .get(
-                                mSectionHeaderModel.get(
-                                        SectionHeaderListProperties.CURRENT_TAB_INDEX_KEY))
+                assumeNonNull(
+                                mTabToStreamMap.get(
+                                        mSectionHeaderModel.get(
+                                                SectionHeaderListProperties.CURRENT_TAB_INDEX_KEY)))
                         .getStreamKind();
         if (itemId == R.id.ntp_feed_header_menu_item_manage) {
             Intent intent = new Intent(mContext, FeedManagementActivity.class);
@@ -1470,7 +1511,7 @@ public class FeedSurfaceMediator
         return mGetRestoringStateSupplier;
     }
 
-    public SignInPromo getSignInPromoForTesting() {
+    public @Nullable SignInPromo getSignInPromoForTesting() {
         return mLegacySignInPromo;
     }
 
@@ -1494,7 +1535,7 @@ public class FeedSurfaceMediator
          *
          * @param finishedCallback Callback to invoke when the animation finishes.
          */
-        public void runWhenAnimationComplete(Runnable finishedCallback) {
+        public void runWhenAnimationComplete(@Nullable Runnable finishedCallback) {
             if (mCoordinator.getRecyclerView() == null) {
                 return;
             }
@@ -1510,7 +1551,7 @@ public class FeedSurfaceMediator
 
             if (recyclerView != null && recyclerView.isAnimating()) {
                 // The RecyclerView is still animating, try again when the animation has finished.
-                recyclerView.getItemAnimator().isRunning(this);
+                assumeNonNull(recyclerView.getItemAnimator()).isRunning(this);
                 return;
             }
 
@@ -1539,14 +1580,14 @@ public class FeedSurfaceMediator
         public boolean animateDisappearance(
                 RecyclerView.ViewHolder viewHolder,
                 ItemHolderInfo itemHolderInfo,
-                ItemHolderInfo itemHolderInfo1) {
+                @Nullable ItemHolderInfo itemHolderInfo1) {
             return false;
         }
 
         @Override
         public boolean animateAppearance(
                 RecyclerView.ViewHolder viewHolder,
-                ItemHolderInfo itemHolderInfo,
+                @Nullable ItemHolderInfo itemHolderInfo,
                 ItemHolderInfo itemHolderInfo1) {
             return false;
         }
@@ -1612,7 +1653,8 @@ public class FeedSurfaceMediator
 
     OnSectionHeaderSelectedListener getOrCreateSectionHeaderListenerForTesting() {
         OnSectionHeaderSelectedListener listener =
-                mSectionHeaderModel.get(SectionHeaderListProperties.ON_TAB_SELECTED_CALLBACK_KEY);
+                assumeNonNull(mSectionHeaderModel)
+                        .get(SectionHeaderListProperties.ON_TAB_SELECTED_CALLBACK_KEY);
         if (listener == null) {
             listener = new FeedSurfaceHeaderSelectedCallback();
         }

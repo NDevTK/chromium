@@ -21,6 +21,7 @@
 #include "base/android/input_hint_checker.h"
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
+#include "base/android/yield_to_looper_checker.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/message_loop/io_watcher.h"
@@ -29,10 +30,12 @@
 #include "base/run_loop.h"
 #include "base/task/task_features.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 
 using base::android::InputHintChecker;
 using base::android::InputHintResult;
+using base::android::YieldToLooperChecker;
 
 namespace base {
 
@@ -87,6 +90,9 @@ std::atomic_bool g_fast_to_sleep = false;
 
 // Implements IOWatcher to allow any MessagePumpAndroid thread to watch
 // arbitrary file descriptors for I/O events.
+// NOTE: When attempting to watch the same `fd` for the same `mode`, this
+// implementation of IOWatcher will unregister the previously registered
+// FdWatch.
 class IOWatcherImpl : public IOWatcher {
  public:
   explicit IOWatcherImpl(ALooper* looper) : looper_(looper) {}
@@ -103,22 +109,40 @@ class IOWatcherImpl : public IOWatcher {
     }
   }
 
-  // IOWatcher:
+  // IOWatcher implementation:
   std::unique_ptr<IOWatcher::FdWatch> WatchFileDescriptorImpl(
       int fd,
       FdWatchDuration duration,
       FdWatchMode mode,
       IOWatcher::FdWatcher& watcher,
       const Location& location) override {
+    const bool is_read =
+        (mode == FdWatchMode::kRead || mode == FdWatchMode::kReadWrite);
+    const bool is_write =
+        (mode == FdWatchMode::kWrite || mode == FdWatchMode::kReadWrite);
+    TRACE_EVENT("base", "MessagePumpAndroid::IOWatcher::WatchFileDescriptor",
+                "fd", fd, "persistent",
+                duration == FdWatchDuration::kPersistent, "write_mode",
+                is_write, "read_mode", is_read);
     auto& watches = watched_fds_[fd];
     auto watch = std::make_unique<FdWatchImpl>(*this, fd, duration, watcher);
-    if (mode == FdWatchMode::kRead || mode == FdWatchMode::kReadWrite) {
-      CHECK(!watches.read_watch) << "Only one watch per FD per condition.";
-      watches.read_watch = watch.get();
-    }
-    if (mode == FdWatchMode::kWrite || mode == FdWatchMode::kReadWrite) {
-      CHECK(!watches.write_watch) << "Only one watch per FD per condition.";
+    if (is_write) {
+      // Detaches the previous FdWatch if there's an attempt to watch the same
+      // `fd` for the same `mode`. This means the previous watch is no longer
+      // responsible for controlling the lifetime of the active FD watch. The
+      // most common case for this happening is multiple EAGAINs in
+      // channel_posix when handling socket/FD writable callbacks.
+      if (watches.write_watch) {
+        watches.write_watch->Detach();
+      }
       watches.write_watch = watch.get();
+    }
+    if (is_read) {
+      if (watches.read_watch) {
+        // Analogous to the write scenario.
+        watches.read_watch->Detach();
+      }
+      watches.read_watch = watch.get();
     }
 
     const int events = (watches.read_watch ? ALOOPER_EVENT_INPUT : 0) |
@@ -455,16 +479,24 @@ void MessagePumpAndroid::DoNonDelayedLooperWork(bool do_idle_work) {
 
     next_work_info = delegate_->DoWork();
 
-    // As an optimization, yield to the Looper when input events are waiting to
-    // be handled. In some cases input events can remain undetected. Such "input
-    // hint false negatives" happen, for example, during initialization, in
-    // multi-window cases, or when a previous value is cached to throttle
-    // polling the input channel.
-    if (is_type_ui_ && next_work_info.is_immediate() &&
-        InputHintChecker::HasInput()) {
-      InputHintChecker::GetInstance().set_is_after_input_yield(true);
-      ScheduleWork();
-      return;
+    if (is_type_ui_ && next_work_info.is_immediate()) {
+      // To reduce startup ANRs, yield if an embedder signifies that startup is
+      // currently running.
+      if (YieldToLooperChecker::GetInstance().ShouldYield()) {
+        ScheduleWork();
+        return;
+      }
+
+      // As an optimization, yield to the Looper when input events are waiting
+      // to be handled. In some cases input events can remain undetected. Such
+      // "input hint false negatives" happen, for example, during
+      // initialization, in multi-window cases, or when a previous value is
+      // cached to throttle polling the input channel.
+      if (InputHintChecker::HasInput()) {
+        InputHintChecker::GetInstance().set_is_after_input_yield(true);
+        ScheduleWork();
+        return;
+      }
     }
   } while (next_work_info.is_immediate());
 

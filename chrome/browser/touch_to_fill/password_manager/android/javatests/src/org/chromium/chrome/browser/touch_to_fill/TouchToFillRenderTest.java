@@ -53,7 +53,9 @@ import org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.HeaderPro
 import org.chromium.chrome.browser.touch_to_fill.data.Credential;
 import org.chromium.chrome.browser.touch_to_fill.data.WebauthnCredential;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetTestSupport;
@@ -81,11 +83,35 @@ public class TouchToFillRenderTest {
 
     private static final GURL TEST_URL = JUnitTestGURLs.EXAMPLE_URL;
     private static final Credential ARON =
-            new Credential("אהרן", "S3cr3t", "אהרן", "", "example.com", GetLoginMatchType.EXACT, 0);
+            new Credential.Builder()
+                    .setUsername("אהרן")
+                    .setPassword("S3cr3t")
+                    .setFormattedUsername("אהרן")
+                    .setOriginUrl("")
+                    .setDisplayName("example.com")
+                    .setMatchType(GetLoginMatchType.EXACT)
+                    .setLastUsedMsSinceEpoch(0)
+                    .build();
     private static final Credential BOB =
-            new Credential("Bob", "*****", "Bob", "", "example.com", GetLoginMatchType.EXACT, 0);
+            new Credential.Builder()
+                    .setUsername("Bob")
+                    .setPassword("*****")
+                    .setFormattedUsername("Bob")
+                    .setOriginUrl("")
+                    .setDisplayName("example.com")
+                    .setMatchType(GetLoginMatchType.EXACT)
+                    .setLastUsedMsSinceEpoch(0)
+                    .build();
     private static final Credential MARIAM =
-            new Credential("مريم", "***", "مريم", "", "example.com", GetLoginMatchType.EXACT, 0);
+            new Credential.Builder()
+                    .setUsername("مريم")
+                    .setPassword("***")
+                    .setFormattedUsername("مريم")
+                    .setOriginUrl("")
+                    .setDisplayName("example.com")
+                    .setMatchType(GetLoginMatchType.EXACT)
+                    .setLastUsedMsSinceEpoch(0)
+                    .build();
     private static final byte[] RANDOM_ID = new byte[] {0};
     private static final WebauthnCredential BATMAN =
             new WebauthnCredential("example.com", RANDOM_ID, RANDOM_ID, "batman");
@@ -103,8 +129,11 @@ public class TouchToFillRenderTest {
     private TouchToFillView mTouchToFillView;
     private BottomSheetController mBottomSheetController;
     PasswordManagerResourceProvider mResourceProvider;
+    private WebPageStation mPage;
 
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    @Rule
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public final ChromeRenderTestRule mRenderTestRule =
@@ -122,7 +151,7 @@ public class TouchToFillRenderTest {
 
     @Before
     public void setUp() throws InterruptedException {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
         mActivityTestRule.waitForActivityCompletelyLoaded();
         mBottomSheetController =
                 mActivityTestRule

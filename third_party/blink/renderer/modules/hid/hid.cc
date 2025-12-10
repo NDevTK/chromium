@@ -95,19 +95,17 @@ void RejectWithTypeError(const String& message,
 
 }  // namespace
 
-const char HID::kSupplementName[] = "HID";
-
 HID* HID::hid(NavigatorBase& navigator) {
-  HID* hid = Supplement<NavigatorBase>::From<HID>(navigator);
+  HID* hid = navigator.GetHID();
   if (!hid) {
     hid = MakeGarbageCollected<HID>(navigator);
-    ProvideTo(navigator, hid);
+    navigator.SetHID(hid);
   }
   return hid;
 }
 
 HID::HID(NavigatorBase& navigator)
-    : Supplement<NavigatorBase>(navigator),
+    : navigator_base_(navigator),
       service_(navigator.GetExecutionContext()),
       receiver_(this, navigator.GetExecutionContext()) {
   if (!base::FeatureList::IsEnabled(
@@ -127,7 +125,7 @@ HID::~HID() {
 }
 
 ExecutionContext* HID::GetExecutionContext() const {
-  return GetSupplementable()->GetExecutionContext();
+  return navigator_base_->GetExecutionContext();
 }
 
 const AtomicString& HID::InterfaceName() const {
@@ -144,7 +142,7 @@ void HID::AddedEventListener(const AtomicString& event_type,
   }
 
   auto* context = GetExecutionContext();
-  if (ShouldBlockHidServiceCall(GetSupplementable()->DomWindow(), context,
+  if (ShouldBlockHidServiceCall(navigator_base_->DomWindow(), context,
                                 nullptr)) {
     return;
   }
@@ -197,7 +195,7 @@ void HID::DeviceChanged(device::mojom::blink::HidDeviceInfoPtr device_info) {
 ScriptPromise<IDLSequence<HIDDevice>> HID::getDevices(
     ScriptState* script_state,
     ExceptionState& exception_state) {
-  if (ShouldBlockHidServiceCall(GetSupplementable()->DomWindow(),
+  if (ShouldBlockHidServiceCall(navigator_base_->DomWindow(),
                                 GetExecutionContext(), &exception_state)) {
     return ScriptPromise<IDLSequence<HIDDevice>>();
   }
@@ -207,8 +205,8 @@ ScriptPromise<IDLSequence<HIDDevice>> HID::getDevices(
   get_devices_promises_.insert(resolver);
 
   EnsureServiceConnection();
-  service_->GetDevices(WTF::BindOnce(
-      &HID::FinishGetDevices, WrapPersistent(this), WrapPersistent(resolver)));
+  service_->GetDevices(BindOnce(&HID::FinishGetDevices, WrapPersistent(this),
+                                WrapPersistent(resolver)));
   return resolver->Promise();
 }
 
@@ -218,7 +216,7 @@ ScriptPromise<IDLSequence<HIDDevice>> HID::requestDevice(
     ExceptionState& exception_state) {
   // requestDevice requires a window to satisfy the user activation requirement
   // and to show a chooser dialog.
-  auto* window = GetSupplementable()->DomWindow();
+  auto* window = navigator_base_->DomWindow();
   if (!window) {
     exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                       kContextGone);
@@ -278,8 +276,8 @@ ScriptPromise<IDLSequence<HIDDevice>> HID::requestDevice(
   EnsureServiceConnection();
   service_->RequestDevice(
       std::move(mojo_filters), std::move(mojo_exclusion_filters),
-      WTF::BindOnce(&HID::FinishRequestDevice, WrapPersistent(this),
-                    WrapPersistent(resolver)));
+      BindOnce(&HID::FinishRequestDevice, WrapPersistent(this),
+               WrapPersistent(resolver)));
   return promise;
 }
 
@@ -350,7 +348,7 @@ void HID::EnsureServiceConnection() {
   GetExecutionContext()->GetBrowserInterfaceBroker().GetInterface(
       service_.BindNewPipeAndPassReceiver(task_runner));
   service_.set_disconnect_handler(
-      WTF::BindOnce(&HID::CloseServiceConnection, WrapWeakPersistent(this)));
+      BindOnce(&HID::CloseServiceConnection, WrapWeakPersistent(this)));
   DCHECK(!receiver_.is_bound());
   service_->RegisterClient(receiver_.BindNewEndpointAndPassRemote(task_runner));
 }
@@ -427,7 +425,7 @@ void HID::Trace(Visitor* visitor) const {
   visitor->Trace(device_cache_);
   visitor->Trace(receiver_);
   EventTarget::Trace(visitor);
-  Supplement<NavigatorBase>::Trace(visitor);
+  visitor->Trace(navigator_base_);
 }
 
 }  // namespace blink

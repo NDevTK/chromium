@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/web_test/renderer/test_runner.h"
 
 #include <stddef.h>
@@ -19,10 +14,10 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/callback_helpers.h"
-#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
@@ -47,11 +42,12 @@
 #include "content/web_test/renderer/test_preferences.h"
 #include "content/web_test/renderer/test_runner_utils.h"
 #include "content/web_test/renderer/web_frame_test_proxy.h"
+#include "crypto/obsolete/md5.h"
 #include "gin/arguments.h"
 #include "gin/array_buffer.h"
 #include "gin/dictionary.h"
-#include "gin/handle.h"
 #include "gin/object_template_builder.h"
+#include "gin/public/wrappable_pointer_tags.h"
 #include "gin/wrappable.h"
 #include "mojo/public/mojom/base/text_direction.mojom-forward.h"
 #include "net/base/filename_util.h"
@@ -61,6 +57,7 @@
 #include "printing/page_range.h"
 #include "printing/print_settings.h"
 #include "services/network/public/mojom/cors.mojom.h"
+#include "third_party/abseil-cpp/absl/numeric/int128.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
@@ -103,6 +100,9 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gfx/test/icc_profiles.h"
+#include "v8/include/cppgc/allocation.h"
+#include "v8/include/cppgc/prefinalizer.h"
+#include "v8/include/v8-cppgc.h"
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
 #include "third_party/blink/public/platform/web_font_render_style.h"
@@ -198,9 +198,16 @@ void ConvertAndSet(gin::Arguments* args, blink::WebString* set_param) {
 
 }  // namespace
 
-class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
+class TestRunnerBindings final : public gin::Wrappable<TestRunnerBindings> {
+  CPPGC_USING_PRE_FINALIZER(TestRunnerBindings, Dispose);
+
  public:
-  static gin::WrapperInfo kWrapperInfo;
+  static constexpr gin::WrapperInfo kWrapperInfo = {{gin::kEmbedderNativeGin},
+                                                    gin::kTestRunnerBindings};
+
+  const gin::WrapperInfo* wrapper_info() const override {
+    return &kWrapperInfo;
+  }
 
   TestRunnerBindings(const TestRunnerBindings&) = delete;
   TestRunnerBindings& operator=(const TestRunnerBindings&) = delete;
@@ -210,6 +217,8 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
                       SpellCheckClient* spell_check,
                       bool is_wpt_reftest,
                       bool is_main_test_window);
+
+  void Dispose();
 
   // Wraps the V8 function in a base::OnceCallback that binds in the given V8
   // arguments. The callback will do nothing when Run() if the
@@ -234,6 +243,10 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
     return frame_->GetWebFrame();
   }
 
+  explicit TestRunnerBindings(TestRunner* test_runner,
+                              WebFrameTestProxy* frame,
+                              SpellCheckClient* spell_check);
+
  private:
   // Watches for the RenderFrame that the TestRunnerBindings is attached to
   // being destroyed.
@@ -249,11 +262,6 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
    private:
     const raw_ptr<TestRunnerBindings> bindings_;
   };
-
-  explicit TestRunnerBindings(TestRunner* test_runner,
-                              WebFrameTestProxy* frame,
-                              SpellCheckClient* spell_check);
-  ~TestRunnerBindings() override;
 
   // gin::Wrappable overrides.
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
@@ -444,8 +452,6 @@ class TestRunnerBindings : public gin::Wrappable<TestRunnerBindings> {
   base::WeakPtrFactory<TestRunnerBindings> weak_ptr_factory_{this};
 };
 
-gin::WrapperInfo TestRunnerBindings::kWrapperInfo = {gin::kEmbedderNativeGin};
-
 // static
 void TestRunnerBindings::Install(TestRunner* test_runner,
                                  WebFrameTestProxy* frame,
@@ -460,16 +466,13 @@ void TestRunnerBindings::Install(TestRunner* test_runner,
 
   v8::Context::Scope context_scope(context);
 
-  TestRunnerBindings* wrapped =
-      new TestRunnerBindings(test_runner, frame, spell_check);
-  gin::Handle<TestRunnerBindings> bindings =
-      gin::CreateHandle(isolate, wrapped);
-  CHECK(!bindings.IsEmpty());
+  auto* bindings = cppgc::MakeGarbageCollected<TestRunnerBindings>(
+      isolate->GetCppHeap()->GetAllocationHandle(), test_runner, frame,
+      spell_check);
+  v8::Local<v8::Object> wrapper =
+      bindings->GetWrapper(isolate).ToLocalChecked();
   v8::Local<v8::Object> global = context->Global();
-  v8::Local<v8::Value> v8_bindings = bindings.ToV8();
-
-  global->Set(context, gin::StringToV8(isolate, "testRunner"), v8_bindings)
-      .Check();
+  global->Set(context, gin::StringToV8(isolate, "testRunner"), wrapper).Check();
 
   // Inject some JavaScript to the top-level frame of a reftest in the
   // web-platform-tests suite to have the same reftest screenshot timing as
@@ -537,6 +540,12 @@ void TestRunnerBindings::Install(TestRunner* test_runner,
   }
 }
 
+void TestRunnerBindings::Dispose() {
+  weak_ptr_factory_.InvalidateWeakPtrsAndDoom();
+  app_banner_service_.reset();
+  frame_observer_.Dispose();
+}
+
 TestRunnerBindings::TestRunnerBindings(TestRunner* runner,
                                        WebFrameTestProxy* frame,
                                        SpellCheckClient* spell_check)
@@ -544,8 +553,6 @@ TestRunnerBindings::TestRunnerBindings(TestRunner* runner,
       runner_(runner),
       frame_(frame),
       spell_check_(spell_check) {}
-
-TestRunnerBindings::~TestRunnerBindings() = default;
 
 gin::ObjectTemplateBuilder TestRunnerBindings::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
@@ -1491,6 +1498,7 @@ void TestRunnerBindings::SetDisallowedSubresourcePathSuffixes(
   // Some tests rely on console loggings.
   subresource_filter::mojom::ActivationState activation_state(
       activation_level,
+      subresource_filter::mojom::SubresourceFilterDisabledReason::kUnknown,
       /*filtering_disabled_for_document=*/false,
       /*generic_blocking_rules_disabled=*/false,
       /*measure_performance=*/false,
@@ -2200,12 +2208,12 @@ void TestRunnerBindings::CopyImageThen(int x,
   frame_->GetBrowserInterfaceBroker().GetInterface(
       remote_clipboard.BindNewPipeAndPassReceiver());
 
-  blink::ClipboardSequenceNumberToken sequence_number_before;
+  absl::uint128 sequence_number_before;
   CHECK(remote_clipboard->GetSequenceNumber(ui::ClipboardBuffer::kCopyPaste,
                                             &sequence_number_before));
   GetWebFrame()->CopyImageAtForTesting(gfx::Point(x, y));
   auto sequence_number_after = sequence_number_before;
-  while (sequence_number_before.value() == sequence_number_after.value()) {
+  while (sequence_number_before == sequence_number_after) {
     // TODO(crbug.com/40588468): Ideally we would CHECK here that the mojo call
     // succeeded, but this crashes under some circumstances (crbug.com/1232810).
     remote_clipboard->GetSequenceNumber(ui::ClipboardBuffer::kCopyPaste,
@@ -3348,11 +3356,6 @@ void TestRunner::SetMainWindowAndTestConfiguration(
     }
   }
 
-  // This may be called for a local root in the same process as another local
-  // root, in which case we just keep the original config, which should match.
-  if (test_is_running_)
-    return;
-
   test_config_ = std::move(*config);
   SetTestIsRunning(true);
 
@@ -3564,7 +3567,7 @@ void TestRunner::DumpIconChanges(WebFrameTestProxy& source) {
 void TestRunner::SetAudioData(const gin::ArrayBufferView& view) {
   uint8_t* bytes = static_cast<uint8_t*>(view.bytes());
   audio_data_.resize(view.num_bytes());
-  std::copy(bytes, bytes + view.num_bytes(), audio_data_.begin());
+  std::copy(bytes, UNSAFE_TODO(bytes + view.num_bytes()), audio_data_.begin());
   dump_as_audio_ = true;
 }
 
@@ -3884,11 +3887,10 @@ void TestRunner::FinishTest(WebFrameTestProxy& source) {
         DCHECK_GT(actual.info().width(), 0);
         DCHECK_GT(actual.info().height(), 0);
 
-        base::MD5Digest digest;
-        auto bytes = base::span(static_cast<const uint8_t*>(actual.getPixels()),
-                                actual.computeByteSize());
-        base::MD5Sum(bytes, &digest);
-        dump_result->actual_pixel_hash = base::MD5DigestToBase16(digest);
+        auto bytes = UNSAFE_TODO(
+            base::span(static_cast<const uint8_t*>(actual.getPixels()),
+                       actual.computeByteSize()));
+        dump_result->actual_pixel_hash = Md5AsHexForWebTestPixels(bytes);
 
         if (dump_result->actual_pixel_hash != test_config_.expected_pixel_hash)
           dump_result->pixels = std::move(actual);

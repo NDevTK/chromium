@@ -11,6 +11,7 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.MathUtils;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackScroller;
+import org.chromium.chrome.browser.compositor.overlays.strip.reorder.TabStripDragHandler;
 import org.chromium.ui.base.LocalizationUtils;
 
 /**
@@ -198,14 +199,9 @@ public class ScrollDelegate {
             if (view.isDraggedOffStrip()) continue;
 
             if (view instanceof final StripLayoutTab tab) {
-                if (tab.isCollapsed()) {
-                    // Need to use real width here (which gets animated to effectively 0), so we
-                    // don't "jump", but instead smoothly scroll when collapsing near the end of a
-                    // full tab strip.
-                    totalViewWidth += tab.getWidth() - tabOverlapWidth;
-                } else if (!tab.isClosed()) {
-                    totalViewWidth += cachedTabWidth - tabOverlapWidth;
-                }
+                if (tab.isClosed()) continue;
+
+                totalViewWidth += (tab.getWidth() - tabOverlapWidth);
             } else if (view instanceof StripLayoutGroupTitle groupTitle) {
                 totalViewWidth += (groupTitle.getWidth() - groupTitleOverlapWidth);
             }
@@ -243,6 +239,9 @@ public class ScrollDelegate {
     public void setReorderStartMargin(float newStartMargin) {
         float delta = newStartMargin - mReorderStartMargin;
         mReorderStartMargin = newStartMargin;
+
+        // Do not update scroll for pinned tabs.
+        if (TabStripDragHandler.isDraggingPinnedItem()) return;
 
         // Adjusts the scrollOffSetLimit here, since the next update cycle (which accounts for the
         // new reorderStartMargin) will not yet have run.

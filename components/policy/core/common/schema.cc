@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/policy/core/common/schema.h"
 
 #include <limits.h>
@@ -29,6 +24,7 @@
 #include "base/containers/flat_set.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
@@ -507,37 +503,37 @@ class Schema::InternalStorage
 
   const SchemaNode* schema(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.schema_nodes + index;
+    return UNSAFE_TODO(schema_data_.schema_nodes + index);
   }
 
   const PropertiesNode* properties(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.properties_nodes + index;
+    return UNSAFE_TODO(schema_data_.properties_nodes + index);
   }
 
   const PropertyNode* property(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.property_nodes + index;
+    return UNSAFE_TODO(schema_data_.property_nodes + index);
   }
 
   const RestrictionNode* restriction(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.restriction_nodes + index;
+    return UNSAFE_TODO(schema_data_.restriction_nodes + index);
   }
 
   const char* const* required_property(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.required_properties + index;
+    return UNSAFE_TODO(schema_data_.required_properties + index);
   }
 
   const int* int_enums(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.int_enums + index;
+    return UNSAFE_TODO(schema_data_.int_enums + index);
   }
 
   const char* const* string_enums(int index) const {
     DCHECK_GE(index, 0);
-    return schema_data_.string_enums + index;
+    return UNSAFE_TODO(schema_data_.string_enums + index);
   }
 
   // Compiles regular expression |pattern|. The result is cached and will be
@@ -844,6 +840,9 @@ base::expected<void, std::string> Schema::InternalStorage::Parse(
   } else if (schema.contains(schema::kEnum)) {
     RETURN_IF_ERROR(ParseEnum(schema, type, schema_node));
   } else if (schema.contains(schema::kPattern)) {
+    if (type != base::Value::Type::STRING) {
+      return base::unexpected("Only strings can have a pattern");
+    }
     RETURN_IF_ERROR(ParseStringPattern(schema, schema_node));
   } else if (schema.contains(schema::kMinimum) ||
              schema.contains(schema::kMaximum)) {
@@ -948,6 +947,10 @@ base::expected<void, std::string> Schema::InternalStorage::ParseDictionary(
       schema.FindList(schema::kRequired);
   if (required_properties) {
     for (const base::Value& val : *required_properties) {
+      if (!val.is_string()) {
+        return base::unexpected(
+            "Items in the 'required' property must be strings.");
+      }
       strings_.push_back(val.GetString());
       required_properties_.push_back(strings_.back().c_str());
     }
@@ -1145,7 +1148,7 @@ bool Schema::Iterator::IsAtEnd() const {
 
 void Schema::Iterator::Advance() {
   DCHECK(it_);
-  ++it_;
+  UNSAFE_TODO(++it_);  // Should be UNSAFE_BUFFER_USAGE.
 }
 
 const char* Schema::Iterator::key() const {
@@ -1495,7 +1498,7 @@ SchemaList Schema::GetPatternProperties(const std::string& key) const {
   const PropertyNode* begin = storage_->property(node->end);
   const PropertyNode* end = storage_->property(node->pattern_end);
   SchemaList matching_properties;
-  for (const PropertyNode* it = begin; it != end; ++it) {
+  for (const PropertyNode* it = begin; it != end; UNSAFE_TODO(++it)) {
     if (re2::RE2::PartialMatch(key, *storage_->CompileRegex(it->key))) {
       matching_properties.push_back(
           Schema(storage_, storage_->schema(it->schema)));
@@ -1574,8 +1577,9 @@ bool Schema::ValidateStringRestriction(int index, const char* str) const {
       rnode->enumeration_restriction.offset_end) {
     for (int i = rnode->enumeration_restriction.offset_begin;
          i < rnode->enumeration_restriction.offset_end; ++i) {
-      if (strcmp(*storage_->string_enums(i), str) == 0)
+      if (UNSAFE_TODO(strcmp(*storage_->string_enums(i), str)) == 0) {
         return true;
+      }
     }
     return false;
   } else {

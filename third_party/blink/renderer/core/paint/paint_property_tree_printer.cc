@@ -140,7 +140,7 @@ void SetDebugName(const PaintPropertyNode* node,
                   const String& name,
                   const LayoutObject& object) {
   if (node) {
-    SetDebugName(node, name + " (" + object.DebugName() + ")");
+    SetDebugName(node, StrCat({name, " (", object.DebugName(), ")"}));
   }
 }
 
@@ -190,6 +190,8 @@ void UpdateDebugNames(const LayoutObject& object,
   SetDebugName(properties.BackgroundClip(), "BackgroundClip", object);
   SetDebugName(properties.InnerBorderRadiusClip(), "InnerBorderRadiusClip",
                object);
+  SetDebugName(properties.InnerBorderShapeClip(), "InnerBorderShapeClip",
+               object);
   SetDebugName(properties.OverflowClip(), "OverflowClip", object);
   SetDebugName(properties.ClipIsolationNode(), "ClipIsolationNode", object);
 
@@ -207,8 +209,8 @@ void UpdateDebugNames(const LayoutObject& object,
   SetDebugName(properties.EffectIsolationNode(), "EffectIsolationNode", object);
   SetDebugName(properties.ViewTransitionEffect(), "ViewTransitionEffect",
                object);
-  SetDebugName(properties.ViewTransitionSubframeRootEffect(),
-               "ViewTransitionSubframeRootEffect", object);
+  SetDebugName(properties.ViewTransitionScopeRootEffect(),
+               "ViewTransitionScopeRootEffect", object);
 
   SetDebugName(properties.Scroll(), "Scroll", object);
 }
@@ -241,22 +243,25 @@ void ShowScrollPropertyTree(const blink::LocalFrameView& rootFrame) {
   LOG(INFO) << "Scroll tree:\n" << ScrollPropertyTreeAsString(rootFrame).Utf8();
 }
 
-String TransformPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
+blink::String TransformPropertyTreeAsString(
+    const blink::LocalFrameView& rootFrame) {
   return blink::FrameViewPropertyTreePrinter(blink::TransformNodeCollector())
       .TreeAsString(rootFrame);
 }
 
-String ClipPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
+blink::String ClipPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
   return blink::FrameViewPropertyTreePrinter(blink::ClipNodeCollector())
       .TreeAsString(rootFrame);
 }
 
-String EffectPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
+blink::String EffectPropertyTreeAsString(
+    const blink::LocalFrameView& rootFrame) {
   return blink::FrameViewPropertyTreePrinter(blink::EffectNodeCollector())
       .TreeAsString(rootFrame);
 }
 
-String ScrollPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
+blink::String ScrollPropertyTreeAsString(
+    const blink::LocalFrameView& rootFrame) {
   return blink::FrameViewPropertyTreePrinter(blink::ScrollNodeCollector())
       .TreeAsString(rootFrame);
 }

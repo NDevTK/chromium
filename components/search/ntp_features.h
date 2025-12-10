@@ -33,10 +33,9 @@ BASE_DECLARE_FEATURE(kNtpAlphaBackgroundCollections);
 BASE_DECLARE_FEATURE(kNtpBackgroundImageErrorDetection);
 BASE_DECLARE_FEATURE(kNtpCalendarModule);
 BASE_DECLARE_FEATURE(kNtpChromeCartModule);
-BASE_DECLARE_FEATURE(kNtpSearchboxComposebox);
-BASE_DECLARE_FEATURE(kNtpSearchboxComposeEntrypoint);
+BASE_DECLARE_FEATURE(kNtpCustomizeChromeAutoOpen);
 BASE_DECLARE_FEATURE(kNtpDriveModule);
-BASE_DECLARE_FEATURE(kNtpDriveModuleNoSyncRequirement);
+BASE_DECLARE_FEATURE(kNtpDriveModuleHistorySyncRequirement);
 BASE_DECLARE_FEATURE(kNtpDriveModuleSegmentation);
 BASE_DECLARE_FEATURE(kNtpDriveModuleShowSixFiles);
 #if !defined(OFFICIAL_BUILD)
@@ -80,8 +79,12 @@ BASE_DECLARE_FEATURE(kNtpWallpaperSearchButtonAnimation);
 BASE_DECLARE_FEATURE(kNtpWallpaperSearchButtonAnimationShownThreshold);
 BASE_DECLARE_FEATURE(kNtpMobilePromo);
 BASE_DECLARE_FEATURE(kNtpMicrosoftAuthenticationModule);
+BASE_DECLARE_FEATURE(kNtpNextFeatures);
 BASE_DECLARE_FEATURE(kNtpOneGoogleBarAsyncBarParts);
 BASE_DECLARE_FEATURE(kNtpFooter);
+BASE_DECLARE_FEATURE(kNtpTabGroupsModule);
+BASE_DECLARE_FEATURE(kNtpTabGroupsModuleZeroState);
+BASE_DECLARE_FEATURE(kNtpFeatureOptimization);
 
 // Parameter for controlling the luminosity difference for NTP elements on light
 // backgrounds.
@@ -150,6 +153,8 @@ extern const char kNtpMostRelevantTabResumptionModuleDataParam[];
 // Parameter determining the max visits to show.
 extern const char kNtpMostRelevantTabResumptionModuleMaxVisitsParam[];
 extern const char kNtpRealboxWidthBehaviorParam[];
+// Parameter determining the type of tab groups data to render.
+extern const char kNtpTabGroupsModuleDataParam[];
 // Parameter for determining the categories a tab must not fall into
 // to be shown.
 extern const char kNtpTabResumptionModuleCategoriesBlocklistParam[];
@@ -187,6 +192,13 @@ extern const base::FeatureParam<base::TimeDelta>
 // window.
 extern const base::FeatureParam<base::TimeDelta>
     kNtpCalendarModuleWindowStartDeltaParam;
+// Parameter for the maximum number of times to automatically show
+// Customize Chrome.
+extern const base::FeatureParam<int> kNtpCustomizeChromeAutoShownMaxCount;
+// Parameter for the maximum number of times to automatically show
+// Customize Chrome in a session.
+extern const base::FeatureParam<int>
+    kNtpCustomizeChromeAutoShownSessionMaxCount;
 // Parameter determining whether the existence of Outlook attachment pages
 // should be checked.
 extern const base::FeatureParam<bool>
@@ -228,9 +240,61 @@ extern const base::FeatureParam<int>
 // that are associated with local tabs.
 extern const base::FeatureParam<bool>
     kNtpMostRelevantTabResumptionModuleFilterLocalTabsParam;
+// Parameter determining the time range of events.
+extern const base::FeatureParam<base::TimeDelta>
+    kNtpTabGroupsModuleWindowEndDeltaParam;
+// Parameter determing the max number of tab groups to show in the module.
+extern const base::FeatureParam<size_t> kNtpTabGroupsModuleMaxGroupCountParam;
 
-extern const base::FeatureParam<int>
-    kNtpSearchboxComposeEntrypointMaxAnimationsParam;
+// Parameter determining the max number of MV tiles before the "Show more"
+// button is shown.
+extern const base::FeatureParam<int> kNtpNextMaxMVTilesBeforeShowMoreParam;
+
+// Parameter determining if the Action Chips on the NTP should display static
+// text instead of real suggestions.
+extern const base::FeatureParam<bool> kNtpNextShowStaticTextParam;
+
+// Parameter determining if the Action Chips on the NTP should display deep
+// dive suggestions.
+extern const base::FeatureParam<bool> kNtpNextShowDeepDiveSuggestionsParam;
+
+// Parameter determining if the suggestions are retrieved from the newly
+// implemented search suggestions endpoint. If true, the new one is used.
+// If false, an existing endpoint (used by ZPS) is used for deep dive chips,
+// and static data is used for steady state chips.
+extern const base::FeatureParam<bool>
+    kNtpNextSuggestionsFromNewSearchSuggestionsEndpointParam;
+
+// Parameter determining if the Action Chips on the NTP should display the
+// NTP Simplification UI.
+extern const base::FeatureParam<bool> kNtpNextShowSimplificationUIParam;
+
+// Parameter determining if the tab upload should be delayed when tab context is
+// added from an action chip.
+extern const base::FeatureParam<bool> kAddTabUploadDelayOnActionChipClick;
+
+// Parameter determining if stale shortcuts will be auto-removed.
+extern const base::FeatureParam<bool> kEnableStaleShortcutsAutoRemoval;
+
+// Parameter determining if stale modules will be auto-removed.
+extern const base::FeatureParam<bool> kEnableStaleModulesAutoRemoval;
+
+// Parameter determining the minimum amount of time that must pass before
+// staleness counters will be incremented.
+extern const base::FeatureParam<base::TimeDelta>
+    kMinStalenessUpdateTimeInterval;
+
+// Parameter determining the count at which shortcuts will be considered stale
+// and be eligible for auto-removal.
+extern const base::FeatureParam<int> kStaleShortcutsCountThreshold;
+
+// Parameter determining the count at which modules will be considered stale
+// and eligible for auto-removal.
+extern const base::FeatureParam<int> kStaleModulesCountThreshold;
+
+// Parameter determining if the dismiss button that allows users to hide modules
+// for certain periods of time will be removed.
+extern const base::FeatureParam<bool> kRemoveDismissModules;
 
 // Returns the timeout after which the load of a module should be aborted.
 base::TimeDelta GetModulesLoadTimeout();
@@ -256,7 +320,10 @@ int GetWallpaperSearchButtonHideCondition();
 
 std::string GetMobilePromoTargetURL();
 
-bool IsNtpComposeboxEnabled();
+// Returns the max number of tiles to show before the "show more" button is
+// shown.
+int GetMaxTilesBeforeShowMore();
+
 }  // namespace ntp_features
 
 #endif  // COMPONENTS_SEARCH_NTP_FEATURES_H_

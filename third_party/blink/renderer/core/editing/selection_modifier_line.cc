@@ -118,6 +118,10 @@ class AbstractLineBox {
       bool only_editable_leaves) const {
     return PositionForPoint(cursor_, point_in_container, only_editable_leaves);
   }
+  const LayoutBlockFlow& GetBlock() const {
+    DCHECK(IsNotNull());
+    return *cursor_.GetLayoutBlockFlow();
+  }
 
  private:
   explicit AbstractLineBox(const InlineCursor& cursor)
@@ -125,10 +129,6 @@ class AbstractLineBox {
     DCHECK(cursor_.Current().IsLineBox());
   }
 
-  const LayoutBlockFlow& GetBlock() const {
-    DCHECK(IsNotNull());
-    return *cursor_.GetLayoutBlockFlow();
-  }
 
   LayoutUnit PhysicalBlockOffset() const {
     DCHECK(IsNotNull());
@@ -396,8 +396,9 @@ PositionInFlatTreeWithAffinity SelectionModifier::PreviousLinePosition(
   AbstractLineBox line = AbstractLineBox::CreateFor(position);
   if (line) {
     line = line.PreviousLine();
-    if (!line || !line.CanBeCaretContainer())
+    if (!line || !line.CanBeCaretContainer()) {
       line = AbstractLineBox();
+    }
   }
 
   if (!line) {

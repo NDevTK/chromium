@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/chrome_browser_main_win.h"
 
@@ -64,6 +60,7 @@
 #include "chrome/browser/first_run/upgrade_util.h"
 #include "chrome/browser/first_run/upgrade_util_win.h"
 #include "chrome/browser/performance_manager/public/dll_pre_read_policy_win.h"
+#include "chrome/browser/platform_experience/features.h"
 #include "chrome/browser/platform_experience/prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
@@ -491,7 +488,7 @@ int DoUninstallTasks(bool chrome_still_running) {
     ShowCloseBrowserFirstMessageBox();
     return CHROME_RESULT_CODE_UNINSTALL_CHROME_ALIVE;
   }
-  int result = chrome::ShowUninstallBrowserPrompt();
+  int result = ShowUninstallBrowserPrompt();
   if (browser_util::IsBrowserAlreadyRunning()) {
     ShowCloseBrowserFirstMessageBox();
     return CHROME_RESULT_CODE_UNINSTALL_CHROME_ALIVE;
@@ -749,8 +746,10 @@ void ChromeBrowserMainPartsWin::PostBrowserStart() {
         FROM_HERE,
         {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
          base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-        base::BindOnce(
-            &platform_experience::MaybeInstallPlatformExperienceHelper));
+        base::BindOnce([]() {
+          platform_experience::MaybeInstallPlatformExperienceHelper();
+          platform_experience::features::ActivateFieldTrials();
+        }));
     platform_experience::prefs::SetPrefOverrides(
         *g_browser_process->local_state());
   }

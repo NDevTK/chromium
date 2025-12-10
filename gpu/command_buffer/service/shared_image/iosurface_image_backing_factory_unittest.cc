@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "gpu/command_buffer/service/shared_image/iosurface_image_backing_factory.h"
 
 #include <dawn/native/DawnNative.h>
@@ -16,8 +11,8 @@
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/callback_helpers.h"
-#include "components/viz/common/resources/resource_sizes.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/service_utils.h"
@@ -41,6 +36,7 @@
 #include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/progress_reporter.h"
@@ -110,11 +106,11 @@ class IOSurfaceImageBackingFactoryTest : public SharedImageTestBase {
 
     for (int i = 0; i < num_pixels; i++) {
       // Compare the pixel values.
-      const uint8_t* pixel = dst_pixels.data() + (i * 4);
+      const uint8_t* pixel = UNSAFE_TODO(dst_pixels.data() + (i * 4));
       EXPECT_EQ(pixel[0], expected_color[0]);
-      EXPECT_EQ(pixel[1], expected_color[1]);
-      EXPECT_EQ(pixel[2], expected_color[2]);
-      EXPECT_EQ(pixel[3], expected_color[3]);
+      UNSAFE_TODO(EXPECT_EQ(pixel[1], expected_color[1]));
+      UNSAFE_TODO(EXPECT_EQ(pixel[2], expected_color[2]));
+      UNSAFE_TODO(EXPECT_EQ(pixel[3], expected_color[3]));
     }
   }
 };
@@ -182,6 +178,29 @@ TEST_F(IOSurfaceImageBackingFactoryTest, GL_SkiaGL) {
 
   CheckSkiaPixels(mailbox, size, {0, 255, 0, 255});
   factory_ref.reset();
+}
+
+TEST_F(IOSurfaceImageBackingFactoryTest, CreateGpuMemoryBuffer) {
+  for (auto format : {
+           viz::SinglePlaneFormat::kRGBA_8888,
+           viz::SinglePlaneFormat::kRGBX_8888,
+           viz::SinglePlaneFormat::kBGRA_8888,
+           viz::SinglePlaneFormat::kBGRX_8888,
+           viz::SinglePlaneFormat::kR_8,
+           viz::SinglePlaneFormat::kRG_88,
+           viz::SinglePlaneFormat::kR_16,
+           viz::SinglePlaneFormat::kRG_1616,
+           viz::SinglePlaneFormat::kRGBA_F16,
+           viz::SinglePlaneFormat::kBGRA_1010102,
+           viz::MultiPlaneFormat::kNV12,
+           viz::MultiPlaneFormat::kNV12A,
+           viz::MultiPlaneFormat::kP010,
+       }) {
+    gfx::GpuMemoryBufferHandle handle =
+        IOSurfaceImageBackingFactory::CreateGpuMemoryBufferHandle(
+            gfx::Size(2, 2), format);
+    EXPECT_EQ(handle.type, gfx::IO_SURFACE_BUFFER);
+  }
 }
 
 class IOSurfaceImageBackingFactoryDawnTest
@@ -343,20 +362,14 @@ class IOSurfaceImageBackingFactoryDawnTest
     return std::make_pair(std::move(src_rep), std::move(src_scoped_access));
   }
 
-#ifdef WGPU_BREAKING_CHANGE_INSTANCE_FEATURES_LIMITS
-  static constexpr auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
-  static constexpr wgpu::InstanceDescriptor instance_desc_ = {
-      .requiredFeatureCount = 1,
-      .requiredFeatures = &kTimedWaitAny,
+  static constexpr auto kInstanceFeatures = std::array{
+      wgpu::InstanceFeatureName::MultipleDevicesPerAdapter,
+      wgpu::InstanceFeatureName::TimedWaitAny,
   };
-#else
   static constexpr wgpu::InstanceDescriptor instance_desc_ = {
-      .capabilities =
-          {
-              .timedWaitAnyEnable = true,
-          },
+      .requiredFeatureCount = kInstanceFeatures.size(),
+      .requiredFeatures = kInstanceFeatures.data(),
   };
-#endif
   dawn::native::Instance instance_ = dawn::native::Instance(&instance_desc_);
   wgpu::Adapter adapter_;
 };
@@ -1343,14 +1356,9 @@ class IOSurfaceImageBackingFactoryGMBTest
     SkAlphaType alpha_type = kPremul_SkAlphaType;
     bool override_rgba_to_bgra = get_gr_context_type() == GrContextType::kGL;
 
-    gfx::BufferFormat buffer_format = gpu::ToBufferFormat(format);
-    gfx::GpuMemoryBufferHandle handle;
-    gfx::GpuMemoryBufferId kBufferId(1);
-    handle.type = gfx::IO_SURFACE_BUFFER;
-    handle.id = kBufferId;
-    handle.io_surface = gfx::CreateIOSurface(
-        size, buffer_format, /*should_clear=*/true, override_rgba_to_bgra);
-    DCHECK(handle.io_surface);
+    gfx::GpuMemoryBufferHandle handle(gfx::CreateIOSurface(
+        size, format, /*should_clear=*/true, override_rgba_to_bgra));
+    DCHECK(handle.io_surface());
 
     auto backing = backing_factory_->CreateSharedImage(
         mailbox, format, size, color_space, surface_origin, alpha_type, usage,

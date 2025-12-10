@@ -8,6 +8,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "chromecast/common/timing_tracker.h"
 #include "chromecast/starboard/chromecast/starboard_adapter/public/cast_starboard_api_adapter.h"
 
 namespace chromecast {
@@ -28,8 +29,29 @@ StarboardDrmWrapper::DrmSystemResource::~DrmSystemResource() {
   StarboardDrmWrapper::GetInstance().RemoveResource(this);
 }
 
+StarboardDrmWrapper::Client::Client() {
+  StarboardDrmWrapper::GetInstance().AddClient(this);
+}
+
 StarboardDrmWrapper::Client::~Client() {
   StarboardDrmWrapper::GetInstance().RemoveClient(this);
+}
+
+bool StarboardDrmWrapper::HasClients() {
+  CHECK(task_runner_->RunsTasksInCurrentSequence());
+
+  return !clients_.empty();
+}
+
+void StarboardDrmWrapper::AddClient(Client* client) {
+  CHECK(task_runner_->RunsTasksInCurrentSequence());
+
+  LOG(INFO) << "StarboardDrmWrapper::AddClient(client=" << client << ")";
+
+  const auto& [unused_it, inserted] = clients_.insert(client);
+  if (!inserted) {
+    LOG(WARNING) << "Duplicate Client* inserted";
+  }
 }
 
 void StarboardDrmWrapper::RemoveClient(Client* client) {
@@ -64,6 +86,9 @@ void StarboardDrmWrapper::RemoveClient(Client* client) {
       }
     }
   }
+
+  // Update clients_.
+  clients_.erase(client);
 }
 
 void StarboardDrmWrapper::CallOnSessionUpdateRequest(
@@ -425,6 +450,7 @@ StarboardDrmWrapper::StarboardDrmWrapper()
   starboard_ = owned_starboard_.get();
   CHECK(starboard_->EnsureInitialized()) << "Failed to initialize starboard";
 
+  CHROMECAST_TIMING_TRACKER;
   drm_system_ = starboard_->CreateDrmSystem(
       /*key_system=*/"com.widevine.alpha",
       /*callback_handler=*/&callback_handler_);

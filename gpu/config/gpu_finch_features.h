@@ -17,9 +17,11 @@ namespace base {
 class CommandLine;
 }  // namespace base
 
-namespace features {
+namespace gpu {
+struct GpuFeatureInfo;
+}  // namespace gpu
 
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kUseGles2ForOopR);
+namespace features {
 
 // All features in alphabetical order. The features should be documented
 // alongside the definition of their values in the .cc file.
@@ -50,9 +52,9 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kAdjustGpuProcessPriority);
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kClearGrShaderDiskCacheOnInvalidPrefix);
 
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kVaapiJpegImageDecodeAcceleration);
-
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kVaapiWebPImageDecodeAcceleration);
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGpuShaderDiskCache);
+GPU_CONFIG_EXPORT bool IsShaderDiskCacheEnabled(
+    const base::CommandLine* command_line);
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kVulkan);
 
@@ -64,19 +66,33 @@ GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
     kSkiaGraphiteDawnBackendValidation;
 GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
     kSkiaGraphiteDawnBackendDebugLabels;
+GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
+    kSkiaGraphiteDawnUsePersistentCache;
+GPU_CONFIG_EXPORT extern const base::FeatureParam<int>
+    kSkiaGraphiteMaxPendingRecordings;
+GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
+    kSkiaGraphiteEnableDeferredSubmit;
+GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
+    kSkiaGraphiteEnableMSAAOnNewerIntel;
 
 #if BUILDFLAG(IS_WIN)
 GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
     kSkiaGraphiteDawnDumpWCOnD3DError;
+GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
+    kSkiaGraphiteDawnDisableD3DShaderOptimizations;
 GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
     kSkiaGraphiteDawnD3D11DelayFlush;
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kSkiaGraphiteDawnUseD3D12);
 #endif
 
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kConditionallySkipGpuChannelFlush);
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kSkiaGraphiteSmallPathAtlas);
+GPU_CONFIG_EXPORT extern const base::FeatureParam<int>
+    kSkiaGraphiteMinPathSizeForMsaa;
 
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kEnableVkPipelineCache);
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGpuPersistentCache);
+
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kConditionallySkipGpuChannelFlush);
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kNoDiscardableMemoryForGpuDecodePath);
 
@@ -92,15 +108,21 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kEnableDrDcVulkan);
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUService);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUBlobCache);
-GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUUseVulkanMemoryModel);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUEnableRangeAnalysisForRobustness);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUAndroidOpenGLES);
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUUseSpirv14);
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUDecomposeUniformBuffers);
+#if BUILDFLAG(IS_WIN)
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUQualcommWindows);
+#endif
 GPU_CONFIG_EXPORT extern const base::FeatureParam<std::string>
     kWebGPUDisabledToggles;
 GPU_CONFIG_EXPORT extern const base::FeatureParam<std::string>
     kWebGPUEnabledToggles;
 GPU_CONFIG_EXPORT extern const base::FeatureParam<std::string>
     kWebGPUUnsafeFeatures;
+GPU_CONFIG_EXPORT extern const base::FeatureParam<bool>
+    kWebGPUSpontaneousWireServer;
 GPU_CONFIG_EXPORT extern const base::FeatureParam<std::string>
     kWGSLUnsafeFeatures;
 
@@ -120,9 +142,10 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGPUDriverBugListTestGroup);
 GPU_CONFIG_EXPORT extern const base::FeatureParam<int>
     kGPUDriverBugListTestGroupId;
 
-GPU_CONFIG_EXPORT bool UseGles2ForOopR();
 GPU_CONFIG_EXPORT bool IsUsingVulkan();
-GPU_CONFIG_EXPORT bool IsDrDcEnabled();
+GPU_CONFIG_EXPORT bool IsDrDcEnabled(
+    const gpu::GpuFeatureInfo& gpu_feature_info);
+GPU_CONFIG_EXPORT bool ShouldEnableDrDc();
 GPU_CONFIG_EXPORT bool NeedThreadSafeAndroidMedia();
 GPU_CONFIG_EXPORT bool IsSkiaGraphiteEnabled(
     const base::CommandLine* command_line);
@@ -147,6 +170,10 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kANGLEPerContextBlobCache);
 #if BUILDFLAG(IS_APPLE)
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kIOSurfaceMultiThreading);
 #endif
+
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kConfigurableGPUWatchdogTimeout);
+GPU_CONFIG_EXPORT extern const base::FeatureParam<int>
+    kConfigurableGPUWatchdogTimeoutSeconds;
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kWebGPUCompatibilityMode);
 

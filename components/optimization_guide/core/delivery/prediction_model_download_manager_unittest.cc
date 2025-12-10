@@ -26,6 +26,7 @@
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/services/unzip/in_process_unzipper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/zlib/google/zip.h"
@@ -59,6 +60,21 @@ class TestPredictionModelDownloadObserver
   std::optional<proto::PredictionModel> last_ready_model_;
 };
 
+class TestProfileDownloadServiceTracker : public ProfileDownloadServiceTracker {
+ public:
+  explicit TestProfileDownloadServiceTracker(
+      download::BackgroundDownloadService* download_service)
+      : download_service_(download_service) {}
+  ~TestProfileDownloadServiceTracker() override = default;
+
+  download::BackgroundDownloadService* GetBackgroundDownloadService() override {
+    return download_service_;
+  }
+
+ private:
+  raw_ptr<download::BackgroundDownloadService> download_service_;
+};
+
 enum class PredictionModelDownloadFileStatus {
   kVerifiedCrxWithGoodModelFiles,
   kVerifiedCrxWithAdditionalFiles,
@@ -78,10 +94,14 @@ class PredictionModelDownloadManagerTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(temp_download_dir_.CreateUniqueTempDir());
     ASSERT_TRUE(temp_models_dir_.CreateUniqueTempDir());
+    local_state_prefs_ = std::make_unique<TestingPrefServiceSimple>();
     mock_download_service_ =
         std::make_unique<download::test::MockDownloadService>();
+    profile_download_service_tracker_ =
+        std::make_unique<TestProfileDownloadServiceTracker>(
+            mock_download_service_.get());
     download_manager_ = std::make_unique<PredictionModelDownloadManager>(
-        mock_download_service_.get(),
+        local_state_prefs_.get(), *profile_download_service_tracker_,
         base::BindRepeating(
             [](const base::FilePath& models_dir_path,
                proto::OptimizationTarget optimization_target) {
@@ -95,6 +115,7 @@ class PredictionModelDownloadManagerTest : public testing::Test {
 
   void TearDown() override {
     download_manager_.reset();
+    profile_download_service_tracker_.reset();
     mock_download_service_ = nullptr;
   }
 
@@ -266,7 +287,10 @@ class PredictionModelDownloadManagerTest : public testing::Test {
   base::test::TaskEnvironment task_environment_;
   base::ScopedTempDir temp_download_dir_;
   base::ScopedTempDir temp_models_dir_;
+  std::unique_ptr<TestingPrefServiceSimple> local_state_prefs_;
   std::unique_ptr<download::test::MockDownloadService> mock_download_service_;
+  std::unique_ptr<ProfileDownloadServiceTracker>
+      profile_download_service_tracker_;
   std::unique_ptr<PredictionModelDownloadManager> download_manager_;
 };
 
@@ -291,85 +315,56 @@ TEST_F(PredictionModelDownloadManagerTest, DownloadServiceReadyPersistsGuids) {
       "OptimizationGuide.PredictionModelDownloadManager.DownloadSucceeded", 0);
 }
 
-TEST_F(PredictionModelDownloadManagerTest, StartDownloadRestrictedDownloading) {
-  base::HistogramTester histogram_tester;
-  base::test::ScopedFeatureList features;
-  features.InitWithFeaturesAndParameters(
-      {
-          {optimization_guide::features::kOptimizationGuideModelDownloading,
-           {{"unrestricted_model_downloading", "false"}}},
-      },
-      /*disabled_features=*/{});
+MATCHER_P(SchedulingParamsEq, expected_params, "") {
+  return arg.scheduling_params.priority == expected_params.priority &&
+         arg.scheduling_params.battery_requirements ==
+             expected_params.battery_requirements &&
+         arg.scheduling_params.network_requirements ==
+             expected_params.network_requirements;
+}
 
-  download::DownloadParams download_params;
-  EXPECT_CALL(*download_service(), StartDownload_(_))
-      .WillOnce(MoveArg<0>(&download_params));
+TEST_F(PredictionModelDownloadManagerTest,
+       StartDownloadWithDefaultSchedulingParams) {
+  download::SchedulingParams scheduling_params;
+  scheduling_params.priority = download::SchedulingParams::Priority::HIGH;
+  scheduling_params.battery_requirements =
+      download::SchedulingParams::BatteryRequirements::BATTERY_INSENSITIVE;
+  scheduling_params.network_requirements =
+      download::SchedulingParams::NetworkRequirements::NONE;
+
+  EXPECT_CALL(*download_service(),
+              StartDownload_(SchedulingParamsEq(scheduling_params)));
   download_manager()->StartDownload(
-      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD);
+      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD,
+      std::nullopt);
+}
 
-  // Validate parameters - basically that we attach the correct client, just do
-  // a passthrough of the URL, and attach the API key.
-  EXPECT_EQ(download_params.client,
-            download::DownloadClient::OPTIMIZATION_GUIDE_PREDICTION_MODELS);
-  EXPECT_EQ(download_params.request_params.url, GURL("someurl"));
-  EXPECT_EQ(download_params.request_params.method, "GET");
-  EXPECT_TRUE(download_params.request_params.request_headers.HasHeader(
-      "X-Goog-Api-Key"));
-  EXPECT_FALSE(download_params.request_params.require_safety_checks);
-  EXPECT_EQ(download_params.scheduling_params.priority,
-            download::SchedulingParams::Priority::NORMAL);
-  EXPECT_EQ(
-      download_params.scheduling_params.battery_requirements,
-      download::SchedulingParams::BatteryRequirements::BATTERY_INSENSITIVE);
-  EXPECT_EQ(download_params.scheduling_params.network_requirements,
-            download::SchedulingParams::NetworkRequirements::NONE);
+TEST_F(PredictionModelDownloadManagerTest,
+       StartDownloadWithCustomSchedulingParams) {
+  download::SchedulingParams scheduling_params;
+  scheduling_params.priority = download::SchedulingParams::Priority::LOW;
+  scheduling_params.battery_requirements =
+      download::SchedulingParams::BatteryRequirements::BATTERY_SENSITIVE;
+  scheduling_params.network_requirements =
+      download::SchedulingParams::NetworkRequirements::UNMETERED;
 
-  histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.PredictionModelDownloadManager.State.PainfulPageLoad",
-      PredictionModelDownloadManager::PredictionModelDownloadState::kRequested,
-      1);
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.PredictionModelDownloadManager.DownloadStartLatency."
-      "PainfulPageLoad",
-      0);
-
-  // Now invoke start callback.
-  std::move(download_params.callback)
-      .Run("someguid", download::DownloadParams::StartResult::ACCEPTED);
-
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.PredictionModelDownloadManager.State.PainfulPageLoad",
-      2);
-  histogram_tester.ExpectBucketCount(
-      "OptimizationGuide.PredictionModelDownloadManager.State.PainfulPageLoad",
-      PredictionModelDownloadManager::PredictionModelDownloadState::kStarted,
-      1);
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.PredictionModelDownloadManager.DownloadStartLatency."
-      "PainfulPageLoad",
-      1);
-
-  // Now cancel all downloads to ensure that callback persisted pending GUID.
-  EXPECT_CALL(*download_service(), CancelDownload(Eq("someguid")));
-  download_manager()->CancelAllPendingDownloads();
+  EXPECT_CALL(*download_service(),
+              StartDownload_(SchedulingParamsEq(scheduling_params)));
+  download_manager()->StartDownload(
+      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD,
+      scheduling_params);
 }
 
 TEST_F(PredictionModelDownloadManagerTest,
        StartDownloadUnrestrictedDownloading) {
   base::HistogramTester histogram_tester;
-  base::test::ScopedFeatureList features;
-  features.InitWithFeaturesAndParameters(
-      {
-          {optimization_guide::features::kOptimizationGuideModelDownloading,
-           {{"unrestricted_model_downloading", "true"}}},
-      },
-      /*disabled_features=*/{});
 
   download::DownloadParams download_params;
   EXPECT_CALL(*download_service(), StartDownload_(_))
       .WillOnce(MoveArg<0>(&download_params));
   download_manager()->StartDownload(
-      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD);
+      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD,
+      /*scheduling_params=*/std::nullopt);
 
   // Validate parameters - basically that we attach the correct client, just do
   // a passthrough of the URL, and attach the API key.
@@ -422,7 +417,8 @@ TEST_F(PredictionModelDownloadManagerTest, StartDownloadFailedToSchedule) {
   EXPECT_CALL(*download_service(), StartDownload_(_))
       .WillOnce(MoveArg<0>(&download_params));
   download_manager()->StartDownload(
-      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD);
+      GURL("someurl"), proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD,
+      /*scheduling_params=*/std::nullopt);
 
   // Now invoke start callback.
   std::move(download_params.callback)

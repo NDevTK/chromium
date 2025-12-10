@@ -4,7 +4,7 @@
 
 package org.chromium.components.browser_ui.widget;
 
-import static org.chromium.ui.listmenu.BasicListMenu.ListMenuItemType.MENU_ITEM;
+import static org.chromium.ui.listmenu.ListItemType.MENU_ITEM;
 
 import android.content.res.Resources;
 
@@ -178,7 +178,8 @@ public class ListItemBuilder {
                             ListMenuItemProperties.TEXT_APPEARANCE_ID,
                             mTextAppearanceStyle != Resources.ID_NULL
                                     ? mTextAppearanceStyle
-                                    : R.style.TextAppearance_TextLarge_Primary_Baseline_Light)
+                                    : R.style
+                                            .TextAppearance_DensityAdaptive_TextLarge_Primary_Baseline_Light)
                     .with(
                             ListMenuItemProperties.ICON_TINT_COLOR_STATE_LIST_ID,
                             mIconTintColorStateList != Resources.ID_NULL
@@ -187,5 +188,14 @@ public class ListItemBuilder {
         }
 
         return new ListItem(MENU_ITEM, builder.build());
+    }
+
+    /**
+     * Builds a {@link ListItem} with the provided title.
+     *
+     * @param titleRes The string resource for the menu item.
+     */
+    public static ListItem buildSimpleMenuItem(@StringRes int titleRes) {
+        return new ListItemBuilder().withTitleRes(titleRes).build();
     }
 }

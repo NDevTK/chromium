@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/files/file_util.h"
+#include "base/strings/strcat.h"
 #include "base/strings/to_string.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -20,11 +21,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/subresource_filter/subresource_filter_browser_test_harness.h"
 #include "chrome/browser/tpcd/experiment/tpcd_experiment_features.h"
-#include "chrome/browser/tpcd/support/top_level_trial_service.h"
-#include "chrome/browser/tpcd/support/top_level_trial_service_factory.h"
-#include "chrome/browser/tpcd/support/tpcd_support_service.h"
-#include "chrome/browser/tpcd/support/tpcd_support_service_factory.h"
-#include "chrome/browser/tpcd/support/validity_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -34,8 +30,8 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/common/pref_names.h"
-#include "components/network_session_configurator/common/network_switches.h"
 #include "components/prefs/pref_service.h"
+#include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/privacy_sandbox/tpcd_pref_names.h"
 #include "components/privacy_sandbox/tpcd_utils.h"
 #include "components/privacy_sandbox/tracking_protection_onboarding.h"
@@ -87,8 +83,6 @@ using MetadataSourceType =
 
 struct Allow3PCMechanismBrowserTestCase {
   bool allow_by_global_setting = false;
-  bool allow_by_3pcd_1p_trial_token = false;
-  bool allow_by_3pcd_3p_trial_token = false;
   bool tpcd_metadata_unspecified_allow_3p_cookie = false;
   bool tpcd_metadata_test_allow_3p_cookie = false;
   bool tpcd_metadata_1p_dt_allow_3p_cookie = false;
@@ -112,20 +106,6 @@ const Allow3PCMechanismBrowserTestCase kAllowMechanismTestCases[] = {
         .expected_web_feature_histogram_sample =
             WebFeature::kThirdPartyCookieDeprecation_AllowByGlobalSetting,
         .expected_metadata_source_type = MetadataSourceType::None,
-    },
-    {
-        .allow_by_3pcd_1p_trial_token = true,
-        .expected_allow_mechanism_histogram_sample =
-            ThirdPartyCookieAllowMechanism::kAllowByTopLevel3PCD,
-        .expected_metadata_source_type = MetadataSourceType::FirstPartyDt,
-    },
-    {
-        .allow_by_3pcd_3p_trial_token = true,
-        .expected_allow_mechanism_histogram_sample =
-            ThirdPartyCookieAllowMechanism::kAllowBy3PCD,
-        .expected_web_feature_histogram_sample =
-            WebFeature::kThirdPartyCookieDeprecation_AllowBy3PCD,
-        .expected_metadata_source_type = MetadataSourceType::ThirdPartyDt,
     },
     {
         .tpcd_metadata_unspecified_allow_3p_cookie = true,
@@ -204,7 +184,7 @@ const Allow3PCMechanismBrowserTestCase kAllowMechanismTestCases[] = {
     // Precedence testing test cases:
     {
         .allow_by_global_setting = true,
-        .allow_by_3pcd_1p_trial_token = true,
+        .tpcd_metadata_1p_dt_allow_3p_cookie = true,
         .expected_allow_mechanism_histogram_sample =
             ThirdPartyCookieAllowMechanism::kAllowByGlobalSetting,
         .expected_web_feature_histogram_sample =
@@ -212,25 +192,6 @@ const Allow3PCMechanismBrowserTestCase kAllowMechanismTestCases[] = {
         // Note that this doesn't match the expected allow mechanism histogram,
         // as the global setting is overridden by tracking protection.
         .expected_metadata_source_type = MetadataSourceType::FirstPartyDt,
-    },
-    {
-        .allow_by_3pcd_1p_trial_token = true,
-        .allow_by_3pcd_3p_trial_token = true,
-        .expected_allow_mechanism_histogram_sample =
-            ThirdPartyCookieAllowMechanism::kAllowByTopLevel3PCD,
-        .expected_metadata_source_type = MetadataSourceType::FirstPartyDt,
-    },
-    {
-        .allow_by_3pcd_3p_trial_token = true,
-        // This test only needs to be perform with one variant of the TPCD
-        // Metadata.
-        .tpcd_metadata_critical_sector_allow_3p_cookie = true,
-        .expected_allow_mechanism_histogram_sample =
-            ThirdPartyCookieAllowMechanism::
-                kAllowBy3PCDMetadataSourceCriticalSector,
-        .expected_web_feature_histogram_sample =
-            WebFeature::kThirdPartyCookieDeprecation_AllowBy3PCDMetadata,
-        .expected_metadata_source_type = MetadataSourceType::CriticalSector,
     },
     {
         .tpcd_metadata_critical_sector_allow_3p_cookie = true,
@@ -267,18 +228,12 @@ class ThirdPartyCookieDeprecationObserverBaseBrowserTest
     host_resolver()->AddRule("*", "127.0.0.1");
     https_server()->AddDefaultHandlers(GetChromeTestDataDir());
     https_server()->ServeFilesFromSourceDirectory("components/test/data");
+    https_server()->SetSSLConfig(net::EmbeddedTestServer::CERT_TEST_NAMES);
     ASSERT_TRUE(https_server()->Start());
     SetRulesetWithRules(
         {subresource_filter::testing::CreateSuffixRule("isad=1"),
          subresource_filter::testing::CreateSuffixRule("ad_script.js")});
     ukm::InitializeSourceUrlRecorderForWebContents(web_contents());
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    // HTTPS server only serves a valid cert for 127.0.0.1 or localhost, so this
-    // is needed to load pages from other hosts (b.test, c.test) without an
-    // error.
-    command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
   }
 
   GURL GetURL(const std::string& host) {
@@ -328,9 +283,6 @@ class ThirdPartyCookieDeprecationObserverBaseBrowserTest
         prefs::kTrackingProtectionOnboardingStatus,
         static_cast<int>(privacy_sandbox::TrackingProtectionOnboarding::
                              OnboardingStatus::kOnboarded));
-    // Enable 3pcd as it's no longer done through the onboarding service.
-    browser()->profile()->GetPrefs()->SetBoolean(
-        prefs::kTrackingProtection3pcdEnabled, true);
   }
 
   content::WebContents* web_contents() {
@@ -395,8 +347,7 @@ class ThirdPartyCookieDeprecationObserverBrowserTest
          {{tpcd::experiment::kDisable3PCookiesName,
            base::ToString(is_experiment_cookies_disabled_)}}},
         {subresource_filter::kTPCDAdHeuristicSubframeRequestTagging, {}}};
-    std::vector<base::test::FeatureRef> disabled_features = {
-        content_settings::features::kTrackingProtection3pcd};
+    std::vector<base::test::FeatureRef> disabled_features = {};
     if (std::get<2>(GetParam())) {
       enabled_features.push_back({network::features::kGetCookiesOnSet, {}});
     } else {
@@ -909,9 +860,7 @@ class ThirdPartyCookieDeprecationObserverMechanismBrowserTest
   }
 
   bool IsAnyTpcdMitigationAllowMechanismTestCase() {
-    return IsAnyTpcdMetadataAllowMechanismTestCase() ||
-           test_case_.allow_by_3pcd_1p_trial_token ||
-           test_case_.allow_by_3pcd_3p_trial_token;
+    return IsAnyTpcdMetadataAllowMechanismTestCase();
   }
 
   void SetUp() override {
@@ -927,27 +876,9 @@ class ThirdPartyCookieDeprecationObserverMechanismBrowserTest
       enabled_features.push_back({net::features::kTpcdMetadataGrants, {}});
     }
 
-    if (test_case_.allow_by_3pcd_3p_trial_token) {
-      enabled_features.push_back({net::features::kTpcdTrialSettings, {}});
-      // Disable the validity service so it doesn't remove manually created
-      // trial settings.
-      tpcd::trial::ValidityService::DisableForTesting();
-    }
-
-    if (test_case_.allow_by_3pcd_1p_trial_token) {
-      enabled_features.push_back(
-          {net::features::kTopLevelTpcdTrialSettings, {}});
-      // Disable the validity service so it doesn't remove manually created
-      // trial settings.
-      tpcd::trial::ValidityService::DisableForTesting();
-    }
-
     if (is_tracking_protection_onboarded_) {
       enabled_features.push_back(
           {content_settings::features::kTrackingProtection3pcd, {}});
-    } else {
-      disabled_features.push_back(
-          content_settings::features::kTrackingProtection3pcd);
     }
 
     scoped_feature_list_.InitWithFeaturesAndParameters(enabled_features,
@@ -989,25 +920,6 @@ class ThirdPartyCookieDeprecationObserverMechanismBrowserTest
 
     if (test_case_.allow_by_global_setting) {
       DisableGlobal3pcb();
-    }
-
-    if (test_case_.allow_by_3pcd_1p_trial_token) {
-      auto* service = tpcd::trial::TopLevelTrialServiceFactory::GetForProfile(
-          browser()->profile());
-      auto origin = url::Origin::Create(first_party_url);
-      service->UpdateTopLevelTrialSettingsForTesting(
-          origin, /*match_subdomains=*/true, /*enabled=*/true);
-    }
-
-    if (test_case_.allow_by_3pcd_3p_trial_token) {
-      auto* service = tpcd::trial::TpcdTrialServiceFactory::GetForProfile(
-          browser()->profile());
-      auto request_origin = url::Origin::Create(third_party_url);
-      auto partition_origin = url::Origin::Create(first_party_url);
-      service->Update3pcdTrialSettingsForTesting(OriginTrialStatusChangeDetails(
-          request_origin, net::SchemefulSite(partition_origin).Serialize(),
-          /*match_subdomains=*/true, /*enabled=*/true,
-          /*source_id=*/std::nullopt));
     }
 
     auto tpcd_metadata_helper = [&](const std::string& source) {
@@ -1073,9 +985,10 @@ class ThirdPartyCookieDeprecationObserverMechanismBrowserTest
     // protection is onboard.
 
     if (test_case_.allow_by_global_setting) {
-      if (test_case_.allow_by_3pcd_1p_trial_token &&
+      if (test_case_.tpcd_metadata_1p_dt_allow_3p_cookie &&
           is_tracking_protection_onboarded_) {
-        am_helper(ThirdPartyCookieAllowMechanism::kAllowByTopLevel3PCD);
+        am_helper(
+            ThirdPartyCookieAllowMechanism::kAllowBy3PCDMetadataSource1pDt);
         return;
       }
 
@@ -1217,149 +1130,6 @@ IN_PROC_BROWSER_TEST_P(ThirdPartyCookieDeprecationObserverMechanismBrowserTest,
   VerifyThirdPartyCookieAllowMechanism(histogram_tester);
   VerifyDtDeploymentUkm(ukm_recorder, top_level_url);
 }
-
-class ThirdPartyCookieDeprecationObserverSSABrowserTest
-    : public ThirdPartyCookieDeprecationObserverBaseBrowserTest,
-      public testing::WithParamInterface<bool> {
- public:
-  ThirdPartyCookieDeprecationObserverSSABrowserTest() = default;
-
-  ThirdPartyCookieDeprecationObserverSSABrowserTest(
-      const ThirdPartyCookieDeprecationObserverSSABrowserTest&) = delete;
-  ThirdPartyCookieDeprecationObserverSSABrowserTest& operator=(
-      const ThirdPartyCookieDeprecationObserverSSABrowserTest&) = delete;
-
-  ~ThirdPartyCookieDeprecationObserverSSABrowserTest() override = default;
-
-  static constexpr char kVerifyHasStorageAccessPermission[] =
-      "navigator.permissions.query({name: 'storage-access'}).then("
-      "  (permission) => permission.name === 'storage-access' && "
-      "permission.state === 'granted');";
-  static constexpr char kRequestStorageAccess[] =
-      "document.requestStorageAccess()";
-
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{features::kCookieDeprecationFacilitatedTesting,
-          {{tpcd::experiment::kDisable3PCookiesName, "true"}}},
-         {content_settings::features::kTrackingProtection3pcd, {}}},
-        {});
-    subresource_filter::SubresourceFilterBrowserTest::SetUp();
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    ThirdPartyCookieDeprecationObserverBaseBrowserTest::SetUpCommandLine(
-        command_line);
-    command_line->AppendSwitchASCII(
-        network::switches::kUseRelatedWebsiteSet,
-        base::StrCat({R"({"primary": "https://)", kHostA,
-                      R"(", "associatedSites": ["https://)", kHostC, R"("])",
-                      R"(, "serviceSites": ["https://)", kHostB, R"("]})"}));
-  }
-
-  void SetUpThirdPartyCookieExperiment() {
-    Wait();
-    g_browser_process->local_state()->SetInteger(
-        tpcd::experiment::prefs::kTPCDExperimentClientState,
-        static_cast<int>(tpcd::experiment::utils::ExperimentState::kEligible));
-
-    // Set up tracking protection onboard status.
-    if (GetParam()) {
-      SetUpTrackingProtectionOnboard();
-    }
-  }
-
-  void SetCrossSiteCookieOnHost(const std::string& host) {
-    GURL host_url = GetURL(host);
-    std::string cookie = base::StrCat({"cross-site=", host});
-    ASSERT_TRUE(
-        content::SetCookie(browser()->profile(), host_url,
-                           base::StrCat({cookie, ";SameSite=None;Secure"})));
-    ASSERT_THAT(content::GetCookies(browser()->profile(), host_url),
-                testing::HasSubstr(cookie));
-  }
-
-  void SetStorageAccessAPIPermission(content::RenderFrameHost* frame) {
-    // See comments in RequestStorageAccessForBaseBrowserTest.
-    EXPECT_FALSE(content::ExecJs(frame, kRequestStorageAccess,
-                                 content::EXECUTE_SCRIPT_NO_USER_GESTURE));
-    EXPECT_TRUE(storage::test::RequestStorageAccessForOrigin(
-        web_contents()->GetPrimaryMainFrame(), GetURL(kHostB).spec()));
-    EXPECT_TRUE(content::ExecJs(frame, kRequestStorageAccess,
-                                content::EXECUTE_SCRIPT_NO_USER_GESTURE));
-    EXPECT_TRUE(storage::test::HasStorageAccessForFrame(frame));
-    EXPECT_TRUE(content::EvalJs(frame, kVerifyHasStorageAccessPermission)
-                    .ExtractBool());
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(,
-                         ThirdPartyCookieDeprecationObserverSSABrowserTest,
-                         testing::Bool());
-
-IN_PROC_BROWSER_TEST_P(ThirdPartyCookieDeprecationObserverSSABrowserTest,
-                       ThirdPartyCookiesReadAndWrite) {
-  SetUpThirdPartyCookieExperiment();
-  SetCrossSiteCookieOnHost(kHostB);
-
-  content::CookieChangeObserver observer(web_contents(), 2);
-  base::HistogramTester histogram_tester;
-  NavigateToPageWithFrame(kHostA);
-  NavigateFrameTo(kHostB, "/");
-
-  content::RenderFrameHost* frame =
-      ChildFrameAt(web_contents()->GetPrimaryMainFrame(), 0);
-  SetStorageAccessAPIPermission(frame);
-
-  // 3p cookie write
-  NavigateFrameTo(kHostB, "/set-cookie?thirdparty=1;SameSite=None;Secure");
-  // 3p cookie read
-  NavigateFrameTo(kHostB, "/");
-  observer.Wait();
-  NavigateToUntrackedUrl();
-
-  // TODO(crbug.com/40936991) In this case, url_loader can't get correct
-  // cookie_setting_overrides value when creating CookieAccessDetails object. It
-  // fails to get the correct enabling mechanism of storage access API. Confirm
-  // with storage access API owner.
-  histogram_tester.ExpectUniqueSample(kThirdPartyCookieAllowMechanismHistogram,
-                                      /*kAllowByStorageAccess*/ 6, 0);
-  histogram_tester.ExpectBucketCount(
-      kWebFeatureHistogram,
-      WebFeature::kThirdPartyCookieDeprecation_AllowByStorageAccess, 0);
-}
-
-IN_PROC_BROWSER_TEST_P(ThirdPartyCookieDeprecationObserverSSABrowserTest,
-                       ThirdPartyJavaScriptCookieReadAndWrite) {
-  SetUpThirdPartyCookieExperiment();
-  SetCrossSiteCookieOnHost(kHostB);
-
-  content::CookieChangeObserver observer(web_contents(), 2);
-  base::HistogramTester histogram_tester;
-  NavigateToPageWithFrame(kHostA);
-  NavigateFrameTo(kHostB, "/empty.html");
-
-  content::RenderFrameHost* frame =
-      ChildFrameAt(web_contents()->GetPrimaryMainFrame(), 0);
-  SetStorageAccessAPIPermission(frame);
-
-  // Write a third-party cookie.
-  EXPECT_TRUE(content::ExecJs(
-      frame, "document.cookie = 'foo=bar;SameSite=None;Secure';"));
-  // Read a third-party cookie.
-  EXPECT_TRUE(content::ExecJs(frame, "let x = document.cookie;"));
-  observer.Wait();
-  NavigateToUntrackedUrl();
-
-  histogram_tester.ExpectUniqueSample(kThirdPartyCookieAllowMechanismHistogram,
-                                      /*kAllowByStorageAccess*/ 6, 2);
-  // Only record blink usage when tracking protection is onboard.
-  histogram_tester.ExpectBucketCount(
-      kWebFeatureHistogram,
-      WebFeature::kThirdPartyCookieDeprecation_AllowByStorageAccess,
-      GetParam() ? 1 : 0);
-}
-
 class ThirdPartyCookieDeprecationObserverCookieReadBrowserTest
     : public ThirdPartyCookieDeprecationObserverBaseBrowserTest {
  public:
@@ -1388,8 +1158,9 @@ class ThirdPartyCookieDeprecationObserverCookieReadBrowserTest
           {{"SkipTpcdMitigationsForAdsMetadata", "true"},
            {"SkipTpcdMitigationsForAdsHeuristics", "true"},
            {"SkipTpcdMitigationsForAdsSupport", "true"},
-           {"SkipTpcdMitigationsForAdsTopLevelTrial", "true"}}}},
-        {content_settings::features::kTrackingProtection3pcd});
+           {"SkipTpcdMitigationsForAdsTopLevelTrial", "true"}}},
+         {content_settings::features::kTrackingProtection3pcd, {}}},
+        {});
   }
 
   void SetUpThirdPartyCookieExperimentWithClientState() {
@@ -1444,8 +1215,17 @@ class ThirdPartyCookieDeprecationObserverCookieReadBrowserTest
   }
 };
 
-IN_PROC_BROWSER_TEST_F(ThirdPartyCookieDeprecationObserverCookieReadBrowserTest,
-                       NotOnboarded_CookieStatusRecorded) {
+class ThirdPartyCookieDeprecationObserverCookieReadNotOnboardedBrowserTest
+    : public ThirdPartyCookieDeprecationObserverCookieReadBrowserTest {
+ public:
+  void SetUp() override {
+    subresource_filter::SubresourceFilterBrowserTest::SetUp();
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(
+    ThirdPartyCookieDeprecationObserverCookieReadNotOnboardedBrowserTest,
+    NotOnboarded_CookieStatusRecorded) {
   SetUpThirdPartyCookieExperimentWithClientState();
 
   NavigateToPageWithFrame(kHostA);
@@ -1611,15 +1391,16 @@ class ThirdPartyCookieDeprecationObserverTriggerBrowserTest
   ~ThirdPartyCookieDeprecationObserverTriggerBrowserTest() override = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitWithFeaturesAndParameters(
-        {}, {content_settings::features::kTrackingProtection3pcd});
     subresource_filter::SubresourceFilterBrowserTest::SetUp();
   }
 };
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyCookieDeprecationObserverTriggerBrowserTest,
                        ThirdPartyCookiesSingleWrite) {
-  // Setup tracking protection onboard to block 3PC.
+  // Block 3PCs.
+  browser()->profile()->GetPrefs()->SetInteger(
+      prefs::kCookieControlsMode,
+      static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty));
   SetUpTrackingProtectionOnboard();
   content::CookieChangeObserver observer(web_contents(), 1);
   NavigateToPageWithFrame(kHostA);
@@ -1643,8 +1424,10 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyCookieDeprecationObserverTriggerBrowserTest,
   EXPECT_EQ(1, observer1.num_read_seen());
   EXPECT_EQ(1, observer1.num_write_seen());
 
-  // Setup tracking protection onboard to block 3PC.
-  SetUpTrackingProtectionOnboard();
+  // Block 3PCs.
+  browser()->profile()->GetPrefs()->SetInteger(
+      prefs::kCookieControlsMode,
+      static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty));
   content::CookieChangeObserver observer2(web_contents(), 1);
   // 3p cookie read
   NavigateFrameTo(kHostB, "/");
@@ -1655,8 +1438,10 @@ IN_PROC_BROWSER_TEST_F(ThirdPartyCookieDeprecationObserverTriggerBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ThirdPartyCookieDeprecationObserverTriggerBrowserTest,
                        ThirdPartyCookiesBothWriteRead) {
-  // Setup tracking protection onboard to block 3PC.
-  SetUpTrackingProtectionOnboard();
+  // Block 3PCs.
+  browser()->profile()->GetPrefs()->SetInteger(
+      prefs::kCookieControlsMode,
+      static_cast<int>(content_settings::CookieControlsMode::kBlockThirdParty));
   // Only 3p cookie write is triggered because the 3p cookie write is blocked
   // and no cookie to read.
   content::CookieChangeObserver observer(web_contents(), 1);

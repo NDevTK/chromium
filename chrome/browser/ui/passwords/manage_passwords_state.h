@@ -123,9 +123,6 @@ class ManagePasswordsState {
   void ProcessLoginsChanged(
       const password_manager::PasswordStoreChangeList& changes);
 
-  void ProcessUnsyncedCredentialsWillBeDeleted(
-      std::vector<password_manager::PasswordForm> unsynced_credentials);
-
   // Called when the user chooses a credential. |form| is passed to the
   // credentials callback. Method should be called in the
   // CREDENTIAL_REQUEST_STATE state.
@@ -134,11 +131,12 @@ class ManagePasswordsState {
   // Move to MANAGE_STATE with initial credential to show its details.
   void OpenPasswordDetailsBubble(const password_manager::PasswordForm& form);
 
+  // Move to PASSWORD_CHANGE_STATE with `username` and `new_password` to
+  // display.
+  void OpenPasswordChangedBubble(const std::u16string& username,
+                                 const std::u16string& new_password);
+
   password_manager::ui::State state() const { return state_; }
-  const std::vector<password_manager::PasswordForm>& unsynced_credentials()
-      const {
-    return unsynced_credentials_;
-  }
   const url::Origin& origin() const { return origin_; }
   password_manager::PasswordFormManagerForUI* form_manager() const {
     return form_manager_.get();
@@ -180,6 +178,14 @@ class ManagePasswordsState {
     single_credential_mode_credential_ = std::nullopt;
   }
 
+  const std::u16string& password_change_username() const {
+    return password_change_username_;
+  }
+
+  const std::u16string& password_change_new_password() const {
+    return password_change_new_password_;
+  }
+
  private:
   // Removes all the PasswordForms and resets passkey state stored in this
   // object.
@@ -208,9 +214,6 @@ class ManagePasswordsState {
   std::vector<std::unique_ptr<password_manager::PasswordForm>>
       local_credentials_forms_;
 
-  // Contains any non synced credentials.
-  std::vector<password_manager::PasswordForm> unsynced_credentials_;
-
   // A callback to be invoked when user selects a credential.
   CredentialsCallback credentials_callback_;
 
@@ -226,6 +229,11 @@ class ManagePasswordsState {
 
   // The passkey relying party identifier used during a recent passkey flow.
   std::string passkey_rp_id_;
+
+  // Username and password of a credential that has been updated in a recent
+  // password change flow.
+  std::u16string password_change_username_;
+  std::u16string password_change_new_password_;
 };
 
 #endif  // CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_STATE_H_

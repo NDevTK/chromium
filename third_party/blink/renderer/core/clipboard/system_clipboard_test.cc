@@ -27,7 +27,7 @@ namespace blink {
 namespace {
 
 mojom::blink::ClipboardFilesPtr CreateFiles(int count) {
-  WTF::Vector<mojom::blink::DataTransferFilePtr> vec;
+  Vector<mojom::blink::DataTransferFilePtr> vec;
   for (int i = 0; i < count; ++i) {
     vec.emplace_back(mojom::blink::DataTransferFile::New(
         base::FilePath(FILE_PATH_LITERAL("path")),
@@ -571,9 +571,6 @@ TEST_F(SystemClipboardTest, SequenceNumberWithUnboundClipboardHost) {
 }
 
 TEST_F(SystemClipboardTest, ClipboardChangeNotification) {
-  // GIVEN: Feature flag is enabled
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kClipboardChangeEvent);
   auto* mock_controller = controller();
 
   // EXPECT: Controller should receive exactly one update notification
@@ -589,9 +586,6 @@ TEST_F(SystemClipboardTest, ClipboardChangeNotification) {
 }
 
 TEST_F(SystemClipboardTest, ClipboardChangeNotification_MultipleRegistrations) {
-  // GIVEN: Feature flag is enabled
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kClipboardChangeEvent);
   auto* mock_controller = controller();
 
   // EXPECT: Controller should receive notifications after each registration
@@ -651,5 +645,29 @@ TEST_F(SystemClipboardTest, ScopedSnapshotReadWriteBehavior) {
   // reflect the state of the clipboard host.
   EXPECT_EQ(system_clipboard().ReadPlainText(), "mocked");
 }
+
+#if BUILDFLAG(IS_MAC)
+TEST_F(SystemClipboardTest, GetPlatformPermissionStateCallback) {
+  // Test callback is called with the permission state
+  bool callback_called = false;
+  mojom::blink::PlatformClipboardPermissionState received_state;
+
+  mock_clipboard_host()->SetPlatformPermissionState(
+      mojom::blink::PlatformClipboardPermissionState::kAllow);
+  system_clipboard().GetPlatformPermissionState(BindOnce(
+      [](bool* called, mojom::blink::PlatformClipboardPermissionState* state,
+         mojom::blink::PlatformClipboardPermissionState result) {
+        *called = true;
+        *state = result;
+      },
+      Unretained(&callback_called), Unretained(&received_state)));
+
+  test::RunPendingTasks();
+
+  EXPECT_TRUE(callback_called);
+  EXPECT_EQ(received_state,
+            mojom::blink::PlatformClipboardPermissionState::kAllow);
+}
+#endif  // BUILDFLAG(IS_MAC)
 
 }  // namespace blink

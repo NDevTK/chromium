@@ -101,9 +101,6 @@ bool CallerAppIsFirstParty(MobileSessionCallerApp callerApp) {
     case CALLER_APP_GOOGLE_OTHER:
     case CALLER_APP_GOOGLE_YOUTUBE:
     case CALLER_APP_GOOGLE_MAPS:
-    case CALLER_APP_GOOGLE_CHROME_TODAY_EXTENSION:
-    case CALLER_APP_GOOGLE_CHROME_SEARCH_EXTENSION:
-    case CALLER_APP_GOOGLE_CHROME_CONTENT_EXTENSION:
     case CALLER_APP_GOOGLE_CHROME_SHARE_EXTENSION:
     case CALLER_APP_GOOGLE_CHROME_OPEN_EXTENSION:
     case CALLER_APP_GOOGLE_CHROME:
@@ -157,12 +154,9 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
                     forceApplicationMode:(BOOL)forceApplicationMode {
   GURL parsedURL = net::GURLWithNSURL(completeURL);
 
-  if (!parsedURL.is_valid() || parsedURL.scheme().length() == 0) {
+  if (!parsedURL.is_valid() || parsedURL.GetScheme().length() == 0) {
     return nil;
   }
-
-  // Log browser started indirectly for default browser promo experiment stats.
-  LogBrowserIndirectlylaunched();
 
   if ([completeURL.scheme isEqualToString:kWidgetKitSchemeChrome]) {
     UMA_HISTOGRAM_ENUMERATION(kUMAMobileSessionStartActionHistogram,
@@ -336,7 +330,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
       // Replace the scheme with https or http depending on whether the input
       // `url` scheme ends with an 's'.
       BOOL useHttps =
-          parsedURL.scheme()[parsedURL.scheme().length() - 1] == 's';
+          parsedURL.GetScheme()[parsedURL.GetScheme().length() - 1] == 's';
       action = useHttps ? START_ACTION_OPEN_HTTPS : START_ACTION_OPEN_HTTP;
       base::UmaHistogramEnumeration(kAppLaunchSource,
                                     AppLaunchSource::LINK_OPENED_FROM_APP);
@@ -540,7 +534,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
                           sourceApplication:(NSString*)appID
                     secureSourceApplication:(NSString*)secureAppID
                        forceApplicationMode:(BOOL)forceApplicationMode {
-  SearchExtensionAction action = ACTION_NO_ACTION;
+  ExtensionAction action = ACTION_NO_ACTION;
   ChromeAppStartupParameters* params = nil;
 
   if ([command
@@ -637,7 +631,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         forceApplicationMode:forceApplicationMode];
 
     params.textQuery = externalText;
-
+    params.openedViaShareExtensionScheme = YES;
     action = ACTION_SEARCH_TEXT;
   }
 
@@ -656,7 +650,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         forceApplicationMode:forceApplicationMode];
 
     params.textQuery = externalText;
-
+    params.openedViaShareExtensionScheme = YES;
     action = ACTION_SEARCH_TEXT;
   }
 
@@ -676,6 +670,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         forceApplicationMode:forceApplicationMode];
 
     params.imageSearchData = externalData;
+    params.openedViaShareExtensionScheme = YES;
 
     action = ACTION_SEARCH_IMAGE;
   }
@@ -695,7 +690,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
         forceApplicationMode:forceApplicationMode];
 
     params.imageSearchData = externalData;
-
+    params.openedViaShareExtensionScheme = YES;
     action = ACTION_SEARCH_IMAGE;
   }
 
@@ -755,17 +750,6 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
     action = ACTION_NO_ACTION;
   }
 
-  if ([secureAppID
-          isEqualToString:app_group::kOpenCommandSourceSearchExtension]) {
-    UMA_HISTOGRAM_ENUMERATION(kSearchExtensionActionHistogram, action,
-                              SEARCH_EXTENSION_ACTION_COUNT);
-  }
-  if ([secureAppID
-          isEqualToString:app_group::kOpenCommandSourceContentExtension] &&
-      index) {
-    UMA_HISTOGRAM_COUNTS_100("IOS.ContentExtension.Index",
-                             [index integerValue]);
-  }
   if ([secureAppID isEqualToString:kWidgetKitHostSearchWidget]) {
     LogWidgetKitAction(WidgetKitExtensionAction::ACTION_SEARCH_WIDGET_SEARCH);
   }
@@ -846,18 +830,6 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
 
 - (MobileSessionCallerApp)callerApp {
   if ([_secureSourceApp
-          isEqualToString:app_group::kOpenCommandSourceTodayExtension]) {
-    return CALLER_APP_GOOGLE_CHROME_TODAY_EXTENSION;
-  }
-  if ([_secureSourceApp
-          isEqualToString:app_group::kOpenCommandSourceSearchExtension]) {
-    return CALLER_APP_GOOGLE_CHROME_SEARCH_EXTENSION;
-  }
-  if ([_secureSourceApp
-          isEqualToString:app_group::kOpenCommandSourceContentExtension]) {
-    return CALLER_APP_GOOGLE_CHROME_CONTENT_EXTENSION;
-  }
-  if ([_secureSourceApp
           isEqualToString:app_group::kOpenCommandSourceShareExtension]) {
     return CALLER_APP_GOOGLE_CHROME_SHARE_EXTENSION;
   }
@@ -920,7 +892,7 @@ TabOpeningPostOpeningAction XCallbackPoaToPostOpeningAction(
     return first_run::LAUNCH_BY_OTHERS;
   }
 
-  NSString* query = base::SysUTF8ToNSString(self.completeURL.query());
+  NSString* query = base::SysUTF8ToNSString(self.completeURL.GetQuery());
   // Takes care of degenerated case of no QUERY_STRING.
   if (![query length]) {
     return first_run::LAUNCH_BY_MOBILESAFARI;

@@ -18,11 +18,15 @@ import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymen
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.EWALLET_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.ON_EWALLET_CLICK_ACTION;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.DESCRIPTION_ID;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.PAYMENT_LINK_TITLE_TOP_MARGIN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.PRODUCT_ICON_CONTENT_DESCRIPTION_ID;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.PRODUCT_ICON_DRAWABLE_ID;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.PRODUCT_ICON_HEIGHT;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.SECURITY_CHECK_DRAWABLE_ID;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.TITLE;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.PaymentAppProperties.ON_PAYMENT_APP_CLICK_ACTION;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.PaymentAppProperties.PAYMENT_APP_ICON;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.PaymentAppProperties.PAYMENT_APP_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN_VIEW_MODEL;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SURVIVES_NAVIGATION;
@@ -171,9 +175,14 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
             sheetDescriptionText.setVisibility(View.VISIBLE);
         } else if (propertyKey == PRODUCT_ICON_DRAWABLE_ID) {
             ImageView sheetProductIconImage = view.findViewById(R.id.branding_icon);
-            sheetProductIconImage.setImageDrawable(
-                    AppCompatResources.getDrawable(
-                            view.getContext(), model.get(PRODUCT_ICON_DRAWABLE_ID)));
+            int productIconDrawableId = model.get(PRODUCT_ICON_DRAWABLE_ID);
+            if (productIconDrawableId != 0) {
+                sheetProductIconImage.setImageDrawable(
+                        AppCompatResources.getDrawable(view.getContext(), productIconDrawableId));
+            } else {
+                // Set product icon image visibility to GONE when product icon is not present.
+                sheetProductIconImage.setVisibility(View.GONE);
+            }
         } else if (propertyKey == PRODUCT_ICON_HEIGHT) {
             ImageView sheetProductIconImage = view.findViewById(R.id.branding_icon);
             sheetProductIconImage.getLayoutParams().height = model.get(PRODUCT_ICON_HEIGHT);
@@ -187,6 +196,12 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
                     AppCompatResources.getDrawable(
                             view.getContext(), model.get(SECURITY_CHECK_DRAWABLE_ID)));
             sheetSecurityCheckImage.setVisibility(View.VISIBLE);
+        } else if (propertyKey == PAYMENT_LINK_TITLE_TOP_MARGIN) {
+            TextView sheetTitleText = view.findViewById(R.id.sheet_title);
+            ViewGroup.MarginLayoutParams params =
+                    (ViewGroup.MarginLayoutParams) sheetTitleText.getLayoutParams();
+            params.topMargin = model.get(PAYMENT_LINK_TITLE_TOP_MARGIN);
+            sheetTitleText.setLayoutParams(params);
         } else {
             assert false : "Unhandled update to property:" + propertyKey;
         }
@@ -224,8 +239,6 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
                             model.get(AdditionalInfoProperties.DESCRIPTION_ID),
                             model.get(SHOW_PAYMENT_METHOD_SETTINGS_CALLBACK)));
             descriptionLine1.setMovementMethod(LinkMovementMethod.getInstance());
-        } else if (propertyKey == SHOW_PAYMENT_METHOD_SETTINGS_CALLBACK) {
-            // Skip because the callback is already handled above.
         } else {
             assert false : "Unhandled update to property:" + propertyKey;
         }
@@ -249,6 +262,11 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
             TextView buttonTitleText =
                     view.findViewById(R.id.facilitated_payments_continue_button_title);
             buttonTitleText.setText(R.string.autofill_payment_method_continue_button);
+        } else if (propertyKey == ON_PAYMENT_APP_CLICK_ACTION) {
+            view.setOnClickListener(unusedView -> model.get(ON_PAYMENT_APP_CLICK_ACTION).run());
+            TextView buttonTitleText =
+                    view.findViewById(R.id.facilitated_payments_continue_button_title);
+            buttonTitleText.setText(R.string.autofill_payment_method_continue_button);
         } else if (propertyKey == BANK_NAME
                 || propertyKey == BANK_ACCOUNT_PAYMENT_RAIL
                 || propertyKey == BANK_ACCOUNT_TYPE
@@ -258,7 +276,9 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
                 || propertyKey == ACCOUNT_DISPLAY_NAME
                 || propertyKey == EWALLET_ICON_BITMAP
                 || propertyKey == EWALLET_NAME
-                || propertyKey == EWALLET_DRAWABLE_ID) {
+                || propertyKey == EWALLET_DRAWABLE_ID
+                || propertyKey == PAYMENT_APP_NAME
+                || propertyKey == PAYMENT_APP_ICON) {
             // Skip, because none of these changes affect the button
         } else {
             assert false : "Unhandled update to property:" + propertyKey;

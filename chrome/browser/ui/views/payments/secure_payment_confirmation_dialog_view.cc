@@ -33,6 +33,7 @@
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/layout/table_layout.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/style/typography.h"
 
 namespace payments {
@@ -61,15 +62,6 @@ std::unique_ptr<views::View> CreateSpacer(
           /*width=*/1,
           views::LayoutProvider::Get()->GetDistanceMetric(vertical_distance)))
       .Build();
-}
-
-std::u16string GetTitleText(std::u16string title_text,
-                            std::u16string relying_party_id) {
-  if (!base::FeatureList::IsEnabled(
-          blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons)) {
-    return title_text;
-  }
-  return base::ReplaceStringPlaceholders(title_text, relying_party_id, nullptr);
 }
 
 void UpdateProgressBarVisiblity(views::BubbleFrameView* bubble_frame_view,
@@ -111,6 +103,7 @@ void SecurePaymentConfirmationDialogView::ShowDialog(
     content::WebContents* web_contents,
     base::WeakPtr<SecurePaymentConfirmationModel> model,
     VerifyCallback verify_callback,
+    AnotherWayCallback another_way_callback,
     CancelCallback cancel_callback,
     OptOutCallback opt_out_callback) {
   DCHECK(model);
@@ -172,13 +165,12 @@ void SecurePaymentConfirmationDialogView::OnDialogCancelled() {
 }
 
 void SecurePaymentConfirmationDialogView::OnDialogClosed() {
-  // We can reach OnDialogClosed either when the user cancels out of the
-  // WebAuthn dialog after clicking 'Verify', or when the user chooses to
-  // opt-out. We should only run the cancellation callback in the former case;
-  // in the latter the opt-out callback will trigger from OnOptOutClicked.
-  if (!model_->opt_out_clicked()) {
-    std::move(cancel_callback_).Run();
+  // Cancel callback may be null if OnDialogCancelled was already called.
+  if (!cancel_callback_) {
+    return;
   }
+
+  std::move(cancel_callback_).Run();
 
   if (observer_for_test_) {
     observer_for_test_->OnDialogClosed();
@@ -205,8 +197,7 @@ void SecurePaymentConfirmationDialogView::OnModelUpdated() {
                    model_->cancel_button_enabled());
 
   SetAccessibleTitle(model_->title());
-  UpdateLabelView(DialogViewID::TITLE,
-                  GetTitleText(model_->title(), model_->relying_party_id()));
+  UpdateLabelView(DialogViewID::TITLE, model_->title());
   UpdateLabelView(DialogViewID::MERCHANT_LABEL, model_->merchant_label());
   UpdateLabelView(
       DialogViewID::MERCHANT_VALUE,
@@ -297,13 +288,8 @@ void SecurePaymentConfirmationDialogView::InitChildViews() {
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(), 0));
 
-  // When the network/issuer icons are shown for the transaction UX, we don't
-  // draw an additional logo on top.
-  if (!base::FeatureList::IsEnabled(
-          blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons)) {
-    AddChildView(CreateSecurePaymentConfirmationHeaderIcon(
-        static_cast<int>(DialogViewID::HEADER_ICON)));
-  }
+  AddChildView(CreateSecurePaymentConfirmationHeaderIcon(
+      static_cast<int>(DialogViewID::HEADER_ICON)));
 
   AddChildView(CreateBodyView());
 
@@ -330,10 +316,6 @@ void SecurePaymentConfirmationDialogView::InitChildViews() {
 // +~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 // | total label         value                |
 // +~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
-// | network label       [icon] value         |  <-- optional
-// +~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
-// | issuer label        [icon] value         |  <-- optional
-// +~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 std::unique_ptr<views::View>
 SecurePaymentConfirmationDialogView::CreateBodyView() {
   auto body_view = std::make_unique<views::BoxLayoutView>();
@@ -345,29 +327,9 @@ SecurePaymentConfirmationDialogView::CreateBodyView() {
       views::BoxLayout::CrossAxisAlignment::kStretch);
 
   std::unique_ptr<views::Label> title_text =
-      CreateSecurePaymentConfirmationTitleLabel(
-          GetTitleText(model_->title(), model_->relying_party_id()));
+      CreateSecurePaymentConfirmationTitleLabel(model_->title());
   title_text->SetID(static_cast<int>(DialogViewID::TITLE));
-  if (base::FeatureList::IsEnabled(
-          blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons)) {
-    body_view->AddChildView(CreateSecurePaymentConfirmationInlineImageTitleView(
-        std::move(title_text), *model_->network_icon(),
-        static_cast<int>(DialogViewID::NETWORK_ICON), *model_->issuer_icon(),
-        static_cast<int>(DialogViewID::ISSUER_ICON)));
-
-    body_view->AddChildView(
-        CreateSpacer(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
-
-    auto description_text = std::make_unique<views::Label>(
-        model_->description(), views::style::CONTEXT_DIALOG_BODY_TEXT,
-        views::style::STYLE_SECONDARY);
-    description_text->SetID(static_cast<int>(DialogViewID::DESCRIPTION));
-    description_text->SetLineHeight(kDescriptionLineHeight);
-    description_text->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
-    body_view->AddChildView(std::move(description_text));
-  } else {
-    body_view->AddChildView(std::move(title_text));
-  }
+  body_view->AddChildView(std::move(title_text));
 
   body_view->AddChildView(
       CreateSpacer(views::DISTANCE_RELATED_CONTROL_VERTICAL));
@@ -377,25 +339,14 @@ SecurePaymentConfirmationDialogView::CreateBodyView() {
       FormatMerchantLabel(model_->merchant_name(), model_->merchant_origin()),
       DialogViewID::MERCHANT_VALUE));
 
-  // When including the Network and Issuer icons, the Total line comes before
-  // the Payment Instrument, versus the current UI where it comes afterwards.
-  std::unique_ptr<views::View> total_line_view =
-      CreateRowView(model_->total_label(), DialogViewID::TOTAL_LABEL,
-                    model_->total_value(), DialogViewID::TOTAL_VALUE);
-  if (base::FeatureList::IsEnabled(
-          blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons)) {
-    body_view->AddChildView(std::move(total_line_view));
-  }
-
   body_view->AddChildView(
       CreateRowView(model_->instrument_label(), DialogViewID::INSTRUMENT_LABEL,
                     model_->instrument_value(), DialogViewID::INSTRUMENT_VALUE,
                     model_->instrument_icon(), DialogViewID::INSTRUMENT_ICON));
 
-  if (!base::FeatureList::IsEnabled(
-          blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons)) {
-    body_view->AddChildView(std::move(total_line_view));
-  }
+  body_view->AddChildView(
+      CreateRowView(model_->total_label(), DialogViewID::TOTAL_LABEL,
+                    model_->total_value(), DialogViewID::TOTAL_VALUE));
 
   return body_view;
 }

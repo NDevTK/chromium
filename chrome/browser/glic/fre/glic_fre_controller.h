@@ -6,10 +6,12 @@
 #define CHROME_BROWSER_GLIC_FRE_GLIC_FRE_CONTROLLER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
+#include "base/timer/elapsed_timer.h"
 #include "chrome/browser/glic/fre/glic_fre.mojom.h"
 #include "chrome/browser/glic/host/auth_controller.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
@@ -35,6 +37,38 @@ class Widget;
 namespace glic {
 
 class GlicFreDialogView;
+class GlicFrePageHandler;
+
+// This enum is used to record the reason for the FRE error state.
+// These values are persisted to logs.
+// LINT.IfChange(FreErrorStateReason)
+enum class FreErrorStateReason {
+  // Sign-in is required.
+  kSignInRequired = 0,
+  // Error while re-syncing cookies before showing FRE.
+  kErrorResyncingCookies = 1,
+  // Timeout exceeded during loading error.
+  kTimeoutExceeded = 2,
+  kMaxValue = kTimeoutExceeded,
+};
+// LINT.ThenChange(tools/metrics/histograms/metadata/glic/enums.xml:FreErrorStateReason)
+
+// This enum is used for the Glic.Fre.WidgetClosedReason2 histogram.
+// It mirrors views::Widget::ClosedReason and adds Glic-specific reasons.
+// Entries should not be renumbered and numeric values should never be reused.
+// LINT.IfChange(GlicFreWidgetClosedReason)
+enum class GlicFreWidgetClosedReason {
+  kUnspecified = 0,
+  kEscKeyPressed = 1,
+  kCloseButtonClicked = 2,
+  kLostFocus = 3,
+  kCancelButtonClicked = 4,
+  kAcceptButtonClicked = 5,
+  kHostTabClosed = 6,
+  kHostTabMoved = 7,
+  kMaxValue = kHostTabMoved,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:GlicFreWidgetClosedReason)
 
 // This class owns and manages the glic FRE modal dialog, and is owned by a
 // GlicWindowController.
@@ -82,10 +116,14 @@ class GlicFreController {
 
   // Closes the FRE dialog and immediately opens a glic window attached to
   // the same browser.
-  void AcceptFre();
+  // |handler| is the specific PageHandler that triggered the acceptance.
+  void AcceptFre(GlicFrePageHandler* handler);
+
+  // Rejects the FRE dialog.
+  void RejectFre();
 
   // Closes the FRE dialog.
-  void DismissFre();
+  void DismissFre(mojom::FreWebUiState panel);
 
   // Used when the native window is closed directly.
   void CloseWithReason(views::Widget::ClosedReason reason);
@@ -93,11 +131,11 @@ class GlicFreController {
   // Re-sync cookies to FRE webview.
   void PrepareForClient(base::OnceCallback<void(bool)> callback);
 
+  // Loading timeout was exceeded.
+  void ExceededTimeoutError();
+
   // Notify FRE controller that the user clicked on a link.
   void OnLinkClicked(const GURL& url);
-
-  // Notify FRE controller that the user clicked "no thanks" in the FRE.
-  void OnNoThanksClicked();
 
   // Attempts to warm the FRE web contents.
   void TryPreload();
@@ -115,6 +153,8 @@ class GlicFreController {
 
   bool IsShowingDialog() const;
 
+  bool IsShowingDialogAndStateInitialized() const;
+
   gfx::Size GetFreInitialSize();
 
   void UpdateFreWidgetSize(const gfx::Size& new_size);
@@ -126,6 +166,31 @@ class GlicFreController {
   base::WeakPtr<GlicFreController> GetWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
   }
+
+  void SetIsShowingDialogForTesting(bool is_showing) {
+    is_showing_dialog_for_testing_ = is_showing;
+  }
+
+  void RecordFrameworkStartTime();
+
+  struct InitTimestamps {
+    base::TimeTicks open_start_time;
+    base::TimeTicks framework_start_time;
+  };
+
+  // Registers a new PageHandler. Called when a new FRE UI instance is created.
+  // Returns the start time of the request to show the FRE.
+  InitTimestamps RegisterPageHandler(GlicFrePageHandler* handler);
+
+  // Unregisters a PageHandler. Called when an FRE UI instance is destroyed.
+  void UnregisterPageHandler(GlicFrePageHandler* handler);
+
+  // Called when the user opens the FRE in dialog or sidepanel. This sets the
+  // value of `pending_open_start_time_`.
+  void MarkFreStartAttempt();
+
+  // Logs when the FRE in sidepanel is shown.
+  void MarkSidepanelFreShown();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(GlicFreControllerTest,
@@ -141,8 +206,6 @@ class GlicFreController {
                                    tabs::TabInterface::DetachReason reason);
 
   void CreateView();
-
-  void RecordMetricsIfDialogIsShowingAndReady();
 
   raw_ptr<Profile> const profile_;
   std::unique_ptr<views::Widget> fre_widget_;
@@ -165,8 +228,21 @@ class GlicFreController {
   base::RepeatingCallbackList<void(mojom::FreWebUiState)>
       webui_state_callback_list_;
 
-  // The timestamp when the FRE window is shown.
-  base::TimeTicks show_start_time_;
+  // Used to track the total time this specific FRE instance has been open. This
+  // value is set when the FRE is toggled on.
+  std::optional<base::TimeTicks> pending_open_start_time_;
+
+  // Used to track the time between the start of the WebUI framework loading and
+  // the moment it's fully loaded. This is logged before the WebUI controller is
+  // created.
+  std::optional<base::TimeTicks> pending_framework_start_time_;
+
+  std::optional<bool> is_showing_dialog_for_testing_;
+
+  // List of active PageHandlers (one per FRE UI instance).
+  // Safe because GlicFrePageHandler explicitly calls UnregisterPageHandler in
+  // its destructor, ensuring pointers are removed before invalidation.
+  std::vector<raw_ptr<GlicFrePageHandler>> handlers_;
 
   base::WeakPtrFactory<GlicFreController> weak_ptr_factory_{this};
 };

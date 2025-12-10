@@ -33,24 +33,6 @@ void SendLogMessage(const std::string& message) {
 
 }  // namespace
 
-namespace WTF {
-
-template <>
-struct CrossThreadCopier<scoped_refptr<webrtc::AudioProcessorInterface>>
-    : public CrossThreadCopierByValuePassThrough<
-          scoped_refptr<webrtc::AudioProcessorInterface>> {
-  STATIC_ONLY(CrossThreadCopier);
-};
-
-template <>
-struct CrossThreadCopier<scoped_refptr<blink::WebRtcAudioSink::Adapter>>
-    : public CrossThreadCopierPassThrough<
-          scoped_refptr<blink::WebRtcAudioSink::Adapter>> {
-  STATIC_ONLY(CrossThreadCopier);
-};
-
-}  // namespace WTF
-
 namespace blink {
 
 WebRtcAudioSink::WebRtcAudioSink(

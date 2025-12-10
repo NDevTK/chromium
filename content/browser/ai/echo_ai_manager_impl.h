@@ -7,13 +7,13 @@
 
 #include <variant>
 
+#include "base/containers/flat_set.h"
 #include "base/no_destructor.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "mojo/public/cpp/bindings/remote_set.h"
-#include "third_party/blink/public/mojom/ai/ai_language_model.mojom-forward.h"
 #include "third_party/blink/public/mojom/ai/ai_language_model.mojom.h"
 #include "third_party/blink/public/mojom/ai/ai_manager.mojom.h"
 #include "third_party/blink/public/mojom/ai/model_download_progress_observer.mojom.h"
@@ -105,12 +105,16 @@ class EchoAIManagerImpl : public blink::mojom::AIManager {
       blink::mojom::AILanguageModelSamplingParamsPtr sampling_params,
       base::flat_set<blink::mojom::AILanguageModelPromptType>
           enabled_input_types,
+      std::vector<blink::mojom::AILanguageModelPromptPtr> initial_prompts,
       uint32_t initial_input_usage);
 
   void DoMockDownloadingAndReturn(base::OnceClosure callback);
 
-  // The mocked download status of an imagined foundational model.
-  bool model_downloaded_ = false;
+  // Returns whether the current mojo receiver triggered mock model download.
+  bool IsModelDownloadedForCurrentReciever() const;
+
+  // The set of mojo receivers that have triggered mock model download.
+  base::flat_set<mojo::ReceiverId> model_downloaded_receivers_;
 
   mojo::RemoteSet<blink::mojom::ModelDownloadProgressObserver>
       download_progress_observers_;

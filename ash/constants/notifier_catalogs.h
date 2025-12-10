@@ -189,7 +189,7 @@ enum class NotificationCatalogName {
   kGeolocationSwitch = 170,
   kMultiCaptureOnLogin = 171,
   kFloatingWorkspace = 172,
-  kScalableIphNotification = 173,
+  // [Deprecated] kScalableIphNotification = 173,
   // [Deprecated] kUpdateNotification = 174,
   kSubAppsUninstall = 175,
   kNetworkCarrierUnlock = 176,
@@ -216,7 +216,9 @@ enum class NotificationCatalogName {
   kFaceGazeActive = 197,
   kUsbPeripheralDeviceOrEndpointLimit = 198,
   kDemoMode = 199,
-  kMaxValue = kDemoMode
+  kArcDlcInstall = 200,
+  kIncompatibleCharger = 201,
+  kMaxValue = kIncompatibleCharger
 };
 
 // A living catalog that registers system nudges.
@@ -245,7 +247,7 @@ enum class NudgeCatalogName {
   kVideoConferenceTrayCameraUseWhileSWDisabled = 15,
   kVideoConferenceTraySpeakOnMuteOptIn = 16,
   // [Deprecated] kVideoConferenceTraySpeakOnMuteOptInConfirmation = 17,
-  kScalableIphBubble = 18,
+  // [Deprecated] kScalableIphBubble = 18,
   kVideoConferenceTrayCameraMicrophoneUseWhileDisabled = 19,
   kMultitaskMenuClamshell = 20,
   kMultitaskMenuTablet = 21,

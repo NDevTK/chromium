@@ -16,6 +16,9 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_ui.h"
 
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CustomizeButtonsHandler,
+                                      kCustomizeChromeButtonElementId);
+
 CustomizeButtonsHandler::CustomizeButtonsHandler(
     mojo::PendingReceiver<customize_buttons::mojom::CustomizeButtonsHandler>
         pending_handler,
@@ -103,45 +106,17 @@ void CustomizeButtonsHandler::NotifyCustomizeChromeSidePanelVisibilityChanged(
 
 void CustomizeButtonsHandler::SetCustomizeChromeSidePanelVisible(
     bool visible,
-    customize_buttons::mojom::CustomizeChromeSection section,
+    CustomizeChromeSection section,
     customize_buttons::mojom::SidePanelOpenTrigger trigger) {
   customize_chrome::SidePanelController*
       customize_chrome_side_panel_controller =
           GetSidePanelControllerForActiveTab();
   CHECK(customize_chrome_side_panel_controller);
 
-  bool is_side_panel_showing =
-      customize_chrome_side_panel_controller->IsCustomizeChromeEntryShowing();
-
-  // Send mojo signal to indicate whether the side panel is showing.
-  NotifyCustomizeChromeSidePanelVisibilityChanged(!is_side_panel_showing);
-
-  if (is_side_panel_showing) {
+  if (!visible) {
     customize_chrome_side_panel_controller->CloseSidePanel();
+    NotifyCustomizeChromeSidePanelVisibilityChanged(false);
     return;
-  }
-
-  CustomizeChromeSection section_enum;
-  // TODO(crbug.com/419081665) Dedupe CustomizeChromeSection mojom enums.
-  switch (section) {
-    case customize_buttons::mojom::CustomizeChromeSection::kUnspecified:
-      section_enum = CustomizeChromeSection::kUnspecified;
-      break;
-    case customize_buttons::mojom::CustomizeChromeSection::kAppearance:
-      section_enum = CustomizeChromeSection::kAppearance;
-      break;
-    case customize_buttons::mojom::CustomizeChromeSection::kShortcuts:
-      section_enum = CustomizeChromeSection::kShortcuts;
-      break;
-    case customize_buttons::mojom::CustomizeChromeSection::kModules:
-      section_enum = CustomizeChromeSection::kModules;
-      break;
-    case customize_buttons::mojom::CustomizeChromeSection::kWallpaperSearch:
-      section_enum = CustomizeChromeSection::kWallpaperSearch;
-      break;
-    case customize_buttons::mojom::CustomizeChromeSection::kToolbar:
-      section_enum = CustomizeChromeSection::kToolbar;
-      break;
   }
 
   SidePanelOpenTrigger trigger_enum;
@@ -154,17 +129,18 @@ void CustomizeButtonsHandler::SetCustomizeChromeSidePanelVisible(
       break;
   }
 
-  customize_chrome_side_panel_controller->OpenSidePanel(trigger_enum,
-                                                        section_enum);
+  NotifyCustomizeChromeSidePanelVisibilityChanged(true);
+  customize_chrome_side_panel_controller->OpenSidePanel(trigger_enum, section);
 
   // Record usage for customize chrome promo.
   auto* tab = GetActiveTab();
   CHECK(tab);
   auto* contents = tab->GetContents();
   feature_promo_helper_->RecordPromoFeatureUsageAndClosePromo(
-      feature_engagement::kIPHDesktopCustomizeChromeRefreshFeature, contents);
+      feature_engagement::kIPHDesktopCustomizeChromeExperimentFeature,
+      contents);
   feature_promo_helper_->RecordPromoFeatureUsageAndClosePromo(
-      feature_engagement::kIPHDesktopCustomizeChromeFeature, contents);
+      feature_engagement::kIPHDesktopCustomizeChromeAutoOpenFeature, contents);
 }
 
 void CustomizeButtonsHandler::IncrementCustomizeChromeButtonOpenCount() {

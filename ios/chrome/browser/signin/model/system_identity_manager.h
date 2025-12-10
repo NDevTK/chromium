@@ -21,6 +21,7 @@
 #include "ios/chrome/browser/signin/model/capabilities_types.h"
 #include "ios/chrome/browser/signin/model/system_identity_manager_observer.h"
 
+class GaiaId;
 @protocol RefreshAccessTokenError;
 @protocol SystemIdentity;
 @protocol SystemIdentityInteractionManager;
@@ -194,7 +195,7 @@ class SystemIdentityManager {
   // Returns true if the identity was removed by calling `ForgetIdentity()`.
   // Returns false If the identity was not removed or disappeared without
   // calling `ForgetIdentity()`.
-  virtual bool IdentityRemovedByUser(NSString* gaia_id) = 0;
+  virtual bool IdentityRemovedByUser(const GaiaId& gaia_id) = 0;
 
   // Asynchronously retrieves access tokens for `identity` with `scopes`. The
   // callback is invoked on the calling sequence when the operation completes.
@@ -247,6 +248,11 @@ class SystemIdentityManager {
       id<RefreshAccessTokenError> error,
       HandleMDMCallback callback) = 0;
 
+  // Returns whether the `error` is due to restricted access to the scopes in
+  // the access token request.
+  // TODO(crbug.com/425592221): Convert to pure virtual method.
+  virtual bool IsScopeLimitedError(id<RefreshAccessTokenError> error);
+
   // Returns whether the `error` associated with `identity` is due to MDM
   // (Mobile Device Management) or not.
   virtual bool IsMDMError(id<SystemIdentity> identity, NSError* error) = 0;
@@ -268,11 +274,6 @@ class SystemIdentityManager {
 
   // Invokes OnIdentityRefreshTokenUpdated(...)` for all observers.
   void FireIdentityRefreshTokenUpdated(id<SystemIdentity> identity);
-
-  // Invokes OnIdentityAccessTokenRefreshFailed(...)` for all observers.
-  // TODO(crbug.com/350461111): Remove this method in favor of the one below.
-  void FireIdentityAccessTokenRefreshFailed(id<SystemIdentity> identity,
-                                            id<RefreshAccessTokenError> error);
 
   // Invokes OnIdentityAccessTokenRefreshFailed(...)` for all observers.
   void FireIdentityAccessTokenRefreshFailed(

@@ -12,9 +12,10 @@
 #include <utility>
 
 #include "base/json/json_writer.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/no_destructor.h"
+#include "base/notreached.h"
 #include "base/trace_event/trace_event.h"
 #include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "services/tracing/public/cpp/perfetto/flow_event_utils.h"
@@ -67,24 +68,21 @@ struct LatencyInfoEnabledInitializer {
   raw_ptr<const unsigned char> latency_info_enabled;
 };
 
-static base::LazyInstance<LatencyInfoEnabledInitializer>::Leaky
-  g_latency_info_enabled = LAZY_INSTANCE_INITIALIZER;
+const LatencyInfoEnabledInitializer& GetLatencyInfoEnabledInitializer() {
+  // Trivially destructible, so no NoDestructor.
+  static const LatencyInfoEnabledInitializer initializer;
+  return initializer;
+}
 
-const perfetto::NamedTrack CreateInputLatencyParentTrack() {
-  perfetto::NamedTrack track("InputLatency", 0, perfetto::Track::Global(0));
-  if (perfetto::Tracing::IsInitialized()) {
-    // Because the track doesn't get any events of its own it must manually
-    // emit the track descriptor. SetTrackDescriptor may crash in unit tests
-    // where tracing isn't initialized.
-    base::TrackEvent::SetTrackDescriptor(track, track.Serialize());
-  }
-  return track;
+perfetto::NamedTrack CreateInputLatencyParentTrack() {
+  return perfetto::NamedTrack("InputLatency", 0, perfetto::Track::Global(0));
 }
 
 perfetto::Track GetInputLatencyTrack(int64_t trace_id) {
-  static const perfetto::NamedTrack parent_track =
-      CreateInputLatencyParentTrack();
-  return perfetto::Track(trace_id, parent_track);
+  static const base::NoDestructor<
+      base::trace_event::TrackRegistration<perfetto::NamedTrack>>
+      parent_track(CreateInputLatencyParentTrack());
+  return perfetto::Track(trace_id, parent_track->track());
 }
 
 }  // namespace
@@ -181,7 +179,7 @@ void LatencyInfo::AddLatencyNumberWithTimestampImpl(
     base::TimeTicks time,
     const char* trace_name_str) {
   const unsigned char* latency_info_enabled =
-      g_latency_info_enabled.Get().latency_info_enabled;
+      GetLatencyInfoEnabledInitializer().latency_info_enabled;
 
   if (IsInputLatencyBeginComponent(component)) {
     // Should only ever add begin component once.
@@ -227,7 +225,7 @@ void LatencyInfo::Terminate() {
   CHECK(!terminated_);
   terminated_ = true;
 
-  if (*g_latency_info_enabled.Get().latency_info_enabled) {
+  if (*GetLatencyInfoEnabledInitializer().latency_info_enabled) {
     base::TimeTicks gpu_swap_end_timestamp;
     if (!this->FindLatency(INPUT_EVENT_LATENCY_FRAME_SWAP_COMPONENT,
                            &gpu_swap_end_timestamp)) {

@@ -6,6 +6,8 @@ package org.chromium.chrome.browser.app.edge_to_edge;
 
 import static org.junit.Assert.assertNull;
 
+import static org.chromium.base.test.transit.Triggers.noopTo;
+
 import android.os.Build.VERSION_CODES;
 
 import androidx.test.filters.LargeTest;
@@ -38,10 +40,7 @@ import org.chromium.ui.test.util.DeviceRestriction;
     ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
     ChromeSwitches.DISABLE_MINIMUM_SHOW_DURATION
 })
-@EnableFeatures({
-    ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-    ChromeFeatureList.EDGE_TO_EDGE_MONITOR_CONFIGURATIONS
-})
+@EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_MONITOR_CONFIGURATIONS)
 // Bots <= VERSION_CODES.S use 3-bottom nav bar. See crbug.com/352402600
 @MinAndroidSdkLevel(VERSION_CODES.S_V2)
 @Restriction({DeviceFormFactor.PHONE, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
@@ -59,9 +58,8 @@ public class EdgeToEdgeStartupTest {
     @Test
     @LargeTest
     public void testStartOnNewPage() {
-        mActivityTestRule
-                .startOnBlankPage()
-                .enterFacilitySync(new EdgeToEdgeBottomChinFacility<>(false), null);
+        mActivityTestRule.startOnBlankPage();
+        noopTo().enterFacility(new EdgeToEdgeBottomChinFacility<>(false));
 
         // Hop off, and assume invalid insets came in.
         EdgeToEdgeUtils.setObservedTappableNavigationBarForTesting(true);

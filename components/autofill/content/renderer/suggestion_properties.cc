@@ -21,14 +21,12 @@ bool ShouldAutofillOnEmptyValues(
     case AutofillSuggestionTriggerSource::kOpenTextDataListChooser:
     case AutofillSuggestionTriggerSource::kManualFallbackPasswords:
     case AutofillSuggestionTriggerSource::kManualFallbackPlusAddresses:
-    case AutofillSuggestionTriggerSource::
-        kShowPromptAfterDialogClosedNonManualFallback:
     case AutofillSuggestionTriggerSource::kComposeDialogLostFocus:
     case AutofillSuggestionTriggerSource::kComposeDelayedProactiveNudge:
     case AutofillSuggestionTriggerSource::kTextareaFocusedWithoutClick:
     case AutofillSuggestionTriggerSource::kContentEditableClicked:
     case AutofillSuggestionTriggerSource::kPasswordManagerProcessedFocusedField:
-    case AutofillSuggestionTriggerSource::kAutofillAi:
+    case AutofillSuggestionTriggerSource::kProactivePasswordRecovery:
       return true;
     case AutofillSuggestionTriggerSource::kTextFieldValueChanged:
       return false;
@@ -56,13 +54,11 @@ bool ShouldAutofillOnLongValues(
     case AutofillSuggestionTriggerSource::kManualFallbackPasswords:
     case AutofillSuggestionTriggerSource::kManualFallbackPlusAddresses:
     case AutofillSuggestionTriggerSource::kOpenTextDataListChooser:
-    case AutofillSuggestionTriggerSource::
-        kShowPromptAfterDialogClosedNonManualFallback:
     case AutofillSuggestionTriggerSource::kTextFieldValueChanged:
     case AutofillSuggestionTriggerSource::kTextFieldDidReceiveKeyDown:
     case AutofillSuggestionTriggerSource::kPasswordManagerProcessedFocusedField:
-    case AutofillSuggestionTriggerSource::kAutofillAi:
     case AutofillSuggestionTriggerSource::kPlusAddressUpdatedInBrowserProcess:
+    case AutofillSuggestionTriggerSource::kProactivePasswordRecovery:
       return false;
     case AutofillSuggestionTriggerSource::kPasswordManager:
     case AutofillSuggestionTriggerSource::kiOS:
@@ -83,12 +79,10 @@ bool RequiresCaretAtEnd(AutofillSuggestionTriggerSource trigger_source) {
     case AutofillSuggestionTriggerSource::kOpenTextDataListChooser:
     case AutofillSuggestionTriggerSource::kManualFallbackPasswords:
     case AutofillSuggestionTriggerSource::kManualFallbackPlusAddresses:
-    case AutofillSuggestionTriggerSource::
-        kShowPromptAfterDialogClosedNonManualFallback:
     case AutofillSuggestionTriggerSource::kComposeDialogLostFocus:
     case AutofillSuggestionTriggerSource::kComposeDelayedProactiveNudge:
     case AutofillSuggestionTriggerSource::kPasswordManagerProcessedFocusedField:
-    case AutofillSuggestionTriggerSource::kAutofillAi:
+    case AutofillSuggestionTriggerSource::kProactivePasswordRecovery:
       return false;
     // `kPasswordManager`, `kiOS`, and `kPlusAddressUpdatedInBrowserProcess` are
     // not used in the renderer code. As such, suggestion properties don't apply
@@ -119,19 +113,18 @@ bool ShouldShowFullSuggestionListForPasswordManager(
     case AutofillSuggestionTriggerSource::kOpenTextDataListChooser:
     case AutofillSuggestionTriggerSource::kManualFallbackPasswords:
     case AutofillSuggestionTriggerSource::kManualFallbackPlusAddresses:
-    case AutofillSuggestionTriggerSource::
-        kShowPromptAfterDialogClosedNonManualFallback:
     case AutofillSuggestionTriggerSource::kComposeDialogLostFocus:
     case AutofillSuggestionTriggerSource::kComposeDelayedProactiveNudge:
-    case AutofillSuggestionTriggerSource::kAutofillAi:
       return false;
-    // `kPasswordManager`, `kiOS`, and `kPlusAddressUpdatedInBrowserProcess` are
-    // not used in the renderer code. As such, suggestion properties don't apply
-    // to them. `kPasswordManager` specifically is used to identify password
-    // manager suggestions in the browser process. In the renderer, the logic
-    // triggering suggestions through Blink events is shared. Thus, the return
-    // values for `kFormControlElementClicked` etc. matter for the password
-    // manager in the renderer.
+    case AutofillSuggestionTriggerSource::kProactivePasswordRecovery:
+      return true;
+    // `kPasswordManager`, `kiOS`, and `kPlusAddressUpdatedInBrowserProcess`
+    // are not used in the renderer code. As such, suggestion properties
+    // don't apply to them. `kPasswordManager` specifically is used to
+    // identify password manager suggestions in the browser process. In the
+    // renderer, the logic triggering suggestions through Blink events is
+    // shared. Thus, the return values for `kFormControlElementClicked` etc.
+    // matter for the password manager in the renderer.
     case AutofillSuggestionTriggerSource::kPasswordManager:
     case AutofillSuggestionTriggerSource::kiOS:
     case AutofillSuggestionTriggerSource::kPlusAddressUpdatedInBrowserProcess:

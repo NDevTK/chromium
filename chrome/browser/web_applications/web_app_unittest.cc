@@ -19,9 +19,9 @@
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/to_string.h"
 #include "base/values.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test.h"
@@ -36,7 +36,8 @@
 #include "components/web_package/signed_web_bundles/ecdsa_p256_public_key.h"
 #include "components/web_package/signed_web_bundles/ecdsa_p256_sha256_signature.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_signature_stack_entry.h"
-#include "components/webapps/isolated_web_apps/update_channel.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
+#include "components/webapps/isolated_web_apps/types/update_channel.h"
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -96,7 +97,8 @@ std::string SerializeValueToJsonOrDie(const base::Value& value) {
 }
 
 base::Value DeserializeValueFromJsonOrDie(std::string_view json) {
-  std::optional<base::Value> value = base::JSONReader::Read(json);
+  std::optional<base::Value> value =
+      base::JSONReader::Read(json, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   CHECK(value.has_value());
   return *std::move(value);
 }
@@ -377,12 +379,13 @@ TEST(WebAppTest, IsolationDataDebugValue) {
   app.SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .Build());
 
   EXPECT_TRUE(app.isolation_data().has_value());
 
-  base::Value expected_isolation_data = base::JSONReader::Read(R"|({
+  base::Value expected_isolation_data =
+      base::JSONReader::Read(R"|({
         "isolated_web_app_location": {
           "owned_bundle": {
             "dev_mode": false,
@@ -391,10 +394,12 @@ TEST(WebAppTest, IsolationDataDebugValue) {
         },
         "version": "1.0.0",
         "controlled_frame_partitions (on-disk)": [],
+        "opened_tabs_counter_notification_state": null,
         "pending_update_info": null,
         "integrity_block_data": null
-      })|")
-                                            .value();
+      })|",
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS)
+          .value();
 
   base::Value::Dict debug_app = app.AsDebugValue().GetDict().Clone();
   base::Value::Dict* debug_isolation_data =
@@ -416,11 +421,11 @@ TEST(WebAppTest, IsolationDataPendingUpdateInfoDebugValue) {
   app.SetIsolationData(
       IsolationData::Builder(
           IwaStorageOwnedBundle{"random_name", /*dev_mode=*/true},
-          base::Version("1.0.0"))
+          *IwaVersion::Create("1.0.0"))
           .SetPendingUpdateInfo(IsolationData::PendingUpdateInfo(
               IwaStorageUnownedBundle{
                   base::FilePath(FILE_PATH_LITERAL("random_folder"))},
-              base::Version("2.0.0"), integrity_block_data))
+              *IwaVersion::Create("2.0.0"), integrity_block_data))
           .SetIntegrityBlockData(integrity_block_data)
           .SetUpdateManifestUrl(GURL(kUpdateManifestUrl))
           .SetUpdateChannel(kUpdateChannel)
@@ -445,6 +450,7 @@ TEST(WebAppTest, IsolationDataPendingUpdateInfoDebugValue) {
         },
         "version": "1.0.0",
         "controlled_frame_partitions (on-disk)": [],
+        "opened_tabs_counter_notification_state": null,
         "pending_update_info": {
           "isolated_web_app_location": {
             "unowned_bundle": {
@@ -459,12 +465,13 @@ TEST(WebAppTest, IsolationDataPendingUpdateInfoDebugValue) {
         "update_channel": "$4"
       })|";
 
-  base::Value expected_isolation_data =
-      *base::JSONReader::Read(base::ReplaceStringPlaceholders(
+  base::Value expected_isolation_data = *base::JSONReader::Read(
+      base::ReplaceStringPlaceholders(
           kExpectedIsolationDataFormat,
           {ib_data_serialized, ib_data_serialized,
            GURL(kUpdateManifestUrl).spec(), kUpdateChannel.ToString()},
-          /*offsets=*/nullptr));
+          /*offsets=*/nullptr),
+      base::JSON_PARSE_CHROMIUM_EXTENSIONS);
 
   base::Value::Dict debug_app = app.AsDebugValue().GetDict().Clone();
   base::Value::Dict* debug_isolation_data =
@@ -501,7 +508,8 @@ TEST(WebAppTest, PermissionsPolicyDebugValue) {
 
   EXPECT_TRUE(!app.permissions_policy().empty());
 
-  base::Value expected_permissions_policy = base::JSONReader::Read(R"([
+  base::Value expected_permissions_policy =
+      base::JSONReader::Read(R"([
         {
           "allowed_origins": [  ],
           "feature": "gyroscope",
@@ -520,39 +528,15 @@ TEST(WebAppTest, PermissionsPolicyDebugValue) {
           "matches_all_origins": false,
           "matches_opaque_src": false
         }
-      ])")
-                                                .value();
+      ])",
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS)
+          .value();
 
   base::Value::Dict debug_app = app.AsDebugValue().GetDict().Clone();
   base::Value::List* debug_permissions_policy =
       debug_app.FindList("permissions_policy");
   EXPECT_TRUE(debug_permissions_policy != nullptr);
   EXPECT_EQ(*debug_permissions_policy, expected_permissions_policy);
-}
-
-class WebAppScopeTest : public WebAppTest {
- public:
-  void SetUp() override {
-    WebAppTest::SetUp();
-    test::AwaitStartWebAppProviderAndSubsystems(profile());
-  }
-};
-
-TEST_F(WebAppScopeTest, TestScopeIgnored) {
-  const GURL kStartUrl("https://www.foo.com/bar/index.html");
-  const GURL kScopeWithQueryAndFragments =
-      GURL("https://www.foo.com/bar/?query=abc#fragment");
-
-  std::unique_ptr<WebAppInstallInfo> install_info =
-      WebAppInstallInfo::CreateWithStartUrlForTesting(kStartUrl);
-  install_info->scope = kScopeWithQueryAndFragments;
-  webapps::AppId app_id =
-      test::InstallWebApp(profile(), std::move(install_info));
-
-  EXPECT_EQ(GURL("https://www.foo.com/bar/"),
-            fake_provider().registrar_unsafe().GetAppScope(app_id));
-  EXPECT_TRUE(fake_provider().registrar_unsafe().IsUrlInAppScope(
-      GURL("https://www.foo.com/bar/"), app_id));
 }
 
 }  // namespace web_app

@@ -85,6 +85,7 @@ chromium-metrics-reviews@google.com.
   <variant name="FeedUserSegment"/>
   <variant name="FrequentFeatureUser"/>
   <variant name="IntentionalUser"/>
+  <variant name="IosDefaultBrowserPromo"/>
   <variant name="IosModuleRanker"/>
   <variant name="MetricsClustering"/>
   <variant name="MostVisitedTilesUser"/>
@@ -96,6 +97,7 @@ chromium-metrics-reviews@google.com.
   <variant name="ShoppingUser"/>
   <variant name="TabletProductivityUser"/>
   <variant name="TabResumptionClassifier"/>
+  <variant name="TipsNotificationsRanker"/>
   <variant name="URLVisitResumptionRanker"/>
   <variant name="WebAppInstallationPromo"/>
 </variants>
@@ -136,6 +138,7 @@ chromium-metrics-reviews@google.com.
   <variant name="ShoppingUser"/>
   <variant name="TabletProductivityUser"/>
   <variant name="TabResumptionClassifier"/>
+  <variant name="TipsNotificationsRanker"/>
   <variant name="Unknown"/>
   <variant name="UrlVisitResumptionRanker"/>
   <variant name="Voice"/>

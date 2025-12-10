@@ -14,8 +14,8 @@
 
 #include "ash/constants/web_app_id_constants.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
+#include "base/i18n/time_formatting.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notimplemented.h"
@@ -37,8 +37,8 @@
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router_factory.h"
 #include "chrome/browser/password_manager/account_password_store_factory.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
+#include "chrome/browser/password_manager/factories/password_sender_service_factory.h"
 #include "chrome/browser/password_manager/password_manager_test_util.h"
-#include "chrome/browser/password_manager/password_sender_service_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/browser.h"
@@ -55,6 +55,7 @@
 #include "chrome/browser/webauthn/enclave_manager.h"
 #include "chrome/browser/webauthn/enclave_manager_factory.h"
 #include "chrome/browser/webauthn/enclave_manager_interface.h"
+#include "chrome/browser/webauthn/mock_enclave_manager.h"
 #include "chrome/browser/webauthn/passkey_model_factory.h"
 #include "chrome/common/extensions/api/passwords_private.h"
 #include "chrome/test/base/test_browser_window.h"
@@ -246,17 +247,6 @@ class MockPasswordManagerClient : public ChromePasswordManagerClient {
       : ChromePasswordManagerClient(web_contents) {}
 
   password_manager::MockPasswordFeatureManager mock_password_feature_manager_;
-};
-
-class MockEnclaveManager : public EnclaveManagerInterface {
- public:
-  MockEnclaveManager() = default;
-  ~MockEnclaveManager() override = default;
-  MockEnclaveManager(const MockEnclaveManager&) = delete;
-  MockEnclaveManager& operator=(const MockEnclaveManager&) = delete;
-
-  MOCK_METHOD(void, Unenroll, (Callback), (override));
-  MOCK_METHOD(bool, is_registered, (), (const override));
 };
 
 // static
@@ -944,6 +934,29 @@ TEST_F(PasswordsPrivateDelegateImplTest, TestCopyPasswordCallbackResult) {
       1);
 }
 
+TEST_F(PasswordsPrivateDelegateImplTest, CopyPlaintextBackupPassword) {
+  std::unique_ptr<content::WebContents> web_contents = CreateWebContents();
+
+  PasswordForm form = CreateSampleForm();
+  form.SetPasswordBackupNote(u"backup");
+  SetUpPasswordStores({form});
+
+  auto delegate = CreateDelegate();
+  base::RunLoop().RunUntilIdle();
+
+  ExpectAuthentication(delegate, /*successful=*/true);
+
+  base::MockCallback<base::OnceCallback<void(bool)>> result_callback;
+  EXPECT_CALL(result_callback, Run(Eq(true)));
+  delegate->CopyPlaintextBackupPassword(0, web_contents.get(),
+                                        result_callback.Get());
+
+  std::u16string result;
+  test_clipboard_->ReadText(ui::ClipboardBuffer::kCopyPaste,
+                            /* data_dst = */ nullptr, &result);
+  EXPECT_EQ(result, form.GetPasswordBackup());
+}
+
 TEST_F(PasswordsPrivateDelegateImplTest, TestShouldEnableAccountStorage) {
   std::unique_ptr<content::WebContents> web_contents = CreateWebContents();
   auto* client =
@@ -1006,6 +1019,31 @@ TEST_F(PasswordsPrivateDelegateImplTest, TestCopyPasswordCallbackResultFail) {
   // Since Reauth had failed password was not copied and metric wasn't recorded
   histogram_tester().ExpectTotalCount(kHistogramName, 0);
 }
+
+TEST_F(PasswordsPrivateDelegateImplTest,
+       CopyPlaintextBackupPasswordFailsAuthentication) {
+  std::unique_ptr<content::WebContents> web_contents = CreateWebContents();
+
+  PasswordForm form = CreateSampleForm();
+  form.SetPasswordBackupNote(u"backup");
+  SetUpPasswordStores({form});
+
+  auto delegate = CreateDelegate();
+  base::RunLoop().RunUntilIdle();
+
+  ExpectAuthentication(delegate, /*successful=*/false);
+
+  base::MockCallback<base::OnceCallback<void(bool)>> result_callback;
+  EXPECT_CALL(result_callback, Run(Eq(false)));
+  delegate->CopyPlaintextBackupPassword(0, web_contents.get(),
+                                        result_callback.Get());
+
+  std::u16string result;
+  test_clipboard_->ReadText(ui::ClipboardBuffer::kCopyPaste,
+                            /* data_dst = */ nullptr, &result);
+  EXPECT_EQ(result, std::u16string());
+}
+
 #endif
 
 TEST_F(PasswordsPrivateDelegateImplTest, TestPassedReauthOnView) {
@@ -1393,7 +1431,7 @@ TEST_F(PasswordsPrivateDelegateImplTest, DISABLED_ShowAddShortcutDialog) {
   Browser::CreateParams params(profile(), /*user_gesture=*/true);
   params.type = Browser::TYPE_NORMAL;
   auto window = std::make_unique<TestBrowserWindow>();
-  params.window = window.get();
+  params.window = window.release();
   auto browser = Browser::DeprecatedCreateOwnedForTesting(params);
   NavigateParams nav_params(browser.get(), GURL("chrome://password-manager"),
                             ui::PAGE_TRANSITION_TYPED);
@@ -1443,6 +1481,11 @@ TEST_F(PasswordsPrivateDelegateImplTest, GetCredentialGroups) {
       CreateSampleForm(PasswordForm::Store::kProfileStore, u"username2");
   const std::u16string backup_password = u"backup";
   password2.SetPasswordBackupNote(backup_password);
+  api::passwords_private::BackupPasswordInfo backup_password_info;
+  backup_password_info.value = base::UTF16ToUTF8(backup_password);
+  backup_password_info.creation_date =
+      base::UTF16ToUTF8(base::LocalizedTimeFormatWithPattern(
+          password2.GetPasswordBackupDateCreated().value(), "MMM dd"));
 
   SetUpPasswordStores({password1, password2});
 
@@ -1462,7 +1505,7 @@ TEST_F(PasswordsPrivateDelegateImplTest, GetCredentialGroups) {
   expected_entry2.affiliated_domains.back().signon_realm = "https://abc1.com";
   expected_entry2.username = "username2";
   expected_entry2.stored_in = api::passwords_private::PasswordStoreSet::kDevice;
-  expected_entry2.backup_password = base::UTF16ToUTF8(backup_password);
+  expected_entry2.backup_password = std::move(backup_password_info);
   EXPECT_THAT(groups[0].entries,
               testing::UnorderedElementsAre(
                   PasswordUiEntryDataEquals(testing::ByRef(expected_entry1)),
@@ -1609,6 +1652,32 @@ TEST_F(PasswordsPrivateDelegateImplTest,
             1 << static_cast<int>(
                 password_manager::metrics_util::
                     PasswordManagerCredentialRemovalReason::kSettings));
+}
+
+TEST_F(PasswordsPrivateDelegateImplTest, RemoveBackupPassword) {
+  auto delegate = CreateDelegate();
+
+  PasswordForm password =
+      CreateSampleForm(PasswordForm::Store::kProfileStore, u"username");
+  password.signon_realm = "https://facebook.com";
+  password.url = GURL("https://facebook.com");
+  password.SetPasswordBackupNote(u"backup");
+
+  SetUpPasswordStores({password});
+
+  auto groups = delegate->GetCredentialGroups();
+  PasswordUiEntry& password_entry = groups.at(0).entries.at(0);
+
+  delegate->RemoveBackupPassword(password_entry.id);
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_THAT(account_store_->stored_passwords(), testing::SizeIs(0));
+  ASSERT_THAT(profile_store_->stored_passwords(), testing::SizeIs(1));
+  EXPECT_FALSE(profile_store_->stored_passwords()
+                   .begin()
+                   ->second.begin()
+                   ->GetPasswordBackup()
+                   .has_value());
 }
 
 TEST_F(PasswordsPrivateDelegateImplTest, SharePasswordWithTwoRecipients) {
@@ -2202,7 +2271,10 @@ TEST_F(PasswordsPrivateDelegateImplTest, DeleteAllData) {
 
   EXPECT_THAT(profile_store_->stored_passwords(), testing::SizeIs(1));
   EXPECT_THAT(account_store_->stored_passwords(), testing::SizeIs(1));
-  EXPECT_THAT(passkey_model->GetAllPasskeys(), SizeIs(1));
+  EXPECT_THAT(passkey_model->GetPasskeys(
+                  webauthn::PasskeyModel::AnyRp(),
+                  webauthn::PasskeyModel::ShadowedCredentials::kInclude),
+              SizeIs(1));
 
   ExpectAuthentication(delegate, /*successful=*/true);
   base::MockCallback<base::OnceCallback<void(bool)>> callback;
@@ -2211,7 +2283,10 @@ TEST_F(PasswordsPrivateDelegateImplTest, DeleteAllData) {
   task_environment()->RunUntilIdle();
   EXPECT_THAT(profile_store_->stored_passwords(), testing::IsEmpty());
   EXPECT_THAT(account_store_->stored_passwords(), testing::IsEmpty());
-  EXPECT_THAT(passkey_model->GetAllPasskeys(), testing::IsEmpty());
+  EXPECT_THAT(passkey_model->GetPasskeys(
+                  webauthn::PasskeyModel::AnyRp(),
+                  webauthn::PasskeyModel::ShadowedCredentials::kInclude),
+              IsEmpty());
 }
 
 TEST_F(PasswordsPrivateDelegateImplTest,
@@ -2263,7 +2338,10 @@ TEST_F(PasswordsPrivateDelegateImplTest, DeleteAllDataWithReauthFailed) {
   task_environment()->RunUntilIdle();
   EXPECT_THAT(profile_store_->stored_passwords(), testing::SizeIs(1));
   EXPECT_THAT(account_store_->stored_passwords(), testing::SizeIs(1));
-  EXPECT_THAT(passkey_model->GetAllPasskeys(), SizeIs(1));
+  EXPECT_THAT(passkey_model->GetPasskeys(
+                  webauthn::PasskeyModel::AnyRp(),
+                  webauthn::PasskeyModel::ShadowedCredentials::kInclude),
+              SizeIs(1));
 }
 #endif
 

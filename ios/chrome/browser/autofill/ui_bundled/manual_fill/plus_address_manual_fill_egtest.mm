@@ -3,21 +3,21 @@
 // found in the LICENSE file.
 
 #import "base/base_paths.h"
+#import "base/ios/ios_util.h"
 #import "base/path_service.h"
 #import "base/strings/escape.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
-#import "components/plus_addresses/features.h"
-#import "components/plus_addresses/grit/plus_addresses_strings.h"
-#import "components/plus_addresses/plus_address_test_utils.h"
+#import "components/plus_addresses/core/browser/grit/plus_addresses_strings.h"
+#import "components/plus_addresses/core/browser/plus_address_test_utils.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_matchers.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_app_interface.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
@@ -29,6 +29,7 @@
 #import "net/test/embedded_test_server/embedded_test_server.h"
 #import "ui/base/l10n/l10n_util.h"
 
+using chrome_test_util::SearchBar;
 using manual_fill::ManualFillDataType;
 using net::test_server::EmbeddedTestServer;
 
@@ -85,16 +86,25 @@ id<GREYMatcher> PlusAddressSelectDoneMatcher() {
       manual_fill::kPlusAddressDoneButtonAccessibilityIdentifier);
 }
 
-// Returns a matcher for the plus address search bar in manual fallback.
-id<GREYMatcher> PlusAddressSelectSearchBarMatcher() {
-  return grey_accessibilityID(
-      manual_fill::kPlusAddressSearchBarAccessibilityIdentifier);
-}
-
 // Returns a matcher for the select plus address action.
 id<GREYMatcher> PlusAddressSelectActionMatcher() {
   return grey_accessibilityID(
       manual_fill::kSelectPlusAddressAccessibilityIdentifier);
+}
+
+// Checks the visibility of the plus address manual filling option.
+void CheckPlusAddressCellVisibility(std::u16string chip_button_text,
+                                    bool should_be_visible = true) {
+  id<GREYMatcher> expected_visibility =
+      should_be_visible ? grey_sufficientlyVisible() : grey_notVisible();
+
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     manual_fill::kExpandedManualFillPlusAddressFaviconID)]
+      assertWithMatcher:expected_visibility];
+
+  [[EarlGrey selectElementWithMatcher:manual_fill::ChipButton(chip_button_text)]
+      assertWithMatcher:expected_visibility];
 }
 
 }  // namespace
@@ -118,10 +128,6 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
            {"server-url", {fakeLocalUrl}},
            {"manage-url", {fakeLocalUrl}},
        }}});
-
-  // Enable the Keyboard Accessory Upgrade feature.
-  config.features_enabled_and_params.push_back(
-      {kIOSKeyboardAccessoryUpgradeForIPad, {}});
 
   return config;
 }
@@ -183,10 +189,7 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
   [self openExpandedManualFillViewForDataType:ManualFillDataType::kAddress
                                   fieldToFill:kNameFieldID];
 
-  [[EarlGrey
-      selectElementWithMatcher:manual_fill::ChipButton(
-                                   plus_addresses::test::kFakePlusAddressU16)]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  CheckPlusAddressCellVisibility(plus_addresses::test::kFakePlusAddressU16);
 
   // Switch over to passwords.
   [[EarlGrey
@@ -233,62 +236,6 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
   [ChromeEarlGrey waitForIncognitoTabCount:oldIncognitoTabCount];
 }
 
-// Tests that tapping on the create plus address action in the address manual
-// fill view opens up the bottomsheet to create one.
-- (void)testPlusAddressCreateActionFromAddressView {
-  [PlusAddressAppInterface setShouldOfferPlusAddressCreation:YES];
-  [PlusAddressAppInterface setShouldReturnNoAffiliatedPlusProfiles:YES];
-
-  [self openExpandedManualFillViewForDataType:ManualFillDataType::kAddress
-                                  fieldToFill:kNameFieldID];
-
-  id<GREYMatcher> createPlusAddressMatcher = grey_accessibilityID(
-      manual_fill::kCreatePlusAddressAccessibilityIdentifier);
-
-  [[EarlGrey selectElementWithMatcher:manual_fill::ProfilesTableViewMatcher()]
-      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
-  [[EarlGrey selectElementWithMatcher:createPlusAddressMatcher]
-      performAction:grey_tap()];
-
-  id<GREYMatcher> createPlusAddressBottomSheetButton =
-      chrome_test_util::ButtonWithAccessibilityLabelId(
-          IDS_PLUS_ADDRESS_BOTTOMSHEET_OK_TEXT_IOS);
-  [[EarlGrey selectElementWithMatcher:createPlusAddressBottomSheetButton]
-      performAction:grey_tap()];
-
-  [self verifyFieldHasBeenFilledWithValue:plus_addresses::test::
-                                              kFakePlusAddressU16];
-}
-
-// Tests that tapping on the create plus address action in the password manual
-// fill view opens up the bottomsheet to create one.
-- (void)testPlusAddressCreateActionFromPasswordView {
-  [PlusAddressAppInterface setShouldOfferPlusAddressCreation:YES];
-  [PlusAddressAppInterface setShouldReturnNoAffiliatedPlusProfiles:YES];
-
-  [self openExpandedManualFillViewForDataType:ManualFillDataType::kAddress
-                                  fieldToFill:kNameFieldID];
-
-  id<GREYMatcher> createPlusAddressMatcher = grey_accessibilityID(
-      manual_fill::kCreatePlusAddressAccessibilityIdentifier);
-
-  [[EarlGrey selectElementWithMatcher:manual_fill::ProfilesTableViewMatcher()]
-      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
-
-  // Switch over to passwords.
-  [[EarlGrey
-      selectElementWithMatcher:manual_fill::SegmentedControlPasswordTab()]
-      performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:createPlusAddressMatcher]
-      performAction:grey_tap()];
-
-  id<GREYMatcher> createPlusAddressBottomSheetCancelButton =
-      chrome_test_util::ButtonWithAccessibilityLabelId(
-          IDS_PLUS_ADDRESS_MODAL_CANCEL_TEXT);
-  [[EarlGrey selectElementWithMatcher:createPlusAddressBottomSheetCancelButton]
-      performAction:grey_tap()];
-}
-
 // Tests that tapping on the select plus address action shows a sheet with the
 // list of all plus addresses from the address manual fill view.
 - (void)testSelectPlusAddressActionFromAddressFillView {
@@ -312,6 +259,11 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
 // Tests that tapping on the select plus address action shows a sheet with the
 // list of all plus addresses from the password manual fill view.
 - (void)testSelectPlusAddressActionFromPasswordFillView {
+  // TODO(crbug.com/439547642): Re-enable the test on iOS26.
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+
   if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Test fails for iPad");
   }
@@ -338,9 +290,7 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
   [[EarlGrey selectElementWithMatcher:PlusAddressSelectActionMatcher()]
       performAction:grey_tap()];
 
-  [[EarlGrey
-      selectElementWithMatcher:manual_fill::ChipButton(u"plus+foo@plus.plus")]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  CheckPlusAddressCellVisibility(u"plus+foo@plus.plus");
 
   [[EarlGrey selectElementWithMatcher:PlusAddressSelectDoneMatcher()]
       performAction:grey_tap()];
@@ -360,16 +310,14 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
       performAction:grey_tap()];
 
   // Tap the search option.
-  [[EarlGrey selectElementWithMatcher:PlusAddressSelectSearchBarMatcher()]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:SearchBar()] performAction:grey_tap()];
 
-  [[EarlGrey selectElementWithMatcher:PlusAddressSelectSearchBarMatcher()]
+  [[EarlGrey selectElementWithMatcher:SearchBar()]
       performAction:grey_replaceText(@"example1")];
-  [[EarlGrey
-      selectElementWithMatcher:manual_fill::ChipButton(u"plus+foo@plus.plus")]
-      assertWithMatcher:grey_notVisible()];
+  CheckPlusAddressCellVisibility(u"plus+foo@plus.plus",
+                                 /*should_be_visible=*/false);
 
-  [[EarlGrey selectElementWithMatcher:PlusAddressSelectSearchBarMatcher()]
+  [[EarlGrey selectElementWithMatcher:SearchBar()]
       performAction:grey_replaceText(@"foo.com")];
   [[EarlGrey
       selectElementWithMatcher:manual_fill::ChipButton(u"plus+foo@plus.plus")]
@@ -387,10 +335,7 @@ id<GREYMatcher> PlusAddressSelectActionMatcher() {
   [self openExpandedManualFillViewForDataType:ManualFillDataType::kAddress
                                   fieldToFill:kNameFieldID];
 
-  [[EarlGrey
-      selectElementWithMatcher:manual_fill::ChipButton(
-                                   plus_addresses::test::kFakePlusAddressU16)]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  CheckPlusAddressCellVisibility(plus_addresses::test::kFakePlusAddressU16);
 
   // Tap the overflow menu button.
   [[EarlGrey selectElementWithMatcher:OverflowMenuButton()]

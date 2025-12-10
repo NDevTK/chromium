@@ -7,10 +7,12 @@
 #include "base/base64.h"
 #include "base/containers/contains.h"
 #include "base/strings/escape.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/url_util.h"
+#include "net/http/http_util.h"
 #include "net/http/structured_headers.h"
 #include "net/url_request/url_request.h"
 #include "services/network/public/cpp/features.h"
@@ -48,7 +50,31 @@ ParameterType ParamNameToType(std::string_view name) {
   if (name == "sf") {
     return ParameterType::kStrictStructuredFieldSerialization;
   }
+  if (name == "bs") {
+    return ParameterType::kBinaryRepresentation;
+  }
   NOTREACHED();
+}
+
+bool IsRequestComponent(
+    const mojom::SRIMessageSignatureComponentPtr& component) {
+  return std::ranges::any_of(component->params, [](const auto& p) {
+    return p->type == ParameterType::kRequest;
+  });
+}
+
+bool IsStrictlySerializedComponent(
+    const mojom::SRIMessageSignatureComponentPtr& component) {
+  return std::ranges::any_of(component->params, [](const auto& p) {
+    return p->type == ParameterType::kStrictStructuredFieldSerialization;
+  });
+}
+
+bool IsBinaryWrappedComponent(
+    const mojom::SRIMessageSignatureComponentPtr& component) {
+  return std::ranges::any_of(component->params, [](const auto& p) {
+    return p->type == ParameterType::kBinaryRepresentation;
+  });
 }
 
 bool ItemHasBooleanParam(const net::structured_headers::ParameterizedItem& item,
@@ -95,9 +121,9 @@ std::optional<mojom::SRIMessageSignatureComponentPtr> ParseComponent(
   auto result = mojom::SRIMessageSignatureComponent::New();
   result->name = name;
 
-  // The "unencoded-digest" component requires a single `sf` parameter with
-  // a `true` boolean value.
   if (name == "unencoded-digest") {
+    // The "unencoded-digest" component requires a single `sf` parameter with
+    // a `true` boolean value.
     if (!ItemHasBooleanParam(component, "sf") ||
         component.params.size() != 1u) {
       AddIssueFromErrorEnum(
@@ -108,6 +134,23 @@ std::optional<mojom::SRIMessageSignatureComponentPtr> ParseComponent(
     }
     result->params.push_back(ComponentParameter::New(
         ParameterType::kStrictStructuredFieldSerialization, std::nullopt));
+    return result;
+  } else if (!name.starts_with('@') && net::HttpUtil::IsValidHeaderName(name) &&
+             name == base::ToLowerASCII(name)) {
+    // All other headers may specify the `req` and `bs` parameters.
+    for (const auto& param : component.params) {
+      if (param.second.is_boolean() && param.second.GetBoolean() &&
+          (param.first == "req" || param.first == "bs")) {
+        result->params.push_back(ComponentParameter::New(
+            ParamNameToType(param.first), std::nullopt));
+      } else {
+        AddIssueFromErrorEnum(
+            mojom::SRIMessageSignatureError::
+                kSignatureInputHeaderInvalidHeaderComponentParameter,
+            issues);
+        return std::nullopt;
+      }
+    }
     return result;
   } else if (base::Contains(kDerivedComponents, name)) {
     // The `@status` derived component must not have any parameters (as it's
@@ -168,6 +211,11 @@ std::optional<mojom::SRIMessageSignatureComponentPtr> ParseComponent(
   }
 }
 
+std::optional<std::string> SerializeByteSequence(std::string_view input) {
+  return net::structured_headers::SerializeItem(net::structured_headers::Item(
+      std::string(input), net::structured_headers::Item::kByteSequenceType));
+}
+
 // net::StructuredHeaders doesn't expose the ability to serialize a parameter
 // list outside the context of a parameterized item. So, we'll do it ourselves
 // by serializing each individually as an Item.
@@ -207,6 +255,9 @@ std::string SerializeComponentParams(
         break;
       case ParameterType::kStrictStructuredFieldSerialization:
         param_list << "sf";
+        break;
+      case ParameterType::kBinaryRepresentation:
+        param_list << "bs";
         break;
     }
   }
@@ -284,13 +335,13 @@ std::string SerializeDerivedComponent(
   if (component->name == "@authority") {
     // https://www.rfc-editor.org/rfc/rfc9421.html#name-authority
     if (url_request.url().has_port()) {
-      return base::StrCat({url_request.url().host_piece(), ":",
-                           url_request.url().port_piece()});
+      return base::StrCat(
+          {url_request.url().host(), ":", url_request.url().port()});
     }
-    return url_request.url().host();
+    return url_request.url().GetHost();
   } else if (component->name == "@query") {
     // https://www.rfc-editor.org/rfc/rfc9421.html#name-query
-    return base::StrCat({"?", url_request.url().query()});
+    return base::StrCat({"?", url_request.url().GetQuery()});
   } else if (component->name == "@query-param") {
     DCHECK(component->params.size() == 2u);
     auto name_it =
@@ -310,9 +361,9 @@ std::string SerializeDerivedComponent(
     return url_request.method();
   } else if (component->name == "@path") {
     // https://www.rfc-editor.org/rfc/rfc9421.html#content-request-path
-    return url_request.url().path();
+    return url_request.url().GetPath();
   } else if (component->name == "@scheme") {
-    return url_request.url().scheme();
+    return url_request.url().GetScheme();
   } else if (component->name == "@status") {
     // https://www.rfc-editor.org/rfc/rfc9421.html#content-status-code
     return base::NumberToString(response_status_code);
@@ -407,13 +458,13 @@ bool ValidateSignatureValue(
 
 bool MatchExpectedPublicKeys(
     mojom::SRIMessageSignaturesPtr& message_signatures,
-    const std::vector<std::string>& expected_public_keys) {
+    const std::vector<std::vector<uint8_t>>& expected_public_keys) {
   if (expected_public_keys.empty()) {
     return true;
   }
-  for (const std::string& key : expected_public_keys) {
+  for (const auto& key : expected_public_keys) {
     for (const auto& signature : message_signatures->signatures) {
-      if (signature->keyid == key) {
+      if (signature->keyid && signature->keyid.value() == key) {
         return true;
       }
     }
@@ -423,7 +474,10 @@ bool MatchExpectedPublicKeys(
   auto issue = mojom::SRIMessageSignatureIssue::New();
   issue->error =
       mojom::SRIMessageSignatureError::kValidationFailedIntegrityMismatch;
-  issue->integrity_assertions = expected_public_keys;
+  issue->integrity_assertions.emplace();
+  for (const auto& key : expected_public_keys) {
+    issue->integrity_assertions->push_back(base::Base64Encode(key));
+  }
   message_signatures->issues.push_back(std::move(issue));
   return false;
 }
@@ -525,7 +579,11 @@ mojom::SRIMessageSignaturesPtr ParseSRIMessageSignaturesFromHeaders(
           std::move(parsed_component.value()));
     }
 
-    if (!message_signature || message_signature->components.empty()) {
+    // The signature's component list must include `unencoded-digest`.
+    if (!message_signature || message_signature->components.empty() ||
+        std::ranges::none_of(message_signature->components, [](const auto& c) {
+          return c->name == "unencoded-digest";
+        })) {
       AddIssueFromErrorEnum(mojom::SRIMessageSignatureError::
                                 kSignatureInputHeaderValueMissingComponents,
                             parsed_headers->issues);
@@ -551,7 +609,7 @@ mojom::SRIMessageSignaturesPtr ParseSRIMessageSignaturesFromHeaders(
           message_signature.reset();
           break;
         }
-        message_signature->keyid = value;
+        message_signature->keyid = std::move(*decoded);
       } else if (param.first == "nonce" && param.second.is_string()) {
         message_signature->nonce = param.second.GetString();
       } else if (param.first == "tag" && param.second.is_string() &&
@@ -661,37 +719,41 @@ std::optional<std::string> ConstructSignatureBase(
       //         cannot be found in the message or the value cannot be obtained
       //         in the context, produce an error.
     } else {
+      // Grab the header from the request or response as appropriate, punting
+      // out of signature base generation if the header isn't present
       std::optional<std::string> header =
-          headers.GetNormalizedHeader(component->name);
+          IsRequestComponent(component)
+              ? url_request.extra_request_headers().GetHeader(component->name)
+              : headers.GetNormalizedHeader(component->name);
       if (!header.has_value()) {
+        // TODO(mkwst): We should have a more-specific error here.
         return std::nullopt;
       }
 
       // Determine how to serialize the header:
-      //
-      // SRI requires the `sf` parameter, which forces strict serialization for
-      // structured fields.
-      if (component->params.size() != 1u ||
-          component->params[0]->type !=
-              ParameterType::kStrictStructuredFieldSerialization) {
-        return std::nullopt;
-      }
-
-      // Unfortunately, there doesn't seem to be a good way to decide how a
-      // given structured field should be serialized (as a Dictionary? List?),
-      // other than encoding a list of known headers and their types.
-      // Fortunately, we only support one header at the moment, so the list is
-      // manageable.
-      if (component->name == "unencoded-digest") {
-        std::optional<net::structured_headers::Dictionary> dict =
-            net::structured_headers::ParseDictionary(header.value());
-        if (!dict.has_value()) {
+      if (IsBinaryWrappedComponent(component)) {
+        component_value = SerializeByteSequence(header.value());
+      } else if (IsStrictlySerializedComponent(component)) {
+        // Unfortunately, there doesn't seem to be a good way to decide how a
+        // given structured field should be serialized (as a Dictionary? List?),
+        // other than encoding a list of known headers and their types.
+        // Fortunately, we only support one header at the moment, so the list is
+        // manageable.
+        if (component->name == "unencoded-digest") {
+          // TODO(mkwst): We shouldn't parse this header both here and in Blink.
+          // Ideally we'll migrate the implementation into the network stack.
+          std::optional<net::structured_headers::Dictionary> dict =
+              net::structured_headers::ParseDictionary(header.value());
+          if (!dict.has_value()) {
+            return std::nullopt;
+          }
+          component_value =
+              net::structured_headers::SerializeDictionary(dict.value());
+        } else {
           return std::nullopt;
         }
-        component_value =
-            net::structured_headers::SerializeDictionary(dict.value());
       } else {
-        return std::nullopt;
+        component_value = header.value();
       }
     }
     // 2.6. Append the covered component's canonicalized component value.
@@ -747,9 +809,8 @@ bool ValidateSRIMessageSignaturesOverHeaders(
     // Decode the public key, and validate that both the public key and the
     // message's signature are the correct length for Ed25519 (32 and 64 bits,
     // respectively).
-    std::string encoded_key = message_signature->keyid.value_or("");
-    std::vector<uint8_t> public_key =
-        base::Base64Decode(encoded_key).value_or(std::vector<uint8_t>{});
+    const std::vector<uint8_t>& public_key =
+        message_signature->keyid.value_or(std::vector<uint8_t>{});
     if (public_key.size() != kEd25519KeyLength ||
         message_signature->signature.size() != kEd25519SigLength) {
       AddIssueFromErrorEnum(
@@ -779,16 +840,9 @@ std::optional<mojom::BlockedByResponseReason>
 MaybeBlockResponseForSRIMessageSignature(
     const net::URLRequest& url_request,
     const network::mojom::URLResponseHead& response,
-    const std::vector<std::string>& expected_public_keys,
+    const std::vector<std::vector<uint8_t>>& expected_public_keys,
     const raw_ptr<mojom::DevToolsObserver> devtools_observer,
     const std::string& devtools_request_id) {
-  // If the feature is disabled, never block resources.
-  if (!base::FeatureList::IsEnabled(
-          features::kSRIMessageSignatureEnforcement) &&
-      expected_public_keys.empty()) {
-    return std::nullopt;
-  }
-
   // No headers, no URL: no blocking.
   const GURL request_url = url_request.url();
   if (!response.headers || !request_url.is_valid()) {
@@ -814,22 +868,12 @@ MaybeBlockResponseForSRIMessageSignature(
 
 void MaybeSetAcceptSignatureHeader(
     net::URLRequest* request,
-    const std::vector<std::string>& expected_public_keys) {
-  // In order to support request-specific experimentation, we send the
-  // `Accept-Signature` header whenever signatures are expected by a request's
-  // initiator, regardless of the `features::kSRIMessageSignatureEnforcement`
-  // flag state.
-  //
-  // TODO(393924693): Remove this comment once we no longer need the origin
-  // trial infrastructure.
-
+    const std::vector<std::vector<uint8_t>>& expected_public_keys) {
   std::stringstream header;
   int counter = 0;
-  for (const std::string& public_key : expected_public_keys) {
-    // We expect these to be validly base64-encoded Ed25519 public keys:
-    std::optional<std::vector<uint8_t>> decoded =
-        base::Base64Decode(public_key);
-    if (!decoded || decoded->size() != kEd25519KeyLength) {
+  for (const auto& public_key : expected_public_keys) {
+    // We expect these to be valid lengths for Ed25519 public keys:
+    if (public_key.size() != kEd25519KeyLength) {
       continue;
     }
 
@@ -840,7 +884,7 @@ void MaybeSetAcceptSignatureHeader(
       header << ", ";
     }
     header << "sig" << counter << "=(\"unencoded-digest\";sf);keyid=\""
-           << public_key << "\";tag=\"ed25519-integrity\"";
+           << base::Base64Encode(public_key) << "\";tag=\"ed25519-integrity\"";
     ++counter;
   }
   if (header.str().empty()) {

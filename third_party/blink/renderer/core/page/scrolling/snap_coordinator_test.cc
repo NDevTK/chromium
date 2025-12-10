@@ -36,7 +36,7 @@ class SnapCoordinatorTest : public testing::Test,
  protected:
   void SetUp() override {
     page_holder_ = std::make_unique<DummyPageHolder>(
-        gfx::Size(), nullptr, nullptr, WTF::BindOnce([](Settings& settings) {
+        gfx::Size(), nullptr, nullptr, BindOnce([](Settings& settings) {
           settings.SetAcceleratedCompositingEnabled(true);
         }));
 
@@ -74,7 +74,8 @@ class SnapCoordinatorTest : public testing::Test,
   Document& GetDocument() { return page_holder_->GetDocument(); }
 
   void SetHTML(const char* html_content) {
-    GetDocument().documentElement()->setInnerHTML(html_content);
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+        html_content);
   }
 
   Element& SnapContainer() {
@@ -243,7 +244,7 @@ TEST_F(SnapCoordinatorTest, UpdateStyleForSnapElement) {
   // Add a new snap element
   Element& container =
       *GetDocument().getElementById(AtomicString("snap-container"));
-  container.setInnerHTML(R"HTML(
+  container.SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div style='scroll-snap-align: start;'>
         <div style='width:2000px; height:2000px;'></div>
     </div>

@@ -12,13 +12,11 @@ import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewPr
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.IS_INCOGNITO;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.LEFT_MARGIN_OVERRIDE_PX;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MESSAGE_IDENTIFIER;
-import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MESSAGE_SERVICE_DISMISS_ACTION_PROVIDER;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MESSAGE_TYPE;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.RIGHT_MARGIN_OVERRIDE_PX;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.UI_DISMISS_ACTION_PROVIDER;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageService.DEFAULT_MESSAGE_IDENTIFIER;
-import static org.chromium.chrome.browser.tasks.tab_management.TabGroupListCoordinator.MessageCardType.TAB_GROUP_REMOVED;
-import static org.chromium.chrome.browser.tasks.tab_management.TabGroupListCoordinator.RowType.MESSAGE_CARD;
+import static org.chromium.chrome.browser.tasks.tab_management.TabGroupListCoordinator.RowType.TAB_GROUP_REMOVED;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.CARD_TYPE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabListModel.CardProperties.ModelType.MESSAGE;
 
@@ -29,8 +27,7 @@ import androidx.annotation.VisibleForTesting;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.chrome.browser.tasks.tab_management.MessageCardView.DismissActionProvider;
-import org.chromium.chrome.browser.tasks.tab_management.MessageService.MessageData;
+import org.chromium.chrome.browser.tasks.tab_management.MessageCardView.ActionProvider;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.components.collaboration.messaging.CollaborationEvent;
 import org.chromium.components.collaboration.messaging.MessageUtils;
@@ -43,7 +40,6 @@ import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /** A mediator for the tab group removed message card for use in {@link TabGroupListCoordinator}. */
 @NullMarked
@@ -53,27 +49,27 @@ public class TabGroupRemovedMessageMediator {
      * This is the data type that this mediator uses to create a message card. It holds the data
      * necessary to display the card.
      */
-    private static class TabGroupRemovedMessageData implements MessageData {
+    private static class TabGroupRemovedMessageModel {
         private final Context mContext;
         private final List<PersistentMessage> mTabGroupRemovedMessages;
-        private final DismissActionProvider mDismissActionProvider;
+        private final ActionProvider mDismissActionProvider;
 
         /**
          * @param context The context used obtaining the message strings.
          * @param tabGroupRemovedMessages The list of persistent messages.
          * @param dismissActionProvider The provider for the dismiss action.
          */
-        TabGroupRemovedMessageData(
+        TabGroupRemovedMessageModel(
                 Context context,
                 List<PersistentMessage> tabGroupRemovedMessages,
-                DismissActionProvider dismissActionProvider) {
+                ActionProvider dismissActionProvider) {
             mContext = context;
             mTabGroupRemovedMessages = tabGroupRemovedMessages;
             mDismissActionProvider = dismissActionProvider;
         }
 
         /** The provider for the dismiss action callback. */
-        public DismissActionProvider getDismissActionProvider() {
+        public ActionProvider getDismissActionProvider() {
             return mDismissActionProvider;
         }
 
@@ -145,11 +141,12 @@ public class TabGroupRemovedMessageMediator {
         List<PersistentMessage> messageList = getTabGroupRemovedMessageList();
         if (messageList.isEmpty()) return;
 
-        TabGroupRemovedMessageData messageData =
-                new TabGroupRemovedMessageData(
-                        mContext, messageList, ignored -> dismissAction(messageList));
+        TabGroupRemovedMessageModel messageData =
+                new TabGroupRemovedMessageModel(
+                        mContext, messageList, () -> dismissAction(messageList));
 
-        mModelList.add(new MVCListAdapter.ListItem(MESSAGE_CARD, createPropertyModel(messageData)));
+        mModelList.add(
+                new MVCListAdapter.ListItem(TAB_GROUP_REMOVED, createPropertyModel(messageData)));
     }
 
     private void dismissAction(List<PersistentMessage> tabGroupRemovedMessages) {
@@ -158,7 +155,7 @@ public class TabGroupRemovedMessageMediator {
             @Nullable String messageId = message.attribution.id;
             assert messageId != null && !TextUtils.isEmpty(messageId);
             mMessagingBackendService.clearPersistentMessage(
-                    messageId, Optional.of(PersistentNotificationType.TOMBSTONED));
+                    messageId, PersistentNotificationType.TOMBSTONED);
         }
         removeMessageCard();
     }
@@ -167,7 +164,7 @@ public class TabGroupRemovedMessageMediator {
     void removeMessageCard() {
         for (int index = 0; index < mModelList.size(); index++) {
             MVCListAdapter.ListItem listItem = mModelList.get(index);
-            if (listItem.type != MESSAGE_CARD) return;
+            if (listItem.type != TAB_GROUP_REMOVED) return;
             if (isGroupRemovedMessage(listItem.model)) {
                 mModelList.removeAt(index);
                 break;
@@ -182,8 +179,7 @@ public class TabGroupRemovedMessageMediator {
     private List<PersistentMessage> getTabGroupRemovedMessageList() {
         List<PersistentMessage> tabGroupRemovedMessages = new ArrayList<>();
         List<PersistentMessage> messages =
-                mMessagingBackendService.getMessages(
-                        Optional.of(PersistentNotificationType.TOMBSTONED));
+                mMessagingBackendService.getMessages(PersistentNotificationType.TOMBSTONED);
 
         for (PersistentMessage message : messages) {
             if (message.collaborationEvent != CollaborationEvent.TAB_GROUP_REMOVED
@@ -196,14 +192,13 @@ public class TabGroupRemovedMessageMediator {
         return tabGroupRemovedMessages;
     }
 
-    private static PropertyModel createPropertyModel(TabGroupRemovedMessageData data) {
+    private static PropertyModel createPropertyModel(TabGroupRemovedMessageModel data) {
         String dismissButtonDescription = data.getDismissButtonDescription();
         int horizontalPadding = data.getHorizontalPadding();
 
         return new PropertyModel.Builder(TabGroupMessageCardViewProperties.ALL_KEYS)
                 .with(MESSAGE_IDENTIFIER, DEFAULT_MESSAGE_IDENTIFIER)
                 .with(UI_DISMISS_ACTION_PROVIDER, data.getDismissActionProvider())
-                .with(MESSAGE_SERVICE_DISMISS_ACTION_PROVIDER, data.getDismissActionProvider())
                 .with(DESCRIPTION_TEXT, data.getMessageText())
                 .with(DISMISS_BUTTON_CONTENT_DESCRIPTION, dismissButtonDescription)
                 .with(IS_ICON_VISIBLE, false)

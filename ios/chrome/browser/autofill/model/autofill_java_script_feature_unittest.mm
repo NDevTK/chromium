@@ -124,8 +124,8 @@ class AutofillJavaScriptFeatureTest : public PlatformTest {
   }
 
   id ExecuteJavaScript(NSString* java_script) {
-    return web::test::ExecuteJavaScriptForFeature(web_state(), java_script,
-                                                  feature());
+    return web::test::ExecuteJavaScriptForFeatureAndReturnResult(
+        web_state(), java_script, feature());
   }
 
   autofill::AutofillJavaScriptFeature* feature() {
@@ -144,7 +144,8 @@ class AutofillJavaScriptFeatureTest : public PlatformTest {
 // Tests that `hasBeenInjected` returns YES after `inject` call.
 TEST_F(AutofillJavaScriptFeatureTest, InitAndInject) {
   LoadHtml(@"<html></html>");
-  EXPECT_NSEQ(@"object", ExecuteJavaScript(@"typeof __gCrWeb.autofill"));
+  EXPECT_NSEQ(@"object", ExecuteJavaScript(
+                             @"typeof __gCrWeb.getRegisteredApi('autofill')"));
 }
 
 // Tests forms extraction method

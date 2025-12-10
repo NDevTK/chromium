@@ -150,6 +150,11 @@ struct BLINK_COMMON_EXPORT
     return data.webrtc_ip_handling_urls;
   }
 
+  static const std::optional<bool> webrtc_post_quantum_key_agreement(
+      const ::blink::RendererPreferences& data) {
+    return data.webrtc_post_quantum_key_agreement;
+  }
+
   static const uint16_t& webrtc_udp_min_port(
       const ::blink::RendererPreferences& data) {
     return data.webrtc_udp_min_port;
@@ -191,6 +196,13 @@ struct BLINK_COMMON_EXPORT
   static const bool& selection_clipboard_buffer_available(
       const ::blink::RendererPreferences& data) {
     return data.selection_clipboard_buffer_available;
+  }
+#endif
+
+#if BUILDFLAG(IS_LINUX)
+  static const bool& middle_click_paste_allowed(
+      const ::blink::RendererPreferences& data) {
+    return data.middle_click_paste_allowed;
   }
 #endif
 
@@ -273,11 +285,6 @@ struct BLINK_COMMON_EXPORT
   static const std::vector<uint16_t>& explicitly_allowed_network_ports(
       const ::blink::RendererPreferences& data) {
     return data.explicitly_allowed_network_ports;
-  }
-
-  static const uint64_t& canvas_noise_token(
-      const ::blink::RendererPreferences& data) {
-    return data.canvas_noise_token;
   }
 
   static bool view_source_line_wrap_enabled(

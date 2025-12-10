@@ -20,8 +20,6 @@
 #include "extensions/common/permissions/manifest_permission.h"
 #include "extensions/common/permissions/permissions_info.h"
 #include "extensions/common/permissions/settings_override_permission.h"
-#include "ipc/ipc_message.h"
-#include "ipc/ipc_message_utils.h"
 #include "url/gurl.h"
 
 using extensions::api::manifest_types::ChromeSettingsOverrides;
@@ -116,7 +114,7 @@ std::optional<ChromeSettingsOverrides::SearchProvider> ParseSearchEngine(
 std::string FormatUrlForDisplay(const GURL& url) {
   // A www. prefix is not informative and thus not worth the limited real estate
   // in the permissions UI.
-  return url_formatter::StripWWW(url.host());
+  return url_formatter::StripWWW(url.GetHost());
 }
 
 }  // namespace

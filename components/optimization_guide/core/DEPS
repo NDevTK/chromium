@@ -6,12 +6,15 @@ include_rules = [
   "+components/page_content_annotations/core",
   "+components/services/unzip",
   "+components/signin/public",
+  "+components/policy/core",
   "+components/ukm/test_ukm_recorder.h",
   "+crypto",
   "+mojo/public/cpp",
   "+services/data_decoder/public/cpp",
   "+services/metrics/public/cpp",
+  "+services/on_device_model/android",
   "+services/on_device_model/ml",
+  "+services/on_device_model/on_device_model_mojom_impl.h",
   "+services/on_device_model/public",
   "+third_party/mediapipe",
   "+third_party/skia",
@@ -19,11 +22,12 @@ include_rules = [
   "+third_party/zlib/google",
   "+ui/accessibility",
   "+ui/base/l10n",
-]
+];
 
 specific_include_rules = {
-  ".*_unittest\.cc": [
+  ".*_unittest.cc": [
     "+third_party/zlib/google/zip.h",
+    "+components/component_updater/component_updater_service.h",
     "+ui/base",
-  ]
-}
+  ],
+};

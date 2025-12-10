@@ -12,8 +12,10 @@
 #include "chrome/browser/ui/webui/customize_buttons/customize_buttons.mojom.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/feature_engagement/public/feature_constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/tabs/public/tab_interface.h"
+#include "components/user_education/common/feature_promo/feature_promo_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_web_ui.h"
@@ -27,7 +29,8 @@ class MockFeaturePromoHelper : public NewTabPageFeaturePromoHelper {
               (override));
   MOCK_METHOD(void,
               MaybeShowFeaturePromo,
-              (const base::Feature& iph_feature, content::WebContents*),
+              (user_education::FeaturePromoParams params,
+               content::WebContents*),
               (override));
   MOCK_METHOD(bool,
               IsSigninModalDialogOpen,
@@ -95,9 +98,9 @@ class CustomizeButtonsHandlerBrowserTestBase : public InProcessBrowserTest {
             std::move(mock_controller_ptr));
   }
 
-  void CreateHanlder(bool should_create_with_tab_interface) {
+  void CreateHandler(bool set_tab_interface) {
     tabs::TabInterface* tab = nullptr;
-    if (should_create_with_tab_interface) {
+    if (set_tab_interface) {
       tab = browser()->tab_strip_model()->GetActiveTab();
     }
 
@@ -133,7 +136,13 @@ class CustomizeButtonsHandlerBrowserTestBase : public InProcessBrowserTest {
 
 class CustomizeButtonsHandlerBrowserTest
     : public CustomizeButtonsHandlerBrowserTestBase,
-      public testing::WithParamInterface<bool> {};
+      public testing::WithParamInterface<bool> {
+ public:
+  void SetUpOnMainThread() override {
+    CustomizeButtonsHandlerBrowserTestBase::SetUpOnMainThread();
+    CreateHandler(/*set_tab_interface=*/GetParam());
+  }
+};
 
 INSTANTIATE_TEST_SUITE_P(All,
                          CustomizeButtonsHandlerBrowserTest,
@@ -141,61 +150,73 @@ INSTANTIATE_TEST_SUITE_P(All,
                          // with and without a TabInterface.
                          testing::Bool());
 
-IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest, OpenSidePanel) {
-  CreateHanlder(GetParam());
+IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest, OpenSidePanelTwice) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   SidePanelOpenTrigger trigger;
   std::optional<CustomizeChromeSection> section;
+  bool visible;
 
   EXPECT_CALL(*mock_controller_.get(), OpenSidePanel)
-      .Times(1)
-      .WillOnce(testing::DoAll(testing::SaveArg<0>(&trigger),
-                               testing::SaveArg<1>(&section)));
-  EXPECT_CALL(
-      *GetMockFeaturePromoHelper(),
-      RecordPromoFeatureUsageAndClosePromo(
-          testing::Ref(feature_engagement::kIPHDesktopCustomizeChromeFeature),
-          web_contents))
-      .Times(1);
+      .Times(2)
+      .WillRepeatedly(testing::DoAll(testing::SaveArg<0>(&trigger),
+                                     testing::SaveArg<1>(&section)));
+  EXPECT_CALL(doc_, SetCustomizeChromeSidePanelVisibility)
+      .Times(2)
+      .WillRepeatedly(testing::SaveArg<0>(&visible));
   EXPECT_CALL(
       *GetMockFeaturePromoHelper(),
       RecordPromoFeatureUsageAndClosePromo(
           testing::Ref(
-              feature_engagement::kIPHDesktopCustomizeChromeRefreshFeature),
+              feature_engagement::kIPHDesktopCustomizeChromeExperimentFeature),
           web_contents))
-      .Times(1);
+      .Times(2);
+  EXPECT_CALL(
+      *GetMockFeaturePromoHelper(),
+      RecordPromoFeatureUsageAndClosePromo(
+          testing::Ref(
+              feature_engagement::kIPHDesktopCustomizeChromeAutoOpenFeature),
+          web_contents))
+      .Times(2);
 
   handler_->SetCustomizeChromeSidePanelVisible(
-      /*visible=*/true,
-      customize_buttons::mojom::CustomizeChromeSection::kAppearance,
+      /*visible=*/true, CustomizeChromeSection::kUnspecified,
+      customize_buttons::mojom::SidePanelOpenTrigger::kNewTabFooter);
+  doc_.FlushForTesting();
+
+  EXPECT_EQ(SidePanelOpenTrigger::kNewTabFooter, trigger);
+  EXPECT_EQ(CustomizeChromeSection::kUnspecified, section);
+  EXPECT_TRUE(visible);
+
+  handler_->SetCustomizeChromeSidePanelVisible(
+      /*visible=*/true, CustomizeChromeSection::kAppearance,
       customize_buttons::mojom::SidePanelOpenTrigger::kNewTabPage);
+  doc_.FlushForTesting();
 
   EXPECT_EQ(SidePanelOpenTrigger::kNewTabPage, trigger);
   EXPECT_EQ(CustomizeChromeSection::kAppearance, section);
-  doc_.FlushForTesting();
+  EXPECT_TRUE(visible);
 }
 
 IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest, CloseSidePanel) {
-  CreateHanlder(GetParam());
   ON_CALL(*mock_controller_.get(), IsCustomizeChromeEntryShowing())
       .WillByDefault(testing::Return(true));
 
   EXPECT_CALL(*mock_controller_.get(), CloseSidePanel).Times(1);
+  EXPECT_CALL(doc_, SetCustomizeChromeSidePanelVisibility)
+      .WillOnce([](bool visible) { EXPECT_FALSE(visible); });
   EXPECT_CALL(*GetMockFeaturePromoHelper(),
               RecordPromoFeatureUsageAndClosePromo)
       .Times(0);
 
   handler_->SetCustomizeChromeSidePanelVisible(
-      /*visible=*/false,
-      customize_buttons::mojom::CustomizeChromeSection::kModules,
+      /*visible=*/false, CustomizeChromeSection::kModules,
       customize_buttons::mojom::SidePanelOpenTrigger::kNewTabPage);
   doc_.FlushForTesting();
 }
 
 IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest,
                        IncrementCustomizeChromeButtonOpenCount) {
-  CreateHanlder(GetParam());
   EXPECT_EQ(profile()->GetPrefs()->GetInteger(
                 prefs::kNtpCustomizeChromeButtonOpenCount),
             0);
@@ -215,7 +236,6 @@ IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest,
 
 IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest,
                        IncrementWallpaperSearchButtonShownCount) {
-  CreateHanlder(GetParam());
   EXPECT_EQ(profile()->GetPrefs()->GetInteger(
                 prefs::kNtpWallpaperSearchButtonShownCount),
             0);
@@ -226,37 +246,19 @@ IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTest,
             1);
 }
 
-class CustomizeButtonsHandlerBrowserTestWithParam
+class CustomizeButtonsHandlerTriggerParamTest
     : public CustomizeButtonsHandlerBrowserTestBase,
       public testing::WithParamInterface<
-          std::tuple<customize_buttons::mojom::CustomizeChromeSection,
-                     customize_buttons::mojom::SidePanelOpenTrigger>> {
+          customize_buttons::mojom::SidePanelOpenTrigger> {
+ public:
+  void SetUpOnMainThread() override {
+    CustomizeButtonsHandlerBrowserTestBase::SetUpOnMainThread();
+    CreateHandler(/*set_tab_interface=*/false);
+  }
+
  protected:
-  customize_buttons::mojom::CustomizeChromeSection GetSectionParam() {
-    return std::get<0>(GetParam());
-  }
-
-  customize_buttons::mojom::SidePanelOpenTrigger GetTriggerParam() {
-    return std::get<1>(GetParam());
-  }
-
-  CustomizeChromeSection GetExpectedSection(
-      customize_buttons::mojom::CustomizeChromeSection section) {
-    // TODO(crbug.com/419081665) Dedupe CustomizeChromeSection mojom enums.
-    switch (section) {
-      case customize_buttons::mojom::CustomizeChromeSection::kUnspecified:
-        return CustomizeChromeSection::kUnspecified;
-      case customize_buttons::mojom::CustomizeChromeSection::kAppearance:
-        return CustomizeChromeSection::kAppearance;
-      case customize_buttons::mojom::CustomizeChromeSection::kShortcuts:
-        return CustomizeChromeSection::kShortcuts;
-      case customize_buttons::mojom::CustomizeChromeSection::kModules:
-        return CustomizeChromeSection::kModules;
-      case customize_buttons::mojom::CustomizeChromeSection::kWallpaperSearch:
-        return CustomizeChromeSection::kWallpaperSearch;
-      case customize_buttons::mojom::CustomizeChromeSection::kToolbar:
-        return CustomizeChromeSection::kToolbar;
-    }
+  customize_buttons::mojom::SidePanelOpenTrigger trigger_param() const {
+    return GetParam();
   }
 
   SidePanelOpenTrigger GetExpectedTrigger(
@@ -272,22 +274,12 @@ class CustomizeButtonsHandlerBrowserTestWithParam
 
 INSTANTIATE_TEST_SUITE_P(
     All,
-    CustomizeButtonsHandlerBrowserTestWithParam,
-    testing::Combine(
-        testing::Values(
-            customize_buttons::mojom::CustomizeChromeSection::kUnspecified,
-            customize_buttons::mojom::CustomizeChromeSection::kAppearance,
-            customize_buttons::mojom::CustomizeChromeSection::kShortcuts,
-            customize_buttons::mojom::CustomizeChromeSection::kModules,
-            customize_buttons::mojom::CustomizeChromeSection::kWallpaperSearch,
-            customize_buttons::mojom::CustomizeChromeSection::kToolbar),
-        testing::Values(
-            customize_buttons::mojom::SidePanelOpenTrigger::kNewTabPage,
-            customize_buttons::mojom::SidePanelOpenTrigger::kNewTabFooter)));
+    CustomizeButtonsHandlerTriggerParamTest,
+    testing::Values(
+        customize_buttons::mojom::SidePanelOpenTrigger::kNewTabPage,
+        customize_buttons::mojom::SidePanelOpenTrigger::kNewTabFooter));
 
-IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTestWithParam,
-                       OpenSidePanel) {
-  CreateHanlder(false);
+IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerTriggerParamTest, OpenSidePanel) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   std::optional<CustomizeChromeSection> section;
@@ -300,25 +292,20 @@ IN_PROC_BROWSER_TEST_P(CustomizeButtonsHandlerBrowserTestWithParam,
   EXPECT_CALL(
       *GetMockFeaturePromoHelper(),
       RecordPromoFeatureUsageAndClosePromo(
-          testing::Ref(feature_engagement::kIPHDesktopCustomizeChromeFeature),
+          testing::Ref(
+              feature_engagement::kIPHDesktopCustomizeChromeExperimentFeature),
           web_contents))
       .Times(1);
   EXPECT_CALL(
       *GetMockFeaturePromoHelper(),
       RecordPromoFeatureUsageAndClosePromo(
           testing::Ref(
-              feature_engagement::kIPHDesktopCustomizeChromeRefreshFeature),
+              feature_engagement::kIPHDesktopCustomizeChromeAutoOpenFeature),
           web_contents))
       .Times(1);
 
-  const customize_buttons::mojom::CustomizeChromeSection sectionParam =
-      GetSectionParam();
-  const customize_buttons::mojom::SidePanelOpenTrigger triggerParam =
-      GetTriggerParam();
-  handler_->SetCustomizeChromeSidePanelVisible(/*visible=*/true, sectionParam,
-                                               triggerParam);
+  handler_->SetCustomizeChromeSidePanelVisible(
+      /*visible=*/true, CustomizeChromeSection::kUnspecified, trigger_param());
 
-  EXPECT_EQ(section.value(), GetExpectedSection(sectionParam));
-  EXPECT_EQ(trigger, GetExpectedTrigger(triggerParam));
-  doc_.FlushForTesting();
+  EXPECT_EQ(trigger, GetExpectedTrigger(trigger_param()));
 }

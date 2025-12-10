@@ -11,10 +11,11 @@
 
 static jlong JNI_ChromeNavigationUiData_CreateUnownedNativeCopy(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
     jlong bookmark_id) {
   ChromeNavigationUIData* ui_data = new ChromeNavigationUIData();
   ui_data->set_bookmark_id(bookmark_id);
   return reinterpret_cast<intptr_t>(
       static_cast<content::NavigationUIData*>(ui_data));
 }
+
+DEFINE_JNI(ChromeNavigationUiData)

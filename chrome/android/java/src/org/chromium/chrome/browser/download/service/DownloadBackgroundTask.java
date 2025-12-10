@@ -11,7 +11,7 @@ import androidx.annotation.VisibleForTesting;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
-import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.download.DownloadNotificationService;
 import org.chromium.chrome.browser.download.DownloadUserInitiatedTaskManager;
@@ -29,6 +29,7 @@ import org.chromium.components.download.internal.BatteryStatusListenerAndroid;
  * scheduler.
  */
 @JNINamespace("download::android")
+@NullMarked
 public class DownloadBackgroundTask extends NativeBackgroundTask {
     @DownloadTaskType private int mCurrentTaskType;
 
@@ -72,12 +73,12 @@ public class DownloadBackgroundTask extends NativeBackgroundTask {
         }
         DownloadBackgroundTaskJni.get()
                 .startBackgroundTask(
-                        DownloadBackgroundTask.this,
                         getProfileKey(),
                         mCurrentTaskType,
-                        needsReschedule -> {
-                            finishTask(taskParameters, callback, needsReschedule);
-                        });
+                        new DownloadBackgroundTaskCallback(
+                                needsReschedule -> {
+                                    finishTask(taskParameters, callback, needsReschedule);
+                                }));
     }
 
     @Override
@@ -98,8 +99,7 @@ public class DownloadBackgroundTask extends NativeBackgroundTask {
         }
         @DownloadTaskType
         int taskType = taskParameters.getExtras().getInt(DownloadTaskScheduler.EXTRA_TASK_TYPE);
-        return DownloadBackgroundTaskJni.get()
-                .stopBackgroundTask(DownloadBackgroundTask.this, getProfileKey(), taskType);
+        return DownloadBackgroundTaskJni.get().stopBackgroundTask(getProfileKey(), taskType);
     }
 
     @VisibleForTesting
@@ -126,11 +126,8 @@ public class DownloadBackgroundTask extends NativeBackgroundTask {
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public interface Natives {
         void startBackgroundTask(
-                DownloadBackgroundTask caller,
-                ProfileKey key,
-                int taskType,
-                Callback<Boolean> callback);
+                ProfileKey key, int taskType, DownloadBackgroundTaskCallback callback);
 
-        boolean stopBackgroundTask(DownloadBackgroundTask caller, ProfileKey key, int taskType);
+        boolean stopBackgroundTask(ProfileKey key, int taskType);
     }
 }

@@ -27,8 +27,8 @@
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/browser/webdata/payments/payments_autofill_table.h"
 #include "components/autofill/core/browser/webdata/payments/payments_sync_bridge_util.h"
+#include "components/autofill/core/browser/webdata/payments/payments_sync_util.h"
 #include "components/sync/base/data_type.h"
-#include "components/sync/base/hash_util.h"
 #include "components/sync/model/client_tag_based_data_type_processor.h"
 #include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/model/sync_metadata_store_change_list.h"
@@ -222,7 +222,7 @@ void AutofillWalletSyncBridge::CreateForWebDataServiceAndBackend(
     const std::string& app_locale,
     AutofillWebDataBackend* web_data_backend,
     AutofillWebDataService* web_data_service) {
-  web_data_service->GetDBUserData()->SetUserData(
+  web_data_service->GetDBUserData().SetUserData(
       &kAutofillWalletSyncBridgeUserDataKey,
       std::make_unique<AutofillWalletSyncBridge>(
           std::make_unique<syncer::ClientTagBasedDataTypeProcessor>(
@@ -235,7 +235,7 @@ void AutofillWalletSyncBridge::CreateForWebDataServiceAndBackend(
 syncer::DataTypeSyncBridge* AutofillWalletSyncBridge::FromWebDataService(
     AutofillWebDataService* web_data_service) {
   return static_cast<AutofillWalletSyncBridge*>(
-      web_data_service->GetDBUserData()->GetUserData(
+      web_data_service->GetDBUserData().GetUserData(
           &kAutofillWalletSyncBridgeUserDataKey));
 }
 
@@ -300,7 +300,7 @@ std::string AutofillWalletSyncBridge::GetClientTag(
     const syncer::EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_autofill_wallet());
 
-  return syncer::GetUnhashedClientTagFromAutofillWalletSpecifics(
+  return GetUnhashedClientTagFromAutofillWalletSpecifics(
       entity_data.specifics.autofill_wallet());
 }
 
@@ -308,14 +308,14 @@ std::string AutofillWalletSyncBridge::GetStorageKey(
     const syncer::EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_autofill_wallet());
   return GetStorageKeyForWalletDataClientTag(
-      syncer::GetUnhashedClientTagFromAutofillWalletSpecifics(
+      GetUnhashedClientTagFromAutofillWalletSpecifics(
           entity_data.specifics.autofill_wallet()));
 }
 
 bool AutofillWalletSyncBridge::IsEntityDataValid(
     const syncer::EntityData& entity_data) const {
   CHECK(entity_data.specifics.has_autofill_wallet());
-  return !syncer::GetUnhashedClientTagFromAutofillWalletSpecifics(
+  return !GetUnhashedClientTagFromAutofillWalletSpecifics(
               entity_data.specifics.autofill_wallet())
               .empty();
 }
@@ -367,7 +367,8 @@ std::unique_ptr<syncer::DataBatch> AutofillWalletSyncBridge::GetAllDataImpl(
        !GetAutofillTable()->GetPaymentInstrumentCreationOptions(
            payment_instrument_creation_options))) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to load entries from table."});
+        {FROM_HERE, syncer::ModelError::Type::
+                        kAutofillWalletFailedToLoadEntriesFromTable});
     return nullptr;
   }
 
@@ -379,7 +380,8 @@ std::unique_ptr<syncer::DataBatch> AutofillWalletSyncBridge::GetAllDataImpl(
     if (!GetAutofillTable()->GetCreditCardBenefitsForInstrumentId(
             entry->instrument_id(), benefits)) {
       change_processor()->ReportError(
-          {FROM_HERE, "Failed to load entries from table."});
+          {FROM_HERE, syncer::ModelError::Type::
+                          kAutofillWalletFailedToLoadBenefitsFromTable});
       return nullptr;
     }
     for (const CreditCardBenefit& benefit : benefits) {
@@ -707,15 +709,18 @@ void AutofillWalletSyncBridge::LoadMetadata() {
   if (!web_data_backend_ || !web_data_backend_->GetDatabase() ||
       !GetAutofillTable() || !GetSyncMetadataStore()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to load AutofillWebDatabase."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kAutofillWalletFailedToLoadDatabase});
     return;
   }
 
   auto batch = std::make_unique<syncer::MetadataBatch>();
   if (!GetSyncMetadataStore()->GetAllSyncMetadata(syncer::AUTOFILL_WALLET_DATA,
                                                   batch.get())) {
-    change_processor()->ReportError(
-        {FROM_HERE, "Failed reading autofill metadata from WebDatabase."});
+    change_processor()->ReportError({
+        FROM_HERE,
+        syncer::ModelError::Type::kAutofillWalletFailedToReadMetadata,
+    });
     return;
   }
 

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <inttypes.h>
 
 #include <iostream>
@@ -19,19 +14,22 @@
 #include "base/at_exit.h"
 #include "base/base_paths.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/logging/logging_settings.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "net/cert/root_store_proto_full/root_store.pb.h"
 #include "third_party/boringssl/src/include/openssl/bio.h"
 #include "third_party/boringssl/src/include/openssl/err.h"
@@ -74,14 +72,16 @@ std::optional<std::map<std::string, std::string>> DecodeCerts(
     bssl::UniquePtr<char> scoped_name(name);
     bssl::UniquePtr<char> scoped_header(header);
     bssl::UniquePtr<unsigned char> scoped_data(data);
-    if (strcmp(name, "CERTIFICATE") != 0) {
+    if (std::string_view(name) != "CERTIFICATE") {
       LOG(ERROR) << "Found PEM block of type " << name
                  << " instead of CERTIFICATE";
       return std::nullopt;
     }
-    std::string sha256_hex = base::ToLowerASCII(base::HexEncode(
-        crypto::SHA256Hash(base::span(data, base::checked_cast<size_t>(len)))));
-    certs[sha256_hex] = std::string(data, data + len);
+    std::string_view cert_view(reinterpret_cast<const char*>(data),
+                               base::checked_cast<size_t>(len));
+    const std::string sha256_hex =
+        base::HexEncodeLower(crypto::hash::Sha256(cert_view));
+    certs[sha256_hex] = std::string(cert_view);
   }
   return std::move(certs);
 }
@@ -394,7 +394,8 @@ bool WriteEvCppFile(const RootStore& root_store,
       continue;
     }
 
-    std::string sha256_hash = crypto::SHA256HashString(anchor.der());
+    std::string sha256_hash =
+        std::string(base::as_string_view(crypto::hash::Sha256(anchor.der())));
 
     // Begin struct. Assumed type of EVMetadata:
     //

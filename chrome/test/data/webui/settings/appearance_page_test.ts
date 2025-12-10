@@ -2,125 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
-import type {AppearanceBrowserProxy, /*CrButtonElement,*/ CustomizeColorSchemeModeClientRemote, SettingsAppearancePageElement, SettingsDropdownMenuElement} from 'chrome://settings/settings.js';
-import {AppearanceBrowserProxyImpl, ColorSchemeMode, CustomizeColorSchemeModeBrowserProxy, CustomizeColorSchemeModeClientCallbackRouter, CustomizeColorSchemeModeHandlerRemote, SystemTheme} from 'chrome://settings/settings.js';
+import type {CustomizeColorSchemeModeClientRemote, SettingsAppearancePageElement, SettingsDropdownMenuElement, SettingsToggleButtonElement} from 'chrome://settings/settings.js';
+import {AppearanceBrowserProxyImpl, ColorSchemeMode, CustomizeColorSchemeModeBrowserProxy, CustomizeColorSchemeModeClientCallbackRouter, CustomizeColorSchemeModeHandlerRemote, loadTimeData, SystemTheme} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
-import {TestBrowserProxy} from 'chrome://webui-test/test_browser_proxy.js';
 import {TestMock} from 'chrome://webui-test/test_mock.js';
 import {isVisible, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
-class TestAppearanceBrowserProxy extends TestBrowserProxy implements
-    AppearanceBrowserProxy {
-  private defaultZoom_: number = 1;
-  private isChildAccount_: boolean = false;
-  private isHomeUrlValid_: boolean = true;
-  private pinnedToolbarActionsAreDefaultResponse_: boolean = true;
-
-  constructor() {
-    super([
-      'getDefaultZoom',
-      'getThemeInfo',
-      'isChildAccount',
-      'openCustomizeChrome',
-      'openCustomizeChromeToolbarSection',
-      'recordHoverCardImagesEnabledChanged',
-      'resetPinnedToolbarActions',
-      'useDefaultTheme',
-      // <if expr="is_linux">
-      'useGtkTheme',
-      'useQtTheme',
-      // </if>
-      'validateStartupPage',
-      'pinnedToolbarActionsAreDefault',
-    ]);
-  }
-
-  getDefaultZoom() {
-    this.methodCalled('getDefaultZoom');
-    return Promise.resolve(this.defaultZoom_);
-  }
-
-  getThemeInfo(themeId: string) {
-    this.methodCalled('getThemeInfo', themeId);
-    return Promise.resolve({
-      id: '',
-      name: 'Sports car red',
-      shortName: '',
-      description: '',
-      version: '',
-      mayDisable: false,
-      enabled: false,
-      isApp: false,
-      offlineEnabled: false,
-      optionsUrl: '',
-      permissions: [],
-      hostPermissions: [],
-    });
-  }
-
-  isChildAccount() {
-    this.methodCalled('isChildAccount');
-    return this.isChildAccount_;
-  }
-
-  openCustomizeChrome() {
-    this.methodCalled('openCustomizeChrome');
-  }
-
-  openCustomizeChromeToolbarSection() {
-    this.methodCalled('openCustomizeChromeToolbarSection');
-  }
-
-  recordHoverCardImagesEnabledChanged(enabled: boolean) {
-    this.methodCalled('recordHoverCardImagesEnabledChanged', enabled);
-  }
-
-  resetPinnedToolbarActions() {
-    this.methodCalled('resetPinnedToolbarActions');
-  }
-
-  useDefaultTheme() {
-    this.methodCalled('useDefaultTheme');
-  }
-
-  // <if expr="is_linux">
-  useGtkTheme() {
-    this.methodCalled('useGtkTheme');
-  }
-
-  useQtTheme() {
-    this.methodCalled('useQtTheme');
-  }
-  // </if>
-
-  setDefaultZoom(defaultZoom: number) {
-    this.defaultZoom_ = defaultZoom;
-  }
-
-  setIsChildAccount(isChildAccount: boolean) {
-    this.isChildAccount_ = isChildAccount;
-  }
-
-  validateStartupPage(url: string) {
-    this.methodCalled('validateStartupPage', url);
-    return Promise.resolve(this.isHomeUrlValid_);
-  }
-
-  setValidStartupPageResponse(isValid: boolean) {
-    this.isHomeUrlValid_ = isValid;
-  }
-
-  pinnedToolbarActionsAreDefault() {
-    this.methodCalled('pinnedToolbarActionsAreDefault');
-    return Promise.resolve(this.pinnedToolbarActionsAreDefaultResponse_);
-  }
-
-  setPinnedToolbarActionsAreDefaultResponse(areDefault: boolean) {
-    this.pinnedToolbarActionsAreDefaultResponse_ = areDefault;
-  }
-}
+import {TestAppearanceBrowserProxy} from './test_appearance_browser_proxy.js';
 
 let appearancePage: SettingsAppearancePageElement;
 let appearanceBrowserProxy: TestAppearanceBrowserProxy;
@@ -175,6 +64,12 @@ function createAppearancePage() {
     },
     tab_search: {
       is_right_aligned: {
+        type: chrome.settingsPrivate.PrefType.BOOLEAN,
+        value: false,
+      },
+    },
+    vertical_tabs: {
+      enabled: {
         type: chrome.settingsPrivate.PrefType.BOOLEAN,
         value: false,
       },
@@ -377,8 +272,6 @@ suite('AppearanceHandler', function() {
   });
 
   test('ColorSchemeMode', async () => {
-    assertFalse(isVisible(appearancePage.$.colorSchemeModeRow));
-
     colorSchemeHandler.reset();
     createAppearancePage();
     await colorSchemeHandler.whenCalled('initializeColorSchemeMode');
@@ -404,7 +297,7 @@ suite('AppearanceHandler', function() {
   test('default zoom handling', async function() {
     function getDefaultZoomText() {
       const zoomLevel = appearancePage.$.zoomLevel;
-      return zoomLevel.options[zoomLevel.selectedIndex]!.textContent!.trim();
+      return zoomLevel.options[zoomLevel.selectedIndex]!.textContent.trim();
     }
 
     await appearanceBrowserProxy.whenCalled('getDefaultZoom');
@@ -469,6 +362,55 @@ suite('AppearanceHandler', function() {
     await microtasksFinished();
     assertTrue(
         !appearancePage.shadowRoot!.querySelector('#tabSearchPositionRow'));
+  });
+
+  test('show split view drag and drop options', async function() {
+    loadTimeData.overrideValues({
+      showSplitViewDragAndDropSetting: true,
+    });
+    createAppearancePage();
+    await microtasksFinished();
+    assertTrue(
+        !!appearancePage.shadowRoot!.querySelector('#splitViewDragAndDrop'));
+    assertFalse(!!appearancePage.shadowRoot!
+                      .querySelector<SettingsToggleButtonElement>(
+                          '#splitViewDragAndDrop')!.hidden);
+  });
+
+  test('hide split view drag and drop options', async function() {
+    loadTimeData.overrideValues({
+      showSplitViewDragAndDropSetting: false,
+    });
+    createAppearancePage();
+    await microtasksFinished();
+    assertTrue(
+        !!appearancePage.shadowRoot!.querySelector('#splitViewDragAndDrop'));
+    assertTrue(!!appearancePage.shadowRoot!
+                     .querySelector<SettingsToggleButtonElement>(
+                         '#splitViewDragAndDrop')!.hidden);
+  });
+
+  test('split view drag and drop toggle updates pref', async function() {
+    loadTimeData.overrideValues({
+      showSplitViewDragAndDropSetting: true,
+    });
+    createAppearancePage();
+    appearancePage.set('prefs.browser.split_view_drag_and_drop_enabled', {
+      type: chrome.settingsPrivate.PrefType.BOOLEAN,
+      value: true,
+    });
+    await microtasksFinished();
+
+    const toggle =
+        appearancePage.shadowRoot!.querySelector<SettingsToggleButtonElement>(
+            '#splitViewDragAndDrop');
+    assertTrue(!!toggle);
+    assertTrue(toggle.checked);
+
+    toggle.click();
+    await microtasksFinished();
+    assertFalse(appearancePage.get(
+        'prefs.browser.split_view_drag_and_drop_enabled.value'));
   });
 });
 
@@ -593,5 +535,52 @@ suite('TabSearchPositionSettings', () => {
 
     await userClicksDropdownForOption(/*userChoice=*/ false);
     assertFalse(!!getTabSearchRestartButton());
+  });
+});
+
+suite('TabStripPositionSettings', () => {
+  setup(async () => {
+    loadTimeData.overrideValues({
+      showVerticalTabsEnabled: true,
+    });
+
+    appearanceBrowserProxy = new TestAppearanceBrowserProxy();
+    AppearanceBrowserProxyImpl.setInstance(appearanceBrowserProxy);
+
+    createAppearancePage();
+
+    await microtasksFinished();
+  });
+
+  teardown(function() {
+    appearancePage.remove();
+  });
+
+  test('Dropdown menu updates vertical_tabs.enabled.value', async function() {
+    assertFalse(appearancePage.get('prefs.vertical_tabs.enabled.value'));
+
+    const dropdown =
+        appearancePage.shadowRoot!.querySelector<SettingsDropdownMenuElement>(
+            '#tabStripPosition');
+    assertTrue(!!dropdown);
+
+    const selectElement = dropdown.$.dropdownMenu;
+    assertTrue(!!selectElement);
+
+    assertEquals('false', selectElement.value);
+
+    selectElement.value = 'true';
+    selectElement.dispatchEvent(new Event('change'));
+    await microtasksFinished();
+
+    assertTrue(appearancePage.get('prefs.vertical_tabs.enabled.value'));
+    assertEquals('true', selectElement.value);
+
+    selectElement.value = 'false';
+    selectElement.dispatchEvent(new Event('change'));
+    await microtasksFinished();
+
+    assertFalse(appearancePage.get('prefs.vertical_tabs.enabled.value'));
+    assertEquals('false', selectElement.value);
   });
 });

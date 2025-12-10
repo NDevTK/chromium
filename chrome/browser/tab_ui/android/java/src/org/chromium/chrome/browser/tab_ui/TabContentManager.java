@@ -190,7 +190,7 @@ public class TabContentManager {
         mNativeTabContentManager =
                 TabContentManagerJni.get()
                         .init(
-                                TabContentManager.this,
+                                this,
                                 mFullResThumbnailsMaxSize,
                                 compressionQueueMaxSize,
                                 writeQueueMaxSize,
@@ -263,9 +263,12 @@ public class TabContentManager {
     }
 
     private @Nullable Bitmap readbackNativeView(
-            View viewToDraw, float scale, NativePage nativePage) {
+            View viewToDraw, float scale, @Nullable NativePage nativePage) {
         Bitmap bitmap;
         float overlayTranslateY = mBrowserControlsStateProvider.getTopVisibleContentOffset();
+        if (nativePage != null) {
+            overlayTranslateY += nativePage.getTopInset();
+        }
 
         float leftMargin = 0.f;
         float topMargin = 0.f;
@@ -710,7 +713,7 @@ public class TabContentManager {
     interface Natives {
         // Class Object Methods
         long init(
-                TabContentManager caller,
+                TabContentManager self,
                 int defaultCacheSize,
                 int compressionQueueMaxSize,
                 int writeQueueMaxSize,

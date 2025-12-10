@@ -96,7 +96,13 @@ bool IsValidRangeAndMarkable(const RangeInFlatTree* range) {
   Node* common_node = ephemeral_range.CommonAncestorContainer();
 
   LayoutObject* object = common_node->GetLayoutObject();
-  CHECK(object);
+  while (!object) {
+    common_node = FlatTreeTraversal::Parent(*common_node);
+    // We should exit this loop before this is false (i.e. there must be at
+    // least one ancestor node with a LayoutObject).
+    CHECK(common_node);
+    object = common_node->GetLayoutObject();
+  }
 
   PhysicalRect absolute_bounding_box =
       object->AbsoluteBoundingBoxRectForScrollIntoView();
@@ -123,13 +129,14 @@ bool IsValidRangeAndMarkable(const RangeInFlatTree* range) {
     // FindBuffer does find this text (as typically overflow: hidden can still
     // be programmatically scrolled).
     if (box->HasNonVisibleOverflow()) {
+      PhysicalSize size = box->StitchedSize();
       if (box->StyleRef().OverflowX() != EOverflow::kVisible &&
-          box->Size().width.RawValue() <= 0) {
+          size.width.RawValue() <= 0) {
         return false;
       }
 
       if (box->StyleRef().OverflowY() != EOverflow::kVisible &&
-          box->Size().height.RawValue() <= 0) {
+          size.height.RawValue() <= 0) {
         return false;
       }
     }
@@ -236,9 +243,8 @@ AnnotationAgentImpl::AnnotationAgentImpl(
     AnnotationSelector& selector,
     std::optional<DOMNodeId> search_range_start_node_id,
     AnnotationAgentContainerImpl::PassKey)
-    : agent_host_(owning_container.GetSupplementable()->GetExecutionContext()),
-      receiver_(this,
-                owning_container.GetSupplementable()->GetExecutionContext()),
+    : agent_host_(owning_container.GetDocument().GetExecutionContext()),
+      receiver_(this, owning_container.GetDocument().GetExecutionContext()),
       owning_container_(&owning_container),
       selector_(&selector),
       search_range_start_node_id_(search_range_start_node_id),
@@ -262,7 +268,7 @@ void AnnotationAgentImpl::Bind(
   DCHECK(!IsRemoved());
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      owning_container_->GetSupplementable()->GetTaskRunner(
+      owning_container_->GetDocument().GetTaskRunner(
           TaskType::kInternalDefault);
 
   agent_host_.Bind(std::move(host_remote), task_runner);
@@ -270,7 +276,7 @@ void AnnotationAgentImpl::Bind(
 
   // Breaking the mojo connection will cause this agent to remove itself from
   // the container.
-  receiver_.set_disconnect_handler(WTF::BindOnce(
+  receiver_.set_disconnect_handler(BindOnce(
       [](WeakPersistent<AnnotationAgentImpl> agent) {
         if (!agent || !agent->OwningContainer()) {
           return;
@@ -293,7 +299,7 @@ void AnnotationAgentImpl::Attach(AnnotationAgentContainerImpl::PassKey) {
 
   // Create the search range within which the agent will attempt to match the
   // selector in.
-  Document* document = owning_container_->GetSupplementable();
+  Document* document = &owning_container_->GetDocument();
   Range* search_range = document->createRange();
   if (document->body()) {
     search_range->selectNode(document->body());
@@ -315,8 +321,8 @@ void AnnotationAgentImpl::Attach(AnnotationAgentContainerImpl::PassKey) {
 
   needs_attachment_ = false;
   selector_->FindRange(*search_range, AnnotationSelector::kSynchronous,
-                       WTF::BindOnce(&AnnotationAgentImpl::DidFinishFindRange,
-                                     WrapWeakPersistent(this)));
+                       BindOnce(&AnnotationAgentImpl::DidFinishFindRange,
+                                WrapWeakPersistent(this)));
 }
 
 bool AnnotationAgentImpl::IsAttached() const {
@@ -378,7 +384,7 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
   CHECK(range.Nodes().begin() != range.Nodes().end());
   Node& first_node = *range.Nodes().begin();
 
-  Document& document = *owning_container_->GetSupplementable();
+  Document& document = owning_container_->GetDocument();
   document.EnsurePaintLocationDataValidForNode(
       &first_node, DocumentUpdateReason::kFindInPage);
 
@@ -496,10 +502,10 @@ void AnnotationAgentImpl::DidFinishFindRange(const RangeInFlatTree* range) {
   } else {
     // TODO(bokan): We may need to force an animation frame e.g. if we're in a
     // throttled iframe.
-    Document& document = *owning_container_->GetSupplementable();
+    Document& document = owning_container_->GetDocument();
     document.EnqueueAnimationFrameTask(
-        WTF::BindOnce(&AnnotationAgentImpl::PerformPreAttachDOMMutation,
-                      WrapPersistent(this)));
+        BindOnce(&AnnotationAgentImpl::PerformPreAttachDOMMutation,
+                 WrapPersistent(this)));
   }
 }
 
@@ -537,17 +543,15 @@ void AnnotationAgentImpl::PerformPreAttachDOMMutation() {
     DisplayLockUtilities::ActivateFindInPageMatchRangeIfNeeded(
         pending_range_->ToEphemeralRange());
 
-    // If the active match is hidden inside a <details> element, then we should
-    // expand it so we can scroll to it.
-    if (HTMLDetailsElement::ExpandDetailsAncestors(first_node)) {
+    // If the active match is hidden inside a <details> element or a
+    // hidden=until-found element, then we should expand it so we can scroll to
+    // it.
+    if (DisplayLockUtilities::RevealAutoExpandableAncestors(first_node)
+            .revealed_details) {
       UseCounter::Count(
           first_node.GetDocument(),
           WebFeature::kAutoExpandedDetailsForScrollToTextFragment);
     }
-
-    // If the active match is hidden inside a hidden=until-found element, then
-    // we should reveal it so we can scroll to it.
-    DisplayLockUtilities::RevealHiddenUntilFoundAncestors(first_node);
 
     // Ensure we leave clean layout since we'll be applying markers after this.
     first_node.GetDocument().UpdateStyleAndLayout(
@@ -652,8 +656,7 @@ mojom::blink::ScrollBehavior AnnotationAgentImpl::ComputeScrollIntoViewBehavior(
   using mojom::blink::AnnotationType;
   using mojom::blink::ScrollBehavior;
 
-  CHECK(owning_container_->GetSupplementable());
-  Document* document = owning_container_->GetSupplementable();
+  Document* document = &owning_container_->GetDocument();
   if (document->GetSettings() &&
       document->GetSettings()->GetPrefersReducedMotion()) {
     return ScrollBehavior::kInstant;

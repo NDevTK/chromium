@@ -20,9 +20,12 @@ extern const char kIsAllowlistedByUserKey[];
 // Website setting value key for suspicious notification ids.
 extern const char kSuspiciousNotificationIdsKey[];
 
+// Website setting value key for suspicious notification show original.
+extern const char kSuspiciousNotificationShowOriginalKey[];
+
 // MQLS metadata dictionary.
-extern const char kMetadataDictionaryKey[];
-extern const char kMetadataSuspiciousKey[];
+extern const char kNotificationContentDetectionMetadataDictionaryKey[];
+extern const char kMetadataSuspiciousScoreKey[];
 extern const char kMetadataIsOriginOnGlobalCacheListKey[];
 extern const char kMetadataIsOriginAllowlistedByUserKey[];
 

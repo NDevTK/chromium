@@ -17,8 +17,13 @@
 #include "ui/gfx/geometry/size_f.h"
 #include "v8/include/v8-forward.h"
 
+class SkBitmap;
 class SkImage;
 class SkSurface;
+
+namespace base::test {
+class TaskEnvironment;
+}  // namespace base::test
 
 namespace gfx {
 class Size;
@@ -55,13 +60,17 @@ base::FilePath GetReferenceFilePath(
 // Matches `actual_image` against the PNG at the file path `expected_png_file`.
 // The path must be relative to //pdf/test/data.
 testing::AssertionResult MatchesPngFile(
-    const SkImage* actual_image,
+    const SkImage& actual_image,
     const base::FilePath& expected_png_file);
 
 // Same as MatchesPngFile() above, but with a fuzzy pixel comparator.
 testing::AssertionResult FuzzyMatchesPngFile(
-    const SkImage* actual_image,
+    const SkImage& actual_image,
     const base::FilePath& expected_png_file);
+
+// Returns true if all pixels are blank.
+bool IsBitmapBlank(const SkBitmap& bitmap);
+bool IsImageBlank(const SkImage& image);
 
 // Takes `pdf_data` and loads it using PDFium. Then renders the page at
 // `page_index` to a bitmap of `size_in_points` and checks if it matches
@@ -92,6 +101,14 @@ void SetBlinkIsolate(v8::Isolate* isolate);
 
 // Get print parameters for general use in tests.
 blink::WebPrintParams GetDefaultPrintParams();
+
+// Sets the global PDF test task environment.
+void SetPdfTestTaskEnvironment(base::test::TaskEnvironment* task_environment);
+
+// Returns the global PDF test task environment. Should always exist for any
+// tests in the PDF test suite, otherwise crashes if no task environment was
+// set.
+base::test::TaskEnvironment& GetPdfTestTaskEnvironment();
 
 }  // namespace chrome_pdf
 

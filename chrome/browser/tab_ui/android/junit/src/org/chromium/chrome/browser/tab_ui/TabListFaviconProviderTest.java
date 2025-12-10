@@ -36,14 +36,13 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.Callback;
 import org.chromium.base.CallbackUtils;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.Holder;
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider.ResourceTabFavicon;
@@ -61,7 +60,6 @@ import org.chromium.url.JUnitTestGURLs;
 /** Unit tests for {@link TabListFaviconProvider}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@EnableFeatures(ChromeFeatureList.TAB_SWITCHER_FOREIGN_FAVICON_SUPPORT)
 public class TabListFaviconProviderTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -282,14 +280,10 @@ public class TabListFaviconProviderTest {
     }
 
     private TabFavicon doFetchFavicon(Runnable after, TabFaviconFetcher fetcher) {
-        TabFavicon[] faviconHolder = new TabFavicon[1];
-        Callback<TabFavicon> callback =
-                tabFavicon -> {
-                    faviconHolder[0] = tabFavicon;
-                };
-        fetcher.fetch(callback);
+        Holder<@Nullable TabFavicon> faviconHolder = new Holder<>(null);
+        fetcher.fetch(faviconHolder);
         after.run();
-        return faviconHolder[0];
+        return faviconHolder.value;
     }
 
     private TabFavicon doFetchFavicon(TabFaviconFetcher fetcher) {

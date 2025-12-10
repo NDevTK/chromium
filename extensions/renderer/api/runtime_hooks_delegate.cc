@@ -86,6 +86,7 @@ void EmptySetter(v8::Local<v8::Name> name,
 }
 
 constexpr char kGetManifest[] = "runtime.getManifest";
+constexpr char kGetVersion[] = "runtime.getVersion";
 constexpr char kGetURL[] = "runtime.getURL";
 constexpr char kConnect[] = "runtime.connect";
 constexpr char kConnectNative[] = "runtime.connectNative";
@@ -155,7 +156,7 @@ v8::LocalVector<v8::Value> MassageRequestUpdateCheckResults(
   DCHECK(success);
 
   // Version is wrapped as a parameter on a details object.
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Local<v8::Object> details = v8::Object::New(isolate);
   auto key = gin::StringToV8(isolate, "version");
   details->CreateDataProperty(context, key, version).Check();
@@ -195,7 +196,8 @@ RequestResult RuntimeHooksDelegate::GetURL(
   // as part of the path, there should be no way this could conceivably fail.
   DCHECK(url.is_valid());
 
-  if (WebAccessibleResourcesInfo::ShouldUseDynamicUrl(extension, url.path())) {
+  if (WebAccessibleResourcesInfo::ShouldUseDynamicUrl(extension,
+                                                      url.GetPath())) {
     GURL::Replacements replacements;
     replacements.SetHostStr(extension->guid());
     url = url.ReplaceComponents(replacements);
@@ -223,6 +225,7 @@ RequestResult RuntimeHooksDelegate::HandleRequest(
       {&RuntimeHooksDelegate::HandleConnect, kConnect},
       {&RuntimeHooksDelegate::HandleGetURL, kGetURL},
       {&RuntimeHooksDelegate::HandleGetManifest, kGetManifest},
+      {&RuntimeHooksDelegate::HandleGetVersion, kGetVersion},
       {&RuntimeHooksDelegate::HandleConnectNative, kConnectNative},
       {&RuntimeHooksDelegate::HandleSendNativeMessage, kSendNativeMessage},
       {&RuntimeHooksDelegate::HandleGetBackgroundPage, kGetBackgroundPage},
@@ -254,7 +257,7 @@ RequestResult RuntimeHooksDelegate::HandleRequest(
   }
 
   if (should_massage) {
-    messaging_util::MassageSendMessageArguments(context->GetIsolate(),
+    messaging_util::MassageSendMessageArguments(v8::Isolate::GetCurrent(),
                                                 allow_options, arguments);
   }
 
@@ -290,6 +293,20 @@ RequestResult RuntimeHooksDelegate::HandleGetManifest(
   RequestResult result(RequestResult::HANDLED);
   result.return_value = content::V8ValueConverter::Create()->ToV8Value(
       *script_context->extension()->manifest()->value(),
+      script_context->v8_context());
+
+  return result;
+}
+
+RequestResult RuntimeHooksDelegate::HandleGetVersion(
+    ScriptContext* script_context,
+    const APISignature::V8ParseResult& parse_result) {
+  DCHECK_EQ(binding::AsyncResponseType::kNone, parse_result.async_type);
+  CHECK(script_context->extension());
+
+  RequestResult result(RequestResult::HANDLED);
+  result.return_value = content::V8ValueConverter::Create()->ToV8Value(
+      script_context->extension()->VersionString(),
       script_context->v8_context());
 
   return result;
@@ -423,15 +440,16 @@ RequestResult RuntimeHooksDelegate::HandleConnect(
         messaging_util::PARSE_CHANNEL_NAME);
   }
 
-  gin::Handle<GinPort> port = messaging_service_->Connect(
+  GinPort* port = messaging_service_->Connect(
       script_context, MessageTarget::ForExtension(target_id),
       options.channel_name,
       messaging_util::GetSerializationFormat(*script_context));
-  DCHECK(!port.IsEmpty());
+  DCHECK(port);
   DCHECK_EQ(binding::AsyncResponseType::kNone, parse_result.async_type);
 
   RequestResult result(RequestResult::HANDLED);
-  result.return_value = port.ToV8();
+  result.return_value =
+      port->GetWrapper(script_context->isolate()).ToLocalChecked();
   return result;
 }
 
@@ -449,12 +467,13 @@ RequestResult RuntimeHooksDelegate::HandleConnectNative(
   // Native messaging always uses JSON since a native host doesn't understand
   // structured cloning serialization.
   auto format = mojom::SerializationFormat::kJson;
-  gin::Handle<GinPort> port = messaging_service_->Connect(
+  GinPort* port = messaging_service_->Connect(
       script_context, MessageTarget::ForNativeApp(application_name),
       std::string(), format);
 
   RequestResult result(RequestResult::HANDLED);
-  result.return_value = port.ToV8();
+  result.return_value =
+      port->GetWrapper(script_context->isolate()).ToLocalChecked();
   return result;
 }
 

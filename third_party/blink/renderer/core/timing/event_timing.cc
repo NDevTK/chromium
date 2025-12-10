@@ -14,7 +14,7 @@
 #include "third_party/blink/renderer/core/events/wheel_event.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/loader/interactive_detector.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/performance_event_timing.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
@@ -34,14 +34,6 @@ bool ShouldLogEvent(const Event& event) {
          event.type() == event_type_names::kKeydown ||
          event.type() == event_type_names::kMousedown ||
          event.type() == event_type_names::kMouseup;
-}
-
-bool ShouldReportForEventTiming(WindowPerformance* performance) {
-  if (!performance->FirstInputDetected())
-    return true;
-
-  return (!performance->IsEventTimingBufferFull() ||
-          performance->HasObserverFor(PerformanceEntry::kEvent));
 }
 
 }  // namespace
@@ -102,7 +94,7 @@ std::optional<EventTiming> EventTiming::TryCreate(
     LocalDOMWindow* window,
     const Event& event,
     EventTarget* hit_test_target) {
-  auto* performance = DOMWindowPerformance::performance(*window);
+  auto* performance = GlobalPerformance::performance(*window);
   if (!performance || !IsEventTypeForEventTiming(event)) {
     return std::nullopt;
   }
@@ -113,26 +105,6 @@ std::optional<EventTiming> EventTiming::TryCreate(
   // two EventTiming objects for the same Event.
   if (performance->GetCurrentEventTimingEvent() == &event)
     return std::nullopt;
-
-  if (!RuntimeEnabledFeatures::
-          ContinueEventTimingRecordingWhenBufferIsFullEnabled()) {
-    bool should_report_for_event_timing =
-        ShouldReportForEventTiming(performance);
-
-    bool should_log_event = ShouldLogEvent(event);
-
-    if (!should_report_for_event_timing && !should_log_event) {
-      return std::nullopt;
-    }
-
-    base::TimeTicks processing_start = Now();
-    HandleInputDelay(window, event, processing_start);
-
-    if (!should_report_for_event_timing && !should_log_event) {
-      return std::nullopt;
-    }
-    return EventTiming(processing_start, performance, event, hit_test_target);
-  }
 
   base::TimeTicks processing_start = Now();
 

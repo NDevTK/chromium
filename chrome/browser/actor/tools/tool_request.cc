@@ -4,6 +4,8 @@
 
 #include "chrome/browser/actor/tools/tool_request.h"
 
+#include <optional>
+
 #include "chrome/browser/actor/tools/tool.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
@@ -21,12 +23,45 @@ ToolRequest::CreateToolResult::~CreateToolResult() = default;
 
 ToolRequest::ToolRequest() = default;
 ToolRequest::~ToolRequest() = default;
+ToolRequest::ToolRequest(const ToolRequest& other) = default;
+ToolRequest& ToolRequest::operator=(const ToolRequest& other) = default;
+
+bool ToolRequest::IsTabScoped() const {
+  return GetTabHandle() != tabs::TabHandle::Null();
+}
+
+bool ToolRequest::AddsTabToObservationSet() const {
+  return IsTabScoped();
+}
 
 GURL ToolRequest::GetURLForJournal() const {
   return GURL::EmptyGURL();
 }
 
-TabToolRequest::TabToolRequest(const tabs::TabInterface::Handle tab_handle)
+tabs::TabHandle ToolRequest::GetTabHandle() const {
+  return tabs::TabHandle();
+}
+
+std::string ToolRequest::JournalEvent() const {
+  return std::string(Name());
+}
+
+bool ToolRequest::RequiresUrlCheckInCurrentTab() const {
+  // By default, tab scoped tools require current tab URL checks but individual
+  // tools can override this.
+  return IsTabScoped();
+}
+
+std::optional<url::Origin> ToolRequest::AssociatedOriginGrant() const {
+  return std::nullopt;
+}
+
+ObservationDelayController::PageStabilityConfig
+ToolRequest::GetObservationPageStabilityConfig() const {
+  return ObservationDelayController::PageStabilityConfig();
+}
+
+TabToolRequest::TabToolRequest(const tabs::TabHandle tab_handle)
     : tab_handle_(tab_handle) {
   // The given handle need not be valid - the handle is validated at time of
   // dereferencing when instantiating a tool. However, it must be a non-null
@@ -34,6 +69,9 @@ TabToolRequest::TabToolRequest(const tabs::TabInterface::Handle tab_handle)
   CHECK_NE(tab_handle.raw_value(), TabHandle::Null().raw_value());
 }
 TabToolRequest::~TabToolRequest() = default;
+TabToolRequest::TabToolRequest(const TabToolRequest& other) = default;
+TabToolRequest& TabToolRequest::operator=(const TabToolRequest& other) =
+    default;
 
 GURL TabToolRequest::GetURLForJournal() const {
   if (TabInterface* tab = tab_handle_.Get()) {
@@ -42,7 +80,7 @@ GURL TabToolRequest::GetURLForJournal() const {
   return ToolRequest::GetURLForJournal();
 }
 
-tabs::TabInterface::Handle TabToolRequest::GetTabHandle() const {
+tabs::TabHandle TabToolRequest::GetTabHandle() const {
   return tab_handle_;
 }
 

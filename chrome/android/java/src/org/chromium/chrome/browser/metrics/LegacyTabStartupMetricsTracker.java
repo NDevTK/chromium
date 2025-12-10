@@ -10,6 +10,8 @@ import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.page_load_metrics.PageLoadMetrics;
 import org.chromium.chrome.browser.paint_preview.StartupPaintPreviewHelper;
@@ -26,6 +28,7 @@ import org.chromium.url.GURL;
  * Tracks the first navigation and first contentful paint events for a tab within an activity during
  * startup.
  */
+@NullMarked
 public class LegacyTabStartupMetricsTracker {
     private static final String FIRST_PAINT_OCCURRED_PRE_FOREGROUND_HISTOGRAM =
             "Startup.Android.Cold.FirstPaintOccurredPreForeground";
@@ -67,10 +70,9 @@ public class LegacyTabStartupMetricsTracker {
     // Event duration recorded from the |mActivityStartTimeMs|.
     private long mFirstCommitTimeMs;
     private @ActivityType int mHistogramSuffix;
-    private TabModelSelectorTabObserver mTabModelSelectorTabObserver;
-    private PageLoadMetricsObserverImpl mPageLoadMetricsObserver;
+    private @Nullable TabModelSelectorTabObserver mTabModelSelectorTabObserver;
+    private @Nullable PageLoadMetricsObserverImpl mPageLoadMetricsObserver;
     private boolean mShouldTrackStartupMetrics;
-    private boolean mFirstVisibleContentRecorded;
     private boolean mFirstVisibleContent2Recorded;
     private boolean mVisibleContentRecorded;
     private boolean mBackPressOccurred;
@@ -142,10 +144,6 @@ public class LegacyTabStartupMetricsTracker {
                     FIRST_PAINT_OCCURRED_PRE_FOREGROUND_HISTOGRAM, true);
         }
 
-        RecordHistogram.deprecatedRecordMediumTimesHistogram(
-                "Startup.Android.Cold.TimeToForegroundSessionStart",
-                SystemClock.uptimeMillis() - mActivityStartTimeMs);
-
         UmaUtils.removeObserver();
     }
 
@@ -160,7 +158,6 @@ public class LegacyTabStartupMetricsTracker {
                     public void onFirstPaint(long durationMs) {
                         RecordHistogram.recordBooleanHistogram(
                                 FIRST_PAINT_OCCURRED_PRE_FOREGROUND_HISTOGRAM, false);
-                        recordFirstVisibleContent(durationMs);
                         recordFirstVisibleContent2(durationMs);
                         recordVisibleContent(durationMs);
                     }
@@ -238,9 +235,6 @@ public class LegacyTabStartupMetricsTracker {
                     "Startup.Android.Cold.TimeToFirstNavigationCommit"
                             + activityTypeToSuffix(mHistogramSuffix),
                     mFirstCommitTimeMs);
-            if (mHistogramSuffix == ActivityType.TABBED) {
-                recordFirstVisibleContent(mFirstCommitTimeMs);
-            }
         }
 
         if (mHistogramSuffix == ActivityType.TABBED
@@ -287,29 +281,9 @@ public class LegacyTabStartupMetricsTracker {
     }
 
     /**
-     * Records the legacy version of the time to first visible content.
-     *
-     * This metric acts as the Clank cold start guardian metric.
-     *
-     * Reports the minimum value of Startup.Android.Cold.TimeToFirstNavigationCommit.Tabbed and
-     * Browser.PaintPreview.TabbedPlayer.TimeToFirstBitmap.
-     *
-     * @param durationMs duration in millis.
-     */
-    private void recordFirstVisibleContent(long durationMs) {
-        if (mFirstVisibleContentRecorded) return;
-
-        mFirstVisibleContentRecorded = true;
-        RecordHistogram.deprecatedRecordMediumTimesHistogram(
-                "Startup.Android.Cold.TimeToFirstVisibleContent", durationMs);
-    }
-
-    /**
      * Records the time to first visible content.
      *
-     * This metric aims to become the new the Clank cold start guardian metric.
-     *
-     * Reports the minimum value of Startup.Android.Cold.TimeToFirstNavigationCommit2.Tabbed and
+     * <p>Reports the minimum value of Startup.Android.Cold.TimeToFirstNavigationCommit2.Tabbed and
      * Browser.PaintPreview.TabbedPlayer.TimeToFirstBitmap.
      *
      * @param durationMs duration in millis.

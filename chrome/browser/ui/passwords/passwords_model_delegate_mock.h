@@ -39,10 +39,6 @@ class PasswordsModelDelegateMock : public PasswordsModelDelegate {
               GetPendingPassword,
               (),
               (const override));
-  MOCK_METHOD(const std::vector<password_manager::PasswordForm>&,
-              GetUnsyncedCredentials,
-              (),
-              (const override));
   MOCK_METHOD(password_manager::metrics_util::CredentialSourceType,
               GetCredentialSource,
               (),
@@ -67,6 +63,14 @@ class PasswordsModelDelegateMock : public PasswordsModelDelegate {
               (),
               (const override));
   MOCK_METHOD(const std::string&, PasskeyRpId, (), (const override));
+  MOCK_METHOD(const std::u16string&,
+              PasswordChangeUsername,
+              (),
+              (const override));
+  MOCK_METHOD(const std::u16string&,
+              PasswordChangeNewPassword,
+              (),
+              (const override));
   MOCK_METHOD(void, OnBubbleShown, (), (override));
   MOCK_METHOD(void, OnBubbleHidden, (), (override));
   MOCK_METHOD(void, OnNoInteraction, (), (override));
@@ -78,11 +82,6 @@ class PasswordsModelDelegateMock : public PasswordsModelDelegate {
               SavePassword,
               (const std::u16string&, const std::u16string&),
               (override));
-  MOCK_METHOD(void,
-              SaveUnsyncedCredentialsInProfileStore,
-              (const std::vector<password_manager::PasswordForm>&),
-              (override));
-  MOCK_METHOD(void, DiscardUnsyncedCredentials, (), (override));
   MOCK_METHOD(void, MovePasswordToAccountStore, (), (override));
   MOCK_METHOD(void, BlockMovingPasswordToAccountStore, (), (override));
   MOCK_METHOD(void,
@@ -133,6 +132,8 @@ class PasswordsModelDelegateMock : public PasswordsModelDelegate {
               (),
               (override));
   MOCK_METHOD(void, NavigateToPasswordChangeSettings, (), (override));
+  MOCK_METHOD(void, OnMouseEntered, (), (override));
+  MOCK_METHOD(void, OnMouseExited, (), (override));
 
   base::WeakPtr<PasswordsModelDelegateMock> AsWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();

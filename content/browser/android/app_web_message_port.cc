@@ -21,6 +21,7 @@
 #include "third_party/blink/public/common/messaging/transferable_message.h"
 #include "third_party/blink/public/common/messaging/transferable_message_mojom_traits.h"
 #include "third_party/blink/public/common/messaging/web_message_port.h"
+#include "third_party/blink/public/mojom/blob/blob.mojom.h"
 #include "third_party/blink/public/mojom/messaging/transferable_message.mojom.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
@@ -98,8 +99,8 @@ AppWebMessagePort::~AppWebMessagePort() {
 // JNI
 void AppWebMessagePort::PostMessage(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& j_message_payload,
-    const base::android::JavaParamRef<jobjectArray>& j_ports) {
+    const base::android::JavaRef<jobject>& j_message_payload,
+    const base::android::JavaRef<jobjectArray>& j_ports) {
   DCHECK(runner_->BelongsToCurrentThread());
   DCHECK(descriptor_.IsValid());
   DCHECK(connector_);
@@ -207,7 +208,7 @@ void AppWebMessagePort::GiveDisentangledHandleIfNeeded() {
   connector_.reset();
 }
 
-base::android::ScopedJavaLocalRef<jobjectArray>
+static base::android::ScopedJavaLocalRef<jobjectArray>
 JNI_AppWebMessagePort_CreatePair(JNIEnv* env) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   blink::MessagePortDescriptorPair port_pair;
@@ -218,3 +219,5 @@ JNI_AppWebMessagePort_CreatePair(JNIEnv* env) {
 }
 
 }  // namespace content::android
+
+DEFINE_JNI(AppWebMessagePort)

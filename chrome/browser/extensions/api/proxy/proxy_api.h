@@ -8,13 +8,14 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_PROXY_PROXY_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_PROXY_PROXY_API_H_
 
-#include <optional>
 #include <string>
 
 #include "base/memory/singleton.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
-
 // This class observes proxy error events and routes them to the appropriate
 // extensions listening to those events. All methods must be called on the IO
 // thread unless otherwise specified.

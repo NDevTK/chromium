@@ -36,7 +36,6 @@ namespace {
 using testing::_;
 using testing::ElementsAre;
 using testing::Eq;
-using testing::Invoke;
 using testing::IsEmpty;
 using testing::NotNull;
 using testing::Pair;
@@ -92,6 +91,11 @@ class MockSyncableService : public SyncableService {
   base::WeakPtr<SyncableService> AsWeakPtr() override {
     return weak_ptr_factory_.GetWeakPtr();
   }
+  MOCK_METHOD(std::string,
+              GetClientTag,
+              (const EntityData& entity_data),
+              (const override));
+  MOCK_METHOD(bool, SupportsGetClientTag, (), (const override));
 
  private:
   base::WeakPtrFactory<MockSyncableService> weak_ptr_factory_{this};
@@ -108,8 +112,7 @@ class SyncableServiceBasedBridgeTest : public ::testing::Test {
   SyncableServiceBasedBridgeTest()
       : store_(DataTypeStoreTestUtil::CreateInMemoryStoreForTest()) {
     ON_CALL(syncable_service_, WaitUntilReadyToSync)
-        .WillByDefault(
-            Invoke([](base::OnceClosure done) { std::move(done).Run(); }));
+        .WillByDefault([](base::OnceClosure done) { std::move(done).Run(); });
     ON_CALL(syncable_service_, MergeDataAndStartSyncing)
         .WillByDefault(
             [&](DataType type, const SyncDataList& initial_sync_data,
@@ -228,9 +231,9 @@ TEST_F(SyncableServiceBasedBridgeTest,
 TEST_F(SyncableServiceBasedBridgeTest, ShouldWaitUntilModelReadyToSync) {
   base::OnceClosure syncable_service_ready_cb;
   ON_CALL(syncable_service_, WaitUntilReadyToSync)
-      .WillByDefault(Invoke([&](base::OnceClosure done) {
+      .WillByDefault([&](base::OnceClosure done) {
         syncable_service_ready_cb = std::move(done);
-      }));
+      });
 
   EXPECT_CALL(mock_processor_, ModelReadyToSync).Times(0);
   EXPECT_CALL(syncable_service_, WaitUntilReadyToSync).Times(0);
@@ -302,14 +305,14 @@ TEST_F(SyncableServiceBasedBridgeTest,
 
   base::RunLoop loop;
   ON_CALL(syncable_service_, WaitUntilReadyToSync)
-      .WillByDefault(Invoke([&](base::OnceClosure done) {
+      .WillByDefault([&](base::OnceClosure done) {
         // This should mark sync metadata as pending clear on start.
         real_processor_->ClearMetadataIfStopped();
         // Metadata has not been cleared yet.
         ASSERT_THAT(GetAllData(), Not(IsEmpty()));
         std::move(done).Run();
         loop.Quit();
-      }));
+      });
 
   base::HistogramTester histogram_tester;
   EXPECT_CALL(syncable_service_, StayStoppedAndMaybeClearData(kDataType));
@@ -389,10 +392,10 @@ TEST_F(SyncableServiceBasedBridgeTest,
 
   base::RunLoop loop;
   ON_CALL(syncable_service_, WaitUntilReadyToSync)
-      .WillByDefault(Invoke([&](base::OnceClosure done) {
+      .WillByDefault([&](base::OnceClosure done) {
         std::move(done).Run();
         loop.Quit();
-      }));
+      });
   EXPECT_CALL(syncable_service_, StayStoppedAndMaybeClearData(kDataType))
       .Times(0);
   base::HistogramTester histogram_tester;
@@ -418,7 +421,8 @@ TEST_F(SyncableServiceBasedBridgeTest,
 TEST_F(SyncableServiceBasedBridgeTest, ShouldPropagateErrorDuringStart) {
   // Instrument MergeDataAndStartSyncing() to return an error.
   ON_CALL(syncable_service_, MergeDataAndStartSyncing)
-      .WillByDefault(Return(ModelError(FROM_HERE, "Test error")));
+      .WillByDefault(Return(
+          ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError)));
 
   EXPECT_CALL(mock_error_handler_, Run);
 
@@ -584,7 +588,8 @@ TEST_F(SyncableServiceBasedBridgeTest,
 
   // We fake an error, reported by the bridge.
   EXPECT_CALL(mock_error_handler_, Run);
-  real_processor_->ReportError(ModelError(FROM_HERE, "Fake error"));
+  real_processor_->ReportError(
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   ASSERT_TRUE(real_processor_->GetError());
 
   // Further local changes should be ignored.
@@ -783,10 +788,10 @@ TEST_F(SyncableServiceBasedBridgeTest, ShouldMeasureSyncableServiceStartTime) {
 
   base::RunLoop loop;
   ON_CALL(syncable_service_, WaitUntilReadyToSync)
-      .WillByDefault(Invoke([&](base::OnceClosure done) {
+      .WillByDefault([&](base::OnceClosure done) {
         std::move(done).Run();
         loop.Quit();
-      }));
+      });
 
   base::HistogramTester histogram_tester;
   EXPECT_CALL(syncable_service_, MergeDataAndStartSyncing);
@@ -847,7 +852,8 @@ TEST_F(SyncableServiceBasedBridgeTest,
 
   // Instrument MergeDataAndStartSyncing() to return an error.
   EXPECT_CALL(syncable_service_, MergeDataAndStartSyncing)
-      .WillOnce(Return(ModelError(FROM_HERE, "Test error")));
+      .WillOnce(Return(
+          ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError)));
   EXPECT_CALL(mock_error_handler_, Run);
 
   worker_->UpdateFromServer(kClientTagHash, GetTestSpecifics("name1"));

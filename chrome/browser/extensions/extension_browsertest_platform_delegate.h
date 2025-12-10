@@ -7,6 +7,9 @@
 
 #include "base/memory/raw_ref.h"
 #include "build/build_config.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class GURL;
 class Profile;
@@ -53,9 +56,6 @@ class ExtensionBrowserTestPlatformDelegate {
   // TODO(devlin): Move this to browsertest_util? It's not used _that_ much.
   const Extension* LoadAndLaunchApp(const base::FilePath& path,
                                     bool uses_guest_view);
-
-  // Wait for the number of visible page actions to change to `count`.
-  bool WaitForPageActionVisibilityChangeTo(int count);
 
  private:
   // The parent test. Owns `this`.

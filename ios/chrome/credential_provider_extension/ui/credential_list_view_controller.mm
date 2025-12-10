@@ -19,13 +19,14 @@
 #import "ios/chrome/credential_provider_extension/metrics_util.h"
 #import "ios/chrome/credential_provider_extension/ui/credential_list_global_header_view.h"
 #import "ios/chrome/credential_provider_extension/ui/credential_list_header_view.h"
+#import "ios/chrome/credential_provider_extension/ui/ui_util.h"
 
 namespace {
 
 // Reuse Identifiers for table views.
-NSString* kHeaderIdentifier = @"clvcHeader";
-NSString* kCredentialCellIdentifier = @"clvcCredentialCell";
-NSString* kNewPasswordCellIdentifier = @"clvcNewPasswordCell";
+NSString* const kHeaderIdentifier = @"clvcHeader";
+NSString* const kCredentialCellIdentifier = @"clvcCredentialCell";
+NSString* const kNewPasswordCellIdentifier = @"clvcNewPasswordCell";
 
 const CGFloat kNewCredentialHeaderHeight = 35;
 // Add extra space to offset the top of the table view from the search bar.
@@ -323,8 +324,7 @@ UIColor* BackgroundColor() {
 
 // Creates a button to be displayed as accessory of the credential row item.
 - (UIView*)infoIconButton {
-  UIImage* image = [UIImage imageNamed:@"info_icon"];
-  image = [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+  UIImage* image = GetCredentialInfoIcon();
 
   HighlightButton* button = [HighlightButton buttonWithType:UIButtonTypeCustom];
   button.frame = CGRectMake(0.0, 0.0, image.size.width, image.size.height);

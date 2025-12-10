@@ -170,6 +170,11 @@ const char kDisableGpuWatchdog[] = "disable-gpu-watchdog";
 // can be used.
 const char kDisableIpcFloodingProtection[] = "disable-ipc-flooding-protection";
 
+// Disables the IgnoreDuplicateNavs feature. This prevent navigations from
+// being unintentionally ignored in tests.
+const char kDisableIgnoreDuplicateNavsForTesting[] =
+    "disable-ignore-duplicate-navs-for-testing";
+
 // Disable the RenderThread's HistogramCustomizer.
 const char kDisableHistogramCustomizer[]    = "disable-histogram-customizer";
 
@@ -469,12 +474,6 @@ const char kIPCConnectionTimeout[]          = "ipc-connection-timeout";
 //   --isolate-origins=https://www.foo.com,https://www.bar.com
 const char kIsolateOrigins[] = "isolate-origins";
 
-// Enables the web-facing behaviors that will enable origin-isolation by default
-// at some point in the relatively near future.
-//
-// https://crbug.com/1140371
-const char kIsolationByDefault[] = "isolation-by-default";
-
 // Disable latest shipping ECMAScript 6 features.
 const char kDisableJavaScriptHarmonyShipping[] =
     "disable-javascript-harmony-shipping";
@@ -623,6 +622,12 @@ const char kRendererClientId[] = "renderer-client-id";
 // The contents of this flag are prepended to the renderer command line.
 // Useful values might be "valgrind" or "xterm -e gdb --args".
 const char kRendererCmdPrefix[]             = "renderer-cmd-prefix";
+
+#if !BUILDFLAG(IS_ANDROID)
+// Indicates that the renderer process was launched to host the initial WebUI
+// as part of WaaP (Webium-as-a-Product).
+const char kRendererForInitialWebUI[] = "renderer-for-initial-webui";
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 // Causes the process to run as renderer instead of as browser.
 const char kRendererProcess[]               = "renderer";
@@ -791,6 +796,10 @@ const char kUtilityStartupDialog[] = "utility-startup-dialog";
 // services offered by the process, but is added to the command line to make
 // it easier to identify the purpose of the utility process.
 const char kUtilitySubType[] = "utility-sub-type";
+
+// Crash the Utility process early in start-up, for testing.
+const char kUtilityImmediateCrashForTesting[] =
+    "utility-immediate-crash-for-testing";
 
 // Causes tests to attempt to verify pixel output.
 const char kVerifyPixels[] = "browser-ui-tests-verify-pixels";

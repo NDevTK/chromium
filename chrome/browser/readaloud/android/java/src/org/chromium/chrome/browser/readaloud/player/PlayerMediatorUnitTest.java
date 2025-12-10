@@ -10,6 +10,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.doReturn;
@@ -47,8 +48,13 @@ import org.robolectric.shadows.ShadowLooper;
 import org.chromium.base.Promise;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.UserActionTester;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker.LayerType;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.readaloud.ReadAloudMetrics;
 import org.chromium.chrome.browser.readaloud.ReadAloudPrefs;
 import org.chromium.chrome.browser.readaloud.ReadAloudPrefsJni;
@@ -68,6 +74,7 @@ import java.util.Map;
 
 /** Unit tests for {@link PlayerMediator}. */
 @RunWith(BaseRobolectricTestRunner.class)
+@DisableFeatures({ChromeFeatureList.FEED_AUDIO_OVERVIEWS})
 @Config(manifest = Config.NONE)
 public class PlayerMediatorUnitTest {
     private static final String TITLE = "Title";
@@ -80,6 +87,7 @@ public class PlayerMediatorUnitTest {
     @Mock private Playback mPlayback;
     @Mock private Playback.Metadata mPlaybackMetadata;
     @Mock private SeekBar mSeekbar;
+    @Mock private BottomControlsStacker mBottomControlsStacker;
     private MockPrefServiceHelper mMockPrefServiceHelper;
     private OnSeekBarChangeListener mOnSeekBarChangeListener;
     private final PlaybackVoice mPlaybackVoiceA = new PlaybackVoice("en", "a", "");
@@ -168,6 +176,7 @@ public class PlayerMediatorUnitTest {
         doReturn(PUBLISHER).when(mPlaybackMetadata).publisher();
         doReturn(PlaybackMode.OVERVIEW).when(mPlaybackMetadata).playbackMode();
         doReturn(1000).when(mSeekbar).getMax();
+        doReturn(mBottomControlsStacker).when(mDelegate).getBottomControlsStacker();
         mVoicesSupplier = new ObservableSupplierImpl<>();
         mVoicesSupplier.set(List.of(new PlaybackVoice("en", "a")));
         mSelectedVoiceIdSupplier = new ObservableSupplierImpl<>();
@@ -198,7 +207,8 @@ public class PlayerMediatorUnitTest {
 
         mModel = Mockito.spy(new PropertyModel.Builder(PlayerProperties.ALL_KEYS).build());
         mModel.set(PlayerProperties.HIDDEN_AND_PLAYING, false);
-        mMediator = new PlayerMediator(mPlayerCoordinator, mDelegate, mModel);
+        mMediator =
+                new PlayerMediator(mPlayerCoordinator, mDelegate, mModel, mBottomControlsStacker);
         mMediator.setClockForTesting(mClock);
         mOnSeekBarChangeListener = mMediator.getSeekBarChangeListener();
         mUserActionTester = new UserActionTester();
@@ -224,7 +234,7 @@ public class PlayerMediatorUnitTest {
         assertEquals(PUBLISHER, mModel.get(PlayerProperties.PUBLISHER));
         assertEquals(true, mModel.get(PlayerProperties.HIGHLIGHTING_SUPPORTED));
         assertEquals(true, mModel.get(PlayerProperties.HIGHLIGHTING_ENABLED));
-        assertEquals(mPlaybackMetadata.playbackMode().getValue(), mModel.get(PlayerProperties.PLAYBACK_MODE));
+        assertEquals(PlaybackMode.OVERVIEW.getValue(), mModel.get(PlayerProperties.PLAYBACK_MODE));
     }
 
     @Test
@@ -279,6 +289,18 @@ public class PlayerMediatorUnitTest {
         mPlaybackListenerCaptor.getValue().onPlaybackDataChanged(mPlaybackData);
 
         assertEquals(0.1f, (float) mModel.get(PlayerProperties.PROGRESS), /* delta= */ 1e-8f);
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.FEED_AUDIO_OVERVIEWS)
+    public void testMoveToNextOnPlaybackComleted() {
+        mMediator.setPlayback(mPlayback);
+        verify(mPlayback).addListener(mPlaybackListenerCaptor.capture());
+
+        mPlaybackData.mAbsolutePositionNanos = DURATION_NS;
+        mPlaybackData.mTotalDurationNanos = DURATION_NS;
+        mPlaybackListenerCaptor.getValue().onPlaybackDataChanged(mPlaybackData);
+        verify(mDelegate).moveToNext();
     }
 
     @Test
@@ -459,6 +481,71 @@ public class PlayerMediatorUnitTest {
     }
 
     @Test
+    public void testPlaybackCloseInfoRecorded_duringPlaybackCreation_overview() {
+        var playbackPositionAtManualCloseHistogram =
+                HistogramWatcher.newSingleRecordWatcher(
+                        ReadAloudMetrics.OVERVIEW_PLAYBACK_POSITION_ON_MANUAL_CLOSE,
+                        0); // NOT_STARTED
+        var timeToMidCreationCloseHistogram =
+                HistogramWatcher.newSingleRecordWatcher(
+                        ReadAloudMetrics.OVERVIEW_PLAYBACK_TIME_TO_MID_LOADING_MANUAL_CLOSE,
+                        1000); // 1000MS until manual close.
+        mMediator.setPlayback(mPlayback);
+        mMediator.setPlaybackState(PLAYBACK_CREATION);
+        mMediator.setRequestedPlaybackMode(PlaybackMode.OVERVIEW);
+        mClock.advanceCurrentTimeMillis(1000);
+        mMediator.onCloseClick();
+
+        playbackPositionAtManualCloseHistogram.assertExpected();
+        timeToMidCreationCloseHistogram.assertExpected();
+    }
+
+    @Test
+    public void testPlaybackCloseInfoRecorded_duringPlaybackCreation_standard() {
+        var playbackPositionAtManualCloseHistogram =
+                HistogramWatcher.newSingleRecordWatcher(
+                        ReadAloudMetrics.STANDARD_PLAYBACK_POSITION_ON_MANUAL_CLOSE,
+                        0); // NOT_STARTED
+        var timeToMidCreationCloseHistogram =
+                HistogramWatcher.newSingleRecordWatcher(
+                        ReadAloudMetrics.STANDARD_PLAYBACK_TIME_TO_MID_LOADING_MANUAL_CLOSE,
+                        1000); // 1000MS until manual close.
+        mMediator.setPlayback(mPlayback);
+        mMediator.setPlaybackState(PLAYBACK_CREATION);
+        mMediator.setRequestedPlaybackMode(PlaybackMode.CLASSIC);
+        mClock.advanceCurrentTimeMillis(1000);
+        mMediator.onCloseClick();
+
+        playbackPositionAtManualCloseHistogram.assertExpected();
+        timeToMidCreationCloseHistogram.assertExpected();
+    }
+
+    @Test
+    public void testPlaybackCloseInfoRecorded_duringPlayback() {
+        var playbackPositionAtManualCloseHistogram =
+                HistogramWatcher.newSingleRecordWatcher(
+                        ReadAloudMetrics.OVERVIEW_PLAYBACK_POSITION_ON_MANUAL_CLOSE,
+                        1); // 0-5 seconds
+        var noMidCreationClose =
+                HistogramWatcher.newBuilder()
+                        .expectNoRecords(
+                                ReadAloudMetrics.OVERVIEW_PLAYBACK_TIME_TO_MID_LOADING_MANUAL_CLOSE)
+                        .build();
+
+        mMediator.setPlayback(mPlayback);
+        mMediator.setPlaybackState(PLAYBACK_CREATION);
+        mMediator.setRequestedPlaybackMode(PlaybackMode.OVERVIEW);
+
+        mMediator.setPlaybackState(PLAYING);
+        mModel.set(PlayerProperties.ELAPSED_NANOS, 1 * 1_000_000_000L); // 1s duration.
+
+        mMediator.onCloseClick();
+
+        playbackPositionAtManualCloseHistogram.assertExpected();
+        noMidCreationClose.assertExpected();
+    }
+
+    @Test
     public void testOnPublisherClick() {
         mMediator.onPublisherClick();
         verify(mPlayerCoordinator).hideExpandedPlayer();
@@ -514,11 +601,34 @@ public class PlayerMediatorUnitTest {
 
     @Test
     public void testOnSpeedChange() {
+      doReturn(PlaybackMode.CLASSIC).when(mPlaybackMetadata).playbackMode();
+
         mMediator.setPlayback(mPlayback);
         mMediator.onSpeedChange(0.5f);
         verify(mPlayback).setRate(0.5f);
         mMediator.onSpeedChange(2f);
-        assertEquals(2f, ReadAloudPrefs.getSpeed(mDelegate.getPrefService()), /* delta= */ 0f);
+        assertEquals(
+                2f,
+                ReadAloudPrefs.getSpeed(mMockPrefServiceHelper.getPrefService()),
+                /* delta= */ 0f);
+        assertEquals(2f, mModel.get(PlayerProperties.SPEED), /* delta= */ 0f);
+    }
+
+    @Test
+    @EnableFeatures(
+            "ReadAloudAudioOverviews:read_aloud_audio_overviews_speed_addition_percentage/30")
+    public void testOnSpeedChange_overview() {
+        doReturn(PlaybackMode.OVERVIEW).when(mPlaybackMetadata).playbackMode();
+
+        mMediator.setPlayback(mPlayback);
+        mMediator.onSpeedChange(0.5f);
+        verify(mPlayback).setRate(0.8f);
+        mMediator.onSpeedChange(2f);
+        verify(mPlayback).setRate(2.3f);
+        assertEquals(
+                2f,
+                ReadAloudPrefs.getSpeed(mMockPrefServiceHelper.getPrefService()),
+                /* delta= */ 0f);
         assertEquals(2f, mModel.get(PlayerProperties.SPEED), /* delta= */ 0f);
     }
 
@@ -621,7 +731,7 @@ public class PlayerMediatorUnitTest {
         mOnSeekBarChangeListener.onStartTrackingTouch(mSeekbar);
         mPlaybackData.mAbsolutePositionNanos = 20 * 1_000_000_000L;
         mPlaybackListenerCaptor.getValue().onPlaybackDataChanged(mPlaybackData);
-        mOnSeekBarChangeListener.onProgressChanged(mSeekbar, mSeekbar.getMax() / 2, true);
+        mOnSeekBarChangeListener.onProgressChanged(mSeekbar, 1000 / 2, true);
         mOnSeekBarChangeListener.onStopTrackingTouch(mSeekbar);
 
         histogram.assertExpected();
@@ -638,7 +748,7 @@ public class PlayerMediatorUnitTest {
         mOnSeekBarChangeListener.onStartTrackingTouch(mSeekbar);
         mPlaybackData.mAbsolutePositionNanos = 20 * 1_000_000_000L;
         mPlaybackListenerCaptor.getValue().onPlaybackDataChanged(mPlaybackData);
-        mOnSeekBarChangeListener.onProgressChanged(mSeekbar, mSeekbar.getMax() / 2, true);
+        mOnSeekBarChangeListener.onProgressChanged(mSeekbar, 1000 / 2, true);
         mOnSeekBarChangeListener.onStopTrackingTouch(mSeekbar);
 
         histogram.assertExpected();
@@ -796,7 +906,7 @@ public class PlayerMediatorUnitTest {
     @Test
     public void testShouldRestoreMiniPlayer_null() {
         mMediator.onShouldRestoreMiniPlayer();
-        verify(mPlayerCoordinator, never()).restoreMiniPlayer();
+        verify(mPlayerCoordinator, never()).restoreMiniPlayer(anyBoolean());
     }
 
     @Test
@@ -815,7 +925,7 @@ public class PlayerMediatorUnitTest {
 
         // The mini player should restore.
         mMediator.onShouldRestoreMiniPlayer();
-        verify(mPlayerCoordinator).restoreMiniPlayer();
+        verify(mPlayerCoordinator).restoreMiniPlayer(true);
     }
 
     @Test
@@ -834,14 +944,18 @@ public class PlayerMediatorUnitTest {
 
         // The mini player should restore.
         mMediator.onShouldRestoreMiniPlayer();
-        verify(mPlayerCoordinator).restoreMiniPlayer();
+        verify(mPlayerCoordinator).restoreMiniPlayer(true);
     }
 
     @Test
     public void testShouldRestoreMiniPlayer() {
         mMediator.setPlayback(mPlayback);
         mMediator.onShouldRestoreMiniPlayer();
-        verify(mPlayerCoordinator).restoreMiniPlayer();
+        verify(mPlayerCoordinator).restoreMiniPlayer(true);
+
+        doReturn(true).when(mBottomControlsStacker).isLayerVisible(LayerType.BOTTOM_TOOLBAR);
+        mMediator.onShouldRestoreMiniPlayer();
+        verify(mPlayerCoordinator).restoreMiniPlayer(false);
     }
 
     @Test

@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/content_settings/fake_owner.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/webui_url_constants.h"
@@ -72,7 +73,8 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
         ->OnMediaStreamPermissionSet(web_contents->GetLastCommittedURL(),
                                      state);
     return std::make_unique<ContentSettingMediaStreamBubbleModel>(
-        browser()->content_setting_bubble_model_delegate(), web_contents);
+        browser()->GetFeatures().content_setting_bubble_model_delegate(),
+        web_contents);
   }
 
   content::WebContents* GetActiveTab() {
@@ -109,8 +111,7 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
           ContentSettingsPattern::Wildcard(),
           ContentSettingsPattern::Wildcard(), type,
           base::Value(ContentSetting::CONTENT_SETTING_BLOCK),
-          /*constraints=*/{},
-          content_settings::PartitionKey::GetDefaultForTesting());
+          /*constraints=*/{});
     }
     HostContentSettingsMap* map =
         HostContentSettingsMapFactory::GetForProfile(browser()->profile());
@@ -181,7 +182,8 @@ IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelMediaStreamTest,
           {PageSpecificContentSettings::kMicrophoneAccessed});
   std::unique_ptr<ContentSettingBubbleModel> mic_bubble =
       std::make_unique<ContentSettingMediaStreamBubbleModel>(
-          browser()->content_setting_bubble_model_delegate(), web_contents);
+          browser()->GetFeatures().content_setting_bubble_model_delegate(),
+          web_contents);
 
   EXPECT_TRUE(mic_bubble->bubble_content().is_user_modifiable);
 }
@@ -339,7 +341,7 @@ IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelPopupTest, PopupsActionsCount) {
   // Creates the ContentSettingPopupBubbleModel in order to emulate clicks.
   std::unique_ptr<ContentSettingBubbleModel> model(
       ContentSettingBubbleModel::CreateContentSettingBubbleModel(
-          browser()->content_setting_bubble_model_delegate(),
+          browser()->GetFeatures().content_setting_bubble_model_delegate(),
           browser()->tab_strip_model()->GetActiveWebContents(),
           ContentSettingsType::POPUPS));
   std::unique_ptr<FakeOwner> owner =

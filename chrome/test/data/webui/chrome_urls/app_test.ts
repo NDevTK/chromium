@@ -8,8 +8,10 @@ import type {ChromeUrlsAppElement} from 'chrome://chrome-urls/app.js';
 import {INTERNAL_DEBUG_PAGES_HASH} from 'chrome://chrome-urls/app.js';
 import {BrowserProxyImpl} from 'chrome://chrome-urls/browser_proxy.js';
 import type {WebuiUrlInfo} from 'chrome://chrome-urls/chrome_urls.mojom-webui.js';
+import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 import {assertEquals, assertFalse, assertGT, assertTrue} from 'chrome://webui-test/chai_assert.js';
+import {TestOpenWindowProxy} from 'chrome://webui-test/test_open_window_proxy.js';
 import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestChromeUrlsBrowserProxy} from './test_chrome_urls_browser_proxy.js';
@@ -20,10 +22,15 @@ suite('ChromeUrlsAppTest', function() {
 
   let app: ChromeUrlsAppElement;
   let browserProxy: TestChromeUrlsBrowserProxy;
+  let openWindowProxy: TestOpenWindowProxy;
 
   async function finishSetup(
       webuiUrls: WebuiUrlInfo[], internalDebuggingUisEnabled: boolean = false) {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+
+    openWindowProxy = new TestOpenWindowProxy();
+    OpenWindowProxyImpl.setInstance(openWindowProxy);
+
     browserProxy = new TestChromeUrlsBrowserProxy();
     browserProxy.handler.setTestData(
         {webuiUrls, commandUrls, internalDebuggingUisEnabled});
@@ -176,7 +183,7 @@ suite('ChromeUrlsAppTest', function() {
     assertEquals('disabled', status.textContent);
     const button = app.shadowRoot.querySelector('cr-button');
     assertTrue(!!button);
-    assertEquals('Enable internal debugging pages', button.textContent!.trim());
+    assertEquals('Enable internal debugging pages', button.textContent.trim());
 
     // Test case of enabling debug pages.
     button.click();
@@ -185,8 +192,7 @@ suite('ChromeUrlsAppTest', function() {
     await microtasksFinished();
     // Status is enabled, button is to disable, and page is linked.
     assertEquals('enabled', status.textContent);
-    assertEquals(
-        'Disable internal debugging pages', button.textContent!.trim());
+    assertEquals('Disable internal debugging pages', button.textContent.trim());
     internalItems = lists[1]!.querySelectorAll('li');
     assertEquals(1, internalItems.length);
     assertTrue(!!internalItems[0]!.querySelector('a'));
@@ -198,10 +204,52 @@ suite('ChromeUrlsAppTest', function() {
     assertFalse(enabled);
     await microtasksFinished();
     assertEquals('disabled', status.textContent);
-    assertEquals('Enable internal debugging pages', button.textContent!.trim());
+    assertEquals('Enable internal debugging pages', button.textContent.trim());
     internalItems = lists[1]!.querySelectorAll('li');
     assertEquals(1, internalItems.length);
     assertFalse(!!internalItems[0]!.querySelector('a'));
+  });
+
+  test('Enable debug UI redirects', async () => {
+    const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://webui-gallery/'}, enabled: false, internal: true},
+    ];
+    await finishSetup(webuiUrls);
+
+    const host = 'chrome://webui-gallery/foo/?param=bar';
+    window.history.replaceState(
+        {}, '', `/?host=${host}#${INTERNAL_DEBUG_PAGES_HASH}`);
+    const button = app.shadowRoot.querySelector('cr-button');
+    assertTrue(!!button);
+
+    // Test that enabling debug UIs redirects to host.
+    button.click();
+    const enabled =
+        await browserProxy.handler.whenCalled('setDebugPagesEnabled');
+    assertTrue(enabled);
+
+    assertEquals(host, await openWindowProxy.whenCalled('openUrl'));
+  });
+
+  test('Enable debug UI bad host', async () => {
+    const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://webui-gallery/'}, enabled: false, internal: true},
+    ];
+    await finishSetup(webuiUrls);
+
+    window.history.replaceState(
+        {}, '', `/?host=chrome://bad-host.com#${INTERNAL_DEBUG_PAGES_HASH}`);
+    const button = app.shadowRoot.querySelector('cr-button');
+    assertTrue(!!button);
+
+    // Test that enabling debug UIs doesn't redirect to bad host.
+    button.click();
+    const enabled =
+        await browserProxy.handler.whenCalled('setDebugPagesEnabled');
+    assertTrue(enabled);
+
+    await microtasksFinished();
+    assertEquals(0, openWindowProxy.getCallCount('openUrl'));
   });
 
   test('Navigate to debug UI headings', async () => {

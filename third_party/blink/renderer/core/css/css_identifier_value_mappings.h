@@ -43,6 +43,7 @@
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/style/position_area.h"
+#include "third_party/blink/renderer/core/style/scroll_marker_group.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_smoothing_mode.h"
 #include "third_party/blink/renderer/platform/fonts/font_variant_emoji.h"
@@ -272,9 +273,10 @@ inline CSSIdentifierValue::CSSIdentifierValue(AppearanceValue e)
       value_id_ = CSSValueID::kTextarea;
       break;
     case AppearanceValue::kBaseSelect:
-      // This can't check for origin trials, unfortunately.
-      DCHECK(HTMLSelectElement::CustomizableSelectEnabledNoDocument());
       value_id_ = CSSValueID::kBaseSelect;
+      break;
+    case AppearanceValue::kBase:
+      value_id_ = CSSValueID::kBase;
       break;
   }
 }
@@ -314,6 +316,8 @@ inline AppearanceValue CSSIdentifierValue::ConvertTo() const {
       return AppearanceValue::kTextArea;
     case CSSValueID::kBaseSelect:
       return AppearanceValue::kBaseSelect;
+    case CSSValueID::kBase:
+      return AppearanceValue::kBase;
     default:
       NOTREACHED();
   }
@@ -1696,6 +1700,66 @@ inline CSSIdentifierValue::CSSIdentifierValue(TextUnderlinePosition position)
 }
 
 template <>
+inline ScrollMarkerGroup::ScrollMarkerPosition CSSIdentifierValue::ConvertTo()
+    const {
+  using enum ScrollMarkerGroup::ScrollMarkerPosition;
+  switch (GetValueID()) {
+    case CSSValueID::kAfter:
+      return kAfter;
+    case CSSValueID::kBefore:
+      return kBefore;
+    default:
+      break;
+  }
+  NOTREACHED();
+}
+
+template <>
+inline CSSIdentifierValue::CSSIdentifierValue(
+    ScrollMarkerGroup::ScrollMarkerPosition position)
+    : CSSValue(kIdentifierClass) {
+  using enum ScrollMarkerGroup::ScrollMarkerPosition;
+  switch (position) {
+    case kAfter:
+      value_id_ = CSSValueID::kAfter;
+      break;
+    case kBefore:
+      value_id_ = CSSValueID::kBefore;
+      break;
+  }
+}
+
+template <>
+inline ScrollMarkerGroup::ScrollMarkerMode CSSIdentifierValue::ConvertTo()
+    const {
+  using enum ScrollMarkerGroup::ScrollMarkerMode;
+  switch (GetValueID()) {
+    case CSSValueID::kTabs:
+      return kTabs;
+    case CSSValueID::kLinks:
+      return kLinks;
+    default:
+      break;
+  }
+  NOTREACHED();
+}
+
+template <>
+inline CSSIdentifierValue::CSSIdentifierValue(
+    ScrollMarkerGroup::ScrollMarkerMode mode)
+    : CSSValue(kIdentifierClass) {
+  using enum ScrollMarkerGroup::ScrollMarkerMode;
+  switch (mode) {
+    case kTabs:
+      value_id_ = CSSValueID::kTabs;
+      break;
+    case kLinks:
+      value_id_ = CSSValueID::kLinks;
+      break;
+  }
+}
+
+template <>
 inline CoordBox CSSIdentifierValue::ConvertTo() const {
   switch (GetValueID()) {
     case CSSValueID::kContentBox:
@@ -1758,6 +1822,8 @@ inline GeometryBox CSSIdentifierValue::ConvertTo() const {
       return GeometryBox::kStrokeBox;
     case CSSValueID::kViewBox:
       return GeometryBox::kViewBox;
+    case CSSValueID::kHalfBorderBox:
+      return GeometryBox::kHalfBorderBox;
     default:
       break;
   }
@@ -1788,6 +1854,9 @@ inline CSSIdentifierValue::CSSIdentifierValue(GeometryBox geometry_box)
       break;
     case GeometryBox::kViewBox:
       value_id_ = CSSValueID::kViewBox;
+      break;
+    case GeometryBox::kHalfBorderBox:
+      value_id_ = CSSValueID::kHalfBorderBox;
       break;
   }
 }
@@ -1966,63 +2035,6 @@ inline TimelineOffset::NamedRange CSSIdentifierValue::ConvertTo() const {
 }
 
 template <>
-inline CSSIdentifierValue::CSSIdentifierValue(ScrollStartValueType value_type)
-    : CSSValue(kIdentifierClass) {
-  switch (value_type) {
-    case ScrollStartValueType::kAuto:
-      value_id_ = CSSValueID::kAuto;
-      break;
-    case ScrollStartValueType::kStart:
-      value_id_ = CSSValueID::kStart;
-      break;
-    case ScrollStartValueType::kCenter:
-      value_id_ = CSSValueID::kCenter;
-      break;
-    case ScrollStartValueType::kEnd:
-      value_id_ = CSSValueID::kEnd;
-      break;
-    case ScrollStartValueType::kTop:
-      value_id_ = CSSValueID::kTop;
-      break;
-    case ScrollStartValueType::kBottom:
-      value_id_ = CSSValueID::kBottom;
-      break;
-    case ScrollStartValueType::kLeft:
-      value_id_ = CSSValueID::kLeft;
-      break;
-    case ScrollStartValueType::kRight:
-      value_id_ = CSSValueID::kRight;
-      break;
-    case ScrollStartValueType::kLengthOrPercentage:
-      NOTREACHED();
-  }
-}
-
-template <>
-inline ScrollStartValueType CSSIdentifierValue::ConvertTo() const {
-  switch (GetValueID()) {
-    case CSSValueID::kAuto:
-      return ScrollStartValueType::kAuto;
-    case CSSValueID::kStart:
-      return ScrollStartValueType::kStart;
-    case CSSValueID::kCenter:
-      return ScrollStartValueType::kCenter;
-    case CSSValueID::kEnd:
-      return ScrollStartValueType::kEnd;
-    case CSSValueID::kTop:
-      return ScrollStartValueType::kTop;
-    case CSSValueID::kBottom:
-      return ScrollStartValueType::kBottom;
-    case CSSValueID::kLeft:
-      return ScrollStartValueType::kLeft;
-    case CSSValueID::kRight:
-      return ScrollStartValueType::kRight;
-    default:
-      NOTREACHED();
-  }
-}
-
-template <>
 inline CSSIdentifierValue::CSSIdentifierValue(EScrollInitialTarget target)
     : CSSValue(kIdentifierClass) {
   switch (target) {
@@ -2120,17 +2132,20 @@ inline CSSIdentifierValue::CSSIdentifierValue(PositionAreaRegion region)
     case PositionAreaRegion::kYEnd:
       value_id_ = CSSValueID::kYEnd;
       break;
-    case PositionAreaRegion::kXSelfStart:
-      value_id_ = CSSValueID::kXSelfStart;
+    case PositionAreaRegion::kSelfXStart:
+      value_id_ = CSSValueID::kSelfXStart;
       break;
-    case PositionAreaRegion::kXSelfEnd:
-      value_id_ = CSSValueID::kXSelfEnd;
+    case PositionAreaRegion::kSelfXEnd:
+      value_id_ = CSSValueID::kSelfXEnd;
       break;
-    case PositionAreaRegion::kYSelfStart:
-      value_id_ = CSSValueID::kYSelfStart;
+    case PositionAreaRegion::kSelfYStart:
+      value_id_ = CSSValueID::kSelfYStart;
       break;
-    case PositionAreaRegion::kYSelfEnd:
-      value_id_ = CSSValueID::kYSelfEnd;
+    case PositionAreaRegion::kSelfYEnd:
+      value_id_ = CSSValueID::kSelfYEnd;
+      break;
+    case PositionAreaRegion::kAny:
+      value_id_ = CSSValueID::kAny;
       break;
   }
 }
@@ -2184,14 +2199,16 @@ inline PositionAreaRegion CSSIdentifierValue::ConvertTo() const {
       return PositionAreaRegion::kYStart;
     case CSSValueID::kYEnd:
       return PositionAreaRegion::kYEnd;
-    case CSSValueID::kXSelfStart:
-      return PositionAreaRegion::kXSelfStart;
-    case CSSValueID::kXSelfEnd:
-      return PositionAreaRegion::kXSelfEnd;
-    case CSSValueID::kYSelfStart:
-      return PositionAreaRegion::kYSelfStart;
-    case CSSValueID::kYSelfEnd:
-      return PositionAreaRegion::kYSelfEnd;
+    case CSSValueID::kSelfXStart:
+      return PositionAreaRegion::kSelfXStart;
+    case CSSValueID::kSelfXEnd:
+      return PositionAreaRegion::kSelfXEnd;
+    case CSSValueID::kSelfYStart:
+      return PositionAreaRegion::kSelfYStart;
+    case CSSValueID::kSelfYEnd:
+      return PositionAreaRegion::kSelfYEnd;
+    case CSSValueID::kAny:
+      return PositionAreaRegion::kAny;
     default:
       NOTREACHED();
   };

@@ -64,7 +64,8 @@ _DEVIL_STATIC_CONFIG_FILE = os.path.abspath(os.path.join(
     host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'devil_config.json'))
 
 _RERUN_FAILED_TESTS_FILE = 'rerun_failed_tests.filter'
-
+# A dictionary of a test suite and a flat test name to overwrite.
+_REWRITE_SCHEME = {'components_perftests': 'components_perftests'}
 
 def _RealPath(arg):
   if arg.startswith('//'):
@@ -254,12 +255,6 @@ def AddCommonOptions(parser):
       action='store_true',
       help='Uses a persistent shell connection for the adb connection.')
 
-  parser.add_argument('--disable-test-server',
-                      action='store_true',
-                      help='Disables SpawnedTestServer which doesn'
-                      't work with remote adb. '
-                      'WARNING: Will break tests which require the server.')
-
   # This is currently only implemented for gtests and instrumentation tests.
   parser.add_argument(
       '--gtest_also_run_disabled_tests', '--gtest-also-run-disabled-tests',
@@ -446,6 +441,10 @@ def AddGTestOptions(parser):
       help=('If present, test artifacts will be uploaded to this Google '
             'Storage bucket.'))
   parser.add_argument(
+      '--proguard-mapping-path',
+      help='.mapping file to use to Deobfuscate java stack traces in test '
+      'output and logcat.')
+  parser.add_argument(
       '--render-test-output-dir',
       help='If present, store rendering artifacts in this path.')
   parser.add_argument(
@@ -460,6 +459,15 @@ def AddGTestOptions(parser):
       '--store-tombstones',
       dest='store_tombstones', action='store_true',
       help='Add tombstones in results if crash.')
+  parser.add_argument(
+      '--do-not-store-tombstones',
+      dest='store_tombstones',
+      action='store_false',
+      help=('Do not add tombstones in results if a crash occurs. This is the '
+            'default behavior, but is available via an explicit flag for '
+            'cases such as crbug.com/419062315 where tombstones should not '
+            'be stored and --store-tombstones cannot be removed from the '
+            'command line.'))
   parser.add_argument(
       '-s', '--suite',
       dest='suite_name', nargs='+', metavar='SUITE_NAME', required=True,
@@ -488,14 +496,12 @@ def AddGTestOptions(parser):
       help='Do not push new files to the device, instead using existing APK '
       'and test data. Only use when running the same test for multiple '
       'iterations.')
-  # This is currently only implemented for gtests tests.
-  # TODO(crbug.com/40200835): Remove this flag when PRE tests run properly.
-  parser.add_argument('--gtest_also_run_pre_tests',
-                      '--gtest-also-run-pre-tests',
+  parser.add_argument('--gtest_skip_pre_tests',
+                      '--gtest-skip-pre-tests',
                       dest='run_pre_tests',
-                      action='store_true',
+                      action='store_false',
                       default=True,
-                      help='Also run PRE_ tests if applicable.')
+                      help='Do not run PRE_ tests if applicable.')
 
 
 def AddInstrumentationTestOptions(parser):
@@ -650,6 +656,15 @@ def AddInstrumentationTestOptions(parser):
       action='store_true', dest='store_tombstones',
       help='Add tombstones in results if crash.')
   parser.add_argument(
+      '--do-not-store-tombstones',
+      dest='store_tombstones',
+      action='store_false',
+      help=('Do not add tombstones in results if a crash occurs. This is the '
+            'default behavior, but is available via an explicit flag for '
+            'cases such as crbug.com/419062315 where tombstones should not '
+            'be stored and --store-tombstones cannot be removed from the '
+            'command line.'))
+  parser.add_argument(
       '--strict-mode',
       dest='strict_mode', default='testing',
       help='StrictMode command-line flag set on the device, '
@@ -769,6 +784,12 @@ def AddSkiaGoldTestOptions(parser):
       help='Bypass all interaction with Skia Gold, effectively disabling the '
       'image comparison portion of any tests that use Gold. Only meant to be '
       'used in case a Gold outage occurs and cannot be fixed quickly.')
+  parser.add_argument(
+      '--skia-gold-consider-unsupported',
+      action='store_true',
+      help='Considers the configuration unsupported for Skia Gold, even if the '
+      'Device + SDK Level is considered supported, which will avoid failing '
+      'the test if there is a mismatch with goldens.')
 
 
 def AddHostsideTestOptions(parser):
@@ -1068,7 +1089,7 @@ def _CreateStructuredTestDict(test_instance, test_result):
 
   test_id = test_result.GetNameForResultSink()
 
-  if test_instance.TestType() in ['instrumentation', 'junit']:
+  if test_instance.TestType() in ['hostside', 'instrumentation', 'junit']:
     re_match = re.search(r'(.*)\.(\w+\$?\w+)#(.*)', test_id)
     if not re_match:
       logging.error(
@@ -1079,10 +1100,53 @@ def _CreateStructuredTestDict(test_instance, test_result):
     # The proto requires a list.
     struct_test_dict['caseNameComponents'] = [re_match.group(3)]
   elif test_instance.TestType() == 'gtest':
+    found_match = False
+    # Attempt to parse gtests based on:
+    #     infra/go/src/infra/tools/result_adapter/gtest.go
+    # Type-parameterised test (e.g. MyInstantiation/FooTest/MyType.DoesBar)
+    re_match = re.search(r'^((\w+)/)?(\w+)/(\w+)\.(\w+)$', test_id)
+    if re_match:
+      suite = re_match.group(3)
+      name = re_match.group(5)
+      instantiation = re_match.group(2)
+      case_id = re_match.group(4)
+      found_match = True
+
+    # Value-parameterised test (e.g. MyInstantiation/FooTest.DoesBar/TestValue)
+    re_match = re.search(r'^((\w+)/)?(\w+)\.(\w+)/(\w+)$', test_id)
+    if not found_match and re_match:
+      suite = re_match.group(3)
+      name = re_match.group(4)
+      instantiation = re_match.group(2)
+      case_id = re_match.group(5)
+      found_match = True
+
+    # Neither type nor value-parameterised (e.g. FooTest.DoesBar)
+    re_match = re.search(r'^(\w+)\.(\w+)$', test_id)
+    if not found_match and re_match:
+      suite = re_match.group(1)
+      name = re_match.group(2)
+      instantiation = ""
+      case_id = ""
+
+    # Some android gtests are incompatible with the upload scheme on other
+    # test runners.
+    if test_instance.suite in _REWRITE_SCHEME:
+      struct_test_dict['caseNameComponents'] = [
+          _REWRITE_SCHEME.get(test_instance.suite)
+      ]
+      return struct_test_dict
+
     struct_test_dict['coarseName'] = None  # Not used.
-    struct_test_dict['fineName'] = test_instance.suite
-    # The proto requires a list.
-    struct_test_dict['caseNameComponents'] = [test_id]
+    struct_test_dict['fineName'] = suite
+    if not case_id:
+      struct_test_dict['caseNameComponents'] = [name]
+    elif not instantiation:
+      struct_test_dict['caseNameComponents'] = ['%s/%s' % (name, case_id)]
+    else:
+      struct_test_dict['caseNameComponents'] = [
+          '%s/%s.%s' % (name, instantiation, case_id)
+      ]
   else:
     return None
 

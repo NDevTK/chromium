@@ -40,7 +40,7 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process_platform_part.h"
-#include "chromeos/ash/components/account_manager/account_manager_facade_factory.h"
+#include "chromeos/ash/components/account_manager/account_manager_factory.h"
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -147,14 +147,17 @@ IdentityManagerFactory::BuildServiceInstanceForBrowserContext(
       profile, ServiceAccessType::EXPLICIT_ACCESS);
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   params.unexportable_key_service =
-      UnexportableKeyServiceFactory::GetForProfile(profile);
+      UnexportableKeyServiceFactory::GetForProfileAndPurpose(
+          profile,
+          UnexportableKeyServiceFactory::KeyPurpose::kRefreshTokenBinding);
 #endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 #endif  // #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (ash::ProfileHelper::IsUserProfile(profile)) {
     params.account_manager_facade =
-        ash::GetAccountManagerFacade(profile->GetPath().value());
+        ash::AccountManagerFactory::Get()->GetAccountManagerFacade(
+            profile->GetPath().value());
     params.is_regular_profile = true;
   }
 #endif

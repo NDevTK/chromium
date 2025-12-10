@@ -15,6 +15,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/mock_callback.h"
@@ -35,6 +36,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/renderer/platform/peerconnection/resolution_monitor.h"
 #include "third_party/blink/renderer/platform/webrtc/webrtc_video_utils.h"
@@ -172,6 +174,12 @@ class RTCVideoDecoderAdapterWrapper : public webrtc::VideoDecoder {
                        &wrapper->rtc_video_decoder_adapter_, gpu_factories,
                        format, pass_resolution_monitor, &waiter, &result));
     waiter.Wait();
+
+    // To avoid a dangling `gpu_factories` pointer during test teardown, wait
+    // for the `RTCVideoDecoderAdapter::SharedResources` to acquire the raster
+    // context provider from the main thread.
+    base::RunLoop().RunUntilIdle();
+
     return result ? std::move(wrapper) : nullptr;
   }
 
@@ -287,6 +295,7 @@ class RTCVideoDecoderAdapterTest : public ::testing::Test {
             webrtc::CodecTypeToPayloadString(webrtc::kVideoCodecVP9))),
         decoded_image_callback_(decoded_cb_.Get()),
         spatial_index_(0) {
+    blink::Platform::SetMainThreadTaskRunnerForTesting();
     media_thread_.Start();
 
     owned_video_decoder_ = std::make_unique<StrictMock<MockVideoDecoder>>();
@@ -323,6 +332,7 @@ class RTCVideoDecoderAdapterTest : public ::testing::Test {
   ~RTCVideoDecoderAdapterTest() override {
     adapter_wrapper_.reset();
     media_thread_.FlushForTesting();
+    blink::Platform::UnsetMainThreadTaskRunnerForTesting();
   }
 
  protected:
@@ -696,6 +706,7 @@ TEST_F(RTCVideoDecoderAdapterTest, DecoderCountIsIncrementedByDecode) {
 
   // Make sure that it goes back to zero.
   EXPECT_EQ(GetCurrentDecoderCount(), 1);
+
   adapter_wrapper_.reset();
   media_thread_.FlushForTesting();
   EXPECT_EQ(GetCurrentDecoderCount(), 0);

@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/ai/rewriter.h"
 
 #include "base/metrics/metrics_hashes.h"
+#include "base/strings/strcat.h"
 #include "third_party/blink/public/mojom/ai/model_streaming_responder.mojom-blink.h"
 #include "third_party/blink/renderer/modules/ai/ai_metrics.h"
 #include "third_party/blink/renderer/modules/ai/ai_writing_assistance_create_client.h"
@@ -182,8 +183,7 @@ ScriptPromise<IDLString> Rewriter::rewrite(
     const RewriterRewriteOptions* options,
     ExceptionState& exception_state) {
   return AIWritingAssistanceBase::execute(script_state, writing_task, options,
-                                          exception_state,
-                                          AIMetrics::AIAPI::kRewriterRewrite);
+                                          exception_state);
 }
 
 ReadableStream* Rewriter::rewriteStreaming(
@@ -191,9 +191,8 @@ ReadableStream* Rewriter::rewriteStreaming(
     const String& writing_task,
     const RewriterRewriteOptions* options,
     ExceptionState& exception_state) {
-  return AIWritingAssistanceBase::executeStreaming(
-      script_state, writing_task, options, exception_state,
-      AIMetrics::AIAPI::kRewriterRewriteStreaming);
+  return AIWritingAssistanceBase::executeStreaming(script_state, writing_task,
+                                                   options, exception_state);
 }
 
 ScriptPromise<IDLDouble> Rewriter::measureInputUsage(

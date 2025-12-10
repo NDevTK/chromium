@@ -4,7 +4,7 @@
 
 import {assertNotReached} from '//resources/js/assert.js';
 import type {SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
-import {SignedInState} from '/shared/settings/people_page/sync_browser_proxy.js';
+import {SignedInState, StatusAction} from '/shared/settings/people_page/sync_browser_proxy.js';
 
 /**
  * Returns true if the deletion will affect account data. This is only the case
@@ -14,7 +14,8 @@ import {SignedInState} from '/shared/settings/people_page/sync_browser_proxy.js'
  */
 export function canDeleteAccountData(syncStatus: SyncStatus|undefined) {
   return isSignedIn(syncStatus) &&
-      syncStatus!.signedInState !== SignedInState.SIGNED_IN_PAUSED;
+      syncStatus!.signedInState !== SignedInState.SIGNED_IN_PAUSED &&
+      !isSyncPaused(syncStatus!);
 }
 
 /** Returns true if the user is signed in to a Google account on Chrome. */
@@ -31,7 +32,12 @@ export function isSignedIn(syncStatus: SyncStatus|undefined) {
     case SignedInState.WEB_ONLY_SIGNED_IN:
     case SignedInState.SIGNED_OUT:
       return false;
+    default:
+      assertNotReached('Invalid SignedInState');
   }
+}
 
-  assertNotReached('Invalid SignedInState');
+function isSyncPaused(syncStatus: SyncStatus): boolean {
+  return !!syncStatus.hasError && !syncStatus.hasUnrecoverableError &&
+      syncStatus.statusAction === StatusAction.REAUTHENTICATE;
 }

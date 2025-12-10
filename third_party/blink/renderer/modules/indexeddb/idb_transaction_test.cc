@@ -104,7 +104,7 @@ class IDBTransactionTest : public testing::Test,
 
     IDBKeyPath store_key_path("primaryKey");
     scoped_refptr<IDBObjectStoreMetadata> store_metadata = base::AdoptRef(
-        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true, 1));
+        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true));
     store_ = MakeGarbageCollected<IDBObjectStore>(store_metadata, transaction_);
   }
 
@@ -398,11 +398,11 @@ TEST_F(IDBTransactionTest, ValueSizeTest) {
   ThreadState::Current()->CollectAllGarbageForTesting();
 
   bool got_error = false;
-  auto callback = WTF::BindOnce(
+  auto callback = BindOnce(
       [](bool* got_error, mojom::blink::IDBTransactionPutResultPtr result) {
         *got_error = result->is_error_result();
       },
-      WTF::Unretained(&got_error));
+      Unretained(&got_error));
 
   V8TestingScope scope;
   MockIDBDatabase database_backend;
@@ -446,11 +446,11 @@ TEST_F(IDBTransactionTest, KeyAndValueSizeTest) {
   ThreadState::Current()->CollectAllGarbageForTesting();
 
   bool got_error = false;
-  auto callback = WTF::BindOnce(
+  auto callback = BindOnce(
       [](bool* got_error, mojom::blink::IDBTransactionPutResultPtr result) {
         *got_error = result->is_error_result();
       },
-      WTF::Unretained(&got_error));
+      Unretained(&got_error));
 
   V8TestingScope scope;
   MockIDBDatabase database_backend;

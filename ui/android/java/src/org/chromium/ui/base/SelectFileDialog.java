@@ -975,7 +975,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
      * @param results The results of the requested intent.
      */
     @Override
-    public void onIntentCompleted(int resultCode, Intent results) {
+    public void onIntentCompleted(int resultCode, @Nullable Intent results) {
         if (sPhotoPicker != null) {
             sPhotoPicker.onExternalIntentCompleted();
         }
@@ -1422,11 +1422,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         recordImageCountHistograms(new String[] {filePath});
         if (nativeSelectFileDialogImpl != 0) {
             SelectFileDialogJni.get()
-                    .onFileSelected(
-                            nativeSelectFileDialogImpl,
-                            SelectFileDialog.this,
-                            filePath,
-                            displayName);
+                    .onFileSelected(nativeSelectFileDialogImpl, filePath, displayName);
         }
     }
 
@@ -1436,24 +1432,20 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         if (nativeSelectFileDialogImpl != 0) {
             SelectFileDialogJni.get()
                     .onMultipleFilesSelected(
-                            nativeSelectFileDialogImpl,
-                            SelectFileDialog.this,
-                            filePathArray,
-                            displayNameArray);
+                            nativeSelectFileDialogImpl, filePathArray, displayNameArray);
         }
     }
 
     protected void onFileNotSelected(long nativeSelectFileDialogImpl) {
         recordImageCountHistograms(new String[] {});
         if (nativeSelectFileDialogImpl != 0) {
-            SelectFileDialogJni.get()
-                    .onFileNotSelected(nativeSelectFileDialogImpl, SelectFileDialog.this);
+            SelectFileDialogJni.get().onFileNotSelected(nativeSelectFileDialogImpl);
         }
     }
 
     private void recordImageCountHistograms(String[] filesSelected) {
         if (isSupportedPhotoPickerTypes(mMimeTypes)) {
-            // Record the total number of images selected via the Chrome Media Picker.
+            // Record the total number of images selected via the Media Picker.
             RecordHistogram.recordCount100Histogram(
                     "Android.SelectFileDialogImgCount", filesSelected.length);
         }
@@ -1846,16 +1838,12 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
     interface Natives {
         void onFileSelected(
                 long nativeSelectFileDialogImpl,
-                SelectFileDialog caller,
                 @Nullable String filePath,
                 @Nullable String displayName);
 
         void onMultipleFilesSelected(
-                long nativeSelectFileDialogImpl,
-                SelectFileDialog caller,
-                String[] filePathArray,
-                String[] displayNameArray);
+                long nativeSelectFileDialogImpl, String[] filePathArray, String[] displayNameArray);
 
-        void onFileNotSelected(long nativeSelectFileDialogImpl, SelectFileDialog caller);
+        void onFileNotSelected(long nativeSelectFileDialogImpl);
     }
 }

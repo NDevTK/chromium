@@ -11,10 +11,10 @@
 #import "base/strings/sys_string_conversions.h"
 #import "components/breadcrumbs/core/breadcrumb_persistent_storage_util.h"
 #import "components/previous_session_info/previous_session_info.h"
-#import "ios/chrome/app/chrome_overlay_window.h"
 #import "ios/chrome/app/main_application_delegate.h"
 #import "ios/chrome/browser/appearance/ui_bundled/appearance_customization.h"
 #import "ios/chrome/browser/shared/model/paths/paths.h"
+#import "ios/chrome/browser/shared/ui/chrome_overlay_window/chrome_overlay_window.h"
 
 namespace {
 
@@ -96,7 +96,7 @@ void SyncBreadcrumbsLog() {
 
 - (void)sceneDidDisconnect:(UIScene*)scene {
   CHECK(_sceneState);
-  [_sceneState setRootViewController:nil makeKeyAndVisible:NO];
+  _sceneState.window.rootViewController = nil;
   _sceneState.activationLevel = SceneActivationLevelDisconnected;
   _sceneState = nil;
   // Setting the level to Disconnected had the side effect of tearing down the

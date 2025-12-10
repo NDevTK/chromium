@@ -4,8 +4,9 @@
 
 #include "chrome/browser/actor/actor_keyed_service_factory.h"
 
-#include "chrome/browser/actor/ui/actor_ui_state_manager.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
+#include "content/public/browser/browser_context.h"
 
 namespace actor {
 
@@ -14,7 +15,7 @@ ActorKeyedService* ActorKeyedServiceFactory::GetActorKeyedService(
     content::BrowserContext* browser_context) {
   return static_cast<ActorKeyedService*>(
       GetInstance()->GetServiceForBrowserContext(browser_context,
-                                                 /*create=*/false));
+                                                 /*create=*/true));
 }
 
 // static
@@ -27,7 +28,9 @@ ActorKeyedServiceFactory* ActorKeyedServiceFactory::GetInstance() {
 ActorKeyedServiceFactory::ActorKeyedServiceFactory(
     base::PassKey<ActorKeyedServiceFactory>)
     : ProfileKeyedServiceFactory("ActorKeyedService",
-                                 ProfileSelections::BuildForRegularProfile()) {}
+                                 ProfileSelections::BuildForRegularProfile()) {
+  DependsOn(IdentityManagerFactory::GetInstance());
+}
 
 ActorKeyedServiceFactory::~ActorKeyedServiceFactory() = default;
 
@@ -39,8 +42,7 @@ std::unique_ptr<KeyedService>
 ActorKeyedServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
-  return std::make_unique<ActorKeyedService>(
-      profile, std::make_unique<ActorUiStateManager>());
+  return std::make_unique<ActorKeyedService>(profile);
 }
 
 }  // namespace actor

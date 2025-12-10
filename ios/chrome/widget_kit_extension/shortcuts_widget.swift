@@ -30,6 +30,7 @@ struct ConfigureShortcutsWidgetEntry: TimelineEntry {
   // Account avatar (to be used when multiprofile flag is enabled).
   let avatar: Image?
   let gaiaID: String?
+  let email: String?
   let deleted: Bool
 }
 
@@ -43,7 +44,7 @@ struct ConfigureShortcutsWidgetEntryProvider: TimelineProvider {
   func placeholder(in context: TimelineProviderContext) -> Entry {
     return Entry(
       date: Date(), mostVisitedSites: [:], isPreview: true, isExpired: false, expirationDate: nil,
-      avatar: nil, gaiaID: nil, deleted: false)
+      avatar: nil, gaiaID: nil, email: nil, deleted: false)
   }
 
   // Provides a timeline entry that represents the current time and state of a widget.
@@ -96,82 +97,85 @@ struct ShortcutsWidget: Widget {
   }
 }
 
-@available(iOS 17, *)
-// Provides the configuration and content of a widget to display on the Home screen.
-struct ShortcutsWidgetConfigurable: Widget {
-  // Changing 'kind' or deleting this widget will cause all installed instances of this widget to
-  // stop updating and show the placeholder state.
-  let kind: String = "ShortcutsWidget"
-  let deviceModel = UIDevice.current.model
-  var body: some WidgetConfiguration {
-    AppIntentConfiguration(
-      kind: kind,
-      intent: SelectAccountIntent.self,
-      provider: ConfigurableShortcutsWidgetEntryProvider()
-    ) { entry in
-      ShortcutsWidgetEntryView(entry: entry)
+#if IOS_ENABLE_WIDGETS_FOR_MIM
+  // Provides the configuration and content of a widget to display on the Home screen.
+  struct ShortcutsWidgetConfigurable: Widget {
+    // Changing 'kind' or deleting this widget will cause all installed instances of this widget to
+    // stop updating and show the placeholder state.
+    let kind: String = "ShortcutsWidget"
+    let deviceModel = UIDevice.current.model
+    var body: some WidgetConfiguration {
+      AppIntentConfiguration(
+        kind: kind,
+        intent: SelectAccountIntent.self,
+        provider: ConfigurableShortcutsWidgetEntryProvider()
+      ) { entry in
+        ShortcutsWidgetEntryView(entry: entry)
+      }
+      .configurationDisplayName(
+        Text("IDS_IOS_WIDGET_KIT_EXTENSION_SHORTCUTS_DISPLAY_NAME")
+      )
+      .description(
+        deviceModel == "iPhone"
+          ? Text("IDS_IOS_WIDGET_KIT_EXTENSION_SHORTCUTS_DESCRIPTION_IPHONE")
+          : Text("IDS_IOS_WIDGET_KIT_EXTENSION_SHORTCUTS_DESCRIPTION_IPAD")
+      )
+      .supportedFamilies([.systemMedium])
+      .crDisfavoredLocations()
+      .crContentMarginsDisabled()
+      .crContainerBackgroundRemovable(false)
     }
-    .configurationDisplayName(
-      Text("IDS_IOS_WIDGET_KIT_EXTENSION_SHORTCUTS_DISPLAY_NAME")
-    )
-    .description(
-      deviceModel == "iPhone"
-        ? Text("IDS_IOS_WIDGET_KIT_EXTENSION_SHORTCUTS_DESCRIPTION_IPHONE")
-        : Text("IDS_IOS_WIDGET_KIT_EXTENSION_SHORTCUTS_DESCRIPTION_IPAD")
-    )
-    .supportedFamilies([.systemMedium])
-    .crDisfavoredLocations()
-    .crContentMarginsDisabled()
-    .crContainerBackgroundRemovable(false)
-  }
-}
-
-// Advises WidgetKit when to update a widget’s display.
-@available(iOS 17, *)
-struct ConfigurableShortcutsWidgetEntryProvider: AppIntentTimelineProvider {
-
-  // A type that specifies the entry of the configured timeline entry of the widget.
-  typealias Entry = ConfigureShortcutsWidgetEntry
-
-  // Provides a timeline entry representing a placeholder version of the widget.
-  func placeholder(in context: TimelineProviderContext) -> Entry {
-    return Entry(
-      date: Date(), mostVisitedSites: [:], isPreview: true, isExpired: false, expirationDate: nil,
-      avatar: nil, gaiaID: nil, deleted: false)
   }
 
-  // Provides a timeline entry that represents the current time and state of a widget.
-  func snapshot(for configuration: SelectAccountIntent, in context: Context) async -> Entry {
+  // Advises WidgetKit when to update a widget’s display.
+  struct ConfigurableShortcutsWidgetEntryProvider: AppIntentTimelineProvider {
 
-    let avatar: Image? = configuration.avatar()
-    let gaiaID: String? = configuration.gaia()
-    let deleted: Bool = configuration.deleted()
+    // A type that specifies the entry of the configured timeline entry of the widget.
+    typealias Entry = ConfigureShortcutsWidgetEntry
 
-    let entry = loadMostVisitedSitesEntry(
-      isPreview: context.isPreview, avatar: avatar, gaia: gaiaID, deleted: deleted)
-    return entry
+    // Provides a timeline entry representing a placeholder version of the widget.
+    func placeholder(in context: TimelineProviderContext) -> Entry {
+      return Entry(
+        date: Date(), mostVisitedSites: [:], isPreview: true, isExpired: false, expirationDate: nil,
+        avatar: nil, gaiaID: nil, email: nil, deleted: false)
+    }
+
+    // Provides a timeline entry that represents the current time and state of a widget.
+    func snapshot(for configuration: SelectAccountIntent, in context: Context) async -> Entry {
+
+      let avatar: Image? = configuration.avatar()
+      let gaiaID: String? = configuration.gaia()
+      let email: String? = configuration.email()
+      let deleted: Bool = configuration.deleted()
+
+      let entry = loadMostVisitedSitesEntry(
+        isPreview: context.isPreview, avatar: avatar, gaia: gaiaID, email: email, deleted: deleted)
+      return entry
+    }
+
+    // Provides an array of timeline entries for the current time.
+    func timeline(for configuration: SelectAccountIntent, in context: Context) async -> Timeline<
+      Entry
+    > {
+      let avatar: Image? = configuration.avatar()
+      let gaiaID: String? = configuration.gaia()
+      let email: String? = configuration.email()
+      let deleted: Bool = configuration.deleted()
+
+      let entry = loadMostVisitedSitesEntry(
+        isPreview: context.isPreview, avatar: avatar, gaia: gaiaID, email: email, deleted: deleted)
+      let entries = [entry]
+      let timeline = Timeline(
+        entries: entries, policy: entry.expirationDate.map { .after($0) } ?? .never)
+      return timeline
+    }
   }
-
-  // Provides an array of timeline entries for the current time.
-  func timeline(for configuration: SelectAccountIntent, in context: Context) async -> Timeline<
-    Entry
-  > {
-    let avatar: Image? = configuration.avatar()
-    let gaiaID: String? = configuration.gaia()
-    let deleted: Bool = configuration.deleted()
-
-    let entry = loadMostVisitedSitesEntry(
-      isPreview: context.isPreview, avatar: avatar, gaia: gaiaID, deleted: deleted)
-    let entries = [entry]
-    let timeline = Timeline(
-      entries: entries, policy: entry.expirationDate.map { .after($0) } ?? .never)
-    return timeline
-  }
-}
+#endif
 
 // Return ConfigureShortcutsWidgetEntry with the most visited sites
 func loadMostVisitedSitesEntry(
-  isPreview: Bool, avatar: Image? = nil, gaia: String? = nil, deleted: Bool = false
+  isPreview: Bool, avatar: Image? = nil, gaia: String? = nil, email: String? = nil,
+  deleted: Bool = false
 )
   -> ConfigureShortcutsWidgetEntry
 {
@@ -187,6 +191,7 @@ func loadMostVisitedSitesEntry(
     expirationDate: nil,
     avatar: avatar,
     gaiaID: gaia,
+    email: email,
     deleted: deleted
   )
   // A constant of an expired entry.
@@ -198,38 +203,34 @@ func loadMostVisitedSitesEntry(
     expirationDate: nil,
     avatar: avatar,
     gaiaID: gaia,
+    email: email,
     deleted: deleted
   )
   // Returns an empty entry if the Shortcuts Widget is in the Widgets Gallery.
   if isPreview {
     return emptyEntry
   }
-  guard let sharedDefaults = AppGroupHelper.groupUserDefaults() else { return emptyEntry }
-  var lastModificationDate: Date?
 
-  if ChromeWidgetsMain.WidgetForMIMAvailable {
-    guard
+  #if IOS_ENABLE_WIDGETS_FOR_MIM
+    guard let sharedDefaults: UserDefaults = AppGroupHelper.groupUserDefaults(),
       let lastModificationDates = sharedDefaults.object(
         forKey: "SuggestedItemsLastModificationDateForMIM")
         as? [String: Date]
     else { return emptyEntry }
+    var date: Date?
     for (key, value) in lastModificationDates {
       if gaia == key {
-        lastModificationDate = value
+        date = value
       }
     }
-  } else {
-    guard
-      let date = sharedDefaults.object(forKey: "SuggestedItemsLastModificationDate")
+    guard let lastModificationDate = date
+    else { return emptyEntry }
+  #else
+    guard let sharedDefaults: UserDefaults = AppGroupHelper.groupUserDefaults(),
+      let lastModificationDate = sharedDefaults.object(forKey: "SuggestedItemsLastModificationDate")
         as? Date
     else { return emptyEntry }
-    lastModificationDate = date
-  }
-
-  // Make sure that lastModificationDate is not empty.
-  guard let lastModificationDate = lastModificationDate else {
-    return emptyEntry
-  }
+  #endif
 
   let extensionsFlags =
     sharedDefaults.object(forKey: "Extension.FieldTrial") as? [String: Any] ?? [:]
@@ -253,28 +254,23 @@ func loadMostVisitedSitesEntry(
   if numberOfSecondsFromLastModificationToExpiration < numberOfSecondsSinceLastModification {
     return expiredEntry
   }
-  var unarchiver: NSKeyedUnarchiver?
-  if ChromeWidgetsMain.WidgetForMIMAvailable {
+
+  #if IOS_ENABLE_WIDGETS_FOR_MIM
     guard let data = sharedDefaults.object(forKey: "SuggestedItemsForMIM") as? [String: Data]
     else { return emptyEntry }
+    var unarchiverForAccount: NSKeyedUnarchiver?
     for (key, value) in data {
       if gaia == key {
-        unarchiver = try? NSKeyedUnarchiver(forReadingFrom: value)
+        unarchiverForAccount = try? NSKeyedUnarchiver(forReadingFrom: value)
       }
     }
-  } else {
-    guard let data = sharedDefaults.object(forKey: "SuggestedItems") as? Data
+    guard let unarchiver = unarchiverForAccount
     else { return emptyEntry }
-    unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data)
-    if unarchiver == nil {
-      return emptyEntry
-    }
-  }
-
-  // Make sure that unarchiver is not empty.
-  guard let unarchiver = unarchiver else {
-    return emptyEntry
-  }
+  #else
+    guard let data = sharedDefaults.object(forKey: "SuggestedItems") as? Data,
+      let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data)
+    else { return emptyEntry }
+  #endif
 
   unarchiver.requiresSecureCoding = false
 
@@ -293,6 +289,7 @@ func loadMostVisitedSitesEntry(
     expirationDate: expirationDate,
     avatar: avatar,
     gaiaID: gaia,
+    email: email,
     deleted: deleted
   )
 }
@@ -356,32 +353,34 @@ struct ShortcutsWidgetEntryView: View {
     let spacing: CGFloat = 12
     let padding: CGFloat = 8
 
-    Link(
-      destination: destinationURL(
-        url: WidgetConstants.ShortcutsWidget.searchUrl, gaia: entry.gaiaID)
-    ) {
-      ZStack {
-        RoundedRectangle(cornerRadius: cornerRadius)
-          .frame(height: height)
-          .foregroundColor(Colors.widgetSearchBarColor)
-        HStack(spacing: spacing) {
-          Image("widget_chrome_logo")
-            .clipShape(Circle())
-            .padding(.leading, padding)
-            .unredacted()
-          Text(Strings.searchA11yLabel)
-            .font(.subheadline)
-            .foregroundColor(Colors.widgetTextColor)
-          Spacer()
-          if ChromeWidgetsMain.WidgetForMIMAvailable {
-            AvatarForShortcuts(entry: entry)
-          }
-        }
+    ZStack {
+      RoundedRectangle(cornerRadius: cornerRadius)
+        .frame(height: height)
+        .foregroundColor(Colors.widgetSearchBarColor)
+        // This is needed so that the voice over will see the widget as a button and not as
+        // an image.
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(Strings.searchA11yLabel)
+      HStack(spacing: spacing) {
+        Image("widget_chrome_logo")
+          .clipShape(Circle())
+          .padding(.leading, padding)
+          .unredacted()
+          .accessibilityHidden(true)
+        Text(Strings.searchA11yLabel)
+          .font(.subheadline)
+          .foregroundColor(Colors.widgetTextColor)
+          .accessibilityHidden(true)
+        Spacer()
+        #if IOS_ENABLE_WIDGETS_FOR_MIM
+          AvatarForShortcuts(entry: entry)
+        #endif
       }
-      .frame(minWidth: 0, maxWidth: .infinity)
-      .padding([.leading, .trailing], Dimensions.stackFramePadding)
     }
-    .accessibilityLabel(Strings.searchA11yLabel)
+    .frame(minWidth: 0, maxWidth: .infinity)
+    .padding([.leading, .trailing], Dimensions.stackFramePadding)
+    .widgetURL(
+      destinationURL(url: WidgetConstants.ShortcutsWidget.searchUrl, gaia: entry.gaiaID))
   }
 
   // Shows the widget with 4 shortcuts placeholder in the gallery view to respect user's privacy.
@@ -453,7 +452,7 @@ struct ShortcutsWidgetEntryView: View {
 
   var body: some View {
     // The account to display was deleted (entry.deleted can only be true if
-    // WidgetForMIMAvailable is true).
+    // IOS_ENABLE_WIDGETS_FOR_MIM is true).
     if entry.deleted && !entry.isPreview {
       MediumWidgetDeletedAccountView()
     } else {
@@ -632,10 +631,15 @@ struct AvatarForShortcuts: View {
         .opacity(0.2)
         .frame(width: 35, height: 35)
         .padding(.trailing, 8)
-    } else if let avatar = entry.avatar {
+    } else if let avatar = entry.avatar,
+      let email = entry.email
+    {
       avatar
         .resizable()
         .clipShape(Circle())
+        .accessibilityLabel(
+          String(localized: "IDS_IOS_WIDGET_KIT_EXTENSION_AVATAR_A11Y_LABEL") + email
+        )
         .unredacted()
         .scaledToFill()
         .frame(width: 35, height: 35)

@@ -21,7 +21,7 @@ using blink::WebGestureEvent;
 using blink::WebInputEvent;
 
 using base::android::AttachCurrentThread;
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace content {
@@ -110,7 +110,7 @@ void GestureListenerManager::ResetScrollObserver::
 }
 
 GestureListenerManager::GestureListenerManager(JNIEnv* env,
-                                               const JavaParamRef<jobject>& obj,
+                                               const JavaRef<jobject>& obj,
                                                WebContentsImpl* web_contents)
     : RenderWidgetHostConnector(web_contents),
       WebContentsObserver(web_contents),
@@ -134,25 +134,19 @@ GestureListenerManager::~GestureListenerManager() {
   Java_GestureListenerManagerImpl_onNativeDestroyed(env, j_obj);
 }
 
-void GestureListenerManager::ResetGestureDetection(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+void GestureListenerManager::ResetGestureDetection(JNIEnv* env) {
   if (rwhva_)
     rwhva_->ResetGestureDetection();
 }
 
-void GestureListenerManager::SetDoubleTapSupportEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jboolean enabled) {
+void GestureListenerManager::SetDoubleTapSupportEnabled(JNIEnv* env,
+                                                        jboolean enabled) {
   if (rwhva_)
     rwhva_->SetDoubleTapSupportEnabled(enabled);
 }
 
-void GestureListenerManager::SetMultiTouchZoomSupportEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jboolean enabled) {
+void GestureListenerManager::SetMultiTouchZoomSupportEnabled(JNIEnv* env,
+                                                             jboolean enabled) {
   if (rwhva_)
     rwhva_->SetMultiTouchZoomSupportEnabled(enabled);
 }
@@ -196,6 +190,11 @@ void GestureListenerManager::OnInputEvent(const RenderWidgetHost& widget,
       static_cast<const blink::WebTouchEvent&>(event).IsTouchSequenceStart()) {
     UpdateOnTouchDown();
     return;
+  }
+
+  if (WebInputEvent::IsTouchEventType(event_type) &&
+      static_cast<const blink::WebTouchEvent&>(event).IsTouchSequenceEnd()) {
+    UpdateOnTouchUp();
   }
 
   if (event_type == blink::mojom::EventType::kGestureFlingStart) {
@@ -313,6 +312,16 @@ void GestureListenerManager::UpdateOnTouchDown() {
   Java_GestureListenerManagerImpl_updateOnTouchDown(env, obj);
 }
 
+void GestureListenerManager::UpdateOnTouchUp() {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null()) {
+    return;
+  }
+
+  Java_GestureListenerManagerImpl_updateOnTouchUp(env, obj);
+}
+
 void GestureListenerManager::OnRootScrollOffsetChanged(
     const gfx::PointF& root_scroll_offset) {
   JNIEnv* env = AttachCurrentThread();
@@ -374,10 +383,10 @@ void GestureListenerManager::UnobserveRenderFrames() {
   observed_render_frames_.clear();
 }
 
-jlong JNI_GestureListenerManagerImpl_Init(
+static jlong JNI_GestureListenerManagerImpl_Init(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jobject>& jweb_contents) {
+    const JavaRef<jobject>& obj,
+    const JavaRef<jobject>& jweb_contents) {
   auto* web_contents = WebContents::FromJavaWebContents(jweb_contents);
   CHECK(web_contents) << "Should be created with a valid WebContents.";
 
@@ -389,3 +398,5 @@ jlong JNI_GestureListenerManagerImpl_Init(
 }
 
 }  // namespace content
+
+DEFINE_JNI(GestureListenerManagerImpl)

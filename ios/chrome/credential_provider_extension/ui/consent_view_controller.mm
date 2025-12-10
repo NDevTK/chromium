@@ -7,8 +7,8 @@
 #import "ios/chrome/common/app_group/app_group_constants.h"
 #import "ios/chrome/common/app_group/app_group_utils.h"
 #import "ios/chrome/common/credential_provider/constants.h"
+#import "ios/chrome/common/ui/button_stack/button_stack_configuration.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
-#import "ios/chrome/credential_provider_extension/ui/feature_flags.h"
 
 namespace {
 NSString* const kConsentViewControllerIdentifier =
@@ -35,10 +35,7 @@ NSString* const kConsentViewControllerIdentifier =
 
   if (userEmail.length) {
     NSString* baseLocalizedString = NSLocalizedString(
-        IsPasskeysM2Enabled()
-            ? @"IDS_IOS_CREDENTIAL_PROVIDER_CONSENT_SUBTITLE_BRANDED_SYNC_WITH_"
-              @"PASSKEYS"
-            : @"IDS_IOS_CREDENTIAL_PROVIDER_CONSENT_SUBTITLE_BRANDED_SYNC",
+        @"IDS_IOS_CREDENTIAL_PROVIDER_CONSENT_SUBTITLE_BRANDED_SYNC",
         @"The subtitle in the consent screen.");
     self.subtitleText =
         [baseLocalizedString stringByReplacingOccurrencesOfString:@"$1"
@@ -56,7 +53,7 @@ NSString* const kConsentViewControllerIdentifier =
   self.shouldShowLearnMoreButton = YES;
   // Primary action button is initialized regardless of the visibility set and
   // the view crashes without this value set.
-  self.primaryActionString = @"";
+  self.configuration.primaryActionString = @"";
   self.actionButtonsVisibility = ActionButtonsVisibility::kHidden;
   self.shouldShowDismissButton = YES;
   self.dismissButtonString = NSLocalizedString(
@@ -84,9 +81,7 @@ NSString* const kConsentViewControllerIdentifier =
 - (UILabel*)drawCaptionLabel {
   UILabel* captionLabel = [[UILabel alloc] init];
   captionLabel.text = NSLocalizedString(
-      IsPasskeysM2Enabled()
-          ? @"IDS_IOS_CREDENTIAL_PROVIDER_CONSENT_CAPTION_WITH_PASSKEYS"
-          : @"IDS_IOS_CREDENTIAL_PROVIDER_CONSENT_CAPTION",
+      @"IDS_IOS_CREDENTIAL_PROVIDER_CONSENT_CAPTION",
       @"Caption below subtitle to show when enabling the extension");
   captionLabel.numberOfLines = 0;
   captionLabel.textAlignment = NSTextAlignmentCenter;

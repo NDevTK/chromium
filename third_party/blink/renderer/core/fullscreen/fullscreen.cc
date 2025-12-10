@@ -515,9 +515,9 @@ void EnqueueEvent(const AtomicString& type,
                   Document& document,
                   FullscreenRequestType request_type) {
   const AtomicString& adjusted_type = AdjustEventType(type, request_type);
-  document.EnqueueAnimationFrameTask(
-      WTF::BindOnce(FireEvent, adjusted_type, WrapWeakPersistent(&element),
-                    WrapWeakPersistent(&document)));
+  document.EnqueueAnimationFrameTask(BindOnce(FireEvent, adjusted_type,
+                                              WrapWeakPersistent(&element),
+                                              WrapWeakPersistent(&document)));
 }
 
 const char* GetErrorString(RequestFullscreenError error) {
@@ -548,13 +548,11 @@ const char* GetErrorString(RequestFullscreenError error) {
 
 }  // anonymous namespace
 
-const char Fullscreen::kSupplementName[] = "Fullscreen";
-
 Fullscreen& Fullscreen::From(LocalDOMWindow& window) {
-  Fullscreen* fullscreen = Supplement<LocalDOMWindow>::From<Fullscreen>(window);
+  Fullscreen* fullscreen = window.GetFullscreen();
   if (!fullscreen) {
     fullscreen = MakeGarbageCollected<Fullscreen>(window);
-    ProvideTo(window, fullscreen);
+    window.SetFullscreen(fullscreen);
   }
   return *fullscreen;
 }
@@ -590,8 +588,7 @@ bool Fullscreen::IsInFullscreenElementStack(const Element& element) {
 }
 
 Fullscreen::Fullscreen(LocalDOMWindow& window)
-    : Supplement<LocalDOMWindow>(window),
-      ExecutionContextLifecycleObserver(&window) {}
+    : ExecutionContextLifecycleObserver(&window) {}
 
 Fullscreen::~Fullscreen() = default;
 
@@ -603,7 +600,7 @@ void Fullscreen::ContextDestroyed() {
 // https://fullscreen.spec.whatwg.org/#dom-element-requestfullscreen
 void Fullscreen::RequestFullscreen(Element& pending) {
   FullscreenOptions* options = FullscreenOptions::Create();
-  options->setNavigationUI("hide");
+  options->setNavigationUI(V8FullscreenNavigationUI::Enum::kHide);
   RequestFullscreen(pending, options, FullscreenRequestType::kUnprefixed);
 }
 
@@ -666,7 +663,7 @@ ScriptPromise<IDLUndefined> Fullscreen::RequestFullscreen(
   } else {
     EnforceRequestFullscreenConditions(
         pending, document,
-        WTF::BindOnce(
+        BindOnce(
             &Fullscreen::ContinueRequestFullscreenAfterConditionsEnforcement,
             WrapPersistent(&pending), request_type, WrapPersistent(options),
             WrapPersistent(resolver)));
@@ -768,8 +765,7 @@ void Fullscreen::EnforceRequestFullscreenConditions(
   //
   // The supplement may be null before this window ever enters fullscreen, but
   // the browser enforces broader per-origin cooldowns with FullscreenUserData.
-  if (Fullscreen* fullscreen =
-          Supplement<LocalDOMWindow>::From<Fullscreen>(*document.domWindow());
+  if (Fullscreen* fullscreen = document.domWindow()->GetFullscreen();
       fullscreen && base::TimeTicks::Now() <=
                         fullscreen->block_automatic_fullscreen_until()) {
     std::move(callback).Run(RequestFullscreenError::kPermissionCheckFailed);
@@ -788,7 +784,7 @@ void Fullscreen::EnforceRequestFullscreenConditions(
               /*allow_without_user_gesture=*/true));
   permission_service->HasPermission(
       std::move(descriptor),
-      WTF::BindOnce(
+      blink::BindOnce(
           [](base::OnceCallback<void(RequestFullscreenError)> callback,
              Document* document, mojom::blink::PermissionStatus status) {
             if (status == mojom::blink::PermissionStatus::GRANTED) {
@@ -869,7 +865,7 @@ void Fullscreen::DidResolveEnterFullscreenRequest(Document& document,
   // but must still not synchronously change the fullscreen element. Instead
   // enqueue a microtask to continue.
   if (RequestFullscreenScope::RunningRequestFullscreen()) {
-    document.GetAgent().event_loop()->EnqueueMicrotask(WTF::BindOnce(
+    document.GetAgent().event_loop()->EnqueueMicrotask(BindOnce(
         [](Document* document, bool granted) {
           DCHECK(document);
           DidResolveEnterFullscreenRequest(*document, granted);
@@ -1107,8 +1103,8 @@ ScriptPromise<IDLUndefined> Fullscreen::ExitFullscreen(
     // will change script-observable state (document.fullscreenElement)
     // synchronously, so we have to continue asynchronously.
     doc.GetAgent().event_loop()->EnqueueMicrotask(
-        WTF::BindOnce(ContinueExitFullscreen, WrapPersistent(&doc),
-                      WrapPersistent(resolver), false /* resize */));
+        BindOnce(ContinueExitFullscreen, WrapPersistent(&doc),
+                 WrapPersistent(resolver), false /* resize */));
   }
   return promise;
 }
@@ -1270,7 +1266,6 @@ bool Fullscreen::IsFullscreenFlagSetFor(const Element& element) {
 void Fullscreen::Trace(Visitor* visitor) const {
   visitor->Trace(pending_requests_);
   visitor->Trace(pending_exits_);
-  Supplement<LocalDOMWindow>::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);
 }
 

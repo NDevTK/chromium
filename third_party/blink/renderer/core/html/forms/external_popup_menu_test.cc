@@ -42,7 +42,7 @@ class ExternalPopupMenuDisplayNoneItemsTest : public PageTestBase {
     PageTestBase::SetUp();
     auto* element = MakeGarbageCollected<HTMLSelectElement>(GetDocument());
     // Set the 4th an 5th items to have "display: none" property
-    element->setInnerHTML(
+    element->SetInnerHTMLWithoutTrustedTypes(
         "<option><option><option><option style='display:none;'><option "
         "style='display:none;'><option><option>");
     GetDocument().body()->AppendChild(element, ASSERT_NO_EXCEPTION);
@@ -86,7 +86,7 @@ class ExternalPopupMenuHrElementItemsTest : public PageTestBase {
   void SetUp() override {
     PageTestBase::SetUp();
     auto* element = MakeGarbageCollected<HTMLSelectElement>(GetDocument());
-    element->setInnerHTML(R"HTML(
+    element->SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <option>zero</option>
       <option>one</option>
       <hr>
@@ -220,8 +220,8 @@ class TestLocalFrameExternalPopupClient : public FakeLocalFrameHost {
     selected_item_ = selected_item;
     menu_items_ = std::move(menu_items);
     popup_client_.Bind(std::move(popup_client));
-    popup_client_.set_disconnect_handler(WTF::BindOnce(
-        &TestLocalFrameExternalPopupClient::Reset, WTF::Unretained(this)));
+    popup_client_.set_disconnect_handler(
+        BindOnce(&TestLocalFrameExternalPopupClient::Reset, Unretained(this)));
     std::move(showed_callback_).Run();
   }
 
@@ -265,7 +265,7 @@ class ExternalPopupMenuTest : public PageTestBase {
     frame_host_.Init(
         web_frame_client_.GetRemoteNavigationAssociatedInterfaces());
     helper_.Initialize(&web_frame_client_);
-    WebView()->GetChromeClient().SetUseExternalPopupMenusForTesting(true);
+    WebView()->GetChromeClient().SetUseExternalPopupMenus(true);
   }
   void TearDown() override {
     url_test_helpers::UnregisterAllURLsAndClearMemoryCache();
@@ -530,7 +530,8 @@ TEST_F(ExternalPopupMenuTest, ShowPopupThenNavigate) {
   WaitUntilShowedPopup();
 
   // Now we navigate to another pager.
-  document->documentElement()->setInnerHTML("<blink>Awesome page!</blink>");
+  document->documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      "<blink>Awesome page!</blink>");
   document->UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   base::RunLoop().RunUntilIdle();
 

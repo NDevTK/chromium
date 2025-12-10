@@ -45,9 +45,20 @@
 // and accessibility trait UIAccessibilityTraitButton.
 + (id<GREYMatcher>)buttonWithForegroundColor:(NSString*)colorName;
 
-// Matcher for element with background color corresponding to `colorName`
-// and accessibility trait UIAccessibilityTraitButton.
-+ (id<GREYMatcher>)buttonWithBackgroundColor:(NSString*)colorName;
+// Matcher for element with background color corresponding to `colorName` or
+// `color` and accessibility trait UIAccessibilityTraitButton.
++ (id<GREYMatcher>)buttonWithBackgroundColor:(UIColor*)color;
++ (id<GREYMatcher>)buttonWithBackgroundColorNamed:(NSString*)colorName;
+
+// Returns a matcher for element with with background/foreground colors related
+// to the Primary type and accessibility trait UIAccessibilityTraitButton.
++ (id<GREYMatcher>)buttonWithPrimaryColor;
+// Returns a matcher for element with with background/foreground colors related
+// to the Secondary type and accessibility trait UIAccessibilityTraitButton.
++ (id<GREYMatcher>)buttonWithSecondaryColor;
+// Returns a matcher for element with with background/foreground colors related
+// to the Equal Weight type and accessibility trait UIAccessibilityTraitButton.
++ (id<GREYMatcher>)buttonWithEqualWeightColor;
 
 // Matcher for context menu items with accessibility label
 // corresponding to `label`.
@@ -117,6 +128,12 @@
 // Returns matcher for a cancel button.
 + (id<GREYMatcher>)cancelButton;
 
+// Returns matcher for a cancel button in an action sheet.
++ (id<GREYMatcher>)actionSheetCancelButton;
+
+// Returns matcher for a close button.
++ (id<GREYMatcher>)closeButton;
+
 // Returns the matcher for an enabled cancel button in a navigation bar.
 + (id<GREYMatcher>)navigationBarCancelButton;
 
@@ -140,6 +157,10 @@
 
 // Matcher for the stop loading button.
 + (id<GREYMatcher>)stopButton;
+
+// Matcher for the search bar's clear text button, which is displayed when the
+// search bar is non-empty. Tapping it clears the search text.
++ (id<GREYMatcher>)searchBarClearTextButton;
 
 // Returns a matcher for the omnibox.
 + (id<GREYMatcher>)omnibox;
@@ -226,6 +247,9 @@
 // Matcher for the Open in New Window option in the context menu when long
 // pressing a link.
 + (id<GREYMatcher>)openLinkInNewWindowButton;
+
+// Matcher for the close button on the navigation bar.
++ (id<GREYMatcher>)navigationBarCloseButton;
 
 // Matcher for the done button on the navigation bar.
 + (id<GREYMatcher>)navigationBarDoneButton;
@@ -316,16 +340,6 @@
 // Returns matcher for the cancel button in the fake add account flow.
 + (id<GREYMatcher>)fakeFakeAddAccountScreenCancelButton;
 
-// Returns matcher for the primary button (typically labeled somethings like
-// "Yes") in various promo screens, including sign-in, history sync, default
-// browser choice, and more.
-+ (id<GREYMatcher>)promoScreenPrimaryButtonMatcher;
-
-// Returns matcher for the secondary button (typically labeled somethings like
-// "No Thanks") in various promo screens, including sign-in, history sync,
-// default browser choice, and more.
-+ (id<GREYMatcher>)promoScreenSecondaryButtonMatcher;
-
 // Returns matcher for the button for the currently signed in account in the
 // settings menu.
 + (id<GREYMatcher>)settingsAccountButton;
@@ -394,12 +408,6 @@
 // Returns matcher for the Safety Check cell on the main Settings screen.
 + (id<GREYMatcher>)settingsMenuSafetyCheckButton;
 
-// Returns matcher for the payment request collection view.
-+ (id<GREYMatcher>)paymentRequestView;
-
-// Returns matcher for the error confirmation view for payment request.
-+ (id<GREYMatcher>)paymentRequestErrorView;
-
 // Returns matcher for the voice search button on the main Settings screen.
 + (id<GREYMatcher>)voiceSearchButton;
 
@@ -451,17 +459,11 @@
 // Returns matcher for the NTP Feed menu button which disables the feed.
 + (id<GREYMatcher>)ntpFeedMenuDisableButton;
 
-// Returns matcher for the warning message while filling in payment requests.
-+ (id<GREYMatcher>)warningMessageView;
-
-// Returns matcher for the payment picker cell.
-+ (id<GREYMatcher>)paymentRequestPickerRow;
-
-// Returns matcher for the payment request search bar.
-+ (id<GREYMatcher>)paymentRequestPickerSearchBar;
-
 // Returns matcher for the New Window button on the Tools menu.
 + (id<GREYMatcher>)openNewWindowMenuButton;
+
+// Returns matcher for the search bar.
++ (id<GREYMatcher>)searchBar;
 
 // Matcher for a Copy button, such as the one in the Activity View. This matcher
 // is very broad and will look for any button with a matching string.
@@ -483,8 +485,11 @@
 // Matcher for the Mark as Unread option on the Reading List's context menus.
 + (id<GREYMatcher>)readingListMarkAsUnreadButton;
 
-// Matcher for the Share option on the updated context menus.
+// Matcher for the Delete option on the updated context menus.
 + (id<GREYMatcher>)deleteButton;
+
+// Matcher for the swipe action Delete button.
++ (id<GREYMatcher>)swipeActionDeleteButton;
 
 // Returns matcher for the Copy item on the old-style context menu.
 + (id<GREYMatcher>)contextMenuCopyButton;
@@ -494,6 +499,9 @@
 
 // Returns matcher for a fake omnibox on a new tab page.
 + (id<GREYMatcher>)fakeOmnibox;
+
+// Returns matcher for the snackbar view.
++ (id<GREYMatcher>)snackbarViewMatcher;
 
 // Returns matcher for a label of a Discover feed header.
 + (id<GREYMatcher>)discoverHeaderLabel;
@@ -556,7 +564,8 @@
 // Returns a matcher for the group cell created just now in the Tab Groups panel
 // for the given `group_name` and `tab_count`.
 + (id<GREYMatcher>)tabGroupsPanelCellWithName:(NSString*)groupName
-                                        count:(NSInteger)count;
+                                        count:(NSInteger)count
+                                       shared:(BOOL)shared;
 
 // Returns a matcher for the recent activity log cell at `index` in the recent
 // activity in the tab group.
@@ -573,9 +582,8 @@
 // Returns the GREYMatcher for the button that closes the tab grid.
 + (id<GREYMatcher>)tabGridDoneButton;
 
-// Returns the GREYMatcher for the button that closes all the tabs in the tab
-// grid.
-+ (id<GREYMatcher>)tabGridCloseAllButton;
+// Returns the GREYMatcher for the button to open the overflow menu.
++ (id<GREYMatcher>)tabGridOverflowMenuButton;
 
 // Returns the GREYMatcher for the button that reverts the close all tabs action
 // in the tab grid.
@@ -616,12 +624,6 @@
 // Returns the GREYMatcher for the button to go to the tab groups panel in
 // the tab grid.
 + (id<GREYMatcher>)tabGridTabGroupsPanelButton;
-
-// Returns the GREYMatcher for the button to go to the third panel in
-// the tab grid. If Tab Group Sync is enabled, it's equivalent to
-// `tabGridTabGroupsPanelButton`. Otherwise, it's equivalent to
-// `tabGridOtherDevicesPanelButton`.
-+ (id<GREYMatcher>)tabGridThirdPanelButton;
 
 // Returns a matcher that matches tab grid normal mode page control - The
 // PageControl panel always exist only on the tab grid normal mode, So this can
@@ -680,9 +682,6 @@
 // smaller than the scroll view bounds.
 + (id<GREYMatcher>)contentViewSmallerThanScrollView;
 
-// Returns a matcher for a history entry with `url` and `title`.
-+ (id<GREYMatcher>)historyEntryForURL:(NSString*)URL title:(NSString*)title;
-
 // Returns a matcher to the add button in the toolbar of the settings view.
 + (id<GREYMatcher>)settingsToolbarAddButton;
 
@@ -732,6 +731,10 @@
 // carousel.
 + (id<GREYMatcher>)siteInfoDestinationButton;
 
+// Returns matcher for the translate destination button in the overflow menu
+// carousel.
++ (id<GREYMatcher>)translateDestinationButton;
+
 // Returns matcher for the downloads destination button in the overflow menu
 // carousel.
 + (id<GREYMatcher>)downloadsDestinationButton;
@@ -740,16 +743,15 @@
 // carousel.
 + (id<GREYMatcher>)whatsNewDestinationButton;
 
+// Matcher for Toolbar element item corresponding to the given accessibility ID
+// `button_id`.
++ (id<GREYMatcher>)toolbarButtonWithID:(NSString*)button_id;
+
 #pragma mark - Overflow Menu Actions
 
 // Returns matcher for the settings action button in the overflow menu
 // carousel.
 + (id<GREYMatcher>)settingsActionButton;
-
-#pragma mark - Promo style view controller
-
-// Returns matcher for the secondary action button.
-+ (id<GREYMatcher>)promoScreenSecondaryButtonMatcher;
 
 #pragma mark - Incognito Interstitial
 
@@ -934,6 +936,20 @@
 
 // Returns the matcher for the tab groups panel view.
 + (id<GREYMatcher>)tabGroupsPanel;
+
+#pragma mark - Button Stack
+
+// Returns a matcher for the primary button in a button stack.
++ (id<GREYMatcher>)buttonStackPrimaryButton;
+
+// Returns a matcher for the secondary button in a button stack.
++ (id<GREYMatcher>)buttonStackSecondaryButton;
+
+// Returns a matcher for the tertiary button in a button stack.
++ (id<GREYMatcher>)buttonStackTertiaryButton;
+
+// Returns a matcher for the checkmark symbol in a button stack.
++ (id<GREYMatcher>)buttonStackCheckmarkSymbol;
 
 @end
 

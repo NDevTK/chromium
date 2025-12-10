@@ -57,20 +57,12 @@ bool ValidateSRIMessageSignaturesOverHeaders(
 
 // Returns `BlockedByResponseReason::kSRIMessageSignatureMismatch` if a response
 // fails validation. If validation is successful, returns `std::nullopt`.
-//
-// Validation will be skipped in most cases if the
-// `features::kSRIMessageSignatureEnforcement` flag is disabled. This flag can
-// be overridden by setting the |checks_forced_by_initiator| parameter in order
-// to support experiments and trials that might be enabled by specific origins.
-//
-// TODO(393924693): Remove this parameter once we no longer need the origin
-// trial infrastructure.
 COMPONENT_EXPORT(NETWORK_CPP)
 std::optional<mojom::BlockedByResponseReason>
 MaybeBlockResponseForSRIMessageSignature(
     const net::URLRequest& url_request,
     const network::mojom::URLResponseHead& response,
-    const std::vector<std::string>& expected_public_keys,
+    const std::vector<std::vector<uint8_t>>& expected_public_keys,
     const raw_ptr<mojom::DevToolsObserver> devtools_observer = nullptr,
     const std::string& devtools_request_id = std::string());
 
@@ -79,7 +71,7 @@ MaybeBlockResponseForSRIMessageSignature(
 COMPONENT_EXPORT(NETWORK_CPP)
 void MaybeSetAcceptSignatureHeader(
     net::URLRequest*,
-    const std::vector<std::string>& expected_public_keys);
+    const std::vector<std::vector<uint8_t>>& expected_public_keys);
 
 }  // namespace network
 

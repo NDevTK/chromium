@@ -212,13 +212,13 @@ class DataTypeManagerImplTest : public testing::Test {
 
   // Configure the given DTM with the given desired types.
   void Configure(DataTypeSet desired_types,
-                 ConfigureReason reason = CONFIGURE_REASON_RECONFIGURATION) {
+                 ConfigureReason reason = ConfigureReason::kReconfiguration) {
     dtm_->Configure(desired_types, BuildConfigureContext(reason));
   }
 
   void Configure(DataTypeSet desired_types,
                  SyncMode sync_mode,
-                 ConfigureReason reason = CONFIGURE_REASON_RECONFIGURATION) {
+                 ConfigureReason reason = ConfigureReason::kReconfiguration) {
     dtm_->Configure(desired_types, BuildConfigureContext(reason, sync_mode));
   }
 
@@ -636,7 +636,7 @@ TEST_F(DataTypeManagerImplTest, OneFailingController) {
   ASSERT_EQ(DataTypeController::MODEL_STARTING,
             GetController(BOOKMARKS)->state());
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "Test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   ASSERT_EQ(DataTypeController::FAILED, GetController(BOOKMARKS)->state());
 
   // This should be CONFIGURED but is not properly handled in
@@ -1090,35 +1090,6 @@ TEST_F(DataTypeManagerImplTest, FailingPreconditionClearData) {
   EXPECT_EQ(1, GetController(BOOKMARKS)->model()->clear_metadata_count());
 }
 
-// Tests that unready types are not started after ResetDataTypeErrors and
-// reconfiguration.
-TEST_F(DataTypeManagerImplTest, UnreadyTypeResetReconfigure) {
-  InitDataTypeManager({BOOKMARKS});
-  GetController(BOOKMARKS)->SetPreconditionState(
-      DataTypeController::PreconditionState::kMustStopAndKeepData);
-
-  // Bookmarks is never started due to failing preconditions.
-  testing::InSequence seq;
-  EXPECT_CALL(observer_, OnConfigureStart());
-  EXPECT_CALL(observer_, OnConfigureDone(ConfigureSucceeded()));
-
-  Configure({BOOKMARKS});
-  // Second Configure sets a flag to perform reconfiguration after the first one
-  // is done.
-  Configure({BOOKMARKS});
-
-  // Reset errors before triggering reconfiguration.
-  dtm_->ResetDataTypeErrors();
-
-  // Reconfiguration should update unready errors. Bookmarks shouldn't start.
-  EXPECT_EQ(DataTypeSet(), FinishDownload());
-  EXPECT_EQ(DataTypeSet(), FinishDownload());  // regular types
-  EXPECT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
-  EXPECT_FALSE(dtm_->GetActiveDataTypes().Has(BOOKMARKS));
-  EXPECT_EQ(DataTypeController::NOT_RUNNING, GetController(BOOKMARKS)->state());
-  EXPECT_EQ(0U, configurer_.connected_types().size());
-}
-
 TEST_F(DataTypeManagerImplTest, UnreadyTypeLaterReady) {
   InitDataTypeManager({BOOKMARKS});
   GetController(BOOKMARKS)->SetPreconditionState(
@@ -1291,7 +1262,7 @@ TEST_F(DataTypeManagerImplTest,
 TEST_F(DataTypeManagerImplTest, ModelLoadError) {
   InitDataTypeManager({BOOKMARKS});
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
 
   // Bookmarks is never started due to hitting a model load error.
   testing::InSequence seq;
@@ -1476,7 +1447,7 @@ TEST_F(DataTypeManagerImplTest, ConnectDataTypeAfterLoadModelsError) {
 
   // Make bookmarks fail LoadModels. Passwords load normally.
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   GetController(PASSWORDS)->model()->SimulateModelStartFinished();
 
   // Connect should be called for passwords, but not bookmarks.
@@ -1587,7 +1558,7 @@ TEST_F(DataTypeManagerImplTest, ShouldRecordInitialConfigureTimeHistogram) {
   EXPECT_CALL(observer_, OnConfigureStart());
   EXPECT_CALL(observer_, OnConfigureDone(ConfigureSucceeded()));
 
-  Configure({BOOKMARKS}, SyncMode::kFull, CONFIGURE_REASON_NEW_CLIENT);
+  Configure({BOOKMARKS}, SyncMode::kFull, ConfigureReason::kNewClient);
 
   EXPECT_EQ(DataTypeSet(), FinishDownload());
   EXPECT_EQ(AddControlTypesTo({BOOKMARKS}), FinishDownload());
@@ -1603,7 +1574,7 @@ TEST_F(DataTypeManagerImplTest, ShouldRecordSubsequentConfigureTimeHistogram) {
   EXPECT_CALL(observer_, OnConfigureStart());
   EXPECT_CALL(observer_, OnConfigureDone(ConfigureSucceeded()));
 
-  Configure({BOOKMARKS}, SyncMode::kFull, CONFIGURE_REASON_RECONFIGURATION);
+  Configure({BOOKMARKS}, SyncMode::kFull, ConfigureReason::kReconfiguration);
 
   EXPECT_EQ(DataTypeSet(), FinishDownload());
   EXPECT_EQ(AddControlTypesTo({BOOKMARKS}), FinishDownload());
@@ -1692,7 +1663,7 @@ TEST_F(DataTypeManagerImplTest, ShouldDoNothingForAlreadyFailedTypes) {
   ASSERT_TRUE(dtm_->GetActiveDataTypes().Has(BOOKMARKS));
 
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   ASSERT_EQ(DataTypeController::FAILED, GetController(BOOKMARKS)->state());
 
   EXPECT_CALL(observer_, OnConfigureDone(ConfigureSucceeded()));
@@ -1707,7 +1678,7 @@ TEST_F(DataTypeManagerImplTest, ShouldDoNothingForAlreadyFailedTypes) {
   // `observer_` which checks for OnConfigurationDone() and should fails when
   // it's called unexpectedly.
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   task_environment_.RunUntilIdle();
 }
 
@@ -1831,7 +1802,7 @@ TEST_F(DataTypeManagerImplTest, ShouldHandleStoppingTypesFailure) {
   ASSERT_EQ(DataTypeManager::STOPPED, dtm_->state());
 
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "Test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   ASSERT_EQ(GetController(BOOKMARKS)->state(), DataTypeController::FAILED);
 
   EXPECT_CALL(observer_, OnConfigureStart());
@@ -1863,7 +1834,7 @@ TEST_F(DataTypeManagerImplTest, ShouldHandleStoppedTypesFailure) {
   ASSERT_EQ(GetController(BOOKMARKS)->state(), DataTypeController::NOT_RUNNING);
 
   GetController(BOOKMARKS)->model()->SimulateModelError(
-      ModelError(FROM_HERE, "Test error"));
+      ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError));
   ASSERT_EQ(GetController(BOOKMARKS)->state(), DataTypeController::FAILED);
 
   testing::InSequence seq;

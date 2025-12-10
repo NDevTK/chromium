@@ -46,6 +46,8 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/tracing/public/cpp/trace_startup.h"
+#include "skia/ext/font_utils.h"
 #include "third_party/abseil-cpp/absl/strings/ascii.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
@@ -72,13 +74,12 @@
 #include "third_party/blink/public/web/web_script_source.h"
 #include "third_party/blink/public/web/web_v8_features.h"
 #include "third_party/blink/public/web/web_view.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/color/color_provider.h"
 #include "ui/color/color_provider_manager.h"
 #include "ui/color/color_provider_source.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/keycodes/keyboard_codes.h"
-#include "ui/native_theme/native_theme_utils.h"
+#include "ui/native_theme/native_theme.h"
 #include "v8/include/v8.h"
 
 #if BUILDFLAG(IS_MAC)
@@ -393,7 +394,7 @@ void RenderViewTest::SetUp() {
   blink::WebRuntimeFeatures::EnableExperimentalFeatures(true);
   blink::WebRuntimeFeatures::EnableTestOnlyFeatures(true);
   blink::WebRuntimeFeatures::EnableOverlayScrollbars(
-      ui::IsOverlayScrollbarEnabled());
+      ui::NativeTheme::GetInstanceForWeb()->use_overlay_scrollbar());
   blink::WebV8Features::InitializeMojoJSAllowedProtectedMemory();
 
   test_io_thread_ =
@@ -401,6 +402,9 @@ void RenderViewTest::SetUp() {
   ipc_support_ = std::make_unique<mojo::core::ScopedIPCSupport>(
       test_io_thread_->task_runner(),
       mojo::core::ScopedIPCSupport::ShutdownPolicy::FAST);
+
+  tracing::InitTracingPostFeatureList(/*enable_consumer=*/false,
+                                      /*will_trace_thread_restart=*/false);
 
   // Subclasses can set render_thread_ with their own implementation before
   // calling RenderViewTest::SetUp().
@@ -417,6 +421,7 @@ void RenderViewTest::SetUp() {
   // as it's not allowed to modify them later.
   v8::V8::SetFlagsFromString("--expose-gc");
 
+  skia::InitializeFontRendering();
   // ContentClient must be initialized before Blink, because Blink now eagerly
   // loads the default stylesheets, which are fetched from the resource bundle
   // using ContentClient.
@@ -459,15 +464,6 @@ void RenderViewTest::SetUp() {
   // since we are using a MockRenderThread.
   RenderThreadImpl::RegisterSchemes();
 
-  // This check is needed because when run under content_browsertests,
-  // ResourceBundle isn't initialized (since we have to use a diferent test
-  // suite implementation than for content_unittests). For browser_tests, this
-  // is already initialized.
-  if (!ui::ResourceBundle::HasSharedInstance()) {
-    ui::ResourceBundle::InitSharedInstanceWithLocale(
-        "en-US", nullptr, ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
-  }
-
   process_ = std::make_unique<RenderProcess>();
 
   // This is used to get the renderer color maps for the purpose of creating the
@@ -484,7 +480,7 @@ void RenderViewTest::SetUp() {
           ui::ColorProviderKey::ForcedColors::kNone),
       mock_color_provider_source_.GetRendererColorMap(
           mock_color_provider_source_.GetColorMode(),
-          ui::ColorProviderKey::ForcedColors::kActive)};
+          ui::ColorProviderKey::ForcedColors::kSystem)};
 
   mojom::CreateViewParamsPtr view_params = mojom::CreateViewParams::New();
   view_params->opener_frame_token = std::nullopt;
@@ -853,7 +849,8 @@ void RenderViewTest::OnSameDocumentNavigation(blink::WebLocalFrame* frame,
           true /* is_synchronously_committed */,
           blink::mojom::SameDocumentNavigationType::kFragment,
           false /* is_client_redirect */,
-          /*screenshot_destination=*/std::nullopt);
+          /*screenshot_destination=*/std::nullopt,
+          /*same_document_metrics_token=*/base::UnguessableToken());
 }
 
 blink::WebFrameWidget* RenderViewTest::GetWebFrameWidget() {

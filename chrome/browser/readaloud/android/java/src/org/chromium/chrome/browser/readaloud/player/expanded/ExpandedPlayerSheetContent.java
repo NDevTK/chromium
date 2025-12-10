@@ -8,6 +8,8 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.text.format.DateUtils;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
+import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
@@ -20,12 +22,10 @@ import android.widget.TextView;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
-import java.util.List;
-import java.util.ArrayList;
-
 import org.chromium.base.Log;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.readaloud.ReadAloudFeatures;
 import org.chromium.chrome.browser.readaloud.player.Colors;
 import org.chromium.chrome.browser.readaloud.player.InteractionHandler;
@@ -40,6 +40,9 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @NullMarked
 public class ExpandedPlayerSheetContent implements BottomSheetContent {
@@ -82,6 +85,7 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
 
     private int mElapsedSeconds;
     private int mTotalDurationSeconds;
+    private @Nullable TouchDelegate mTouchDelegate;
 
     public ExpandedPlayerSheetContent(
             Context context,
@@ -92,7 +96,11 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
                 context,
                 bottomSheetController,
                 LayoutInflater.from(context)
-                        .inflate(R.layout.readaloud_expanded_player_layout, null),
+                        .inflate(
+                                ChromeFeatureList.isEnabled(ChromeFeatureList.FEED_AUDIO_OVERVIEWS)
+                                        ? R.layout.readaloud_expanded_player_with_navigation_layout
+                                        : R.layout.readaloud_expanded_player_layout,
+                                null),
                 model,
                 playbackModeIphController);
     }
@@ -161,7 +169,20 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
                             int oldTop,
                             int oldRight,
                             int oldBottom) {
-                        TouchDelegateUtil.setBiggerTouchTarget(publisherButton);
+                        if (mTouchDelegate == null) {
+                            mTouchDelegate =
+                                    TouchDelegateUtil.createTouchDelegate(
+                                            mContentView, publisherButton);
+                        }
+                    }
+                });
+        mContentView.setOnTouchListener(
+                new View.OnTouchListener() {
+                    @Override
+                    public boolean onTouch(View v, MotionEvent event) {
+                        return v == publisherButton
+                                && mTouchDelegate != null
+                                && mTouchDelegate.onTouchEvent(event);
                     }
                 });
 
@@ -378,6 +399,10 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
         setOnClickListener(R.id.readaloud_mode_selector, () -> onPlaybackModeChangeClick(handler));
         setOnClickListener(R.id.readaloud_thumb_down_button, () -> showNegativeFeedbackMenu());
         setOnClickListener(R.id.readaloud_thumb_up_button, () -> handlePositiveFeedback(handler));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.FEED_AUDIO_OVERVIEWS)) {
+            setOnClickListener(R.id.readaloud_previous_button, handler::onMoveToPreviousClick);
+            setOnClickListener(R.id.readaloud_next_button, handler::onMoveToNextClick);
+        }
 
         SeekBar seekBar =
                 (SeekBar) mContentView.findViewById(R.id.readaloud_expanded_player_seek_bar);

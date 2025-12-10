@@ -13,12 +13,12 @@
 #include "third_party/blink/renderer/core/fetch/fetch_manager.h"
 #include "third_party/blink/renderer/core/fetch/request.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/window_or_worker_global_scope.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 
 namespace blink {
 
@@ -37,29 +37,24 @@ void MeasureFetchProperties(ExecutionContext* execution_context,
     UseCounter::Count(execution_context, WebFeature::kFetchCacheReload);
 }
 
+}  // namespace
+
 template <typename T>
 class GlobalFetchImpl final : public GarbageCollected<GlobalFetchImpl<T>>,
-                              public GlobalFetch::ScopedFetcher,
-                              public Supplement<T> {
+                              public GlobalFetch::ScopedFetcher {
  public:
-  static const char kSupplementName[];
-
   static ScopedFetcher* From(T& supplementable,
                              ExecutionContext* execution_context) {
-    GlobalFetchImpl* supplement =
-        Supplement<T>::template From<GlobalFetchImpl>(supplementable);
+    GlobalFetchImpl* supplement = supplementable.GetGlobalFetchImpl();
     if (!supplement) {
-      supplement = MakeGarbageCollected<GlobalFetchImpl>(supplementable,
-                                                         execution_context);
-      Supplement<T>::ProvideTo(supplementable, supplement);
+      supplement = MakeGarbageCollected<GlobalFetchImpl>(execution_context);
+      supplementable.SetGlobalFetchImpl(supplement);
     }
     return supplement;
   }
 
-  explicit GlobalFetchImpl(T& supplementable,
-                           ExecutionContext* execution_context)
-      : Supplement<T>(supplementable),
-        fetch_manager_(MakeGarbageCollected<FetchManager>(execution_context)),
+  explicit GlobalFetchImpl(ExecutionContext* execution_context)
+      : fetch_manager_(MakeGarbageCollected<FetchManager>(execution_context)),
         // TODO(crbug.com/1356128): FetchLater is only supported in Document.
         fetch_later_manager_(
             base::FeatureList::IsEnabled(blink::features::kFetchLaterAPI) &&
@@ -170,7 +165,6 @@ class GlobalFetchImpl final : public GarbageCollected<GlobalFetchImpl<T>>,
     visitor->Trace(fetch_manager_);
     visitor->Trace(fetch_later_manager_);
     ScopedFetcher::Trace(visitor);
-    Supplement<T>::Trace(visitor);
   }
 
  private:
@@ -178,12 +172,6 @@ class GlobalFetchImpl final : public GarbageCollected<GlobalFetchImpl<T>>,
   Member<FetchLaterManager> fetch_later_manager_;
   uint32_t fetch_count_ = 0;
 };
-
-// static
-template <typename T>
-const char GlobalFetchImpl<T>::kSupplementName[] = "GlobalFetchImpl";
-
-}  // namespace
 
 GlobalFetch::ScopedFetcher::~ScopedFetcher() {}
 
@@ -203,15 +191,9 @@ void GlobalFetch::ScopedFetcher::UpdateDeferredBytesQuota(
 }
 
 GlobalFetch::ScopedFetcher* GlobalFetch::ScopedFetcher::From(
-    LocalDOMWindow& window) {
-  return GlobalFetchImpl<LocalDOMWindow>::From(window,
-                                               window.GetExecutionContext());
-}
-
-GlobalFetch::ScopedFetcher* GlobalFetch::ScopedFetcher::From(
-    WorkerGlobalScope& worker) {
-  return GlobalFetchImpl<WorkerGlobalScope>::From(worker,
-                                                  worker.GetExecutionContext());
+    WindowOrWorkerGlobalScope& window_or_worker) {
+  return GlobalFetchImpl<WindowOrWorkerGlobalScope>::From(
+      window_or_worker, window_or_worker.GetExecutionContext());
 }
 
 GlobalFetch::ScopedFetcher* GlobalFetch::ScopedFetcher::From(

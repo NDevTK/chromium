@@ -85,7 +85,8 @@ class MessageService : public BrowserContextKeyedAPI,
   void ClosePort(const PortId& port_id,
                  int process_id,
                  const PortContext& port_context,
-                 bool force_close) override;
+                 bool close_channel,
+                 const std::string& error_message) override;
   void PostMessage(const PortId& port_id, const Message& message) override;
   void NotifyResponsePending(const PortId& port_id) override;
 
@@ -155,6 +156,9 @@ class MessageService : public BrowserContextKeyedAPI,
 
   // Returns the number of open channels for test.
   size_t GetChannelCountForTest() { return channels_.size(); }
+
+  bool HasPendingLazyContextChannelsForExtension(
+      const ExtensionId& extension_id) const;
 
   base::WeakPtr<MessagePort::ChannelDelegate> GetChannelDelegate() {
     return weak_factory_.GetWeakPtr();

@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/glic/test_support/glic_test_environment.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
@@ -17,7 +19,6 @@
 
 #if BUILDFLAG(ENABLE_GLIC)
 #include "chrome/browser/glic/glic_pref_names.h"
-#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
 #include "chrome/browser/glic/test_support/glic_test_util.h"
 #endif
 
@@ -42,26 +43,16 @@ bool ContainsCommand(const ui::MenuModel* menu,
 }  // namespace
 
 class SystemMenuModelBuilderGlicTest : public InProcessBrowserTest {
- public:
-  void SetUp() override {
-    feature_list_.InitWithFeatures(
-        {features::kGlic, features::kTabstripComboButton,
-         features::kGlicRollout},
-        {});
-    InProcessBrowserTest::SetUp();
-  }
-
  private:
-  base::test::ScopedFeatureList feature_list_;
+  glic::GlicTestEnvironment glic_test_env_;
 };
 
 // Check if the toggle glic pinning option exists and has the right label based
 // on relevant prefs.
 IN_PROC_BROWSER_TEST_F(SystemMenuModelBuilderGlicTest, TogglePinning) {
-  glic::ForceSigninAndModelExecutionCapability(browser()->profile());
   PrefService* profile_prefs = browser()->profile()->GetPrefs();
   ui::MenuModel* menu = BrowserView::GetBrowserViewForBrowser(browser())
-                            ->frame()
+                            ->browser_widget()
                             ->GetSystemMenuModel();
 
   profile_prefs->SetInteger(

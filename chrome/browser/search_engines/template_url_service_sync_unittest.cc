@@ -157,7 +157,8 @@ std::optional<syncer::ModelError> TestChangeProcessor::ProcessSyncChanges(
     const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (erroneous_)
-    return syncer::ModelError(FROM_HERE, "Some error.");
+    return syncer::ModelError(FROM_HERE,
+                              syncer::ModelError::Type::kGenericTestError);
 
   change_map_.erase(change_map_.begin(), change_map_.end());
   for (auto iter = change_list.begin(); iter != change_list.end(); ++iter)
@@ -198,8 +199,6 @@ class KeywordsConsumer
 }  // namespace
 
 // TemplateURLServiceSyncTest -------------------------------------------------
-// TODO(crbug.com/40276119): Remove this test when the default search provider
-// preference stops being synced.
 class TemplateURLServiceSyncTest : public testing::Test {
  public:
   typedef TemplateURLService::SyncDataMap SyncDataMap;

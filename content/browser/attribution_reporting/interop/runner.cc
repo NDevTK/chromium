@@ -142,8 +142,8 @@ class Adjuster : public ReportBodyAdjuster {
     AdjustTime(*shared_info_dict, "source_registration_time",
                /*skip_adjust_value=*/"0");
 
-    std::string adjusted_shared_info;
-    base::JSONWriter::Write(*shared_info_dict, &adjusted_shared_info);
+    std::string adjusted_shared_info =
+        base::WriteJson(*shared_info_dict).value_or("");
 
     // The payloads were encrypted with the original shared info, therefore
     // need to be re-encrypted with the adjusted shared info.
@@ -335,6 +335,14 @@ class ControllableStorageDelegate : public AttributionResolverDelegateImpl {
     return response_data;
   }
 
+  std::optional<AttributionResolverDelegate::OfflineReportDelayConfig>
+  GetOfflineReportDelayConfig() const override {
+    return OfflineReportDelayConfig{
+        .min = base::Minutes(5),
+        .max = base::Minutes(5),
+    };
+  }
+
   bool GenerateNullAggregatableReportForLookbackDay(
       int lookback_day,
       attribution_reporting::mojom::SourceRegistrationTimeConfig
@@ -359,7 +367,7 @@ class ControllableStorageDelegate : public AttributionResolverDelegateImpl {
 };
 
 void Handle(const AttributionSimulationEvent::StartRequest& event,
-            AttributionDataHostManager& data_host_manager) {
+            AttributionManager& manager) {
   std::optional<RegistrationEligibility> eligibility =
       attribution_reporting::GetRegistrationEligibility(event.eligibility);
   if (!eligibility.has_value()) {
@@ -370,6 +378,7 @@ void Handle(const AttributionSimulationEvent::StartRequest& event,
       event.context_origin, event.fenced, kFrameId,
       /*last_navigation_id=*/kNavigationId);
 
+  auto& data_host_manager = *manager.GetDataHostManager();
   std::optional<blink::AttributionSrcToken> attribution_src_token;
   if (event.eligibility == AttributionReportingEligibility::kNavigationSource) {
     attribution_src_token.emplace();
@@ -378,27 +387,28 @@ void Handle(const AttributionSimulationEvent::StartRequest& event,
         /*background_registrations_count=*/1);
     data_host_manager.NotifyNavigationRegistrationStarted(
         suitable_context, *attribution_src_token, kNavigationId,
-        /*devtools_request_id=*/"");
+        /*devtools_request_id=*/"",
+        /*from_context_menu=*/false);
     data_host_manager.NotifyNavigationRegistrationCompleted(
         *attribution_src_token);
   }
 
-  data_host_manager.NotifyBackgroundRegistrationStarted(
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationStarted(
       BackgroundRegistrationsId(event.request_id), std::move(suitable_context),
       *eligibility, attribution_src_token,
       /*devtools_request_id=*/"");
 }
 
 void Handle(const AttributionSimulationEvent::Response& event,
-            AttributionDataHostManager& data_host_manager) {
-  data_host_manager.NotifyBackgroundRegistrationData(
+            AttributionManager& manager) {
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationData(
       BackgroundRegistrationsId(event.request_id), event.response_headers.get(),
       event.url);
 }
 
 void Handle(const AttributionSimulationEvent::EndRequest& event,
-            AttributionDataHostManager& data_host_manager) {
-  data_host_manager.NotifyBackgroundRegistrationCompleted(
+            AttributionManager& manager) {
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationCompleted(
       BackgroundRegistrationsId(event.request_id));
 }
 
@@ -442,9 +452,8 @@ RunAttributionInteropSimulation(
   DCHECK(std::ranges::is_sorted(run.events, /*comp=*/{},
                                 &AttributionSimulationEvent::time));
 
-  std::vector<base::test::FeatureRef> enabled_features(
-      {blink::features::kKeepAliveInBrowserMigration,
-       blink::features::kAttributionReportingInBrowserMigration});
+  std::vector<base::test::FeatureRefAndParams> enabled_features(
+      {{blink::features::kKeepAliveInBrowserMigration, {}}});
 
   std::optional<AttributionOsLevelManager::ScopedApiStateForTesting>
       scoped_api_state;
@@ -453,8 +462,8 @@ RunAttributionInteropSimulation(
   }
 
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(enabled_features,
-                                       /*disabled_features=*/{});
+  scoped_feature_list.InitWithFeaturesAndParameters(enabled_features,
+                                                    /*disabled_features=*/{});
 
   attribution_reporting::ScopedMaxEventLevelEpsilonForTesting
       scoped_max_event_level_epsilon(run.config.max_event_level_epsilon);
@@ -587,9 +596,7 @@ RunAttributionInteropSimulation(
                         }));
               }
             },
-            [&](const auto& data) {
-              Handle(data, *manager->GetDataHostManager());
-            }},
+            [&](const auto& data) { Handle(data, *manager); }},
         event.data);
   }
 
@@ -601,16 +608,15 @@ RunAttributionInteropSimulation(
 void MaybeAdjustReportBody(const GURL& url,
                            base::Value& payload,
                            ReportBodyAdjuster& adjuster) {
-  if (base::EndsWith(url.path_piece(), "/report-aggregate-attribution")) {
+  if (base::EndsWith(url.path(), "/report-aggregate-attribution")) {
     if (base::Value::Dict* dict = payload.GetIfDict()) {
       adjuster.AdjustAggregatable(*dict);
     }
-  } else if (base::EndsWith(url.path_piece(), "/report-event-attribution")) {
+  } else if (base::EndsWith(url.path(), "/report-event-attribution")) {
     if (base::Value::Dict* dict = payload.GetIfDict()) {
       adjuster.AdjustEventLevel(*dict);
     }
-  } else if (url.path_piece() ==
-             "/.well-known/attribution-reporting/debug/verbose") {
+  } else if (url.path() == "/.well-known/attribution-reporting/debug/verbose") {
     if (base::Value::List* list = payload.GetIfList()) {
       for (auto& item : *list) {
         base::Value::Dict* dict = item.GetIfDict();
@@ -625,7 +631,7 @@ void MaybeAdjustReportBody(const GURL& url,
         }
       }
     }
-  } else if (url.path_piece() ==
+  } else if (url.path() ==
              "/.well-known/attribution-reporting/debug/"
              "report-aggregate-debug") {
     if (base::Value::Dict* dict = payload.GetIfDict()) {

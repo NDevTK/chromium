@@ -26,14 +26,18 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/recently_audible_helper.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/performance_manager/public/decorators/page_live_state_decorator.h"
 #include "components/performance_manager/public/graph/page_node.h"
 #include "components/tabs/public/tab_group.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -53,6 +57,7 @@ namespace {
 
 constexpr char kFromIndexKey[] = "fromIndex";
 constexpr char kGroupIdKey[] = "groupId";
+constexpr char kSplitIdKey[] = "splitViewId";
 constexpr char kNewPositionKey[] = "newPosition";
 constexpr char kNewWindowIdKey[] = "newWindowId";
 constexpr char kOldPositionKey[] = "oldPosition";
@@ -63,12 +68,9 @@ constexpr char kFrozenKey[] = "frozen";
 constexpr char kDiscardedKey[] = "discarded";
 constexpr char kAutoDiscardableKey[] = "autoDiscardable";
 constexpr char kMutedInfoKey[] = "mutedInfo";
-constexpr char kSelectedKey[] = "selected";
-constexpr char kStatusKey[] = "status";
 constexpr char kTabIdKey[] = "tabId";
 constexpr char kTabIdsKey[] = "tabIds";
 constexpr char kToIndexKey[] = "toIndex";
-constexpr char kWindowClosing[] = "isWindowClosing";
 
 bool WillDispatchTabUpdatedEvent(
     WebContents* contents,
@@ -78,7 +80,8 @@ bool WillDispatchTabUpdatedEvent(
     const Extension* extension,
     const base::Value::Dict* listener_filter,
     std::optional<base::Value::List>& event_args_out,
-    mojom::EventFilteringInfoPtr& event_filtering_info_out) {
+    mojom::EventFilteringInfoPtr& event_filtering_info_out,
+    bool* dispatch_separate_event_out) {
   ExtensionTabUtil::ScrubTabBehavior scrub_tab_behavior =
       ExtensionTabUtil::GetScrubTabBehavior(extension, target_context,
                                             contents);
@@ -108,14 +111,15 @@ bool WillDispatchTabCreatedEvent(
     const Extension* extension,
     const base::Value::Dict* listener_filter,
     std::optional<base::Value::List>& event_args_out,
-    mojom::EventFilteringInfoPtr& event_filtering_info_out) {
+    mojom::EventFilteringInfoPtr& event_filtering_info_out,
+    bool* dispatch_separate_event_out) {
   ExtensionTabUtil::ScrubTabBehavior scrub_tab_behavior =
       ExtensionTabUtil::GetScrubTabBehavior(extension, target_context,
                                             contents);
   base::Value::Dict tab_value =
       ExtensionTabUtil::CreateTabObject(contents, scrub_tab_behavior, extension)
           .ToValue();
-  tab_value.Set(kSelectedKey, active);
+  tab_value.Set(tabs_constants::kSelectedKey, active);
   tab_value.Set(tabs_constants::kActiveKey, active);
 
   event_args_out.emplace();
@@ -147,7 +151,7 @@ std::set<std::string> TabsEventRouter::TabEntry::UpdateLoadState() {
   // Send 'status' of tab change. Expecting 'complete' is fired.
   complete_waiting_on_load_ = false;
   std::set<std::string> changed_property_names;
-  changed_property_names.insert(kStatusKey);
+  changed_property_names.insert(tabs_constants::kStatusKey);
   return changed_property_names;
 }
 
@@ -170,8 +174,7 @@ void TabsEventRouter::TabEntry::NavigationEntryCommitted(
   // Send 'status' of tab change. Expecting 'loading' is fired.
   complete_waiting_on_load_ = true;
   std::set<std::string> changed_property_names;
-  changed_property_names.insert(kStatusKey);
-
+  changed_property_names.insert(tabs_constants::kStatusKey);
   if (web_contents()->GetURL() != url_) {
     url_ = web_contents()->GetURL();
     changed_property_names.insert(tabs_constants::kUrlKey);
@@ -212,17 +215,17 @@ TabsEventRouter::~TabsEventRouter() {
   BrowserList::RemoveObserver(this);
 }
 
-bool TabsEventRouter::ShouldTrackBrowser(Browser* browser) {
-  return profile_->IsSameOrParent(browser->profile()) &&
-         ExtensionTabUtil::BrowserSupportsTabs(browser);
+bool TabsEventRouter::ShouldTrackBrowser(BrowserWindowInterface* browser) {
+  return profile_->IsSameOrParent(browser->GetProfile()) &&
+         ExtensionTabUtil::BrowserSupportsTabs(
+             browser->GetBrowserForMigrationOnly());
 }
 
 void TabsEventRouter::OnBrowserSetLastActive(Browser* browser) {
   TabsWindowsAPI* tabs_window_api = TabsWindowsAPI::Get(profile_);
   if (tabs_window_api) {
     tabs_window_api->windows_event_router()->OnActiveWindowChanged(
-        browser ? browser->GetFeatures().extension_window_controller()
-                : nullptr);
+        browser ? BrowserExtensionWindowController::From(browser) : nullptr);
   }
 }
 
@@ -324,6 +327,31 @@ void TabsEventRouter::OnTabGroupChanged(const TabGroupChange& change) {
   }
 }
 
+void TabsEventRouter::OnSplitTabChanged(const SplitTabChange& change) {
+  if (change.type == SplitTabChange::Type::kAdded &&
+      change.GetAddedChange()->reason() !=
+          SplitTabChange::SplitTabAddReason::kInsertedFromAnotherTabstrip) {
+    for (const std::pair<tabs::TabInterface*, int>& tab :
+         change.GetAddedChange()->tabs()) {
+      std::set<std::string> changed_property_names;
+      changed_property_names.insert(kSplitIdKey);
+      DispatchTabUpdatedEvent(tab.first->GetContents(),
+                              std::move(changed_property_names));
+    }
+  }
+  if (change.type == SplitTabChange::Type::kRemoved &&
+      change.GetRemovedChange()->reason() !=
+          SplitTabChange::SplitTabRemoveReason::kDetachedToAnotherTabstrip) {
+    for (const std::pair<tabs::TabInterface*, int>& tab :
+         change.GetRemovedChange()->tabs()) {
+      std::set<std::string> changed_property_names;
+      changed_property_names.insert(kSplitIdKey);
+      DispatchTabUpdatedEvent(tab.first->GetContents(),
+                              std::move(changed_property_names));
+    }
+  }
+}
+
 void TabsEventRouter::TabGroupedStateChanged(
     TabStripModel* tab_strip_model,
     std::optional<tab_groups::TabGroupId> old_group,
@@ -383,8 +411,7 @@ void TabsEventRouter::OnFaviconUpdated(
 
 void TabsEventRouter::OnLifecycleUnitStateChanged(
     resource_coordinator::LifecycleUnit* lifecycle_unit,
-    ::mojom::LifecycleUnitState previous_state,
-    ::mojom::LifecycleUnitStateChangeReason reason) {
+    ::mojom::LifecycleUnitState previous_state) {
   const ::mojom::LifecycleUnitState new_state = lifecycle_unit->GetState();
   auto previous_or_new_state_is = [&](::mojom::LifecycleUnitState state) {
     return previous_state == state || new_state == state;
@@ -399,7 +426,7 @@ void TabsEventRouter::OnLifecycleUnitStateChanged(
     // - a tab can only be discarded if its status is "complete" or "loading",
     //   in which case it will transition to "unloaded".
     changed_property_names.insert(kDiscardedKey);
-    changed_property_names.insert(kStatusKey);
+    changed_property_names.insert(tabs_constants::kStatusKey);
   }
 
   if (previous_or_new_state_is(::mojom::LifecycleUnitState::FROZEN)) {
@@ -462,7 +489,8 @@ void TabsEventRouter::DispatchTabClosingAt(TabStripModel* tab_strip_model,
   base::Value::Dict object_args;
   object_args.Set(tabs_constants::kWindowIdKey,
                   ExtensionTabUtil::GetWindowIdOfTab(contents));
-  object_args.Set(kWindowClosing, tab_strip_model->closing_all());
+  object_args.Set(tabs_constants::kIsWindowClosingKey,
+                  tab_strip_model->closing_all());
   args.Append(std::move(object_args));
 
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
@@ -546,9 +574,18 @@ void TabsEventRouter::DispatchTabSelectionChanged(
   base::Value::List args;
   base::Value::Dict select_info;
 
-  select_info.Set(
-      tabs_constants::kWindowIdKey,
-      ExtensionTabUtil::GetWindowIdOfTabStripModel(tab_strip_model));
+  int window_id = -1;
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [tab_strip_model,
+       &window_id](BrowserWindowInterface* browser_window_interface) {
+        if (browser_window_interface->GetTabStripModel() == tab_strip_model) {
+          window_id = ExtensionTabUtil::GetWindowId(browser_window_interface);
+          return false;
+        }
+        return true;
+      });
+
+  select_info.Set(tabs_constants::kWindowIdKey, window_id);
 
   select_info.Set(kTabIdsKey, std::move(all_tabs));
   args.Append(std::move(select_info));

@@ -594,7 +594,9 @@ IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest,
     // the navigation doesn't use the same process as the crashed process, we
     // can crash the process after the final RenderFrameHost has been picked
     // instead, and the navigation will commit normally.
-    if (ShouldCreateNewHostForAllFrames() || IsBackForwardCacheEnabled()) {
+    if (!base::FeatureList::IsEnabled(
+            features::kResumeNavigationWithSpeculativeRFHProcessGone) &&
+        (ShouldCreateNewHostForAllFrames() || IsBackForwardCacheEnabled())) {
       EXPECT_FALSE(dip_navigation.was_committed());
       return;
     }
@@ -665,11 +667,66 @@ IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest,
     crash_observer.reset();
 
     // Finish the navigation to the non DIP page.
-    // TODO(crbug.com/343914483): This might need to change and match the test
-    // above if we implement an optimization to assume DIP value hasn't changed
-    // until response time.
     ASSERT_TRUE(non_dip_navigation.WaitForNavigationFinished());
 
+    // The navigation will fail if we create speculative RFH when the navigation
+    // started (instead of only when the response started), because the renderer
+    // process will crash and trigger deletion of the speculative RFH and the
+    // navigation using that speculative RFH. BFCache forces a BrowsingInstance
+    // swap (even in this same-site case), hence it also necessitates a
+    // speculative RFH.
+    // TODO(crbug.com/40261276): If the final RenderFrameHost picked for
+    // the navigation doesn't use the same process as the crashed process, we
+    // can crash the process after the final RenderFrameHost has been picked
+    // instead, and the navigation will commit normally.
+    if (!base::FeatureList::IsEnabled(
+            features::kResumeNavigationWithSpeculativeRFHProcessGone) &&
+        (ShouldCreateNewHostForAllFrames() || IsBackForwardCacheEnabled())) {
+      EXPECT_FALSE(non_dip_navigation.was_committed());
+      EXPECT_EQ(current_frame_host()
+                    ->policy_container_host()
+                    ->policies()
+                    .document_isolation_policy,
+                GetDocumentIsolationPolicy());
+      return;
+    }
+
+    EXPECT_TRUE(non_dip_navigation.was_successful());
+    EXPECT_EQ(current_frame_host()
+                  ->policy_container_host()
+                  ->policies()
+                  .document_isolation_policy,
+              DipNone());
+  }
+
+  // Test a crash during the navigation commit.
+  {
+    // Navigate to a DIP page.
+    EXPECT_TRUE(NavigateToURL(shell(), dip_page));
+    scoped_refptr<SiteInstance> initial_site_instance(
+        current_frame_host()->GetSiteInstance());
+
+    // Start navigating to a non DIP page.
+    TestNavigationManager non_dip_navigation(web_contents(), non_dip_page);
+    shell()->LoadURL(non_dip_page);
+    EXPECT_TRUE(non_dip_navigation.WaitForResponse());
+
+    // Simulate the renderer process crashing.
+    RenderProcessHost* process = initial_site_instance->GetProcess();
+    ASSERT_TRUE(process);
+    std::unique_ptr<RenderProcessHostWatcher> crash_observer(
+        new RenderProcessHostWatcher(
+            process, RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT));
+    process->Shutdown(0);
+    crash_observer->Wait();
+    crash_observer.reset();
+
+    // Finish the navigation to the non DIP page.
+    ASSERT_TRUE(non_dip_navigation.WaitForNavigationFinished());
+
+    // The navigation will not fail after killing the process of the dip page.
+    // A new render process has been created during the navigation to the
+    // non-dip page.
     EXPECT_TRUE(non_dip_navigation.was_successful());
     EXPECT_EQ(current_frame_host()
                   ->policy_container_host()
@@ -878,11 +935,14 @@ IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest,
                                 .root()
                                 ->render_manager()
                                 ->speculative_frame_host();
-    // The navigation is considered cross-site, because the AgentClusterKey of
-    // the current page has an IsolationKey, and the request does not have one.
-    // TODO(https://issues.chromium.org/343914483): Avoid creating a speculative
-    // RFH in this case.
-    EXPECT_TRUE(speculative_rfh);
+    if (CanSameSiteMainFrameNavigationsChangeRenderFrameHosts()) {
+      // When ProactivelySwapBrowsingInstance or RenderDocument is enabled on
+      // same-site main-frame navigations, the navigation will result in a new
+      // RFH, so it will create a pending RFH.
+      EXPECT_TRUE(speculative_rfh);
+    } else {
+      EXPECT_FALSE(speculative_rfh);
+    }
 
     ASSERT_TRUE(non_dip_navigation.WaitForNavigationFinished());
 
@@ -918,11 +978,15 @@ IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest,
                                 .root()
                                 ->render_manager()
                                 ->speculative_frame_host();
-    // The navigation is considered cross-site, because the AgentClusterKey of
-    // the current page has an IsolationKey, and the request does not have one.
-    // TODO(https://issues.chromium.org/343914483): Avoid creating a speculative
-    // RFH in this case.
-    EXPECT_TRUE(speculative_rfh);
+    if (WillSameSiteNavigationChangeRenderFrameHosts(true, true)) {
+      // When RenderDocument is enabled, a speculative RFH will always be
+      // created. ProactivelySwapBrowsingInstance will not create one in this
+      // case because we are navigating to the same URL as the existing
+      // document.
+      EXPECT_TRUE(speculative_rfh);
+    } else {
+      EXPECT_FALSE(speculative_rfh);
+    }
 
     ASSERT_TRUE(dip_navigation.WaitForNavigationFinished());
 
@@ -936,24 +1000,39 @@ IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest,
   }
 }
 
-// A test to make sure that loading a page with DIP sets
-// requires_origin_keyed_process() on the SiteInstance's SiteInfo.
+// A test to make sure that loading a page with DIP creates an origin-keyed
+// AgentClusterKey in SiteInstance's SiteInfo.
 IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest, DipOriginKeyed) {
   GURL isolated_page = GetDocumentIsolationPolicyURL("a.test");
 
   EXPECT_TRUE(NavigateToURL(shell(), isolated_page));
   SiteInstanceImpl* current_si = current_frame_host()->GetSiteInstance();
   EXPECT_TRUE(current_si->IsCrossOriginIsolated());
-  // Currently, use of the DIP header does not cause
-  // SiteInfo::requires_origin_keyed_process() to return true. In practice, the
-  // process will be origin-keyed because the AgentClusterKey is. Once we
-  // refactor Origin-Agent-Cluster to use the AgentClusterKey, using DIP should
-  // also cause SiteInfo::requires_origin_keyed_process() to return true.
-  // Note: if kOriginKeyedProcessesByDefault is enabled, then
-  // requires_origin_keyed_process() will return true.
-  EXPECT_EQ(SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault(),
-            current_si->GetSiteInfo().requires_origin_keyed_process());
-  EXPECT_TRUE(current_si->GetSiteInfo().agent_cluster_key()->IsOriginKeyed());
+  EXPECT_TRUE(current_si->GetSiteInfo().agent_cluster_key().IsOriginKeyed());
+
+  // While the AgentClusterKey is origin-keyed, this should not impact the OAC
+  // status of the SiteInfo.
+  if (SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault()) {
+    EXPECT_EQ(AgentClusterKey::OACStatus::kOriginKeyedByDefault,
+              current_si->GetSiteInfo().oac_status());
+  } else {
+    EXPECT_EQ(AgentClusterKey::OACStatus::kSiteKeyedByDefault,
+              current_si->GetSiteInfo().oac_status());
+  }
+}
+
+// A test to make sure that loading a page with DIP creates a SiteInfo with an
+// AgentClusterKey that has the origin of the DIP document, not its SiteURL.
+IN_PROC_BROWSER_TEST_P(DocumentIsolationPolicyBrowserTest,
+                       DipAgentClusterKeyUsesOrigin) {
+  GURL isolated_page = GetDocumentIsolationPolicyURL("a.b.test");
+  url::Origin origin = url::Origin::Create(isolated_page);
+
+  EXPECT_TRUE(NavigateToURL(shell(), isolated_page));
+  SiteInstanceImpl* current_si = current_frame_host()->GetSiteInstance();
+  EXPECT_TRUE(current_si->IsCrossOriginIsolated());
+  EXPECT_TRUE(current_si->GetSiteInfo().agent_cluster_key().IsOriginKeyed());
+  EXPECT_EQ(origin, current_si->GetSiteInfo().agent_cluster_key().GetOrigin());
 }
 
 // Tests that main frame navigations are correctly assigned cross-origin

@@ -38,6 +38,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "crypto/hash.h"
+#include "ipc/constants.mojom.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
@@ -718,7 +719,7 @@ void SignedExchangeHandler::CheckAbsenceOfCookies(base::OnceClosure callback) {
           render_frame_host ? render_frame_host->GetProcess()->GetDeprecatedID()
                             : -1,
           render_frame_host ? render_frame_host->GetRoutingID()
-                            : MSG_ROUTING_NONE,
+                            : IPC::mojom::kRoutingIdNone,
           /*cookie_setting_overrides=*/
           render_frame_host ? render_frame_host->GetCookieSettingOverrides()
                             : net::CookieSettingOverrides(),
@@ -769,7 +770,10 @@ void SignedExchangeHandler::CreateResponse(
   response_head->load_timing.send_start = now;
   response_head->load_timing.send_end = now;
   response_head->load_timing.receive_headers_end = now;
-  response_head->content_length = response_head->headers->GetContentLength();
+  std::optional<base::ByteCount> content_length =
+      response_head->headers->GetContentLength();
+  response_head->content_length =
+      content_length ? content_length->InBytes() : -1;
   response_head->remote_endpoint = remote_endpoint_;
 
   auto body_stream = CreateResponseBodyStream();

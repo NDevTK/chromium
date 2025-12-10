@@ -14,6 +14,18 @@ namespace on_device_model::features {
 COMPONENT_EXPORT(ON_DEVICE_MODEL_CPP)
 BASE_DECLARE_FEATURE(kUseFakeChromeML);
 
+// Whether the on-device model should be limited to running only on the CPU.
+COMPONENT_EXPORT(ON_DEVICE_MODEL_CPP)
+BASE_DECLARE_FEATURE(kOnDeviceModelForceCpuBackend);
+
+// Whether the CPU backend for the on-device model is enabled.
+COMPONENT_EXPORT(ON_DEVICE_MODEL_CPP)
+BASE_DECLARE_FEATURE(kOnDeviceModelCpuBackend);
+
+// Whether the on-device model should use the LiteRT-LM backend.
+COMPONENT_EXPORT(ON_DEVICE_MODEL_CPP)
+BASE_DECLARE_FEATURE(kOnDeviceModelLitertLmBackend);
+
 }  // namespace on_device_model::features
 
 #endif  // SERVICES_ON_DEVICE_MODEL_PUBLIC_CPP_FEATURES_H_

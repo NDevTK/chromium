@@ -7,9 +7,11 @@
 #import <UIKit/UIKit.h>
 
 #import "base/check.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_color_palette_configuration.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_color_palette.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
+#import "ios/chrome/grit/ios_strings.h"
+#import "ui/base/l10n/l10n_util_mac.h"
 
 // Define constants within the namespace.
 namespace {
@@ -45,6 +47,8 @@ const CGFloat kGapBorderWidth = 3.0;
   self = [super initWithFrame:frame];
   if (self) {
     self.contentView.backgroundColor = UIColor.clearColor;
+    self.isAccessibilityElement = YES;
+    self.accessibilityTraits |= UIAccessibilityTraitButton;
 
     // Outer container view that holds the highlight border.
     _borderWrapperView = [[UIView alloc] init];
@@ -58,6 +62,7 @@ const CGFloat kGapBorderWidth = 3.0;
     _innerContentView = [[UIView alloc] init];
     _innerContentView.translatesAutoresizingMaskIntoConstraints = NO;
     _innerContentView.layer.masksToBounds = YES;
+    _innerContentView.layer.borderWidth = 1;
     [_borderWrapperView addSubview:_innerContentView];
 
     _lightColorView = [[UIView alloc] init];
@@ -113,6 +118,10 @@ const CGFloat kGapBorderWidth = 3.0;
     AddSameConstraints(_borderWrapperView, self.contentView);
     AddSameConstraintsWithInset(_innerContentView, _borderWrapperView,
                                 kGapBorderWidth + kHighlightBorderWidth);
+
+    [self registerForTraitChanges:@[ UITraitUserInterfaceStyle.class ]
+                       withAction:@selector(updateCGColors)];
+    [self updateCGColors];
   }
   return self;
 }
@@ -131,12 +140,11 @@ const CGFloat kGapBorderWidth = 3.0;
   _innerContentView.clipsToBounds = YES;
 }
 
-- (void)setConfiguration:
-    (HomeCustomizationColorPaletteConfiguration*)configuration {
-  _configuration = configuration;
-  _lightColorView.backgroundColor = configuration.lightColor;
-  _darkColorView.backgroundColor = configuration.darkColor;
-  _mediumColorView.backgroundColor = configuration.mediumColor;
+- (void)setColorPalette:(NewTabPageColorPalette*)colorPalette {
+  _colorPalette = colorPalette;
+  _lightColorView.backgroundColor = colorPalette.lightColor;
+  _darkColorView.backgroundColor = colorPalette.darkColor;
+  _mediumColorView.backgroundColor = colorPalette.mediumColor;
 }
 
 - (void)setSelected:(BOOL)selected {
@@ -153,7 +161,15 @@ const CGFloat kGapBorderWidth = 3.0;
   } else {
     _borderWrapperView.layer.borderColor = nil;
     _borderWrapperView.layer.borderWidth = 0;
+    self.accessibilityValue = nil;
   }
+}
+
+// Updates CGColors when the user interface style changes, as they do not
+// update automatically.
+- (void)updateCGColors {
+  _innerContentView.layer.borderColor =
+      [UIColor colorNamed:kGrey200Color].CGColor;
 }
 
 @end

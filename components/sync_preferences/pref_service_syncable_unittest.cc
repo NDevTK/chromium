@@ -129,7 +129,8 @@ std::optional<base::Value> FindValue(
         change.sync_data().GetClientTagHash() ==
             syncer::ClientTagHash::FromUnhashed(syncer::PREFERENCES, name)) {
       return base::JSONReader::Read(
-          change.sync_data().GetSpecifics().preference().value());
+          change.sync_data().GetSpecifics().preference().value(),
+          base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     }
   }
   return std::nullopt;
@@ -159,7 +160,8 @@ class TestSyncProcessorStub : public syncer::SyncChangeProcessor {
     }
     if (fail_next_) {
       fail_next_ = false;
-      return syncer::ModelError(FROM_HERE, "Error");
+      return syncer::ModelError(FROM_HERE,
+                                syncer::ModelError::Type::kGenericTestError);
     }
     return std::nullopt;
   }
@@ -328,7 +330,8 @@ TEST_F(PrefServiceSyncableTest, CreatePrefSyncData) {
       sync_data.GetSpecifics().preference());
   EXPECT_EQ(std::string(kStringPrefName), specifics.name());
 
-  std::optional<base::Value> value = base::JSONReader::Read(specifics.value());
+  std::optional<base::Value> value = base::JSONReader::Read(
+      specifics.value(), base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(*pref->GetValue(), *value);
 }
 

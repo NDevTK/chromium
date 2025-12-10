@@ -36,7 +36,7 @@ class VIZ_SERVICE_EXPORT FlingSchedulerAndroid
       base::WeakPtr<input::FlingController> fling_controller) override;
   void DidStopFlingingOnBrowser(
       base::WeakPtr<input::FlingController> fling_controller) override;
-  bool NeedsBeginFrameForFlingProgress() override;
+  bool ProgressFlingOnFlingStart() override;
   bool ShouldUseMobileFlingCurve() override;
   gfx::Vector2dF GetPixelsPerInch(
       const gfx::PointF& position_in_screen) override;
@@ -65,7 +65,6 @@ class VIZ_SERVICE_EXPORT FlingSchedulerAndroid
   // BeginFrameObserverBase implementation.
   bool OnBeginFrameDerivedImpl(const BeginFrameArgs& args) override;
   void OnBeginFrameSourcePausedChanged(bool paused) override {}
-  bool IsRoot() const override;
 
   const FrameSinkId frame_sink_id_;
 };

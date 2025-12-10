@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/version.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_selection.h"
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
 #include "ui/accessibility/platform/ax_platform_tree_manager_delegate.h"
@@ -49,15 +50,24 @@ BrowserAccessibilityManagerAuraLinux::BrowserAccessibilityManagerAuraLinux(
 }
 
 BrowserAccessibilityManagerAuraLinux::~BrowserAccessibilityManagerAuraLinux() {
-  if (IsRootFrameManager()) {
-    DCHECK(GetBrowserAccessibilityRoot());
-    gfx::NativeViewAccessible obj =
-        GetBrowserAccessibilityRoot()->GetNativeViewAccessible();
-    // We don't fire state:changed:defunct on every object in order to reduce
-    // event noise, but it is useful for the root node of a document.
-    if (ATK_IS_OBJECT(obj)) {
-      atk_object_notify_state_change(obj, ATK_STATE_DEFUNCT, TRUE);
-    }
+  if (!IsRootFrameManager()) {
+    return;
+  }
+
+  // When ViewsAX is enabled, it's possible to have a non-web content source
+  // delegate.
+  if (!features::IsAccessibilityTreeForViewsEnabled()) {
+    CHECK(!delegate() || delegate()->AccessibilityIsWebContentSource())
+        << "We should never get here in non-web content sourced managers.";
+  }
+
+  DCHECK(GetBrowserAccessibilityRoot());
+  gfx::NativeViewAccessible obj =
+      GetBrowserAccessibilityRoot()->GetNativeViewAccessible();
+  // We don't fire state:changed:defunct on every object in order to reduce
+  // event noise, but it is useful for the root node of a document.
+  if (ATK_IS_OBJECT(obj)) {
+    atk_object_notify_state_change(obj, ATK_STATE_DEFUNCT, TRUE);
   }
 }
 
@@ -361,6 +371,7 @@ void BrowserAccessibilityManagerAuraLinux::FireGeneratedEvent(
     case AXEventGenerator::Event::CHECKED_STATE_DESCRIPTION_CHANGED:
     case AXEventGenerator::Event::CHILDREN_CHANGED:
     case AXEventGenerator::Event::CONTROLS_CHANGED:
+    case AXEventGenerator::Event::DEFAULT_ACTION_VERB_CHANGED:
     case AXEventGenerator::Event::DETAILS_CHANGED:
     case AXEventGenerator::Event::DESCRIBED_BY_CHANGED:
     case AXEventGenerator::Event::EDITABLE_TEXT_CHANGED:

@@ -54,24 +54,21 @@ bool AreDeviceAttributesAllowedByPermissionsPolicy(ExecutionContext* context) {
 
 }  // namespace
 
-const char NavigatorManagedData::kSupplementName[] = "NavigatorManagedData";
-
 NavigatorManagedData* NavigatorManagedData::managed(Navigator& navigator) {
   if (!navigator.DomWindow())
     return nullptr;
 
-  NavigatorManagedData* device_service =
-      Supplement<Navigator>::From<NavigatorManagedData>(navigator);
+  NavigatorManagedData* device_service = navigator.GetNavigatorManagedData();
   if (!device_service) {
     device_service = MakeGarbageCollected<NavigatorManagedData>(navigator);
-    ProvideTo(navigator, device_service);
+    navigator.SetNavigatorManagedData(device_service);
   }
   return device_service;
 }
 
 NavigatorManagedData::NavigatorManagedData(Navigator& navigator)
     : ActiveScriptWrappable<NavigatorManagedData>({}),
-      Supplement<Navigator>(navigator),
+      navigator_(navigator),
       device_api_service_(navigator.DomWindow()),
       managed_configuration_service_(navigator.DomWindow()),
       configuration_observer_(this, navigator.DomWindow()) {}
@@ -81,7 +78,7 @@ const AtomicString& NavigatorManagedData::InterfaceName() const {
 }
 
 ExecutionContext* NavigatorManagedData::GetExecutionContext() const {
-  return GetSupplementable()->DomWindow();
+  return navigator_->DomWindow();
 }
 
 bool NavigatorManagedData::HasPendingActivity() const {
@@ -93,7 +90,7 @@ bool NavigatorManagedData::HasPendingActivity() const {
 void NavigatorManagedData::Trace(Visitor* visitor) const {
   EventTarget::Trace(visitor);
   ActiveScriptWrappable::Trace(visitor);
-  Supplement<Navigator>::Trace(visitor);
+  visitor->Trace(navigator_);
 
   visitor->Trace(device_api_service_);
   visitor->Trace(managed_configuration_service_);
@@ -109,8 +106,8 @@ mojom::blink::DeviceAPIService* NavigatorManagedData::GetService() {
     // The access status of Device API can change dynamically. Hence, we have to
     // properly handle cases when we are losing this access.
     device_api_service_.set_disconnect_handler(
-        WTF::BindOnce(&NavigatorManagedData::OnServiceConnectionError,
-                      WrapWeakPersistent(this)));
+        BindOnce(&NavigatorManagedData::OnServiceConnectionError,
+                 WrapWeakPersistent(this)));
   }
 
   return device_api_service_.get();
@@ -126,8 +123,8 @@ NavigatorManagedData::GetManagedConfigurationService() {
     // The access status of Device API can change dynamically. Hence, we have to
     // properly handle cases when we are losing this access.
     managed_configuration_service_.set_disconnect_handler(
-        WTF::BindOnce(&NavigatorManagedData::OnServiceConnectionError,
-                      WrapWeakPersistent(this)));
+        BindOnce(&NavigatorManagedData::OnServiceConnectionError,
+                 WrapWeakPersistent(this)));
   }
 
   return managed_configuration_service_.get();
@@ -166,8 +163,8 @@ NavigatorManagedData::getManagedConfiguration(ScriptState* script_state,
   }
 #if !BUILDFLAG(IS_ANDROID)
   GetManagedConfigurationService()->GetManagedConfiguration(
-      keys, WTF::BindOnce(&NavigatorManagedData::OnConfigurationReceived,
-                          WrapWeakPersistent(this), WrapPersistent(resolver)));
+      keys, BindOnce(&NavigatorManagedData::OnConfigurationReceived,
+                     WrapWeakPersistent(this), WrapPersistent(resolver)));
 #else
   resolver->Reject(MakeGarbageCollected<DOMException>(
       DOMExceptionCode::kNotSupportedError, kManagedConfigNotSupported));
@@ -189,7 +186,7 @@ ScriptPromise<IDLNullable<IDLString>> NavigatorManagedData::getDirectoryId(
   pending_promises_.insert(resolver);
   auto promise = resolver->Promise();
 
-  GetService()->GetDirectoryId(WTF::BindOnce(
+  GetService()->GetDirectoryId(BindOnce(
       &NavigatorManagedData::OnAttributeReceived, WrapWeakPersistent(this),
       WrapPersistent(script_state), WrapPersistent(resolver)));
   return promise;
@@ -208,7 +205,7 @@ ScriptPromise<IDLNullable<IDLString>> NavigatorManagedData::getHostname(
   pending_promises_.insert(resolver);
   auto promise = resolver->Promise();
 
-  GetService()->GetHostname(WTF::BindOnce(
+  GetService()->GetHostname(BindOnce(
       &NavigatorManagedData::OnAttributeReceived, WrapWeakPersistent(this),
       WrapPersistent(script_state), WrapPersistent(resolver)));
   return promise;
@@ -227,7 +224,7 @@ ScriptPromise<IDLNullable<IDLString>> NavigatorManagedData::getSerialNumber(
   pending_promises_.insert(resolver);
   auto promise = resolver->Promise();
 
-  GetService()->GetSerialNumber(WTF::BindOnce(
+  GetService()->GetSerialNumber(BindOnce(
       &NavigatorManagedData::OnAttributeReceived, WrapWeakPersistent(this),
       WrapPersistent(script_state), WrapPersistent(resolver)));
   return promise;
@@ -246,7 +243,7 @@ ScriptPromise<IDLNullable<IDLString>> NavigatorManagedData::getAnnotatedAssetId(
   pending_promises_.insert(resolver);
   auto promise = resolver->Promise();
 
-  GetService()->GetAnnotatedAssetId(WTF::BindOnce(
+  GetService()->GetAnnotatedAssetId(BindOnce(
       &NavigatorManagedData::OnAttributeReceived, WrapWeakPersistent(this),
       WrapPersistent(script_state), WrapPersistent(resolver)));
   return promise;
@@ -265,7 +262,7 @@ NavigatorManagedData::getAnnotatedLocation(ScriptState* script_state,
   pending_promises_.insert(resolver);
   auto promise = resolver->Promise();
 
-  GetService()->GetAnnotatedLocation(WTF::BindOnce(
+  GetService()->GetAnnotatedLocation(BindOnce(
       &NavigatorManagedData::OnAttributeReceived, WrapWeakPersistent(this),
       WrapPersistent(script_state), WrapPersistent(resolver)));
   return promise;

@@ -26,11 +26,14 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::mojom::APIPermissionID;
 
@@ -91,8 +94,8 @@ class ExtensionInstallStatusTest : public testing::Test {
   }
 
   void SetExtensionSettings(const std::string& settings_string) {
-    std::optional<base::Value> settings =
-        base::JSONReader::Read(settings_string);
+    std::optional<base::Value> settings = base::JSONReader::Read(
+        settings_string, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(settings);
     SetPolicy(pref_names::kExtensionManagement,
               base::Value::ToUniquePtrValue(std::move(*settings)));
@@ -591,8 +594,9 @@ class ExtensionInstallStatusTestWithoutMv2Deprecation
     // This test assumes MV2 is not blocked by Chrome. Versions with MV2
     // blocked by Chrome are exercised in
     // `ExtensionInstallStatusTestWithMV2Deprecation`.
-    feature_list_.InitAndDisableFeature(
-        extensions_features::kExtensionManifestV2Disabled);
+    feature_list_.InitWithFeatures(
+        {}, {extensions_features::kExtensionManifestV2Disabled,
+             extensions_features::kExtensionManifestV2Unsupported});
   }
   ExtensionInstallStatusTestWithoutMv2Deprecation(
       const ExtensionInstallStatusTestWithoutMv2Deprecation&) = delete;
@@ -724,8 +728,17 @@ class ExtensionInstallStatusTestWithMV2Deprecation
       public testing::WithParamInterface<bool> {
  public:
   ExtensionInstallStatusTestWithMV2Deprecation() {
-    feature_list_.InitWithFeatureState(
-        extensions_features::kExtensionManifestV2Disabled, GetParam());
+    std::vector<base::test::FeatureRef> enabled_features;
+    std::vector<base::test::FeatureRef> disabled_features(
+        {extensions_features::kExtensionManifestV2Unsupported});
+    if (GetParam()) {
+      enabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+    } else {
+      disabled_features.push_back(
+          extensions_features::kExtensionManifestV2Disabled);
+    }
+    feature_list_.InitWithFeatures(enabled_features, disabled_features);
   }
   ~ExtensionInstallStatusTestWithMV2Deprecation() override = default;
 

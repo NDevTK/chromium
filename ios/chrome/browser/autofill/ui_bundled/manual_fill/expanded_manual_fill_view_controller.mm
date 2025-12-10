@@ -22,9 +22,16 @@ using manual_fill::ManualFillDataType;
 namespace {
 
 // Size of the Chrome logo.
-constexpr CGFloat kChromeLogoSize = 24;
+constexpr CGFloat kChromeLogoSize = 28;
+
+// Size of the Chrome logo when liquid glass is disabled.
+constexpr CGFloat kChromeLogoSizePreLiquidGlass = 24;
+
 // Size of the close button.
-constexpr CGFloat kCloseButtonSize = 30;
+constexpr CGFloat kCloseButtonSize = 44;
+
+// Size of the close button when liquid glass is disabled.
+constexpr CGFloat kCloseButtonSizePreLiquidGlass = 30;
 // Size of the data type icons representing the different segments
 // of the segmented control.
 constexpr CGFloat kDataTypeIconSize = 18;
@@ -32,10 +39,17 @@ constexpr CGFloat kDataTypeIconSize = 18;
 constexpr CGFloat kHeaderViewBottomPadding = 12;
 // Leading and trailing padding for the header view.
 constexpr CGFloat kHeaderViewHorizontalPadding = 16;
+// Extra horizontal inset of the cells of a UITableView
+// (UITableViewStyleInsetGrouped) on iOS 26.
+constexpr CGFloat kIOS26TableViewCellExtraHorizontalInset = 4;
 // Top padding for the header view.
 constexpr CGFloat kHeaderViewTopPadding = 8;
 // Top padding for the header view when in a bottom popover.
 constexpr CGFloat kHeaderViewPopoverTopPadding = 22;
+
+// Opacity of the segmented control background color.
+constexpr CGFloat kSegmentedControlBackgroundColorOpacity = 0.05;
+
 // Height of the segmented control.
 constexpr CGFloat kSegmentedControlHeight = 32;
 // Multiplier used to constraint the view's height.
@@ -68,6 +82,93 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
     case ManualFillDataType::kOther:
       NOTREACHED();
   }
+}
+
+// Returns the color to use for the view's background.
+UIColor* GetBackgroundColor() {
+  if (@available(iOS 26, *)) {
+    return UIColor.clearColor;
+  }
+
+  return [UIColor colorNamed:kGroupedPrimaryBackgroundColor];
+}
+
+// Returns the size to use for the Chrome logo.
+CGFloat GetChromeLogoSize() {
+  if (@available(iOS 26, *)) {
+    return kChromeLogoSize;
+  }
+
+  return kChromeLogoSizePreLiquidGlass;
+}
+
+// Returns the symbol configuration to use for the close button.
+UIImageSymbolConfiguration* GetCloseButtonSymbolConfiguration() {
+  if (@available(iOS 26, *)) {
+    return [UIImageSymbolConfiguration
+        configurationWithPointSize:kCloseButtonSize
+                            weight:UIImageSymbolWeightThin
+                             scale:UIImageSymbolScaleDefault];
+  }
+
+  return [UIImageSymbolConfiguration
+      configurationWithPointSize:kCloseButtonSizePreLiquidGlass
+                          weight:UIImageSymbolWeightRegular
+                           scale:UIImageSymbolScaleMedium];
+}
+
+// Returns the trailing offset of the close button.
+// The image of the close button comes with a padding, which is noticable for a
+// larger button. An offset is needed to visually align the close button to the
+// trailing edge of the header view.
+// - `size` is the size of the image, also the size of the button.
+// - `kCloseButtonSize` is the point size for the symbol configuration of the
+// larger button, representing the size of the symbol on screen.
+CGFloat GetCloseButtonTrailingOffset(CGSize size) {
+  return std::max(size.width - kCloseButtonSize, 0.0) * 0.5;
+}
+
+// Returns the foreground color to use for the close button color palette.
+UIColor* GetCloseButtonForegroundColor() {
+  if (@available(iOS 26, *)) {
+    return [UIColor colorNamed:kTextPrimaryColor];
+  }
+
+  return [[UIColor secondaryLabelColor] colorWithAlphaComponent:0.6];
+}
+
+// Returns the constant to apply to the header view top constraint.
+CGFloat GetHeaderViewTopConstraintConstant(bool is_compact_height) {
+  if (@available(iOS 26, *)) {
+    if (!(is_compact_height ||
+          ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET)) {
+      return -kHeaderViewTopPadding;
+    }
+  }
+
+  return kHeaderViewTopPadding;
+}
+
+// Returns the on-screen horizontal inset of `UITableViewCell`s based on the
+// inset from their layout margins.
+// As of iOS 26, the actual horizontal cell inset on iPhone is 4pt larger than
+// the obtained inset from the layout margins of a cell.
+// On iOS 18 and iPad, the two insets are identical.
+// This function takes into account the additional inset and returns a value
+// that can be used to align other UI elements with the cells.
+CGFloat GetUpdatedHorizontalInset(CGFloat inset) {
+  if (@available(iOS 26, *)) {
+    if (ui::GetDeviceFormFactor() != ui::DEVICE_FORM_FACTOR_TABLET) {
+      return inset + kIOS26TableViewCellExtraHorizontalInset;
+    }
+  }
+  return inset;
+}
+
+// Returns the horizontal inset of the cells of a UITableView.
+CGFloat GetTableViewCellHorizontalInset(UITableView* tableView) {
+  return GetUpdatedHorizontalInset(
+      tableView.visibleCells.firstObject.layoutMargins.left);
 }
 
 }  // namespace
@@ -119,6 +220,10 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   // Button to close the view.
   ExtendedTouchTargetButton* _closeButton;
 
+  // Trailing offset of the `_closeButton` so the trailing edge of the image can
+  // be aligned with its parent.
+  CGFloat _closeButtonTrailingOffset;
+
   // Initial data type to present in the view. Reflects the type of the form the
   // user wants to fill.
   ManualFillDataType _initialDataType;
@@ -146,8 +251,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   [super viewDidLoad];
 
   self.view.accessibilityIdentifier = manual_fill::kExpandedManualFillViewID;
-  self.view.backgroundColor =
-      [UIColor colorNamed:kGroupedPrimaryBackgroundColor];
+  self.view.backgroundColor = GetBackgroundColor();
 
   // Set the view's frame to get the right height initially. Once the view's
   // window is loaded in `viewDidAppear`, the view's height will be
@@ -164,9 +268,12 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
       [self createSegmentedControlAndSelectDataType:_initialDataType];
   _headerViewHeightConstraint = [_headerView.heightAnchor
       constraintEqualToConstant:kHeaderViewHeightWideLayout];
+  _headerViewTopConstraint =
+      [_headerView.topAnchor constraintEqualToAnchor:self.view.topAnchor];
 
   [self setUpHeaderView:_headerView
       headerViewHeightConstraint:_headerViewHeightConstraint
+         headerViewTopConstraint:_headerViewTopConstraint
                       chromeLogo:_chromeLogo
                      closeButton:_closeButton
                 segmentedControl:_segmentedControl
@@ -176,13 +283,12 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   // `_headerView` constraints.
   _headerViewLeadingConstraint = [_headerView.leadingAnchor
       constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor
-                     constant:kHeaderViewHorizontalPadding];
+                     constant:GetUpdatedHorizontalInset(
+                                  kHeaderViewHorizontalPadding)];
   _headerViewTrailingConstraint = [_headerView.trailingAnchor
       constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor
-                     constant:-kHeaderViewHorizontalPadding];
-  _headerViewTopConstraint =
-      [_headerView.topAnchor constraintEqualToAnchor:self.view.topAnchor
-                                            constant:kHeaderViewTopPadding];
+                     constant:-GetUpdatedHorizontalInset(
+                                  kHeaderViewHorizontalPadding)];
   _headerViewPopoverTopConstraint = [_headerView.topAnchor
       constraintEqualToAnchor:self.view.topAnchor
                      constant:kHeaderViewPopoverTopPadding];
@@ -192,16 +298,14 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
     _headerViewTrailingConstraint,
   ]];
 
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits =
-        TraitCollectionSetForTraits(@[ UITraitVerticalSizeClass.class ]);
-    __weak __typeof(self) weakSelf = self;
-    UITraitChangeHandler handler = ^(id<UITraitEnvironment> traitEnvironment,
-                                     UITraitCollection* previousCollection) {
-      [weakSelf resetHeaderViewOnTraitChange];
-    };
-    [self registerForTraitChanges:traits withHandler:handler];
-  }
+  NSArray<UITrait>* traits =
+      TraitCollectionSetForTraits(@[ UITraitVerticalSizeClass.class ]);
+  __weak __typeof(self) weakSelf = self;
+  UITraitChangeHandler handler = ^(id<UITraitEnvironment> traitEnvironment,
+                                   UITraitCollection* previousCollection) {
+    [weakSelf resetHeaderViewOnTraitChange];
+  };
+  [self registerForTraitChanges:traits withHandler:handler];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -233,7 +337,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   UITableView* tableView = self.childViewController.tableView;
   UITableViewStyle style = tableView.style;
   CGFloat tableViewCellHorizontalInset =
-      tableView.visibleCells.firstObject.layoutMargins.left;
+      GetTableViewCellHorizontalInset(tableView);
 
   // If needed, update the horizontal contraints of the header view so that it
   // is horizontally aligned with the table view cells.
@@ -247,22 +351,6 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 
   [self adjustTopHeaderViewConstraint];
 }
-
-#pragma mark - UITraitEnvironment
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  if (self.traitCollection.verticalSizeClass !=
-      previousTraitCollection.verticalSizeClass) {
-    [self resetHeaderViewOnTraitChange];
-  }
-}
-#endif
 
 #pragma mark - Setters
 
@@ -326,13 +414,13 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 
 // Creates and configures the Chrome logo.
 - (UIImageView*)createChromeLogo {
-#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
-  UIImage* image = MakeSymbolMulticolor(
-      CustomSymbolWithPointSize(kMulticolorChromeballSymbol, kChromeLogoSize));
+#if BUILDFLAG(IOS_USE_BRANDED_ASSETS)
+  UIImage* image = MakeSymbolMulticolor(CustomSymbolWithPointSize(
+      kMulticolorChromeballSymbol, GetChromeLogoSize()));
 #else
   UIImage* image =
-      CustomSymbolWithPointSize(kChromeProductSymbol, kChromeLogoSize);
-#endif  // BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
+      CustomSymbolWithPointSize(kChromeProductSymbol, GetChromeLogoSize());
+#endif  // BUILDFLAG(IOS_USE_BRANDED_ASSETS)
   UIImageView* chromeLogo = [[UIImageView alloc] initWithImage:image];
   chromeLogo.translatesAutoresizingMaskIntoConstraints = NO;
   chromeLogo.contentMode = UIViewContentModeCenter;
@@ -361,17 +449,13 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
   closeButton.accessibilityLabel = l10n_util::GetNSString(
       IDS_IOS_EXPANDED_MANUAL_FILL_CLOSE_BUTTON_ACCESSIBILITY_LABEL);
 
-  UIImageSymbolConfiguration* symbolConfiguration = [UIImageSymbolConfiguration
-      configurationWithPointSize:kCloseButtonSize
-                          weight:UIImageSymbolWeightRegular
-                           scale:UIImageSymbolScaleMedium];
+  UIImageSymbolConfiguration* symbolConfiguration =
+      GetCloseButtonSymbolConfiguration();
   UIImage* buttonImage = SymbolWithPalette(
       DefaultSymbolWithConfiguration(kXMarkCircleFillSymbol,
                                      symbolConfiguration),
-      @[
-        [[UIColor secondaryLabelColor] colorWithAlphaComponent:0.6],
-        [UIColor tertiarySystemFillColor]
-      ]);
+      @[ GetCloseButtonForegroundColor(), [UIColor tertiarySystemFillColor] ]);
+  _closeButtonTrailingOffset = GetCloseButtonTrailingOffset(buttonImage.size);
   [closeButton setImage:buttonImage forState:UIControlStateNormal];
 
   [closeButton setContentHuggingPriority:UILayoutPriorityRequired
@@ -419,19 +503,28 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
                        action:@selector(onSegmentSelected:)
              forControlEvents:UIControlEventValueChanged];
 
+  if (@available(iOS 26, *)) {
+    segmentedControl.backgroundColor = [[UIColor colorNamed:kGrey700Color]
+        colorWithAlphaComponent:kSegmentedControlBackgroundColorOpacity];
+  }
+
   return segmentedControl;
 }
 
 // Sets up the header view depending on the device's orientation.
 - (void)setUpHeaderView:(UIView*)headerView
     headerViewHeightConstraint:(NSLayoutConstraint*)headerViewHeightConstraint
+       headerViewTopConstraint:(NSLayoutConstraint*)headerViewTopConstraint
                     chromeLogo:(UIImageView*)chromeLogo
                    closeButton:(UIButton*)closeButton
               segmentedControl:(UISegmentedControl*)segmentedControl
                  headerTopView:(UIView*)headerTopView {
   // If the vertical size class is compact, apply the wide layout. Otherwise,
   // apply the narrow layout.
-  if (IsCompactHeight(self)) {
+  bool isCompactHeight = IsCompactHeight(self);
+  _headerViewTopConstraint.constant =
+      GetHeaderViewTopConstraintConstant(isCompactHeight);
+  if (isCompactHeight) {
     [headerView addSubview:chromeLogo];
     [headerView addSubview:closeButton];
     [headerView addSubview:segmentedControl];
@@ -481,7 +574,8 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
       [closeButton.centerYAnchor
           constraintEqualToAnchor:headerTopView.centerYAnchor],
       [closeButton.trailingAnchor
-          constraintEqualToAnchor:headerTopView.trailingAnchor],
+          constraintEqualToAnchor:headerTopView.trailingAnchor
+                         constant:_closeButtonTrailingOffset],
 
       // `headerTopView` constraints.
       [headerTopView.topAnchor constraintEqualToAnchor:headerView.topAnchor],
@@ -516,6 +610,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 // Resets the header view. Called when a layout change is needed.
 - (void)resetHeaderView:(UIView*)headerView
     headerViewHeightConstraint:(NSLayoutConstraint*)headerViewHeightConstraint
+       headerViewTopConstraint:(NSLayoutConstraint*)headerViewTopConstraint
                     chromeLogo:(UIImageView*)chromeLogo
                    closeButton:(UIButton*)closeButton
               segmentedControl:(UISegmentedControl*)segmentedControl
@@ -528,6 +623,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 
   [self setUpHeaderView:headerView
       headerViewHeightConstraint:headerViewHeightConstraint
+         headerViewTopConstraint:headerViewTopConstraint
                       chromeLogo:chromeLogo
                      closeButton:closeButton
                 segmentedControl:segmentedControl
@@ -565,6 +661,7 @@ int GetSegmentIndexForDataType(ManualFillDataType data_type) {
 - (void)resetHeaderViewOnTraitChange {
   [self resetHeaderView:_headerView
       headerViewHeightConstraint:_headerViewHeightConstraint
+         headerViewTopConstraint:_headerViewTopConstraint
                       chromeLogo:_chromeLogo
                      closeButton:_closeButton
                 segmentedControl:_segmentedControl

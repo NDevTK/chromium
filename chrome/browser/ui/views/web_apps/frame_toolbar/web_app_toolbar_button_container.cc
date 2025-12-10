@@ -6,10 +6,10 @@
 
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "chrome/browser/download/bubble/download_bubble_prefs.h"
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
@@ -230,8 +230,9 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
   // Pinned buttons are not shown in web apps but buttons can be shown
   // ephemerally in this container and should have the same flex behavior as
   // other toolbar buttons.
-  pinned_toolbar_actions_container_ = AddChildView(
-      std::make_unique<PinnedToolbarActionsContainer>(browser_view_));
+  pinned_toolbar_actions_container_ =
+      AddChildView(std::make_unique<PinnedToolbarActionsContainer>(
+          browser_view_, toolbar_button_provider));
   views::SetHitTestComponent(pinned_toolbar_actions_container_,
                              static_cast<int>(HTCLIENT));
 
@@ -250,19 +251,18 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
     web_app_menu_button_ =
         AddChildView(std::make_unique<WebAppMenuButton>(browser_view_));
     web_app_menu_button_->SetID(VIEW_ID_APP_MENU);
-    ConfigureWebAppToolbarButton(web_app_menu_button_,
-                                 toolbar_button_provider_);
+    web_app_menu_button_->SetMinSize(
+        toolbar_button_provider_->GetToolbarButtonSize());
     web_app_menu_button_->SetProperty(views::kFlexBehaviorKey,
                                       views::FlexSpecification());
   }
 
-  browser_view_->immersive_mode_controller()->AddObserver(this);
+  ImmersiveModeController::From(browser_view_->browser())->AddObserver(this);
 }
 
 WebAppToolbarButtonContainer::~WebAppToolbarButtonContainer() {
-  ImmersiveModeController* immersive_controller =
-      browser_view_->immersive_mode_controller();
-  if (immersive_controller) {
+  if (auto* const immersive_controller =
+          ImmersiveModeController::From(browser_view_->browser())) {
     immersive_controller->RemoveObserver(this);
   }
 }
@@ -361,7 +361,7 @@ gfx::Insets WebAppToolbarButtonContainer::PageActionIconInsetsFromSize(
 // highlight and icon fade in).
 bool WebAppToolbarButtonContainer::GetAnimate() const {
   return !g_animation_disabled_for_testing &&
-         !browser_view_->immersive_mode_controller()->IsEnabled();
+         !ImmersiveModeController::From(browser_view_->browser())->IsEnabled();
 }
 
 void WebAppToolbarButtonContainer::StartTitlebarAnimation() {
@@ -418,7 +418,9 @@ WebAppToolbarButtonContainer::GetContentSettingWebContents() {
 
 ContentSettingBubbleModelDelegate*
 WebAppToolbarButtonContainer::GetContentSettingBubbleModelDelegate() {
-  return browser_view_->browser()->content_setting_bubble_model_delegate();
+  return browser_view_->browser()
+      ->GetFeatures()
+      .content_setting_bubble_model_delegate();
 }
 
 // ImmersiveModeController::Observer:

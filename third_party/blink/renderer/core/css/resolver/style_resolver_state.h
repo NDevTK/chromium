@@ -97,7 +97,7 @@ class CORE_EXPORT StyleResolverState {
     return element_context_;
   }
 
-  void SetStyle(const ComputedStyle& style) {
+  void CreateNewClonedStyle(const ComputedStyle& style) {
     // FIXME: Improve RAII of StyleResolverState to remove this function.
     style_builder_.emplace(style);
     UpdateLengthConversionData();
@@ -119,6 +119,7 @@ class CORE_EXPORT StyleResolverState {
   ComputedStyleBuilder& StyleBuilder() { return *style_builder_; }
   const ComputedStyleBuilder& StyleBuilder() const { return *style_builder_; }
   const ComputedStyle* TakeStyle();
+  const ComputedStyle* CloneStyle() const;
 
   const CSSToLengthConversionData& CssToLengthConversionData() const {
     return css_to_length_conversion_data_;
@@ -138,6 +139,9 @@ class CORE_EXPORT StyleResolverState {
   }
   void SetConversionZoom(float zoom) {
     css_to_length_conversion_data_.SetZoom(zoom);
+  }
+  void SubtractScrollbarsFromViewportUnits(const gfx::Size& scrollbars) {
+    css_to_length_conversion_data_.SubtractScrollbars(scrollbars);
   }
 
   CSSAnimationUpdate& AnimationUpdate() { return animation_update_; }
@@ -169,11 +173,9 @@ class CORE_EXPORT StyleResolverState {
 
   void LoadPendingResources();
 
-  // FIXME: Once styleImage can be made to not take a StyleResolverState
-  // this convenience function should be removed. As-is, without this, call
-  // sites are extremely verbose.
   StyleImage* GetStyleImage(CSSPropertyID property_id, const CSSValue& value) {
-    return element_style_resources_.GetStyleImage(property_id, value);
+    return element_style_resources_.GetStyleImage(property_id,
+                                                  ResolveGradient(value));
   }
   SVGResource* GetSVGResource(CSSPropertyID, const cssvalue::CSSURIValue&);
 
@@ -191,8 +193,12 @@ class CORE_EXPORT StyleResolverState {
   void SetWritingMode(WritingMode);
   void SetTextSizeAdjust(TextSizeAdjust);
   void SetTextOrientation(ETextOrientation);
-  void SetPositionAnchor(ScopedCSSName*);
+  void SetPositionAnchor(const StylePositionAnchor&);
   void SetPositionAreaOffsets(const std::optional<PositionAreaOffsets>&);
+
+  // Return the writing-direction of the abs-pos container for an anchored
+  // element.
+  WritingDirectionMode GetAnchoredContainerWritingDirection() const;
 
   CSSParserMode GetParserMode() const;
 
@@ -201,13 +207,13 @@ class CORE_EXPORT StyleResolverState {
   // reference to the passed value.
   const CSSValue& ResolveLightDarkPair(const CSSValue&);
 
+  // If the input CSSValue is a CSSGradientValue, resolve its "calc" functions.
+  const CSSValue& ResolveGradient(const CSSValue&);
+
   const ComputedStyle* OriginatingElementStyle() const {
     return originating_element_style_;
   }
   bool IsForHighlight() const { return is_for_highlight_; }
-  bool UsesHighlightPseudoInheritance() const {
-    return uses_highlight_pseudo_inheritance_;
-  }
   // See StyleRecalcContext::is_outside_flat_tree.
   bool IsOutsideFlatTree() const {
     return style_recalc_context_ && style_recalc_context_->is_outside_flat_tree;
@@ -272,7 +278,8 @@ class CORE_EXPORT StyleResolverState {
 
   // The element to start the search from, when looking for a CQ size container.
   Element* NearestSizeContainer() const {
-    return style_recalc_context_ ? style_recalc_context_->container : nullptr;
+    return style_recalc_context_ ? style_recalc_context_->size_container
+                                 : nullptr;
   }
 
   // See StyleRequest.pseudo_id.
@@ -337,9 +344,6 @@ class CORE_EXPORT StyleResolverState {
   const ComputedStyle* originating_element_style_;
   // True if we are resolving styles for a highlight pseudo-element.
   const bool is_for_highlight_;
-  // True if this is a highlight style request, and highlight inheritance
-  // should be used for this highlight pseudo.
-  const bool uses_highlight_pseudo_inheritance_;
 
   // True if this style resolution can start or stop animations and transitions.
   // One case where animations and transitions can not be triggered is when we

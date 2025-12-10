@@ -2,22 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/metrics/file_metrics_provider.h"
 
 #include <array>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_base.h"
@@ -31,6 +28,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -39,16 +37,11 @@
 #include "components/metrics/persistent_system_profile.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/variations/variations_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/chrome_user_metrics_extension.pb.h"
 #include "third_party/metrics_proto/system_profile.pb.h"
-
-#if !BUILDFLAG(IS_FUCHSIA)
-#include "base/test/scoped_feature_list.h"
-#include "components/metrics/fre_source_trial.h"
-#include "components/variations/variations_test_utils.h"
-#endif  // !BUILDFLAG(IS_FUCHSIA)
 
 namespace {
 const char kMetricsName[] = "TestMetrics";
@@ -145,8 +138,10 @@ class FileMetricsProviderTestBase : public testing::Test {
 
   enum : int { kMaxCreateHistograms = 10 };
 
-  explicit FileMetricsProviderTestBase(bool create_large_files = false)
+  explicit FileMetricsProviderTestBase(bool create_large_files = false,
+                                       bool is_fre = false)
       : create_large_files_(create_large_files),
+        is_fre_(is_fre),
         statistics_recorder_(
             base::StatisticsRecorder::CreateTemporaryForTesting()),
         prefs_(new TestingPrefServiceSimple) {
@@ -171,9 +166,9 @@ class FileMetricsProviderTestBase : public testing::Test {
     return temp_dir_.GetPath().AppendASCII(kMetricsFilename);
   }
 
-  TestFileMetricsProvider* provider(bool is_fre = false) {
+  TestFileMetricsProvider* provider() {
     if (!provider_) {
-      provider_ = std::make_unique<TestFileMetricsProvider>(prefs(), is_fre);
+      provider_ = std::make_unique<TestFileMetricsProvider>(prefs(), is_fre_);
     }
     return provider_.get();
   }
@@ -265,7 +260,8 @@ class FileMetricsProviderTestBase : public testing::Test {
     // Use DCHECK so the stack-trace will indicate where this was called.
     DCHECK(writer.IsValid()) << path;
     size_t file_size = create_large_files_ ? metrics->size() : metrics->used();
-    int written = writer.Write(0, (const char*)metrics->data(), file_size);
+    int written =
+        UNSAFE_TODO(writer.Write(0, (const char*)metrics->data(), file_size));
     DCHECK_EQ(static_cast<int>(file_size), written);
   }
 
@@ -299,6 +295,15 @@ class FileMetricsProviderTestBase : public testing::Test {
                      base::File::FLAG_CREATE | base::File::FLAG_WRITE);
   }
 
+  void CreateEmptyFileAtTime(const base::FilePath& file_path,
+                             base::Time write_time) {
+    base::File empty(file_path,
+                     base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+    base::TouchFile(file_path,
+                    /*last_accessed=*/write_time,
+                    /*last_modified=*/write_time);
+  }
+
   base::GlobalHistogramAllocator* CreateMetricsFileWithHistograms(
       int histogram_count) {
     return CreateMetricsFileWithHistograms(
@@ -321,13 +326,14 @@ class FileMetricsProviderTestBase : public testing::Test {
   }
 
   const bool create_large_files_;
+  const bool is_fre_ = false;
 
  private:
   FileMetricsProvider::FilterAction FilterSourcePath(
       const base::FilePath& path) {
     DCHECK_LT(0U, filter_actions_remaining_);
     --filter_actions_remaining_;
-    return *filter_actions_++;
+    return UNSAFE_TODO(*filter_actions_++);
   }
 
   base::test::TaskEnvironment task_environment_;
@@ -751,8 +757,9 @@ TEST_P(FileMetricsProviderTest, AccessCountLimitedDirectory) {
 
 TEST_P(FileMetricsProviderTest, AccessSizeLimitedDirectory) {
   // This only works with large files that are big enough to count.
-  if (!create_large_files_)
+  if (!create_large_files_) {
     return;
+  }
 
   ASSERT_FALSE(PathExists(metrics_file()));
 
@@ -1394,77 +1401,47 @@ TEST_P(FileMetricsProviderTest, MetricsDisabledRegisterActiveFile) {
   EXPECT_TRUE(base::PathExists(metrics_file()));
 }
 
-#if !BUILDFLAG(IS_FUCHSIA)
-class FileMetricsProviderFRETrialTest : public FileMetricsProviderTestBase {
+#if BUILDFLAG(IS_IOS)
+class FileMetricsProviderFirstRunTest : public FileMetricsProviderTestBase {
  public:
-  FileMetricsProviderFRETrialTest()
-      : entropy_providers_(
-            std::make_unique<const variations::MockEntropyProviders>(
-                variations::MockEntropyProviders::Results{
-                    .low_entropy = variations::kAlwaysUseLastGroup})) {}
-
- protected:
-  void SetUp() override {
-    scoped_feature_list_.InitWithEmptyFeatureAndFieldTrialLists();
-    fre_source_trial::RegisterLocalStatePrefs(local_state_.registry());
-    ASSERT_FALSE(
-        base::FieldTrialList::TrialExists(fre_source_trial::kFRESourceTrial));
-  }
-
-  base::test::ScopedFeatureList scoped_feature_list_;
-  TestingPrefServiceSimple local_state_;
-  std::unique_ptr<const variations::MockEntropyProviders> entropy_providers_;
+  FileMetricsProviderFirstRunTest()
+      : FileMetricsProviderTestBase(/*create_large_files=*/false,
+                                    /*is_fre=*/true) {}
 };
 
-TEST_F(FileMetricsProviderFRETrialTest, FirstRunAssignTrialGroup) {
-  fre_source_trial::Create(&local_state_, entropy_providers_->default_entropy(),
-                           version_info::Channel::DEV, /*is_fre=*/true);
-  EXPECT_TRUE(
-      base::FieldTrialList::TrialExists(fre_source_trial::kFRESourceTrial));
-}
-
-TEST_F(FileMetricsProviderFRETrialTest, DoNotParticipateInExperiment) {
-  fre_source_trial::Create(&local_state_, entropy_providers_->default_entropy(),
-                           version_info::Channel::DEV, /*is_fre=*/false);
-  EXPECT_FALSE(
-      base::FieldTrialList::TrialExists(fre_source_trial::kFRESourceTrial));
-}
-
-class FileMetricsProviderFRETrialGroupsTest
-    : public FileMetricsProviderFRETrialTest,
-      public testing::WithParamInterface<std::string> {};
-
-INSTANTIATE_TEST_SUITE_P(FRETrialGroups,
-                         FileMetricsProviderFRETrialGroupsTest,
-                         testing::Values(fre_source_trial::kDefaultGroup,
-                                         fre_source_trial::kControlGroup,
-                                         fre_source_trial::kEnabledGroup));
-
-TEST_P(FileMetricsProviderFRETrialGroupsTest, FRETrialKeepTrialGroup) {
-  const std::string_view trial_group = GetParam();
-  local_state_.SetString(fre_source_trial::kFRESourceTrial, trial_group);
-  fre_source_trial::Create(&local_state_, entropy_providers_->default_entropy(),
-                           version_info::Channel::DEV, /*is_fre=*/true);
-  EXPECT_TRUE(
-      base::FieldTrialList::TrialExists(fre_source_trial::kFRESourceTrial));
-  EXPECT_EQ(
-      base::FieldTrialList::FindFullName(fre_source_trial::kFRESourceTrial),
-      trial_group);
-}
-
-TEST_P(FileMetricsProviderFRETrialGroupsTest, FRETrialFirstRunExperience) {
-  const std::string_view trial_group = GetParam();
-  local_state_.SetString(fre_source_trial::kFRESourceTrial, trial_group);
-  fre_source_trial::Create(&local_state_, entropy_providers_->default_entropy(),
-                           version_info::Channel::DEV, /*is_fre=*/true);
-  ASSERT_TRUE(
-      base::FieldTrialList::TrialExists(fre_source_trial::kFRESourceTrial));
-  ASSERT_EQ(
-      base::FieldTrialList::FindFullName(fre_source_trial::kFRESourceTrial),
-      trial_group);
-
+TEST_F(FileMetricsProviderFirstRunTest, FREFilesLimit) {
   base::ScopedTempDir metrics_files;
   EXPECT_TRUE(metrics_files.CreateUniqueTempDir());
+  base::FilePath dir = metrics_files.GetPath();
+
+  for (size_t i = 0; i < FileMetricsProvider::kMaxSourceFilesInFRE * 2; i++) {
+    CreateEmptyFileAtTime(dir.AppendASCII(base::StringPrintf("h%d.pma", i)),
+                          base::Time::Now() - base::Minutes(i));
+  }
+
+  provider()->RegisterSource(
+      FileMetricsProvider::Params(
+          metrics_files.GetPath(),
+          FileMetricsProvider::SOURCE_HISTOGRAMS_ATOMIC_DIR,
+          FileMetricsProvider::ASSOCIATE_INTERNAL_PROFILE, kMetricsName),
+      /*metrics_reporting_enabled=*/false);
+
+  task_environment()->RunUntilIdle();
+
+  for (size_t i = 0; i < FileMetricsProvider::kMaxSourceFilesInFRE; i++) {
+    EXPECT_TRUE(
+        base::PathExists(dir.AppendASCII(base::StringPrintf("h%d.pma", i))));
+  }
+  for (size_t i = FileMetricsProvider::kMaxSourceFilesInFRE;
+       i < FileMetricsProvider::kMaxSourceFilesInFRE * 2; i++) {
+    EXPECT_FALSE(
+        base::PathExists(dir.AppendASCII(base::StringPrintf("h%d.pma", i))));
+  }
+}
+
+TEST_F(FileMetricsProviderFirstRunTest, FirstRunExperience) {
+  base::ScopedTempDir metrics_files;
+  ASSERT_TRUE(metrics_files.CreateUniqueTempDir());
   base::FilePath dir = metrics_files.GetPath();
 
   CreateMetricsFileWithHistograms(
@@ -1473,34 +1450,20 @@ TEST_P(FileMetricsProviderFRETrialGroupsTest, FRETrialFirstRunExperience) {
   // Also create an empty file there to test the multiple-files in dir case.
   CreateEmptyFile(dir.AppendASCII("h2.pma"));
 
-  EXPECT_TRUE(base::PathExists(dir));
-  EXPECT_TRUE(base::PathExists(dir.AppendASCII("h1.pma")));
-  EXPECT_TRUE(base::PathExists(dir.AppendASCII("h2.pma")));
-  provider(/*is_fre=*/true)
-      ->RegisterSource(
-          FileMetricsProvider::Params(
-              metrics_files.GetPath(),
-              FileMetricsProvider::SOURCE_HISTOGRAMS_ATOMIC_DIR,
-              FileMetricsProvider::ASSOCIATE_INTERNAL_PROFILE, kMetricsName),
-          /*metrics_reporting_enabled=*/false);
-
+  ASSERT_TRUE(base::PathExists(dir));
+  ASSERT_TRUE(base::PathExists(dir.AppendASCII("h1.pma")));
+  ASSERT_TRUE(base::PathExists(dir.AppendASCII("h2.pma")));
+  provider()->RegisterSource(
+      FileMetricsProvider::Params(
+          metrics_files.GetPath(),
+          FileMetricsProvider::SOURCE_HISTOGRAMS_ATOMIC_DIR,
+          FileMetricsProvider::ASSOCIATE_INTERNAL_PROFILE, kMetricsName),
+      /*metrics_reporting_enabled=*/false);
   task_environment()->RunUntilIdle();
-
-  bool should_keep_dir = trial_group == fre_source_trial::kEnabledGroup;
-  EXPECT_EQ(base::PathExists(dir), should_keep_dir);
+  EXPECT_TRUE(base::PathExists(dir));
 }
 
-TEST_P(FileMetricsProviderFRETrialGroupsTest, FRETrialPostFRERun) {
-  const std::string_view trial_group = GetParam();
-  local_state_.SetString(fre_source_trial::kFRESourceTrial, trial_group);
-  fre_source_trial::Create(&local_state_, entropy_providers_->default_entropy(),
-                           version_info::Channel::DEV, /*is_fre=*/false);
-  ASSERT_TRUE(
-      base::FieldTrialList::TrialExists(fre_source_trial::kFRESourceTrial));
-  ASSERT_EQ(
-      base::FieldTrialList::FindFullName(fre_source_trial::kFRESourceTrial),
-      trial_group);
-
+TEST_F(FileMetricsProviderTestBase, PostFRERun) {
   base::ScopedTempDir metrics_files;
   EXPECT_TRUE(metrics_files.CreateUniqueTempDir());
   base::FilePath dir = metrics_files.GetPath();
@@ -1525,6 +1488,6 @@ TEST_P(FileMetricsProviderFRETrialGroupsTest, FRETrialPostFRERun) {
 
   EXPECT_FALSE(base::PathExists(dir));
 }
-#endif  // !BUILDFLAG(IS_FUCHSIA)
+#endif  // BUILDFLAG(IS_IOS)
 
 }  // namespace metrics

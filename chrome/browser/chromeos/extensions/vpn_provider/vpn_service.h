@@ -15,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/values.h"
+#include "chrome/browser/ash/crosapi/vpn_service_ash.h"
 #include "chrome/browser/chromeos/extensions/vpn_provider/vpn_service_interface.h"
 #include "chromeos/crosapi/mojom/vpn_service.mojom.h"
 #include "extensions/browser/event_router.h"
@@ -38,6 +39,10 @@ namespace extensions {
 class ExtensionRegistry;
 
 }  // namespace extensions
+
+namespace crosapi {
+class VpnServiceAsh;
+}
 
 namespace chromeos {
 
@@ -120,14 +125,20 @@ class VpnService : public extensions::api::VpnServiceInterface,
   // EventRouter::Observer:
   void OnListenerAdded(const extensions::EventListenerInfo&) override;
 
+  // Owns all configurations. Key is a hash of |extension_id| and
+  // |configuration_name|. This is public temporarily while we are dismantling
+  // the crosapi VpnService (crbug.com/365902693).
+  using StringToOwnedConfigurationMap = std::map<
+      std::string,
+      std::unique_ptr<crosapi::VpnServiceForExtensionAsh::VpnConfiguration>>;
+  StringToOwnedConfigurationMap key_to_configuration_map_;
+
  private:
-  class VpnServiceProxyImpl;
-  class PepperVpnProxyAdapter;
   friend class VpnProviderApiTest;
   friend class VpnServiceForExtension;
   friend class VpnServiceFactory;
 
-  static crosapi::mojom::VpnService* GetVpnService();
+  static crosapi::VpnServiceAsh* GetVpnService();
 
   mojo::Remote<crosapi::mojom::VpnServiceForExtension>&
   GetVpnServiceForExtension(const std::string& extension_id);
@@ -136,16 +147,13 @@ class VpnService : public extensions::api::VpnServiceInterface,
   void SendToExtension(const std::string& extension_id,
                        std::unique_ptr<extensions::Event> event);
 
+  bool OwnsActiveConfiguration(const std::string& extension_id) const;
+  std::optional<std::string> GetActiveConfigurationObjectPath(
+      const std::string& extension_id) const;
+
   void SendOnPlatformMessageToExtension(const std::string& extension_id,
                                         const std::string& configuration_name,
                                         uint32_t platform_message);
-
-  void OnBindPepperVpnProxy(
-      SuccessCallback,
-      FailureCallback,
-      std::unique_ptr<PepperVpnProxyAdapter>,
-      mojo::PendingReceiver<crosapi::mojom::PepperVpnProxyObserver>,
-      crosapi::mojom::VpnErrorResponsePtr);
 
   raw_ptr<content::BrowserContext> browser_context_;
 

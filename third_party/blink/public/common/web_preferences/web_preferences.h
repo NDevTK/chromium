@@ -65,6 +65,7 @@ struct BLINK_COMMON_EXPORT WebPreferences {
   bool shrinks_standalone_images_to_fit = true;
   bool text_areas_are_resizable = true;
   bool allow_scripts_to_close_windows = false;
+  bool allow_window_focus_without_user_gesture = false;
   bool remote_fonts_enabled = true;
   bool javascript_can_access_clipboard = false;
   // We don't use dns_prefetching_enabled to disable DNS prefetching.  Instead,
@@ -82,7 +83,6 @@ struct BLINK_COMMON_EXPORT WebPreferences {
   bool allow_file_access_from_file_urls = false;
   bool webgl1_enabled = true;
   bool webgl2_enabled = true;
-  bool pepper_3d_enabled = false;
   bool privileged_webgl_extensions_enabled = false;
   bool webgl_errors_to_console_enabled = true;
   bool hide_scrollbars = false;
@@ -113,7 +113,8 @@ struct BLINK_COMMON_EXPORT WebPreferences {
   // Disallow user opt-in for blockable mixed content.
   bool strictly_block_blockable_mixed_content = false;
   bool block_mixed_plugin_content = false;
-  bool password_echo_enabled = false;
+  bool password_echo_enabled_physical = false;
+  bool password_echo_enabled_touch = false;
   bool should_print_backgrounds = false;
   bool should_clear_document_background = true;
   bool enable_scroll_animator = false;
@@ -252,6 +253,7 @@ struct BLINK_COMMON_EXPORT WebPreferences {
   int text_size_contrast_factor = 0;
   float device_scale_adjustment = 1.0f;
   bool force_enable_zoom = false;
+  bool enable_touchpad_overscroll_history_navigation = true;
   GURL default_video_poster_url;
   bool support_deprecated_target_density_dpi = false;
   bool wide_viewport_quirk = false;
@@ -442,17 +444,25 @@ struct BLINK_COMMON_EXPORT WebPreferences {
   bool modal_context_menu = true;
 
   // Whether the safe-area-insets should be changed dynamically based on
-  // browser controls shown ratio. This value is used in web settings only
-  // when feature DynamicSafeAreaInsets is enabled.
+  // browser controls shown ratio on Android.
   bool dynamic_safe_area_insets_enabled = false;
 
   // Whether PaymentRequest is enabled. Controlled by WebView settings on
   // WebView and by `kWebPayments` feature flag everywhere.
   bool payment_request_enabled = false;
 
-  // Whether API-specific interventions aimed at reducing the efficacy of
-  // fingerprinting are enabled.
-  bool api_based_fingerprinting_interventions_enabled = false;
+  bool ai_prompt_api_enabled = false;
+
+#if BUILDFLAG(IS_MAC)
+  bool should_disable_external_popups = false;
+#endif  // BUILDFLAG(IS_MAC)
+
+#if BUILDFLAG(IS_ANDROID)
+  // Whether a screenshot will be take for every traversable mainframe same-doc
+  // navigation. This will increment the `viz::LocalSurfaceId` from the impl
+  // thread as a side-effect.
+  bool should_screenshot_on_mainframe_same_doc_navigation = true;
+#endif  // BUILDFLAG(IS_ANDROID)
 
   // We try to keep the default values the same as the default values in
   // chrome, except for the cases where it would require lots of extra work for

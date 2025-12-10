@@ -20,7 +20,6 @@ import org.chromium.url.GURL;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /** A central hub for accessing shopping and product information. */
 @JNINamespace("commerce")
@@ -30,22 +29,22 @@ public class ShoppingService {
     public static final class ProductInfo {
         public final String title;
         public final GURL imageUrl;
-        public final Optional<Long> productClusterId;
-        public final Optional<Long> offerId;
+        public final @Nullable Long productClusterId;
+        public final @Nullable Long offerId;
         public final String currencyCode;
         public final long amountMicros;
-        public final Optional<Long> previousAmountMicros;
+        public final @Nullable Long previousAmountMicros;
         public final String countryCode;
 
         public ProductInfo(
                 String title,
                 GURL imageUrl,
-                Optional<Long> productClusterId,
-                Optional<Long> offerId,
+                @Nullable Long productClusterId,
+                @Nullable Long offerId,
                 String currencyCode,
                 long amountMicros,
                 String countryCode,
-                Optional<Long> previousAmountMicros) {
+                @Nullable Long previousAmountMicros) {
             this.title = title;
             this.imageUrl = imageUrl;
             this.productClusterId = productClusterId;
@@ -99,24 +98,24 @@ public class ShoppingService {
 
     /** A data container for price insights info provided by the shopping service. */
     public static final class PriceInsightsInfo {
-        public final Optional<Long> productClusterId;
+        public final @Nullable Long productClusterId;
         public final String currencyCode;
-        public final Optional<Long> typicalLowPriceMicros;
-        public final Optional<Long> typicalHighPriceMicros;
-        public final Optional<String> catalogAttributes;
+        public final @Nullable Long typicalLowPriceMicros;
+        public final @Nullable Long typicalHighPriceMicros;
+        public final @Nullable String catalogAttributes;
         public final List<PricePoint> catalogHistoryPrices;
-        public final Optional<GURL> jackpotUrl;
+        public final @Nullable GURL jackpotUrl;
         public final @PriceBucket int priceBucket;
         public final boolean hasMultipleCatalogs;
 
         public PriceInsightsInfo(
-                Optional<Long> productClusterId,
+                @Nullable Long productClusterId,
                 String currencyCode,
-                Optional<Long> typicalLowPriceMicros,
-                Optional<Long> typicalHighPriceMicros,
-                Optional<String> catalogAttributes,
+                @Nullable Long typicalLowPriceMicros,
+                @Nullable Long typicalHighPriceMicros,
+                @Nullable String catalogAttributes,
                 List<PricePoint> catalogHistoryPrices,
-                Optional<GURL> jackpotUrl,
+                @Nullable GURL jackpotUrl,
                 @PriceBucket int priceBucket,
                 boolean hasMultipleCatalogs) {
             this.productClusterId = productClusterId;
@@ -196,8 +195,7 @@ public class ShoppingService {
             return;
         }
 
-        ShoppingServiceJni.get()
-                .getProductInfoForUrl(mNativeShoppingServiceAndroid, this, url, callback);
+        ShoppingServiceJni.get().getProductInfoForUrl(mNativeShoppingServiceAndroid, url, callback);
     }
 
     /**
@@ -210,7 +208,7 @@ public class ShoppingService {
         if (mNativeShoppingServiceAndroid == 0) return null;
 
         return ShoppingServiceJni.get()
-                .getAvailableProductInfoForUrl(mNativeShoppingServiceAndroid, this, url);
+                .getAvailableProductInfoForUrl(mNativeShoppingServiceAndroid, url);
     }
 
     /**
@@ -226,7 +224,7 @@ public class ShoppingService {
         }
 
         ShoppingServiceJni.get()
-                .getMerchantInfoForUrl(mNativeShoppingServiceAndroid, this, url, callback);
+                .getMerchantInfoForUrl(mNativeShoppingServiceAndroid, url, callback);
     }
 
     /**
@@ -243,7 +241,7 @@ public class ShoppingService {
         }
 
         ShoppingServiceJni.get()
-                .getPriceInsightsInfoForUrl(mNativeShoppingServiceAndroid, this, url, callback);
+                .getPriceInsightsInfoForUrl(mNativeShoppingServiceAndroid, url, callback);
     }
 
     /**
@@ -259,7 +257,23 @@ public class ShoppingService {
         }
 
         ShoppingServiceJni.get()
-                .getDiscountInfoForUrl(mNativeShoppingServiceAndroid, this, url, callback);
+                .getDiscountInfoForUrl(mNativeShoppingServiceAndroid, url, callback);
+    }
+
+    /**
+     * Fetch available discounts information for a URL.
+     *
+     * @param url The URL to fetch discounts info for.
+     * @param callback The callback that will run after the fetch is completed.
+     */
+    public void getAvailableDiscountInfoForUrl(GURL url, DiscountInfoCallback callback) {
+        if (mNativeShoppingServiceAndroid == 0) {
+            callback.onResult(url, null);
+            return;
+        }
+
+        ShoppingServiceJni.get()
+                .getAvailableDiscountInfoForUrl(mNativeShoppingServiceAndroid, url, callback);
     }
 
     /**
@@ -271,14 +285,14 @@ public class ShoppingService {
     public void fetchPriceEmailPref() {
         if (mNativeShoppingServiceAndroid == 0) return;
 
-        ShoppingServiceJni.get().fetchPriceEmailPref(mNativeShoppingServiceAndroid, this);
+        ShoppingServiceJni.get().fetchPriceEmailPref(mNativeShoppingServiceAndroid);
     }
 
     /** Schedules updates for all products that the user has saved in the bookmarks system. */
     public void scheduleSavedProductUpdate() {
         if (mNativeShoppingServiceAndroid == 0) return;
 
-        ShoppingServiceJni.get().scheduleSavedProductUpdate(mNativeShoppingServiceAndroid, this);
+        ShoppingServiceJni.get().scheduleSavedProductUpdate(mNativeShoppingServiceAndroid);
     }
 
     /** Create new subscriptions in batch. */
@@ -292,7 +306,6 @@ public class ShoppingService {
         ShoppingServiceJni.get()
                 .subscribe(
                         mNativeShoppingServiceAndroid,
-                        this,
                         sub.type,
                         sub.idType,
                         sub.managementType,
@@ -314,7 +327,6 @@ public class ShoppingService {
         ShoppingServiceJni.get()
                 .unsubscribe(
                         mNativeShoppingServiceAndroid,
-                        this,
                         sub.type,
                         sub.idType,
                         sub.managementType,
@@ -336,7 +348,6 @@ public class ShoppingService {
         ShoppingServiceJni.get()
                 .isSubscribed(
                         mNativeShoppingServiceAndroid,
-                        this,
                         sub.type,
                         sub.idType,
                         sub.managementType,
@@ -356,7 +367,6 @@ public class ShoppingService {
         return ShoppingServiceJni.get()
                 .isSubscribedFromCache(
                         mNativeShoppingServiceAndroid,
-                        this,
                         sub.type,
                         sub.idType,
                         sub.managementType,
@@ -377,7 +387,7 @@ public class ShoppingService {
             return;
         }
         ShoppingServiceJni.get()
-                .getAllPriceTrackedBookmarks(mNativeShoppingServiceAndroid, this, callback);
+                .getAllPriceTrackedBookmarks(mNativeShoppingServiceAndroid, callback);
     }
 
     @CalledByNative
@@ -396,8 +406,7 @@ public class ShoppingService {
     public boolean isMerchantViewerEnabled() {
         if (mNativeShoppingServiceAndroid == 0) return false;
 
-        return ShoppingServiceJni.get()
-                .isMerchantViewerEnabled(mNativeShoppingServiceAndroid, this);
+        return ShoppingServiceJni.get().isMerchantViewerEnabled(mNativeShoppingServiceAndroid);
     }
 
     // This is a feature check for the "price insights", which will return true
@@ -406,8 +415,7 @@ public class ShoppingService {
     public boolean isPriceInsightsEligible() {
         if (mNativeShoppingServiceAndroid == 0) return false;
 
-        return ShoppingServiceJni.get()
-                .isPriceInsightsEligible(mNativeShoppingServiceAndroid, this);
+        return ShoppingServiceJni.get().isPriceInsightsEligible(mNativeShoppingServiceAndroid);
     }
 
     // This is a feature check for the "discounts on navigation", which will return true
@@ -417,7 +425,7 @@ public class ShoppingService {
         if (mNativeShoppingServiceAndroid == 0) return false;
 
         return ShoppingServiceJni.get()
-                .isDiscountEligibleToShowOnNavigation(mNativeShoppingServiceAndroid, this);
+                .isDiscountEligibleToShowOnNavigation(mNativeShoppingServiceAndroid);
     }
 
     @CalledByNative
@@ -444,11 +452,9 @@ public class ShoppingService {
             String countryCode,
             boolean hasPreviousPrice,
             long previousAmountMicros) {
-        Optional<Long> offer = !hasOfferId ? Optional.empty() : Optional.of(offerId);
-        Optional<Long> cluster =
-                !hasProductClusterId ? Optional.empty() : Optional.of(productClusterId);
-        Optional<Long> previousPrice =
-                !hasPreviousPrice ? Optional.empty() : Optional.of(previousAmountMicros);
+        Long offer = !hasOfferId ? null : offerId;
+        Long cluster = !hasProductClusterId ? null : productClusterId;
+        Long previousPrice = !hasPreviousPrice ? null : previousAmountMicros;
         return new ProductInfo(
                 title,
                 imageUrl,
@@ -518,15 +524,11 @@ public class ShoppingService {
             GURL jackpotUrl,
             int priceBucket,
             boolean hasMultipleCatalogs) {
-        Optional<Long> clusterId =
-                hasProductClusterId ? Optional.of(productClusterId) : Optional.empty();
-        Optional<Long> lowPrice =
-                hasTypicalLowPrice ? Optional.of(typicalLowPriceMicros) : Optional.empty();
-        Optional<Long> highPrice =
-                hasTypicalHighPrice ? Optional.of(typicalHighPriceMicros) : Optional.empty();
-        Optional<String> attributes =
-                hasCatalogAttributes ? Optional.of(catalogAttributes) : Optional.empty();
-        Optional<GURL> jackpot = hasJackpotUrl ? Optional.of(jackpotUrl) : Optional.empty();
+        Long clusterId = hasProductClusterId ? productClusterId : null;
+        Long lowPrice = hasTypicalLowPrice ? typicalLowPriceMicros : null;
+        Long highPrice = hasTypicalHighPrice ? typicalHighPriceMicros : null;
+        String attributes = hasCatalogAttributes ? catalogAttributes : null;
+        GURL jackpot = hasJackpotUrl ? jackpotUrl : null;
 
         if (catalogHistoryPrices == null) {
             catalogHistoryPrices = new ArrayList<>();
@@ -584,27 +586,19 @@ public class ShoppingService {
     @NativeMethods
     interface Natives {
         void getProductInfoForUrl(
-                long nativeShoppingServiceAndroid,
-                ShoppingService caller,
-                GURL url,
-                ProductInfoCallback callback);
+                long nativeShoppingServiceAndroid, GURL url, ProductInfoCallback callback);
 
-        ProductInfo getAvailableProductInfoForUrl(
-                long nativeShoppingServiceAndroid, ShoppingService caller, GURL url);
+        ProductInfo getAvailableProductInfoForUrl(long nativeShoppingServiceAndroid, GURL url);
 
         void getMerchantInfoForUrl(
-                long nativeShoppingServiceAndroid,
-                ShoppingService caller,
-                GURL url,
-                MerchantInfoCallback callback);
+                long nativeShoppingServiceAndroid, GURL url, MerchantInfoCallback callback);
 
-        void fetchPriceEmailPref(long nativeShoppingServiceAndroid, ShoppingService caller);
+        void fetchPriceEmailPref(long nativeShoppingServiceAndroid);
 
-        void scheduleSavedProductUpdate(long nativeShoppingServiceAndroid, ShoppingService caller);
+        void scheduleSavedProductUpdate(long nativeShoppingServiceAndroid);
 
         void subscribe(
                 long nativeShoppingServiceAndroid,
-                ShoppingService caller,
                 int type,
                 int idType,
                 int managementType,
@@ -617,7 +611,6 @@ public class ShoppingService {
 
         void unsubscribe(
                 long nativeShoppingServiceAndroid,
-                ShoppingService caller,
                 int type,
                 int idType,
                 int managementType,
@@ -626,7 +619,6 @@ public class ShoppingService {
 
         void isSubscribed(
                 long nativeShoppingServiceAndroid,
-                ShoppingService caller,
                 int type,
                 int idType,
                 int managementType,
@@ -635,36 +627,29 @@ public class ShoppingService {
 
         boolean isSubscribedFromCache(
                 long nativeShoppingServiceAndroid,
-                ShoppingService caller,
                 int type,
                 int idType,
                 int managementType,
                 String id);
 
         void getAllPriceTrackedBookmarks(
-                long nativeShoppingServiceAndroid,
-                ShoppingService caller,
-                Callback<List<BookmarkId>> callback);
+                long nativeShoppingServiceAndroid, Callback<List<BookmarkId>> callback);
 
-        boolean isShoppingListEligible(long nativeShoppingServiceAndroid, ShoppingService caller);
+        boolean isShoppingListEligible(long nativeShoppingServiceAndroid);
 
-        boolean isMerchantViewerEnabled(long nativeShoppingServiceAndroid, ShoppingService caller);
+        boolean isMerchantViewerEnabled(long nativeShoppingServiceAndroid);
 
         void getPriceInsightsInfoForUrl(
-                long nativeShoppingServiceAndroid,
-                ShoppingService caller,
-                GURL url,
-                PriceInsightsInfoCallback callback);
+                long nativeShoppingServiceAndroid, GURL url, PriceInsightsInfoCallback callback);
 
-        boolean isPriceInsightsEligible(long nativeShoppingServiceAndroid, ShoppingService caller);
+        boolean isPriceInsightsEligible(long nativeShoppingServiceAndroid);
 
         void getDiscountInfoForUrl(
-                long nativeShoppingServiceAndroid,
-                ShoppingService caller,
-                GURL url,
-                DiscountInfoCallback callback);
+                long nativeShoppingServiceAndroid, GURL url, DiscountInfoCallback callback);
 
-        boolean isDiscountEligibleToShowOnNavigation(
-                long nativeShoppingServiceAndroid, ShoppingService caller);
+        void getAvailableDiscountInfoForUrl(
+                long nativeShoppingServiceAndroid, GURL url, DiscountInfoCallback callback);
+
+        boolean isDiscountEligibleToShowOnNavigation(long nativeShoppingServiceAndroid);
     }
 }

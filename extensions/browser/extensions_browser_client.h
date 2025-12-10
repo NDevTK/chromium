@@ -16,16 +16,15 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/safe_browsing/core/browser/db/v4_protocol_config.h"
 #include "content/public/browser/bluetooth_chooser.h"
 #include "content/public/browser/frame_tree_node_id.h"
 #include "extensions/browser/extension_event_histogram_value.h"
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/browser/extensions_browser_api_provider.h"
-#include "extensions/browser/script_executor.h"
-#include "extensions/common/api/declarative_net_request.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/view_type.mojom.h"
-#include "mojo/public/cpp/bindings/binder_map.h"
+#include "extensions/common/url_pattern_set.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
@@ -50,6 +49,11 @@ class StoragePartitionConfig;
 class WebContents;
 }  // namespace content
 
+namespace mojo {
+template <typename>
+class BinderMapWithContext;
+}  // namespace mojo
+
 namespace net {
 class HttpResponseHeaders;
 }  // namespace net
@@ -62,6 +66,7 @@ class NetworkContext;
 }  // namespace network
 
 namespace update_client {
+class Configurator;
 class UpdateClient;
 }  // namespace update_client
 
@@ -77,6 +82,14 @@ namespace media_device_salt {
 class MediaDeviceSaltService;
 }  // namespace media_device_salt
 
+namespace custom_handlers {
+class ProtocolHandlerRegistry;
+}  // namespace custom_handlers
+
+namespace safe_browsing {
+class SafeBrowsingDatabaseManager;
+}  // namespace safe_browsing
+
 namespace extensions {
 
 class ComponentExtensionResourceManager;
@@ -84,6 +97,7 @@ class Extension;
 class ExtensionCache;
 class ExtensionError;
 class ExtensionHostDelegate;
+class ExtensionManagementClient;
 class ExtensionSet;
 class ExtensionSystem;
 class ExtensionSystemProvider;
@@ -93,7 +107,10 @@ class PermissionSet;
 class ProcessManagerDelegate;
 class ProcessMap;
 class RuntimeAPIDelegate;
+class SafeBrowsingDelegate;
 class ScopedExtensionUpdaterKeepAlive;
+class ScriptExecutor;
+class SitePermissionsHelper;
 class UserScriptListener;
 
 // Interface to allow the extensions module to make browser-process-specific
@@ -379,7 +396,11 @@ class ExtensionsBrowserClient {
 
   // Returns a new UpdateClient.
   virtual scoped_refptr<update_client::UpdateClient> CreateUpdateClient(
-      content::BrowserContext* context);
+      scoped_refptr<update_client::Configurator> configurator);
+
+  // Returns a new update_client::Configurator.
+  virtual scoped_refptr<update_client::Configurator>
+  CreateUpdateClientConfigurator(content::BrowserContext* context);
 
   // Returns a new ScopedExtensionUpdaterKeepAlive, or nullptr if the embedder
   // does not support keeping the context alive while the updater is running.
@@ -400,6 +421,9 @@ class ExtensionsBrowserClient {
 
   // Returns a delegate that provides kiosk mode functionality.
   virtual KioskDelegate* GetKioskDelegate() = 0;
+
+  // Returns a delegate that provides safe browsing functionality.
+  virtual SafeBrowsingDelegate* GetSafeBrowsingDelegate() = 0;
 
   // Returns the locale used by the application.
   virtual std::string GetApplicationLocale() = 0;
@@ -455,36 +479,9 @@ class ExtensionsBrowserClient {
                             bool include_incognito,
                             content::WebContents** web_contents) const;
 
-  // Returns true if chrome extension telemetry service is enabled.
-  virtual bool IsExtensionTelemetryServiceEnabled(
-      content::BrowserContext* context) const;
-
   // Returns the script executor for `web_contents`.
   virtual ScriptExecutor* GetScriptExecutorForTab(
       content::WebContents& web_contents);
-
-  // TODO(anunoy): This is a temporary implementation of notifying the
-  // extension telemetry service of the tabs.executeScript API invocation
-  // while its usefulness is evaluated.
-  virtual void NotifyExtensionApiTabExecuteScript(
-      content::BrowserContext* context,
-      const ExtensionId& extension_id,
-      const std::string& code) const;
-
-  // Notifies the extension telemetry service when declarativeNetRequest API
-  // rules are added.
-  virtual void NotifyExtensionApiDeclarativeNetRequest(
-      content::BrowserContext* context,
-      const ExtensionId& extension_id,
-      const std::vector<api::declarative_net_request::Rule>& rules) const;
-
-  // Notifies the extension telemetry service when declarativeNetRequest
-  // redirect action is invoked.
-  virtual void NotifyExtensionDeclarativeNetRequestRedirectAction(
-      content::BrowserContext* context,
-      const ExtensionId& extension_id,
-      const GURL& request_url,
-      const GURL& redirect_url) const;
 
   // Return true if the USB device is allowed by policy.
   virtual bool IsUsbDeviceAllowedByPolicy(content::BrowserContext* context,
@@ -548,11 +545,6 @@ class ExtensionsBrowserClient {
       base::OnceCallback<void(std::optional<content::StoragePartitionConfig>)>
           callback);
 
-  // Creates password reuse detection manager when new extension web contents
-  // are created.
-  virtual void CreatePasswordReuseDetectionManager(
-      content::WebContents* web_contents) const;
-
   // Returns a service that provides persistent salts for generating media
   // device IDs. Can be null if the embedder does not support persistent salts.
   virtual media_device_salt::MediaDeviceSaltService* GetMediaDeviceSaltService(
@@ -562,6 +554,57 @@ class ExtensionsBrowserClient {
   // since extensions shouldn't have knowledge of Controlled Frame.
   virtual bool HasControlledFrameCapability(content::BrowserContext* context,
                                             const GURL& url);
+
+  // Returns the ProtocolHandlerRegistry instance associated with the user
+  // profile.
+  virtual custom_handlers::ProtocolHandlerRegistry* GetProtocolHandlerRegistry(
+      content::BrowserContext* context);
+
+  // Go through each extension and unload those that are not allowed to run by
+  // management policy providers (ie. network admin and Google-managed
+  // blocklist).
+  virtual void CheckManagementPolicy(content::BrowserContext* context);
+
+  // Get the locally-managed database manager of the safe browsing service.
+  virtual scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager>
+  GetSafeBrowsingDatabaseManager() const;
+
+  // Get the default v4 protocol config struct from the safe browsing service.
+  virtual std::optional<safe_browsing::V4ProtocolConfig> GetV4ProtocolConfig()
+      const;
+
+  // Notifies the ExtensionActionRunner that an extension has been granted
+  // active tab permissions. This will run any pending injections for that
+  // extension.
+  virtual void OnActiveTabPermissionGranted(
+      const Extension* extension,
+      content::WebContents* web_contents) const;
+
+  // Returns the client of ExtensionManagement.
+  virtual ExtensionManagementClient* GetExtensionManagementClient(
+      content::BrowserContext* context);
+
+  // Runs blocked actions that were blocked for the given `extension`. If
+  // blocked actions requires the page to be reloaded, `reload_required` will
+  // be set to true.
+  virtual void RunBlockActionsIfNeeded(const Extension* extension,
+                                       content::WebContents* web_contents,
+                                       SitePermissionsHelper* permission_helper,
+                                       bool* reload_required);
+
+  // Shows the reload bubble for all specified `extensions`.
+  virtual void ShowReloadBubbleForAllExtensions(
+      const std::vector<const Extension*>& extensions,
+      content::WebContents* web_contents);
+
+  // Returns whether the given `extension` has been blocked on the specified
+  // `web_contents`.
+  virtual bool HasBeenBlocked(const Extension& extension,
+                              content::WebContents* web_contents) const;
+
+  // Shows a dialog box with the given |title| and |message|.
+  virtual void ShowWarningMessageBox(const std::u16string& title,
+                                     const std::u16string& message);
 
  private:
   std::vector<std::unique_ptr<ExtensionsBrowserAPIProvider>> providers_;

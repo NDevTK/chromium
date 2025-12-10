@@ -24,10 +24,12 @@
 
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/renderer/core/animation/css/css_animations.h"
+#include "third_party/blink/renderer/core/css/css_gradient_value.h"
 #include "third_party/blink/renderer/core/css/css_light_dark_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
 #include "third_party/blink/renderer/core/css/css_uri_value.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
@@ -74,12 +76,10 @@ StyleResolverState::StyleResolverState(
       pseudo_id_(style_request.pseudo_id),
       originating_element_style_(style_request.originating_element_style),
       is_for_highlight_(IsHighlightPseudoElement(style_request.pseudo_id)),
-      uses_highlight_pseudo_inheritance_(
-          ::blink::UsesHighlightPseudoInheritance(style_request.pseudo_id)),
       can_trigger_animations_(style_request.can_trigger_animations) {
   DCHECK(!!parent_style_ == !!layout_parent_style_);
 
-  if (UsesHighlightPseudoInheritance()) {
+  if (is_for_highlight_) {
     DCHECK(originating_element_style_);
   } else {
     if (!parent_style_) {
@@ -105,7 +105,7 @@ StyleResolverState::~StyleResolverState() {
 
 bool StyleResolverState::IsInheritedForUnset(
     const CSSProperty& property) const {
-  return property.IsInherited() || UsesHighlightPseudoInheritance();
+  return property.IsInherited() || IsForHighlight();
 }
 
 EInsideLink StyleResolverState::InsideLink() const {
@@ -119,7 +119,7 @@ EInsideLink StyleResolverState::InsideLink() const {
   }
   if (!IsForPseudoElement() && GetElement().IsLink()) {
     inside_link_ = ElementLinkState();
-  } else if (uses_highlight_pseudo_inheritance_) {
+  } else if (IsForHighlight()) {
     // Highlight pseudo-elements acquire the link status of the originating
     // element. Note that highlight pseudo-elements do not *inherit* from
     // the originating element [1], and therefore ParentStyle()->InsideLink()
@@ -137,6 +137,14 @@ const ComputedStyle* StyleResolverState::TakeStyle() {
     return nullptr;
   }
   return style_builder_->TakeStyle();
+}
+
+const ComputedStyle* StyleResolverState::CloneStyle() const {
+  if (had_no_matched_properties_ &&
+      pseudo_request_type_ == StyleRequest::kForRenderer) {
+    return nullptr;
+  }
+  return style_builder_->CloneStyle();
 }
 
 void StyleResolverState::UpdateLengthConversionData() {
@@ -184,7 +192,7 @@ CSSToLengthConversionData StyleResolverState::UnzoomedLengthConversionData() {
 
 Element* StyleResolverState::ContainerUnitContext() const {
   // TODO(crbug.com/396016391): Always provide a StyleRecalcContext.
-  return style_recalc_context_ ? style_recalc_context_->container
+  return style_recalc_context_ ? style_recalc_context_->size_container
                                : FlatTreeTraversal::ParentElement(GetElement());
 }
 
@@ -317,7 +325,8 @@ void StyleResolverState::SetTextOrientation(ETextOrientation text_orientation) {
   }
 }
 
-void StyleResolverState::SetPositionAnchor(ScopedCSSName* position_anchor) {
+void StyleResolverState::SetPositionAnchor(
+    const StylePositionAnchor& position_anchor) {
   if (StyleBuilder().PositionAnchor() != position_anchor) {
     StyleBuilder().SetPositionAnchor(position_anchor);
     css_to_length_conversion_data_.SetAnchorData(
@@ -336,6 +345,16 @@ void StyleResolverState::SetPositionAreaOffsets(
                                               StyleBuilder().PositionAnchor(),
                                               position_area_offsets));
   }
+}
+
+WritingDirectionMode StyleResolverState::GetAnchoredContainerWritingDirection()
+    const {
+  AnchorEvaluator* anchor_evaluator = GetAnchorEvaluator();
+  CHECK(anchor_evaluator)
+      << "Should only be invoked for flips, which only happen from "
+         "UpdateStyleAndLayoutTreeForOutOfFlow() for which we always have a "
+         "non-null AnchorEvaluator";
+  return anchor_evaluator->GetContainerWritingDirection();
 }
 
 CSSParserMode StyleResolverState::GetParserMode() const {
@@ -360,6 +379,15 @@ const CSSValue& StyleResolverState::ResolveLightDarkPair(
       return pair->First();
     }
     return pair->Second();
+  }
+  return value;
+}
+
+const CSSValue& StyleResolverState::ResolveGradient(const CSSValue& value) {
+  if (const auto* gradient_value =
+          DynamicTo<cssvalue::CSSGradientValue>(&value)) {
+    return *gradient_value->ResolveValuesIfNeeded(
+        css_to_length_conversion_data_);
   }
   return value;
 }
@@ -399,17 +427,11 @@ void StyleResolverState::SetComputedStyleFlagsFromAuthorFlags(
     StyleBuilder().SetHasAuthorBorderRadius();
   }
 
-  if (RuntimeEnabledFeatures::CSSDoNotHideVisitedColorEnabled()) {
-    if (author_flags & CSSProperty::kHighlightColors) {
-      StyleBuilder().SetHasAuthorHighlightColors();
-    }
-  } else {
-    if ((InsideLink() != EInsideLink::kInsideVisitedLink &&
-         (author_flags & CSSProperty::kHighlightColors)) ||
-        (InsideLink() == EInsideLink::kInsideVisitedLink &&
-         (author_flags & CSSProperty::kVisitedHighlightColors))) {
-      StyleBuilder().SetHasAuthorHighlightColors();
-    }
+  if ((InsideLink() != EInsideLink::kInsideVisitedLink &&
+       (author_flags & CSSProperty::kHighlightColors)) ||
+      (InsideLink() == EInsideLink::kInsideVisitedLink &&
+       (author_flags & CSSProperty::kVisitedHighlightColors))) {
+    StyleBuilder().SetHasAuthorHighlightColors();
   }
 }
 

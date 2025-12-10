@@ -59,6 +59,7 @@ struct BLINK_COMMON_EXPORT RendererPreferences {
   blink::mojom::WebRtcIpHandlingPolicy webrtc_ip_handling_policy =
       blink::mojom::WebRtcIpHandlingPolicy::kDefault;
   std::vector<WebRtcIpHandlingUrlEntry> webrtc_ip_handling_urls;
+  std::optional<bool> webrtc_post_quantum_key_agreement;
   uint16_t webrtc_udp_min_port{0};
   uint16_t webrtc_udp_max_port{0};
   std::vector<std::string> webrtc_local_ips_allowed_urls;
@@ -87,11 +88,13 @@ struct BLINK_COMMON_EXPORT RendererPreferences {
 #if BUILDFLAG(IS_OZONE)
   bool selection_clipboard_buffer_available{false};
 #endif
+#if BUILDFLAG(IS_LINUX)
+  bool middle_click_paste_allowed{true};
+#endif
   bool plugin_fullscreen_allowed{true};
   bool caret_browsing_enabled{false};
   bool uses_platform_autofill{false};
   std::vector<uint16_t> explicitly_allowed_network_ports;
-  uint64_t canvas_noise_token{0};
   // The default value must be false to avoid performance problems on very large
   // source pages.
   bool view_source_line_wrap_enabled{false};

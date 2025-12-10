@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/base/audio_bus.h"
 
 #include <stddef.h>
@@ -16,6 +11,8 @@
 #include <limits>
 #include <memory>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/memory/aligned_memory.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
@@ -150,16 +147,6 @@ class AudioBusTest : public testing::Test {
     }
   }
 
-  // TODO(crbug.com/373960632): remove this when all ctors take spans.
-  std::vector<float*> GetRawPointers(std::vector<AlignedFloatArray>& data) {
-    std::vector<float*> result;
-    result.reserve(data_.size());
-    for (AlignedFloatArray& array : data) {
-      result.push_back(array.as_span().data());
-    }
-    return result;
-  }
-
   std::vector<AlignedFloatArray> data_;
 };
 
@@ -264,52 +251,57 @@ TEST_F(AudioBusTest, AllChannelsSubspan) {
   EXPECT_EQ(current_channel, kChannels);
 }
 
-// Verify an AudioBus created via wrapping a vector works as advertised.
-TEST_F(AudioBusTest, WrapVector) {
-  AllocateDataPerChannel();
-
-  std::vector<float*> data_pointers;
-  data_pointers.reserve(kChannels);
-
-  for (AlignedFloatArray& data : data_) {
-    data_pointers.push_back(data.as_span().data());
-  }
-
-  std::unique_ptr<AudioBus> bus =
-      AudioBus::WrapVector(kFrameCount, GetRawPointers(data_));
-  VerifyChannelAndFrameCount(bus.get());
-  VerifyReadWriteAndAlignment(bus.get());
-}
-
 // Verify an AudioBus created via wrapping a memory block works as advertised.
 TEST_F(AudioBusTest, WrapMemory) {
-  AudioParameters params(AudioParameters::AUDIO_PCM_LINEAR,
-                         ChannelLayoutConfig::FromLayout<kChannelLayout>(),
-                         kSampleRate, kFrameCount);
-  size_t total_frame_count =
-      AudioBus::CalculateMemorySize(params) / sizeof(float);
-  AlignedFloatArray data = base::AlignedUninit<float>(
-      total_frame_count, AudioBus::kChannelAlignment);
+  auto verify_wrapped_memory = [&](bool use_byte_span) {
+    AudioParameters params(AudioParameters::AUDIO_PCM_LINEAR,
+                           ChannelLayoutConfig::FromLayout<kChannelLayout>(),
+                           kSampleRate, kFrameCount);
 
-  // Fill the memory with a test value we can check for after wrapping.
-  static const float kTestValue = 3;
-  std::ranges::fill(data, kTestValue);
+    const size_t total_frame_count =
+        AudioBus::CalculateMemorySize(params) / sizeof(float);
+    auto float_data = base::AlignedUninit<float>(total_frame_count,
+                                                 AudioBus::kChannelAlignment);
+    base::span<float> float_span = base::span(float_data);
 
-  std::unique_ptr<AudioBus> bus =
-      AudioBus::WrapMemory(params, data.as_span().data());
-  // Verify the test value we filled prior to wrapping.
-  for (auto channel : bus->AllChannels()) {
-    VerifySpanIsFilledWithValue(channel, kTestValue);
+    // Fill the memory with a test value we can check for after wrapping.
+    static constexpr float kTestValue = 3;
+    std::ranges::fill(float_data, kTestValue);
+
+    std::unique_ptr<AudioBus> bus;
+
+    if (use_byte_span) {
+      base::span<uint8_t> byte_span =
+          base::as_writable_bytes(base::allow_nonunique_obj, float_span);
+      bus = AudioBus::WrapMemory(params, byte_span);
+    } else {
+      bus = AudioBus::WrapMemory(params, float_span);
+    }
+
+    // Verify the test value we filled prior to wrapping.
+    for (auto channel : bus->AllChannels()) {
+      VerifySpanIsFilledWithValue(channel, kTestValue);
+    }
+    VerifyChannelAndFrameCount(bus.get());
+    VerifyReadWriteAndAlignment(bus.get());
+
+    auto all_channels = bus->AllChannels();
+    auto first_channel = all_channels.front();
+    auto last_channel = all_channels.back();
+
+    // Verify the channel vectors lie within the provided memory block.
+    EXPECT_GE(&first_channel.front(), &float_span.front());
+    EXPECT_LT(&last_channel.back(), &float_span.back());
+  };
+
+  {
+    SCOPED_TRACE("uint8_t span");
+    verify_wrapped_memory(/*use_byte_span=*/true);
   }
-  VerifyChannelAndFrameCount(bus.get());
-  VerifyReadWriteAndAlignment(bus.get());
-
-  // Verify the channel vectors lie within the provided memory block.
-  const float* backing_memory_start = data.as_span().data();
-  const float* backing_memory_end = backing_memory_start + total_frame_count;
-  EXPECT_GE(bus->channel_span(0).data(), backing_memory_start);
-  EXPECT_LT(bus->channel_span(bus->channels() - 1).data() + bus->frames(),
-            backing_memory_end);
+  {
+    SCOPED_TRACE("float span");
+    verify_wrapped_memory(/*use_byte_span=*/false);
+  }
 }
 
 // Simulate a shared memory transfer and verify results.
@@ -322,26 +314,28 @@ TEST_F(AudioBusTest, CopyTo) {
   std::unique_ptr<AudioBus> bus1 = AudioBus::Create(kChannels, kFrameCount);
   std::unique_ptr<AudioBus> bus2 = AudioBus::Create(params);
 
+  const size_t memory_size = AudioBus::CalculateMemorySize(params);
+
   {
     SCOPED_TRACE("Created");
     CopyTest(bus1.get(), bus2.get());
   }
   {
-    SCOPED_TRACE("Wrapped Vector");
-    // Try a copy to an AudioBus wrapping a vector.
-    AllocateDataPerChannel();
+    SCOPED_TRACE("Wrapped Memory - byte span");
+    // Try a copy to an AudioBus wrapping a memory block.
+    auto data =
+        base::AlignedUninit<uint8_t>(memory_size, AudioBus::kChannelAlignment);
 
-    bus2 = AudioBus::WrapVector(kFrameCount, GetRawPointers(data_));
+    bus2 = AudioBus::WrapMemory(params, data.as_span());
     CopyTest(bus1.get(), bus2.get());
   }
   {
-    SCOPED_TRACE("Wrapped Memory");
+    SCOPED_TRACE("Wrapped Memory - float span");
     // Try a copy to an AudioBus wrapping a memory block.
-    std::unique_ptr<float, base::AlignedFreeDeleter> data(static_cast<float*>(
-        base::AlignedAlloc(AudioBus::CalculateMemorySize(params),
-                           AudioBus::kChannelAlignment)));
+    auto data = base::AlignedUninit<float>(memory_size / sizeof(float),
+                                           AudioBus::kChannelAlignment);
 
-    bus2 = AudioBus::WrapMemory(params, data.get());
+    bus2 = AudioBus::WrapMemory(params, data.as_span());
     CopyTest(bus1.get(), bus2.get());
   }
 }
@@ -514,8 +508,8 @@ TEST_F(AudioBusTest, FromInterleavedPartial) {
     SCOPED_TRACE("SignedInt32SampleTypeTraits");
     bus->Zero();
     bus->FromInterleavedPartial<SignedInt32SampleTypeTraits>(
-        kTestVectorInt32 + kPartialStart * bus->channels(), kPartialStart,
-        kPartialFrames);
+        UNSAFE_TODO(kTestVectorInt32 + kPartialStart * bus->channels()),
+        kPartialStart, kPartialFrames);
     VerifyAreEqual(bus.get(), expected.get());
   }
 }
@@ -533,15 +527,15 @@ TEST_F(AudioBusTest, ToInterleaved) {
     SCOPED_TRACE("UnsignedInt8SampleTypeTraits");
     uint8_t test_array[std::size(kTestVectorUint8)];
     bus->ToInterleaved<UnsignedInt8SampleTypeTraits>(bus->frames(), test_array);
-    ASSERT_EQ(0,
-              memcmp(test_array, kTestVectorUint8, sizeof(kTestVectorUint8)));
+    UNSAFE_TODO(ASSERT_EQ(
+        0, memcmp(test_array, kTestVectorUint8, sizeof(kTestVectorUint8))));
   }
   {
     SCOPED_TRACE("SignedInt16SampleTypeTraits");
     int16_t test_array[std::size(kTestVectorInt16)];
     bus->ToInterleaved<SignedInt16SampleTypeTraits>(bus->frames(), test_array);
-    ASSERT_EQ(0,
-              memcmp(test_array, kTestVectorInt16, sizeof(kTestVectorInt16)));
+    UNSAFE_TODO(ASSERT_EQ(
+        0, memcmp(test_array, kTestVectorInt16, sizeof(kTestVectorInt16))));
   }
   {
     SCOPED_TRACE("SignedInt32SampleTypeTraits");
@@ -551,23 +545,23 @@ TEST_F(AudioBusTest, ToInterleaved) {
     // Some compilers get better precision than others on the half-max test, so
     // let the test pass with an off by one check on the half-max.
     int32_t alternative_acceptable_result[std::size(kTestVectorInt32)];
-    memcpy(alternative_acceptable_result, kTestVectorInt32,
-           sizeof(kTestVectorInt32));
+    UNSAFE_TODO(memcpy(alternative_acceptable_result, kTestVectorInt32,
+                       sizeof(kTestVectorInt32)));
     ASSERT_EQ(alternative_acceptable_result[4],
               std::numeric_limits<int32_t>::max() / 2);
     alternative_acceptable_result[4]++;
 
-    ASSERT_TRUE(
+    UNSAFE_TODO(ASSERT_TRUE(
         memcmp(test_array, kTestVectorInt32, sizeof(kTestVectorInt32)) == 0 ||
         memcmp(test_array, alternative_acceptable_result,
-               sizeof(alternative_acceptable_result)) == 0);
+               sizeof(alternative_acceptable_result)) == 0));
   }
   {
     SCOPED_TRACE("Float32SampleTypeTraits");
     float test_array[std::size(kTestVectorFloat32)];
     bus->ToInterleaved<Float32SampleTypeTraits>(bus->frames(), test_array);
-    ASSERT_EQ(
-        0, memcmp(test_array, kTestVectorFloat32, sizeof(kTestVectorFloat32)));
+    UNSAFE_TODO(ASSERT_EQ(
+        0, memcmp(test_array, kTestVectorFloat32, sizeof(kTestVectorFloat32))));
   }
 }
 
@@ -581,7 +575,7 @@ TEST_F(AudioBusTest, ToInterleavedSanitized) {
   std::array<float, std::size(kTestVectorFloat32Sanitized)> test_array;
   bus->ToInterleaved<Float32SampleTypeTraits>(bus->frames(), test_array.data());
   for (size_t i = 0; i < std::size(kTestVectorFloat32Sanitized); ++i)
-    ASSERT_EQ(kTestVectorFloat32Sanitized[i], test_array[i]);
+    UNSAFE_TODO(ASSERT_EQ(kTestVectorFloat32Sanitized[i], test_array[i]));
 
   // Verify that Float32SampleTypeTraitsNoClip applied no sanity. Note: We don't
   // use memcmp() here since the NaN type may change on x86 platforms in certain
@@ -590,9 +584,9 @@ TEST_F(AudioBusTest, ToInterleavedSanitized) {
                                                     test_array.data());
   for (int i = 0; i < kTestVectorSize; ++i) {
     if (std::isnan(test_array[i]))
-      EXPECT_TRUE(std::isnan(kTestVectorFloat32Invalid[i]));
+      UNSAFE_TODO(EXPECT_TRUE(std::isnan(kTestVectorFloat32Invalid[i])));
     else
-      EXPECT_FLOAT_EQ(test_array[i], kTestVectorFloat32Invalid[i]);
+      UNSAFE_TODO(EXPECT_FLOAT_EQ(test_array[i], kTestVectorFloat32Invalid[i]));
   }
 }
 
@@ -642,10 +636,11 @@ TEST_F(AudioBusTest, ToInterleavedPartial) {
     float test_array[std::size(kTestVectorFloat32)];
     expected->ToInterleavedPartial<Float32SampleTypeTraits>(
         kPartialStart, kPartialFrames, test_array);
-    ASSERT_EQ(0, memcmp(test_array, kTestVectorFloat32 +
-                                        kPartialStart * kTestVectorChannelCount,
-                        kPartialFrames * sizeof(*kTestVectorFloat32) *
-                            kTestVectorChannelCount));
+    UNSAFE_TODO(ASSERT_EQ(
+        0, memcmp(test_array,
+                  kTestVectorFloat32 + kPartialStart * kTestVectorChannelCount,
+                  kPartialFrames * sizeof(*kTestVectorFloat32) *
+                      kTestVectorChannelCount)));
   }
 }
 

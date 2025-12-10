@@ -16,6 +16,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
@@ -414,9 +415,11 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessOopifPDFTest,
       GetTestPdfViewerStreamManager()->GetStreamContainer(primary_main_frame));
 
   // Now detach the frame and observe that the stream manager is destroyed.
+  content::RenderFrameDeletedObserver deleted_observer(subframe_main_host);
   EXPECT_TRUE(
       ExecJs(primary_main_frame,
              "document.body.removeChild(document.querySelector('iframe'));"));
+  deleted_observer.WaitUntilDeleted();
 
   EXPECT_FALSE(GetPdfViewerStreamManager());
 }
@@ -448,8 +451,8 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessOopifPDFTest,
 
   // When accessed from the PDF document, both localStorage and sessionStorage
   // should be null. These accesses shouldn't lead to a renderer kill.
-  EXPECT_EQ(nullptr, content::EvalJs(pdf_frame, "window.localStorage"));
-  EXPECT_EQ(nullptr, content::EvalJs(pdf_frame, "window.sessionStorage"));
+  EXPECT_EQ(base::Value(), content::EvalJs(pdf_frame, "window.localStorage"));
+  EXPECT_EQ(base::Value(), content::EvalJs(pdf_frame, "window.sessionStorage"));
   EXPECT_TRUE(pdf_frame->IsRenderFrameLive());
 }
 #endif  // BUILDFLAG(ENABLE_PDF)
@@ -1505,7 +1508,7 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest,
   display::test::DisplayManagerTestApi display_manager_test_api(
       shell_test_api.display_manager());
 
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   int64_t display2 = display_manager_test_api.GetSecondaryDisplay().id();
   screen->SetDisplayForNewWindows(display2);
   Browser* browser_on_secondary_display = CreateBrowser(browser()->profile());

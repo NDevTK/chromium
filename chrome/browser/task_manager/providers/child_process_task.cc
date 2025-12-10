@@ -6,10 +6,12 @@
 
 #include <utility>
 
+#include "base/byte_count.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -25,7 +27,9 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/child_process_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/common/process_type.h"
+#include "content/public/common/result_codes.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
@@ -37,10 +41,6 @@
 #include "extensions/common/extension_set.h"        // nogncheck
 #endif
 
-#if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
-#endif
-
 namespace task_manager {
 
 namespace {
@@ -49,18 +49,6 @@ std::u16string GetLocalizedTitle(const std::u16string& title,
                                  int process_type,
                                  ChildProcessTask::ProcessSubtype subtype) {
   std::u16string result_title = title;
-  if (result_title.empty()) {
-    switch (process_type) {
-      case content::PROCESS_TYPE_PPAPI_PLUGIN:
-      case content::PROCESS_TYPE_PPAPI_BROKER:
-        result_title = l10n_util::GetStringUTF16(
-            IDS_TASK_MANAGER_UNKNOWN_PLUGIN_NAME);
-        break;
-      default:
-        // Nothing to do for non-plugin processes.
-        break;
-    }
-  }
 
   // Explicitly mark name as LTR if there is no strong RTL character,
   // to avoid the wrong concatenation result similar to "!Yahoo Mail: the
@@ -74,12 +62,9 @@ std::u16string GetLocalizedTitle(const std::u16string& title,
                                         result_title);
     case content::PROCESS_TYPE_GPU:
       return l10n_util::GetStringUTF16(IDS_TASK_MANAGER_GPU_PREFIX);
-    case content::PROCESS_TYPE_PPAPI_PLUGIN:
-      return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_PLUGIN_PREFIX,
-                                        result_title);
-    case content::PROCESS_TYPE_PPAPI_BROKER:
-      return l10n_util::GetStringFUTF16(IDS_TASK_MANAGER_PLUGIN_BROKER_PREFIX,
-                                        result_title);
+    case content::PROCESS_TYPE_PPAPI_PLUGIN_DEPRECATED:
+    case content::PROCESS_TYPE_PPAPI_BROKER_DEPRECATED:
+      NOTREACHED();
     case content::PROCESS_TYPE_RENDERER: {
       switch (subtype) {
         case ChildProcessTask::ProcessSubtype::kSpareRenderProcess:
@@ -120,8 +105,9 @@ ProcessResourceUsage* CreateProcessResourcesSampler(
   content::BrowserChildProcessHost* host =
       content::BrowserChildProcessHost::FromID(unique_child_process_id);
   auto receiver = usage_reporter.InitWithNewPipeAndPassReceiver();
-  if (host)
+  if (host) {
     host->GetHost()->BindReceiver(std::move(receiver));
+  }
 
   return new ProcessResourceUsage(std::move(usage_reporter));
 }
@@ -148,8 +134,6 @@ ChildProcessTask::ChildProcessTask(const content::ChildProcessData& data,
            FetchIcon(IDR_PLUGINS_FAVICON, &s_icon_),
            data.GetProcess().Handle()),
       process_resources_sampler_(CreateProcessResourcesSampler(data.id)),
-      v8_memory_allocated_(-1),
-      v8_memory_used_(-1),
       unique_child_process_id_(data.id),
       process_type_(data.process_type),
       process_subtype_(subtype),
@@ -157,15 +141,46 @@ ChildProcessTask::ChildProcessTask(const content::ChildProcessData& data,
 
 ChildProcessTask::~ChildProcessTask() = default;
 
+bool ChildProcessTask::IsKillable() {
+  return Task::IsKillable();
+}
+
+bool ChildProcessTask::Kill() {
+  if (!IsKillable()) {
+    return false;
+  }
+
+#if BUILDFLAG(IS_ANDROID)
+  if (process_type_ == content::PROCESS_TYPE_RENDERER) {
+    if (auto* host =
+            content::RenderProcessHost::FromID(unique_child_process_id_);
+        host) {
+      return host->Shutdown(content::RESULT_CODE_KILLED);
+    }
+  }
+
+  if (auto* host =
+          content::BrowserChildProcessHost::FromID(unique_child_process_id_);
+      host) {
+    host->GetHost()->ForceShutdown();
+    return true;
+  }
+#endif
+
+  return Task::Kill();
+}
+
 void ChildProcessTask::Refresh(const base::TimeDelta& update_interval,
                                int64_t refresh_flags) {
   Task::Refresh(update_interval, refresh_flags);
 
-  if ((refresh_flags & REFRESH_TYPE_V8_MEMORY) == 0)
+  if ((refresh_flags & REFRESH_TYPE_V8_MEMORY) == 0) {
     return;
+  }
 
-  if (!uses_v8_memory_)
+  if (!uses_v8_memory_) {
     return;
+  }
 
   // The child process resources refresh is performed asynchronously, we will
   // invoke it and record the current values (which might be invalid at the
@@ -173,18 +188,18 @@ void ChildProcessTask::Refresh(const base::TimeDelta& update_interval,
   // potentially having valid values).
   process_resources_sampler_->Refresh(base::DoNothing());
 
-  v8_memory_allocated_ = base::saturated_cast<int64_t>(
-      process_resources_sampler_->GetV8MemoryAllocated());
-  v8_memory_used_ = base::saturated_cast<int64_t>(
-      process_resources_sampler_->GetV8MemoryUsed());
+  v8_memory_allocated_ =
+      base::ByteCount(process_resources_sampler_->GetV8MemoryAllocated());
+  v8_memory_used_ =
+      base::ByteCount(process_resources_sampler_->GetV8MemoryUsed());
 }
 
 Task::Type ChildProcessTask::GetType() const {
   // Convert |content::ProcessType| to |task_manager::Task::Type|.
   switch (process_type_) {
-    case content::PROCESS_TYPE_PPAPI_PLUGIN:
-    case content::PROCESS_TYPE_PPAPI_BROKER:
-      return Task::PLUGIN;
+    case content::PROCESS_TYPE_PPAPI_PLUGIN_DEPRECATED:
+    case content::PROCESS_TYPE_PPAPI_BROKER_DEPRECATED:
+      NOTREACHED();
     case content::PROCESS_TYPE_UTILITY:
       return Task::UTILITY;
     case content::PROCESS_TYPE_ZYGOTE:
@@ -219,11 +234,11 @@ int ChildProcessTask::GetChildProcessUniqueID() const {
   return unique_child_process_id_;
 }
 
-int64_t ChildProcessTask::GetV8MemoryAllocated() const {
+base::ByteCount ChildProcessTask::GetV8MemoryAllocated() const {
   return v8_memory_allocated_;
 }
 
-int64_t ChildProcessTask::GetV8MemoryUsed() const {
+base::ByteCount ChildProcessTask::GetV8MemoryUsed() const {
   return v8_memory_used_;
 }
 

@@ -115,9 +115,9 @@ scoped_refptr<const Extension> CreateWebStoreExtension(int manifest_version) {
 
 scoped_refptr<const Extension> CreateTestResponseHeaderExtension(
     int manifest_version) {
-  if (manifest_version == 3) {
+  if (manifest_version >= 3) {
     return ExtensionBuilder("An extension with web-accessible resources")
-        .SetManifestVersion(3)
+        .SetManifestVersion(manifest_version)
         .SetManifestKey(
             "web_accessible_resources",
             base::Value::List().Append(
@@ -161,9 +161,9 @@ scoped_refptr<const Extension> CreateTestModuleResponseHeaderExtension(
 scoped_refptr<const Extension> CreateTestModuleImporterResponseHeaderExtension(
     int manifest_version,
     const std::string& module_extension_id) {
-  if (manifest_version == 3) {
+  if (manifest_version >= 3) {
     return ExtensionBuilder("A module importer extension")
-        .SetManifestVersion(3)
+        .SetManifestVersion(manifest_version)
         .SetManifestKey("import",
                         base::Value::List().Append(
                             base::Value::Dict().Set("id", module_extension_id)))
@@ -806,7 +806,7 @@ TEST_P(ExtensionProtocolsTest, AllowFrameRequests) {
 // https://crbug.com/356878412.
 TEST_P(ExtensionProtocolsTest, PathsWithTrailingSeparatorsAreNotAllowed) {
   base::FilePath extension_dir = GetTestPath("simple_with_file");
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension = file_util::LoadExtension(
       extension_dir, mojom::ManifestLocation::kInternal, Extension::NO_FLAGS,
       &error);
@@ -827,7 +827,7 @@ TEST_P(ExtensionProtocolsTest, PathsWithTrailingSeparatorsAreNotAllowed) {
 // on Windows. See https://crbug.com/400119351.
 TEST_P(ExtensionProtocolsTest, PathsWithTrailingDotSpaceAreNotAllowed) {
   base::FilePath extension_dir = GetTestPath("simple_with_file");
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension = file_util::LoadExtension(
       extension_dir, mojom::ManifestLocation::kInternal, Extension::NO_FLAGS,
       &error);
@@ -851,7 +851,7 @@ TEST_P(ExtensionProtocolsTest, PathsWithTrailingDotSpaceAreNotAllowed) {
 // index.html doesn't get any special treatment.
 TEST_P(ExtensionProtocolsTest, DirectoryWithIndexHtml) {
   base::FilePath extension_dir = GetTestPath("simple_with_index_html");
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension = file_util::LoadExtension(
       extension_dir, mojom::ManifestLocation::kInternal, Extension::NO_FLAGS,
       &error);
@@ -875,7 +875,7 @@ TEST_P(ExtensionProtocolsTest, DirectoryWithIndexHtml) {
 
 TEST_P(ExtensionProtocolsTest, MetadataFolder) {
   base::FilePath extension_dir = GetTestPath("metadata_folder");
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension = file_util::LoadExtension(
       extension_dir, mojom::ManifestLocation::kInternal, Extension::NO_FLAGS,
       &error);
@@ -1102,7 +1102,7 @@ TEST_P(ExtensionProtocolsTest, MimeTypesForKnownFiles) {
 TEST_P(ExtensionProtocolsTest, ExtensionRequestsNotAborted) {
   base::FilePath extension_dir =
       GetTestPath("common").AppendASCII("background_script");
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension = file_util::LoadExtension(
       extension_dir, mojom::ManifestLocation::kInternal, Extension::NO_FLAGS,
       &error);

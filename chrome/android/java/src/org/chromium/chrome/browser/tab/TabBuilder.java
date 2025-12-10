@@ -37,6 +37,8 @@ public class TabBuilder {
     private boolean mInitializeRenderer;
     private @Nullable TabState mTabState;
     private @Nullable Callback<Tab> mPreInitializeAction;
+    private boolean mIsPinned;
+    private boolean mIsArchived;
 
     public TabBuilder(Profile profile) {
         mProfile = profile;
@@ -64,7 +66,19 @@ public class TabBuilder {
     }
 
     /**
+     * Sets the archived state of the tab.
+     *
+     * @param isArchived Whether the tab is archived.
+     * @return {@link TabBuilder} creating the Tab.
+     */
+    public TabBuilder setArchived(boolean isArchived) {
+        mIsArchived = isArchived;
+        return this;
+    }
+
+    /**
      * Sets the tab resolver (tab id -> {@link Tab} mapping)
+     *
      * @param tabResolver the {@link TabResolver}
      * @return {@link TabBuilder} creating the Tab.
      */
@@ -157,6 +171,11 @@ public class TabBuilder {
         return this;
     }
 
+    public TabBuilder setInitialPinState(boolean isPinned) {
+        mIsPinned = isPinned;
+        return this;
+    }
+
     public Tab build() {
         assert mLaunchType != null : "TabBuilder#setLaunchType() must be called.";
 
@@ -172,7 +191,7 @@ public class TabBuilder {
             if (mFromFrozenState) assert mLaunchType == TabLaunchType.FROM_RESTORE;
         }
 
-        TabImpl tab = new TabImpl(mId, mProfile, mLaunchType);
+        TabImpl tab = new TabImpl(mId, mProfile, mLaunchType, mIsArchived);
         Tab parent = null;
         if (mParent != null) {
             parent = mParent;
@@ -201,7 +220,8 @@ public class TabBuilder {
                 mDelegateFactory,
                 mInitiallyHidden,
                 mTabState,
-                mInitializeRenderer);
+                mInitializeRenderer,
+                mIsPinned);
         return tab;
     }
 

@@ -8,21 +8,17 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import static org.chromium.chrome.browser.webid.DigitalCredentialsPresentationDelegate.BUNDLE_KEY_IDENTITY_TOKEN;
 import static org.chromium.chrome.browser.webid.DigitalCredentialsPresentationDelegate.BUNDLE_KEY_PROVIDER_DATA;
-import static org.chromium.chrome.browser.webid.DigitalCredentialsPresentationDelegate.BUNDLE_KEY_REQUEST_JSON;
-import static org.chromium.chrome.browser.webid.DigitalCredentialsPresentationDelegate.EXTRA_CREDENTIAL_DATA;
-import static org.chromium.chrome.browser.webid.DigitalCredentialsPresentationDelegate.EXTRA_GET_CREDENTIAL_RESPONSE;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.credentials.Credential;
-import android.credentials.GetCredentialResponse;
 import android.os.Build;
 import android.os.Bundle;
+
+import androidx.credentials.GetCredentialResponse;
+import androidx.credentials.provider.PendingIntentHandler;
 
 import com.google.android.gms.identitycredentials.GetCredentialException;
 
@@ -51,6 +47,9 @@ public class DigitalCredentialsPresentationDelegateTest {
     private static final String JSON_WITHOUT_PROTOCOL = "{\"data\": {\"test_key\":\"test_value\"}}";
     private static final byte[] LEGACY_RESPONSE = "{\"legacy_key\":\"legacy_value\"}".getBytes();
 
+    private static final String BUNDLE_KEY_REQUEST_JSON =
+            "androidx.credentials.BUNDLE_KEY_REQUEST_JSON";
+
     private void packageResponseJsonInLegacyFormat(byte[] response, Intent intent) {
         Bundle dataBundle = new Bundle();
         dataBundle.putByteArray(BUNDLE_KEY_IDENTITY_TOKEN, response);
@@ -60,37 +59,9 @@ public class DigitalCredentialsPresentationDelegateTest {
     }
 
     private void packageResponseJsonInNewFormat(String json, Intent intent) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            packageResponseJsonInNewFormatAfter34(json, intent);
-        } else {
-            packageResponseJsonInNewFormatBefore34(json, intent);
-        }
-    }
-
-    private void packageResponseJsonInNewFormatBefore34(String json, Intent intent) {
-        Bundle credentialBundle = new Bundle();
-        credentialBundle.putString(BUNDLE_KEY_REQUEST_JSON, json);
-
-        Bundle dataBundle = new Bundle();
-        dataBundle.putBundle(EXTRA_CREDENTIAL_DATA, credentialBundle);
-
-        intent.putExtra(EXTRA_GET_CREDENTIAL_RESPONSE, dataBundle);
-    }
-
-    private void packageResponseJsonInNewFormatAfter34(String json, Intent intent) {
-        Bundle credentialBundle = new Bundle();
-        credentialBundle.putString(BUNDLE_KEY_REQUEST_JSON, json);
-
-        // Credential and GetCredentialResponse classes don't exist in Robolectric test and hence we
-        // mock them.
-        Credential credential = mock(Credential.class);
-        when(credential.getType()).thenReturn("androidx.credentials.TYPE_DIGITAL_CREDENTIAL");
-        when(credential.getData()).thenReturn(credentialBundle);
-
-        GetCredentialResponse getCredentialResponse = mock(GetCredentialResponse.class);
-        when(getCredentialResponse.getCredential()).thenReturn(credential);
-
-        intent.putExtra(EXTRA_GET_CREDENTIAL_RESPONSE, getCredentialResponse);
+        PendingIntentHandler.setGetCredentialResponse(
+                intent,
+                new GetCredentialResponse(new androidx.credentials.DigitalCredential(json)));
     }
 
     private Bundle packageIntentInResponseBundle(Intent intent) {
@@ -116,7 +87,7 @@ public class DigitalCredentialsPresentationDelegateTest {
     }
 
     @Test
-    public void testExtractDigitalCredentialFromGetResponse_NewFormat_ProcotolInResponse()
+    public void testExtractDigitalCredentialFromGetResponse_NewFormat_ProtocolInResponse()
             throws JSONException, NullPointerException, GetCredentialException {
         Intent intent = new Intent();
         packageResponseJsonInNewFormat(JSON_WITH_PROTOCOL, intent);
@@ -132,7 +103,7 @@ public class DigitalCredentialsPresentationDelegateTest {
     }
 
     @Test
-    public void testExtractDigitalCredentialFromGetResponse_BothFormats_ProcotolInResponse()
+    public void testExtractDigitalCredentialFromGetResponse_BothFormats_ProtocolInResponse()
             throws JSONException, NullPointerException, GetCredentialException {
         Intent intent = new Intent();
         packageResponseJsonInNewFormat(JSON_WITH_PROTOCOL, intent);
@@ -150,7 +121,7 @@ public class DigitalCredentialsPresentationDelegateTest {
     }
 
     @Test
-    public void testExtractDigitalCredentialFromGetResponse_BothFormats_NoProcotolInResponse()
+    public void testExtractDigitalCredentialFromGetResponse_BothFormats_NoProtocolInResponse()
             throws JSONException, NullPointerException, GetCredentialException {
         Intent intent = new Intent();
         packageResponseJsonInNewFormat(JSON_WITHOUT_PROTOCOL, intent);
@@ -177,21 +148,6 @@ public class DigitalCredentialsPresentationDelegateTest {
 
         assertThrows(
                 NullPointerException.class,
-                () -> {
-                    DigitalCredentialsPresentationDelegate
-                            .extractDigitalCredentialFromResponseBundle(Activity.RESULT_OK, bundle);
-                });
-    }
-
-    @Test
-    public void testExtractDigitalCredentialFromGetResponse_JSONException()
-            throws JSONException, NullPointerException, GetCredentialException {
-        Intent intent = new Intent();
-        packageResponseJsonInNewFormat("{invalidjson", intent);
-        Bundle bundle = packageIntentInResponseBundle(intent);
-
-        assertThrows(
-                JSONException.class,
                 () -> {
                     DigitalCredentialsPresentationDelegate
                             .extractDigitalCredentialFromResponseBundle(Activity.RESULT_OK, bundle);

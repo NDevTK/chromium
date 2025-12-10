@@ -33,6 +33,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_constants.h"
 #include "ui/native_theme/native_theme.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -44,6 +45,7 @@
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/layout_provider.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -98,6 +100,14 @@ std::unique_ptr<views::ImageView> CreateIconView(
           *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
               IDR_AUTOFILL_GOOGLE_PAY_ZIP_DARK));
       break;
+    case TitleWithIconAfterLabelView::Icon::GOOGLE_PAY_AND_KLARNA:
+      model = ui::ImageModel::FromImageSkia(
+          *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+              IDR_AUTOFILL_GOOGLE_PAY_KLARNA));
+      model_dark = ui::ImageModel::FromImageSkia(
+          *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+              IDR_AUTOFILL_GOOGLE_PAY_KLARNA_DARK));
+      break;
     case TitleWithIconAfterLabelView::Icon::GOOGLE_G: {
       const gfx::VectorIcon& icon = vector_icons::kGoogleGLogoIcon;
 #else
@@ -105,7 +115,8 @@ std::unique_ptr<views::ImageView> CreateIconView(
     case TitleWithIconAfterLabelView::Icon::GOOGLE_G:
     case TitleWithIconAfterLabelView::Icon::GOOGLE_PAY_AND_AFFIRM:
     case TitleWithIconAfterLabelView::Icon::GOOGLE_PAY_AND_AFTERPAY:
-    case TitleWithIconAfterLabelView::Icon::GOOGLE_PAY_AND_ZIP: {
+    case TitleWithIconAfterLabelView::Icon::GOOGLE_PAY_AND_ZIP:
+    case TitleWithIconAfterLabelView::Icon::GOOGLE_PAY_AND_KLARNA: {
       const gfx::VectorIcon& icon = kCreditCardIcon;
 #endif
       model = ui::ImageModel::FromVectorIcon(icon, ui::kColorIcon, kIconHeight);
@@ -141,19 +152,22 @@ views::Textfield& LabeledTextfieldWithErrorMessage::GetInputTextField() const {
   return *input;
 }
 
-void LabeledTextfieldWithErrorMessage::SetErrorState(
-    bool is_valid_input,
-    std::optional<std::u16string> error_message) {
+void LabeledTextfieldWithErrorMessage::SetErrorState(bool is_valid) {
   CHECK(input);
-  input->SetInvalid(!is_valid_input);
+  is_valid_input = is_valid;
+  input->SetInvalid(!is_valid);
   if (error_label) {
-    if (error_message.has_value()) {
-      error_label->SetText(error_message.value());
-    }
-    error_label->SetVisible(!is_valid_input);
+    error_label->SetVisible(!is_valid);
   }
   if (error_label_placeholder) {
-    error_label_placeholder->SetVisible(is_valid_input);
+    error_label_placeholder->SetVisible(is_valid);
+  }
+}
+
+void LabeledTextfieldWithErrorMessage::MaybeAnnounceError() {
+  if (!GetInputTextField().GetText().empty() && !is_valid_input) {
+    error_label->GetViewAccessibility().AnnouncePolitely(
+        error_label->GetText());
   }
 }
 

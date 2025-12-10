@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/safety_checks.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -71,6 +72,9 @@ class LayerThreadedAnimationDelegate;
 class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
                                 public cc::ContentLayerClient,
                                 public cc::TextureLayerClient {
+  // TODO(crbug.com/453831486): Remove this macro once the bug gets fixed.
+  ADVANCED_MEMORY_SAFETY_CHECKS();
+
  public:
   using ShapeRects = std::vector<gfx::Rect>;
   explicit Layer(LayerType type = LAYER_TEXTURED);
@@ -557,7 +561,8 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
 
   float device_scale_factor() const { return device_scale_factor_; }
 
-  // Triggers a call to SwitchToLayer.
+  // Triggers a call to `FinishAnimationsBeforeSwitchToLayer` and
+  // `SwitchToLayer`. If this returns false, then `this` Layer was destroyed.
   bool SwitchCCLayerForTest();
 
   const cc::Region& damaged_region_for_testing() const {
@@ -691,11 +696,18 @@ class COMPOSITOR_EXPORT Layer : public LayerAnimationDelegate,
   // Set all filters which got applied to the layer background.
   void SetLayerBackgroundFilters();
 
-  // Cleanup |cc_layer_| and replaces it with |new_layer|. When stopping
-  // animations handled by old cc layer before the switch, |this| could be
-  // released by an animation observer. Returns false when it happens and
-  // callers should take cautions as well. Otherwise returns true.
-  [[nodiscard]] bool SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
+  // Cleans up |cc_layer_| and replaces it with |new_layer|. Before calling
+  // `SwitchToLayer`, `FinishAnimationsBeforeSwitchToLayer` must be called to
+  // ensure all animations on the old cc layer are stopped and `this` Layer was
+  // not deleted as a result.
+  void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
+
+  // Helper used as part of `SwitchToLayer` flow that stops animations on the
+  // old cc layer in preparation for switching to a new cc layer. Note that
+  // animation observers may delete `this` Layer during this call. Returns false
+  // when it happens and callers should take precautions. Otherwise returns
+  // true.
+  [[nodiscard]] bool FinishAnimationsBeforeSwitchToLayer();
 
   void OnMirrorDestroyed(LayerMirror* mirror);
 

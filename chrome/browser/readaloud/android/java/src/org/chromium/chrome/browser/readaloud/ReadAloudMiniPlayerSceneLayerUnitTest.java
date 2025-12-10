@@ -59,8 +59,7 @@ public class ReadAloudMiniPlayerSceneLayerUnitTest {
                 .getBottomControlsMinHeightOffset();
 
         mSceneLayer.setSize((int) VIEWPORT.width(), (int) layerHeight);
-        mSceneLayer.getUpdatedSceneOverlayTree(
-                VIEWPORT, VIEWPORT, /* resourceManager= */ null, /* topOffset= */ 20f);
+        mSceneLayer.getUpdatedSceneOverlayTree(VIEWPORT, VIEWPORT, /* resourceManager= */ null);
 
         verify(mSceneLayerJni)
                 .updateReadAloudMiniPlayerLayer(
@@ -76,14 +75,13 @@ public class ReadAloudMiniPlayerSceneLayerUnitTest {
     public void testInitAndDestroy() {
         verify(mSceneLayerJni).init(eq(mSceneLayer));
         mSceneLayer.destroy();
-        verify(mSceneLayerJni).destroy(eq(123456789L), any());
+        verify(mSceneLayerJni).destroy(eq(123456789L));
     }
 
     @Test
     public void testSetColor() {
         mSceneLayer.setColor(0xAABBCCFF);
-        mSceneLayer.getUpdatedSceneOverlayTree(
-                VIEWPORT, VIEWPORT, /* resourceManager= */ null, /* topOffset= */ 20f);
+        mSceneLayer.getUpdatedSceneOverlayTree(VIEWPORT, VIEWPORT, /* resourceManager= */ null);
 
         verify(mSceneLayerJni)
                 .updateReadAloudMiniPlayerLayer(

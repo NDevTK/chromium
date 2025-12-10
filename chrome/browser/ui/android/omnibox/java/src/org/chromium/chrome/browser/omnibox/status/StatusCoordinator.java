@@ -21,7 +21,6 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.OneshotSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
@@ -34,15 +33,14 @@ import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
-import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.components.permissions.PermissionDialogController;
 import org.chromium.components.search_engines.TemplateUrlService;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.ui.modelutil.PropertyModelAnimatorFactory;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * A component for displaying a status icon (e.g. security icon or navigation icon) and optional
@@ -97,7 +95,8 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
             PageInfoAction pageInfoAction,
             @Nullable Supplier<MerchantTrustSignalsCoordinator>
                     merchantTrustSignalsCoordinatorSupplier,
-            BrowserStateBrowserControlsVisibilityDelegate browserControlsVisibilityDelegate) {
+            @Nullable BrowserStateBrowserControlsVisibilityDelegate
+                    browserControlsVisibilityDelegate) {
         mIsTablet = isTablet;
         mStatusView = statusView;
         mLocationBarDataProvider = locationBarDataProvider;
@@ -112,7 +111,9 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
         PageInfoIphController pageInfoIphController =
                 new PageInfoIphController(
                         new UserEducationHelper(
-                                activity, profileSupplier, new Handler(Looper.getMainLooper())),
+                                activity,
+                                (Supplier<@Nullable Profile>) profileSupplier,
+                                new Handler(Looper.getMainLooper())),
                         getSecurityIconView());
 
         mMediator =
@@ -132,7 +133,7 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
         Resources res = mStatusView.getResources();
         mMediator.setUrlMinWidth(
                 res.getDimensionPixelSize(R.dimen.location_bar_min_url_width)
-                        + res.getDimensionPixelSize(R.dimen.location_bar_status_icon_bg_size)
+                        + res.getDimensionPixelSize(R.dimen.location_bar_status_icon_width)
                         + res.getDimensionPixelSize(R.dimen.location_bar_start_padding)
                         + res.getDimensionPixelSize(R.dimen.location_bar_end_padding));
 
@@ -188,15 +189,8 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     }
 
     /** Toggle whether the status icon should be hidden for secure origins. */
-    public void setHideStatusIconForSecureOrigins(boolean hideStatusIconForSecureOrigins) {
-        mMediator.setHideStatusIconForSecureOrigins(hideStatusIconForSecureOrigins);
-    }
-
-    /**
-     * @param show Whether the status icon background should be VISIBLE, otherwise INVISIBLE.
-     */
-    public void setStatusIconBackgroundVisibility(boolean show) {
-        mMediator.setStatusIconBackgroundVisibility(show);
+    public void setShowStatusIconForSecureOrigins(boolean showStatusIconForSecureOrigins) {
+        mMediator.setShowStatusIconForSecureOrigins(showStatusIconForSecureOrigins);
     }
 
     /**
@@ -234,10 +228,9 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
         updateSecurityIcon();
     }
 
-    // LocationBarData.Observer implementation.
+    // LocationBarDataProvider.Observer implementation.
     // Using the default empty onPrimaryColorChanged.
     // Using the default empty onTitleChanged.
-    // Using the default empty onUrlChanged.
 
     @Override
     public void onNtpStartedLoading() {
@@ -256,13 +249,17 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     }
 
     @Override
-    public void onUrlChanged() {
-        mMediator.onUrlChanged();
+    public void onUrlChanged(boolean isTabChanging) {
+        mMediator.onUrlChanged(isTabChanging);
     }
 
     @Override
     public void onTabCrashed() {
         mMediator.onTabCrashed();
+    }
+
+    public void setUseSmallWidget(boolean useSmallWidget) {
+        mMediator.setUseSmallWidget(useSmallWidget);
     }
 
     /** Returns the resource identifier of the current security icon drawable. */
@@ -304,7 +301,7 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
     public @DrawableRes int getSecurityIconResourceIdForTesting() {
         return mModel.get(StatusProperties.STATUS_ICON_RESOURCE) == null
                 ? 0
-                : mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting();
+                : mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes();
     }
 
     /**
@@ -392,15 +389,5 @@ public class StatusCoordinator implements View.OnClickListener, LocationBarDataP
      * start delay and duration, adding it to the given list of animators.
      */
     public void populateFadeAnimation(
-            List<Animator> animators, long startDelayMs, long durationMs, float targetAlpha) {
-        if (mLocationBarDataProvider.isIncognitoBranded()
-                && !OmniboxFeatures.sOmniboxMobileParityUpdate.isEnabled()) {
-            Animator animator =
-                    PropertyModelAnimatorFactory.ofFloat(
-                                    mModel, StatusProperties.ALPHA, targetAlpha)
-                            .setDuration(durationMs);
-            animator.setStartDelay(startDelayMs);
-            animators.add(animator);
-        }
-    }
+            List<Animator> animators, long startDelayMs, long durationMs, float targetAlpha) {}
 }

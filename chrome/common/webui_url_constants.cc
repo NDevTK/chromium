@@ -18,6 +18,10 @@
 #include "extensions/buildflags/buildflags.h"
 #include "third_party/blink/public/common/chrome_debug_urls.h"
 
+#if BUILDFLAG(IS_CHROMEOS)
+#include "ash/constants/url_constants.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
 namespace chrome {
 
 // Note: Add hosts to `ChromeURLHosts()` at the bottom of this file to be listed
@@ -32,7 +36,6 @@ bool IsSystemWebUIHost(std::string_view host) {
       kChromeUIAccountMigrationWelcomeHost,
       kChromeUIAddSupervisionHost,
       kChromeUIAppInstallDialogHost,
-      kChromeUIAssistantOptInHost,
       kChromeUIBluetoothPairingHost,
       kChromeUIBorealisCreditsHost,
       kChromeUIBorealisInstallerHost,
@@ -83,6 +86,7 @@ base::span<const base::cstring_view> ChromeURLHosts() {
       kChromeUIChromeURLsHost,
       kChromeUIComponentsHost,
       commerce::kChromeUICommerceInternalsHost,
+      kChromeUIConnectorsInternalsHost,
       kChromeUICrashesHost,
       kChromeUICreditsHost,
 #if BUILDFLAG(IS_CHROMEOS) && !defined(OFFICIAL_BUILD)
@@ -117,6 +121,9 @@ base::span<const base::cstring_view> ChromeURLHosts() {
       kChromeUIPrefsInternalsHost,
       kChromeUIProfileInternalsHost,
       content::kChromeUIQuotaInternalsHost,
+#if !BUILDFLAG(IS_ANDROID)
+      kChromeUIReloadButtonHost,
+#endif
       kChromeUISignInInternalsHost,
       kChromeUISiteEngagementHost,
 #if !BUILDFLAG(IS_ANDROID)
@@ -130,6 +137,9 @@ base::span<const base::cstring_view> ChromeURLHosts() {
       kChromeUITermsHost,
 #endif
       kChromeUITranslateInternalsHost,
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
+      kChromeUIUpdaterHost,
+#endif
       kChromeUIUsbInternalsHost,
       kChromeUIUserActionsHost,
       kChromeUIVersionHost,
@@ -165,6 +175,9 @@ base::span<const base::cstring_view> ChromeURLHosts() {
       kChromeUIInspectHost,
       kChromeUINewTabPageHost,
       kChromeUINewTabPageThirdPartyHost,
+#if BUILDFLAG(IS_ANDROID)
+      kChromeUINotificationsInternalsHost,
+#endif
       kChromeUISettingsHost,
       kChromeUISystemInfoHost,
 #if !BUILDFLAG(IS_CHROMEOS)
@@ -190,11 +203,6 @@ base::span<const base::cstring_view> ChromeURLHosts() {
       kChromeUISysInternalsHost,
       kChromeUIInternetConfigDialogHost,
       kChromeUIInternetDetailDialogHost,
-      kChromeUIAssistantOptInHost,
-#endif
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
-      kChromeUIConnectorsInternalsHost,
 #endif
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
     BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_DESKTOP_ANDROID)
@@ -224,6 +232,9 @@ base::span<const base::cstring_view> ChromeURLHosts() {
 #if BUILDFLAG(IS_CHROMEOS)
       kChromeUIDlpInternalsHost,
 #endif  // BUILDFLAG(IS_CHROMEOS)
+#if !BUILDFLAG(IS_ANDROID)
+      kChromeUIWebuiBrowserHost,
+#endif  // !BUILDFLAG(IS_ANDROID)
   });
 
   return base::span(kChromeURLHosts);

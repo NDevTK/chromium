@@ -41,6 +41,8 @@
 
 #include "base/auto_reset.h"
 #include "base/notreached.h"
+#include "base/strings/strcat.h"
+#include "base/time/time.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/unguessable_token.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -97,6 +99,7 @@
 #include "third_party/blink/renderer/core/loader/idleness_detector.h"
 #include "third_party/blink/renderer/core/loader/mixed_content_checker.h"
 #include "third_party/blink/renderer/core/loader/navigation_policy.h"
+#include "third_party/blink/renderer/core/loader/old_document_info_for_commit.h"
 #include "third_party/blink/renderer/core/loader/progress_tracker.h"
 #include "third_party/blink/renderer/core/navigation_api/navigation_api.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
@@ -401,17 +404,21 @@ void FrameLoader::DispatchUnloadEventAndFillOldDocumentInfoIfNeeded(
     return;
   }
   old_document_info->history_item = GetDocumentLoader()->GetHistoryItem();
-  old_document_info->had_sticky_activation_before_navigation =
-      frame_->HadStickyUserActivationBeforeNavigation();
   if (auto* scheduler = frame_->GetFrameScheduler()) {
     old_document_info->frame_scheduler_unreported_task_time =
         scheduler->UnreportedTaskTime();
   }
   old_document_info->was_focused_frame =
       (frame_->GetPage()->GetFocusController().FocusedFrame() == frame_);
+  old_document_info->overlay_color = frame_->GetFrameOverlayColor();
 
+  base::ElapsedTimer elapsed_timer;
   frame_->GetDocument()->DispatchUnloadEvents(
       &old_document_info->unload_timing_info);
+  old_document_info->total_lifecycle_events_processing_time_on_commit =
+      std::max(
+          old_document_info->total_lifecycle_events_processing_time_on_commit,
+          elapsed_timer.Elapsed());
 }
 
 void FrameLoader::DidExplicitOpen() {
@@ -543,13 +550,10 @@ bool FrameLoader::AllowRequestForThisFrame(const FrameLoadRequest& request) {
 
   const KURL& url = request.GetResourceRequest().Url();
   if (url.ProtocolIsJavaScript()) {
-    if (request.GetOriginWindow()
-            ->CheckAndGetJavascriptUrl(request.JavascriptWorld(), url,
-                                       frame_->DeprecatedLocalOwner())
-            .empty()) {
+    if (!request.GetOriginWindow()->AllowInlineJavascriptUrl(
+            request.JavascriptWorld(), url, frame_->DeprecatedLocalOwner())) {
       return false;
     }
-
     if (frame_->Owner() && ((frame_->Owner()->GetFramePolicy().sandbox_flags &
                              network::mojom::blink::WebSandboxFlags::kOrigin) !=
                             network::mojom::blink::WebSandboxFlags::kNone)) {
@@ -722,6 +726,28 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
       ShouldPerformFragmentNavigation(
           request.Form(), resource_request.HttpMethod(), frame_load_type, url);
 
+  if (RuntimeEnabledFeatures::
+          TreatMhtmlInitialDocumentLoadsAsCrossDocumentEnabled()) {
+    if (auto* parent = DynamicTo<LocalFrame>(frame_->Tree().Parent())) {
+      // Within MHTML archives, treat the initial about:blank#fragment
+      // navigation as cross-document. Although it appears to be a same-document
+      // fragment navigation, it actually commits a new document with a new
+      // opaque origin.
+      //
+      // TODO(crbug.com/423663315): Consider refining this logic to only treat
+      // the initial about:blank#fragment navigation in MHTML as cross-document
+      // if the MHTML archive actually overrides the about:blank resource. If it
+      // doesn't, the navigation may be better treated as same-document,
+      // matching non-MHTML behavior.
+      if (parent->Loader().GetDocumentLoader()->HasBeenLoadedAsWebArchive()) {
+        if (url.HasFragmentIdentifier() &&
+            frame_->GetDocument()->IsInitialEmptyDocument()) {
+          same_document_navigation = false;
+        }
+      }
+    }
+  }
+
   // Perform same document navigation.
   if (same_document_navigation) {
     DCHECK(origin_window);
@@ -865,7 +891,17 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
       origin_window->GetFrame() == frame_->Parent()) {
     if (auto* owner = DynamicTo<HTMLFrameOwnerElement>(frame_->Owner());
         owner) {
-      owner->UpdateDeferredFetchPolicy(url);
+      // Determine the origin of the navigation target `url`.
+      // This is not available from `frame` security context yet as navigation
+      // is just starting. It has to take frame's sandbox flags into account.
+      scoped_refptr<const SecurityOrigin> to_origin =
+          SecurityOrigin::Create(url);
+      if ((owner->GetFramePolicy().sandbox_flags &
+           network::mojom::blink::WebSandboxFlags::kOrigin) !=
+          network::mojom::blink::WebSandboxFlags::kNone) {
+        to_origin = to_origin->DeriveNewOpaqueOrigin();
+      }
+      owner->UpdateDeferredFetchPolicy(std::move(to_origin));
     }
   }
 
@@ -1125,6 +1161,10 @@ void FrameLoader::CommitNavigation(
   auto url_origin = SecurityOrigin::Create(navigation_params->url);
   ScopedOldDocumentInfoForCommitCapturer scoped_old_document_info(
       MakeGarbageCollected<OldDocumentInfoForCommit>(url_origin));
+  scoped_old_document_info.CurrentInfo()
+      ->total_lifecycle_events_processing_time_on_commit =
+      navigation_params->navigation_timings
+          .total_lifecycle_events_processing_time_on_commit;
 
   FrameSwapScope frame_swap_scope(frame_owner);
   {
@@ -1221,6 +1261,17 @@ void FrameLoader::CommitNavigation(
       commit_reason);
 
   RestoreScrollPositionAndViewState();
+
+  if (!frame_->IsDetached() && frame_->IsOutermostMainFrame()) {
+    ukm::builders::PageLifecycleMetricsOnNewPageCommit(
+        frame_->GetDocument()->UkmSourceID())
+        .SetPageLifecycleEventsTotalProcessingTime(
+            ukm::GetExponentialBucketMinForFineUserTiming(
+                scoped_old_document_info.CurrentInfo()
+                    ->total_lifecycle_events_processing_time_on_commit
+                    .InMilliseconds()))
+        .Record(frame_->GetDocument()->UkmRecorder());
+  }
 
   TakeObjectSnapshot();
 }

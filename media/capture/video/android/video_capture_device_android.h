@@ -97,20 +97,23 @@ class CAPTURE_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
                        SetPhotoOptionsCallback callback) override;
   void TakePhoto(TakePhotoCallback callback) override;
 
-  // Implement org.chromium.media.VideoCapture.nativeOnFrameAvailable.
+  void OnHardwareBufferAvailableOnMainThread(
+      base::android::ScopedHardwareBufferHandle ahb_handle,
+      jint rotation,
+      jlong timestamp);
+
+  // Implement org.chromium.media.VideoCapture.Natives.OnFrameAvailable.
   void OnFrameAvailable(JNIEnv* env,
-                        const base::android::JavaParamRef<jobject>& obj,
-                        const base::android::JavaParamRef<jbyteArray>& data,
+                        const base::android::JavaRef<jbyteArray>& data,
                         jint length,
                         jint rotation);
 
-  // Implement org.chromium.media.VideoCapture.nativeOnI420FrameAvailable.
+  // Implement org.chromium.media.VideoCapture.Natives.OnI420FrameAvailable.
   void OnI420FrameAvailable(JNIEnv* env,
-                            jobject obj,
-                            jobject y_buffer,
+                            const base::android::JavaRef<jobject>& y_buffer,
                             jint y_stride,
-                            jobject u_buffer,
-                            jobject v_buffer,
+                            const base::android::JavaRef<jobject>& u_buffer,
+                            const base::android::JavaRef<jobject>& v_buffer,
                             jint uv_row_stride,
                             jint uv_pixel_stride,
                             jint width,
@@ -118,37 +121,39 @@ class CAPTURE_EXPORT VideoCaptureDeviceAndroid : public VideoCaptureDevice {
                             jint rotation,
                             jlong timestamp);
 
-  // Implement org.chromium.media.VideoCapture.nativeOnError.
+  // Implement
+  // org.chromium.media.VideoCapture.Natives.onHardwareBufferAvailable.
+  void OnHardwareBufferAvailable(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& hardwareBuffer,
+      jint rotation,
+      jlong timestamp);
+
+  // Implement org.chromium.media.VideoCapture.Natives.OnError.
   void OnError(JNIEnv* env,
-               const base::android::JavaParamRef<jobject>& obj,
                int android_video_capture_error,
-               const base::android::JavaParamRef<jstring>& message);
+               const base::android::JavaRef<jstring>& message);
 
   // Implement org.chromium.media.VideoCapture.nativeOnFrameDropped.
   void OnFrameDropped(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& obj,
                       int android_video_capture_frame_drop_reason);
 
   void OnGetPhotoCapabilitiesReply(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       jlong callback_id,
-      jobject photo_capabilities);
+      const base::android::JavaRef<jobject>& photo_capabilities);
 
   // Implement org.chromium.media.VideoCapture.nativeOnPhotoTaken.
   void OnPhotoTaken(JNIEnv* env,
-                    const base::android::JavaParamRef<jobject>& obj,
                     jlong callback_id,
-                    const base::android::JavaParamRef<jbyteArray>& data);
+                    const base::android::JavaRef<jbyteArray>& data);
 
   // Implement org.chromium.media.VideoCapture.nativeOnStarted.
-  void OnStarted(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void OnStarted(JNIEnv* env);
 
   // Implement
   // org.chromium.media.VideoCapture.nativeDCheckCurrentlyOnIncomingTaskRunner.
-  void DCheckCurrentlyOnIncomingTaskRunner(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
+  void DCheckCurrentlyOnIncomingTaskRunner(JNIEnv* env);
 
   void ConfigureForTesting();
 

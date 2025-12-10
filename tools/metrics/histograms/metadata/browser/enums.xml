@@ -62,6 +62,29 @@ chromium-metrics-reviews@google.com.
   <int value="6" label="Edge"/>
 </enum>
 
+<!-- LINT.IfChange(CfmArtemisLoggerResponse) -->
+
+<enum name="CfmArtemisLoggerResponse">
+  <int value="0" label="Ok"/>
+  <int value="1" label="Other"/>
+  <int value="2" label="DeniedDueToThrottling"/>
+  <int value="3" label="Unauthenticated"/>
+  <int value="4" label="Unavailable"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/ash/chromebox_for_meetings/artemis/data_aggregator_service.h:LoggerResponse) -->
+
+<!-- LINT.IfChange(CfmArtemisSetupStatus) -->
+
+<enum name="CfmArtemisSetupStatus">
+  <int value="0" label="SetupSuccessful"/>
+  <int value="1" label="DeviceInfoServiceBindFailure"/>
+  <int value="2" label="LoggerServiceBindFailure"/>
+  <int value="3" label="NoRobotEmailFound"/>
+</enum>
+
+<!-- LINT.ThenChange(//chrome/browser/ash/chromebox_for_meetings/artemis/data_aggregator_service.h:SetupStatus) -->
+
 <enum name="DarkModeStatus">
   <int value="0" label="Unavailable"/>
   <int value="1" label="Light"/>
@@ -200,7 +223,7 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="DUPLICATE_DOWNLOAD_INFOBAR_DELEGATE_ANDROID"/>
   <int value="5" label="DOWNLOAD_REQUEST_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
   <int value="6" label="FULLSCREEN_INFOBAR_DELEGATE (Obsolete)"/>
-  <int value="7" label="HUNG_PLUGIN_INFOBAR_DELEGATE"/>
+  <int value="7" label="HUNG_PLUGIN_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="8" label="HUNG_RENDERER_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
   <int value="9" label="MEDIA_STREAM_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
   <int value="10" label="MEDIA_THROTTLE_INFOBAR_DELEGATE (Obsolete)"/>
@@ -210,12 +233,12 @@ chromium-metrics-reviews@google.com.
   <int value="14" label="INCOGNITO_CONNECTABILITY_INFOBAR_DELEGATE"/>
   <int value="15" label="THEME_INSTALLED_INFOBAR_DELEGATE"/>
   <int value="16" label="GEOLOCATION_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
-  <int value="17" label="THREE_D_API_INFOBAR_DELEGATE"/>
+  <int value="17" label="THREE_D_API_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="18" label="INSECURE_CONTENT_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="19" label="MIDI_PERMISSION_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
   <int value="20"
       label="PROTECTED_MEDIA_IDENTIFIER_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
-  <int value="21" label="NACL_INFOBAR_DELEGATE"/>
+  <int value="21" label="NACL_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="22"
       label="DATA_REDUCTION_PROXY_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
   <int value="23" label="NOTIFICATION_PERMISSION_INFOBAR_DELEGATE (Obsolete)"/>
@@ -230,7 +253,7 @@ chromium-metrics-reviews@google.com.
   <int value="31" label="OUTDATED_PLUGIN_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="32" label="PLUGIN_METRO_MODE_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="33" label="RELOAD_PLUGIN_INFOBAR_DELEGATE"/>
-  <int value="34" label="PLUGIN_OBSERVER_INFOBAR_DELEGATE"/>
+  <int value="34" label="PLUGIN_OBSERVER_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="35" label="SSL_ADD_CERTIFICATE (Obsolete)"/>
   <int value="36" label="SSL_ADD_CERTIFICATE_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="37" label="POPUP_BLOCKED_INFOBAR_DELEGATE_MOBILE"/>
@@ -243,7 +266,7 @@ chromium-metrics-reviews@google.com.
   <int value="44" label="DEFAULT_BROWSER_INFOBAR_DELEGATE"/>
   <int value="45" label="GOOGLE_API_KEYS_INFOBAR_DELEGATE"/>
   <int value="46" label="OBSOLETE_SYSTEM_INFOBAR_DELEGATE"/>
-  <int value="47" label="SESSION_CRASHED_INFOBAR_DELEGATE_MAC_IOS"/>
+  <int value="47" label="SESSION_CRASHED_INFOBAR_DELEGATE_MAC_IOS (Obsolete)"/>
   <int value="48" label="PAGE_INFO_INFOBAR_DELEGATE"/>
   <int value="49" label="AUTOFILL_CC_INFOBAR_DELEGATE_MOBILE"/>
   <int value="50" label="TRANSLATE_INFOBAR_DELEGATE_NON_AURA"/>
@@ -255,7 +278,7 @@ chromium-metrics-reviews@google.com.
   <int value="56" label="SHOW_PASSKIT_ERROR_INFOBAR_DELEGATE_IOS"/>
   <int value="57" label="READER_MODE_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="58" label="SYNC_ERROR_INFOBAR_DELEGATE_IOS"/>
-  <int value="59" label="UPGRADE_INFOBAR_DELEGATE"/>
+  <int value="59" label="UPGRADE_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="60" label="WINDOW_ERROR_INFOBAR_DELEGATE_ANDROID"/>
   <int value="61"
       label="DANGEROUS_DOWNLOAD_INFOBAR_DELEGATE_ANDROID (Obsolete)"/>
@@ -281,11 +304,12 @@ chromium-metrics-reviews@google.com.
   <int value="77" label="FRAMEBUST_BLOCK_INFOBAR_ANDROID"/>
   <int value="78" label="SURVEY_INFOBAR_ANDROID"/>
   <int value="79" label="NEAR_OOM_INFOBAR_ANDROID"/>
-  <int value="80" label="INSTALLABLE_AMBIENT_BADGE_INFOBAR_DELEGATE"/>
+  <int value="80"
+      label="INSTALLABLE_AMBIENT_BADGE_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="81" label="PAGE_LOAD_CAPPING_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="82" label="DOWNLOAD_PROGRESS_INFOBAR_ANDROID (Obsolete)"/>
   <int value="83" label="AR_CORE_UPGRADE_ANDROID"/>
-  <int value="84" label="BLOATED_RENDERER_INFOBAR_DELEGATE"/>
+  <int value="84" label="BLOATED_RENDERER_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="85"
       label="SUPERVISED_USERS_DEPRECATED_INFOBAR_DELEGATE (Obsolete)"/>
   <int value="86" label="NEAR_OOM_REDUCTION_INFOBAR_ANDROID"/>
@@ -315,7 +339,8 @@ chromium-metrics-reviews@google.com.
   <int value="109"
       label="SUPPORTED_LINKS_INFOBAR_DELEGATE_CHROMEOS (Obsolete)"/>
   <int value="110"
-      label="AUTOFILL_VIRTUAL_CARD_ENROLLMENT_INFOBAR_DELEGATE_MOBILE"/>
+      label="AUTOFILL_VIRTUAL_CARD_ENROLLMENT_INFOBAR_DELEGATE_MOBILE
+             (Obsolete)"/>
   <int value="111" label="TAILORED_SECURITY_SERVICE_INFOBAR_DELEGATE"/>
   <int value="112" label="CHROME_FOR_TESTING_INFOBAR_DELEGATE"/>
   <int value="113" label="EXTENSIONS_WEB_AUTH_FLOW_INFOBAR_DELEGATE"/>
@@ -324,13 +349,20 @@ chromium-metrics-reviews@google.com.
   <int value="116"
       label="BIDDING_AND_AUCTION_USER_CONSENTED_DEBUGGING_DELEGATE"/>
   <int value="117" label="PARCEL_TRACKING_INFOBAR_DELEGATE (Obsolete)"/>
-  <int value="118" label="TEST_THIRD_PARTY_COOKIE_PHASEOUT_DELEGATE"/>
+  <int value="118"
+      label="TEST_THIRD_PARTY_COOKIE_PHASEOUT_DELEGATE (Obsolete)"/>
   <int value="119" label="ENABLE_LINK_CAPTURING_INFOBAR_DELEGATE"/>
   <int value="120" label="DEV_TOOLS_SHARED_PROCESS_DELEGATE"/>
   <int value="121" label="ENHANCED_SAFE_BROWSING_INFOBAR_DELEGATE"/>
   <int value="122" label="CREDENTIAL_PROVIDER_INFOBAR_DELEGATE_IOS"/>
   <int value="123" label="PDF_INFOBAR_DELEGATE"/>
   <int value="124" label="INSTALLER_DOWNLOADER_INFOBAR_DELEGATE"/>
+  <int value="125" label="COLLABORATION_GROUP_UPDATE_INFOBAR_DELEGATE"/>
+  <int value="126" label="COLLABORATION_OUT_OF_DATE_INFOBAR_DELEGATE"/>
+  <int value="127" label="PIN_TO_TASKBAR_INFOBAR_DELEGATE"/>
+  <int value="128" label="SESSION_RESTORE_INFOBAR_DELEGATE"/>
+  <int value="129" label="ROLL_BACK_MODE_B_INFOBAR_DELEGATE"/>
+  <int value="130" label="DEV_TOOLS_REMOTE_DEBUGGING_INFOBAR_DELEGATE"/>
 </enum>
 
 <!-- LINT.ThenChange(//components/infobars/core/infobar_delegate.h:InfoBarIdentifier) -->
@@ -423,6 +455,19 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.ThenChange(//content/public/browser/process_allocation_context.h:ProcessAllocationSource) -->
 
+<!-- LINT.IfChange(ProcessReusePolicy) -->
+
+<enum name="ProcessReusePolicy">
+  <int value="0" label="Default"/>
+  <int value="1" label="ProcessPerSite"/>
+  <int value="2" label="ReusePendingOrCommittedSiteSubframe"/>
+  <int value="3" label="ReusePendingOrCommittedSiteWorker"/>
+  <int value="4" label="ReusePendingOrCommittedSiteWithMainFrameThreshold"/>
+  <int value="5" label="ReusePrerenderingProcessForMainFrame"/>
+</enum>
+
+<!-- LINT.ThenChange(//content/browser/process_reuse_policy.h:ProcessReusePolicy) -->
+
 <enum name="RendererType">
   <int value="1" label="Normal renderer"/>
   <int value="2" label="Extension renderer"/>
@@ -432,6 +477,8 @@ chromium-metrics-reviews@google.com.
   <int value="0" label="Invalid URL"/>
   <int value="1" label="Failed CanRequestURL Check"/>
 </enum>
+
+<!-- LINT.IfChange(RenderProcessHostDelayShutdownReason) -->
 
 <enum name="RenderProcessHostDelayShutdownReason">
   <int value="0" label="No Delay"/>
@@ -444,7 +491,7 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="No Process">
     Render process hasn't started or is probably crashed.
   </int>
-  <int value="4" label="Unload Handler Exists"/>
+  <int value="4" label="Unload Handler Exists (Deprecated)"/>
   <int value="5" label="Fetch Keepalive Request">
     There is pending fetch keepalive request.
   </int>
@@ -460,7 +507,14 @@ chromium-metrics-reviews@google.com.
   <int value="11" label="NavigationStateKeepAlive">
     There are NavigationStateKeepAlives in this process.
   </int>
+  <int value="12" label="Fast shutdown disallowed at the process level"/>
+  <int value="13" label="Has a beforeunload handler"/>
+  <int value="14" label="Has a unload handler"/>
+  <int value="15" label="Has a pagehide handler"/>
+  <int value="16" label="Has a visibilitychange handler"/>
 </enum>
+
+<!-- LINT.ThenChange(//content/browser/renderer_host/render_process_host_impl.h:RenderProcessHostDelayShutdownReason) -->
 
 <!-- LINT.IfChange(SpareProcessMaybeTakeAction) -->
 
@@ -484,6 +538,7 @@ chromium-metrics-reviews@google.com.
   <int value="7" label="RefusedForJitMismatch"/>
   <int value="8" label="RefusedForV8OptimizationMismatch"/>
   <int value="9" label="RefusedNonNavigation"/>
+  <int value="10" label="CannotAddThrottle"/>
 </enum>
 
 <!-- LINT.ThenChange(//content/browser/renderer_host/render_process_host_impl.h:SpareProcessMaybeTakeAction) -->

@@ -9,9 +9,8 @@
 
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
-#include "gpu/command_buffer/client/fake_gpu_memory_buffer.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
-#include "gpu/command_buffer/client/test_gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/ipc/client/shared_image_interface_proxy.h"
@@ -21,6 +20,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
+#include "ui/gfx/buffer_types.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 
@@ -36,10 +37,18 @@ class TestSharedImageInterface : public SharedImageInterface {
  public:
   TestSharedImageInterface();
 
+  // Creates a shared memory region and returns a handle to it.
+  static gfx::GpuMemoryBufferHandle CreateGMBHandle(
+      const viz::SharedImageFormat& format,
+      const gfx::Size& size);
+
+  // for default-args overloads
+  using SharedImageInterface::CreateSharedImage;
+
   scoped_refptr<ClientSharedImage> CreateSharedImage(
       const SharedImageInfo& si_info,
       SurfaceHandle surface_handle,
-      std::optional<SharedImagePoolId> pool_id = std::nullopt) override;
+      std::optional<SharedImagePoolId> pool_id) override;
 
   scoped_refptr<ClientSharedImage> CreateSharedImage(
       const SharedImageInfo& si_info,
@@ -49,7 +58,7 @@ class TestSharedImageInterface : public SharedImageInterface {
       const SharedImageInfo& si_info,
       SurfaceHandle surface_handle,
       gfx::BufferUsage buffer_usage,
-      std::optional<SharedImagePoolId> pool_id = std::nullopt) override;
+      std::optional<SharedImagePoolId> pool_id) override;
 
   MOCK_METHOD4(DoCreateSharedImage,
                void(const gfx::Size& size,
@@ -91,15 +100,12 @@ class TestSharedImageInterface : public SharedImageInterface {
       const SyncToken& sync_token,
       scoped_refptr<ClientSharedImage> client_shared_image) override;
 
-  SwapChainSharedImages CreateSwapChain(viz::SharedImageFormat format,
-                                        const gfx::Size& size,
-                                        const gfx::ColorSpace& color_space,
-                                        GrSurfaceOrigin surface_origin,
-                                        SkAlphaType alpha_type,
-                                        SharedImageUsageSet usage,
-                                        std::string_view debug_label) override;
-  void PresentSwapChain(const SyncToken& sync_token,
-                        const Mailbox& mailbox) override;
+  bool IsLost() const override { return false; }
+  bool AddGpuChannelLostObserver(GpuChannelLostObserver* observer) override {
+    return true;
+  }
+  void RemoveGpuChannelLostObserver(GpuChannelLostObserver* observer) override {
+  }
 
 #if BUILDFLAG(IS_FUCHSIA)
   void RegisterSysmemBufferCollection(zx::eventpair service_handle,
@@ -113,20 +119,30 @@ class TestSharedImageInterface : public SharedImageInterface {
   SyncToken GenUnverifiedSyncToken() override;
   void VerifySyncToken(SyncToken& sync_token) override;
   void WaitSyncToken(const SyncToken& sync_token) override;
+  bool CanVerifySyncToken(const gpu::SyncToken& sync_token) override;
+  void VerifyFlush() override;
 
   // This is used only on windows for webrtc tests where test wants the
   // production code to trigger ClientSharedImage::MapAsync() but wants
   // to control when the callback runs from inside the test. This is achieved by
-  // using a custom MapCallbackController. The callback execution is deferred
-  // by registering the callback with the provided |controller|. The test
-  // manually triggers the mapping completion by invoking the |controller|
-  // later, simulating a delayed (asynchronous) mapping. This is required to
-  // test delayed mapping behavior.
-  scoped_refptr<ClientSharedImage> CreateSharedImageWithMapCallbackController(
+  // using a custom ClientSharedImage::MapCallbackControllerForTesting. The
+  // callback execution is deferred by registering the callback with the
+  // provided |controller|. The test manually triggers the mapping completion by
+  // invoking the |controller| later, simulating a delayed (asynchronous)
+  // mapping. This is required to test delayed mapping behavior.
+  scoped_refptr<ClientSharedImage> CreateSharedImageWithAsyncMapControl(
       const SharedImageInfo& si_info,
       gfx::BufferUsage buffer_usage,
       bool premapped,
-      FakeGpuMemoryBuffer::MapCallbackController* controller);
+      const ClientSharedImage::AsyncMapInvokedCallback& callback);
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+  // Creates a mappable SI backed by a NativePixmapHandle.
+  scoped_refptr<ClientSharedImage> CreateNativePixmapBackedSharedImage(
+      const SharedImageInfo& si_info,
+      SurfaceHandle surface_handle,
+      gfx::BufferUsage buffer_usage);
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
   void CreateSharedImagePool(
       const SharedImagePoolId& pool_id,
@@ -164,6 +180,10 @@ class TestSharedImageInterface : public SharedImageInterface {
   const SyncToken& MostRecentDestroyToken() const {
     return most_recent_destroy_token_;
   }
+  ClientSharedImage* MostRecentMappableSharedImage() const {
+    return most_recent_mappable_shared_image_;
+  }
+
   bool CheckSharedImageExists(const Mailbox& mailbox) const;
 
   const SharedImageCapabilities& GetCapabilities() override;
@@ -171,13 +191,6 @@ class TestSharedImageInterface : public SharedImageInterface {
 
   void SetFailSharedImageCreationWithBufferUsage(bool value) {
     fail_shared_image_creation_with_buffer_usage_ = value;
-  }
-
-  void UseTestGMBInSharedImageCreationWithBufferUsage() {
-    // Create |test_gmb_manager_| only if it doesn't already exist.
-    if (!test_gmb_manager_) {
-      test_gmb_manager_ = std::make_unique<TestGpuMemoryBufferManager>();
-    }
   }
 
   void emulate_client_provided_native_buffer() {
@@ -205,6 +218,7 @@ class TestSharedImageInterface : public SharedImageInterface {
   gfx::Size most_recent_size_;
   SyncToken most_recent_generated_token_;
   SyncToken most_recent_destroy_token_;
+  raw_ptr<ClientSharedImage> most_recent_mappable_shared_image_;
   absl::flat_hash_set<Mailbox> shared_images_;
   bool emulate_client_provided_native_buffer_ = false;
 
@@ -214,10 +228,6 @@ class TestSharedImageInterface : public SharedImageInterface {
 #endif
   SharedImageCapabilities shared_image_capabilities_;
   bool fail_shared_image_creation_with_buffer_usage_ = false;
-
-  // If non-null, this will be used to back mappable SharedImages with test
-  // GpuMemoryBuffers.
-  std::unique_ptr<TestGpuMemoryBufferManager> test_gmb_manager_;
 
   // This is used to simply keep the SharedImagePoolClientInterface alive for
   // the duration of the SharedImagePool. Not keeping it alive and bound

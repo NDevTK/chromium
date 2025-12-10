@@ -10,8 +10,8 @@
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/timing/element_timing_utils.h"
 #include "third_party/blink/renderer/core/paint/timing/image_element_timing.h"
-#include "third_party/blink/renderer/core/paint/timing/text_paint_timing_detector.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/paint/timing/paint_timing_record.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/platform/graphics/paint/float_clip_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/geometry_mapper.h"
 #include "ui/gfx/geometry/rect.h"
@@ -19,22 +19,18 @@
 namespace blink {
 
 // static
-const char TextElementTiming::kSupplementName[] = "TextElementTiming";
-
-// static
 TextElementTiming& TextElementTiming::From(LocalDOMWindow& window) {
-  TextElementTiming* timing =
-      Supplement<LocalDOMWindow>::From<TextElementTiming>(window);
+  TextElementTiming* timing = window.GetTextElementTiming();
   if (!timing) {
     timing = MakeGarbageCollected<TextElementTiming>(window);
-    ProvideTo(window, timing);
+    window.SetTextElementTiming(timing);
   }
   return *timing;
 }
 
 TextElementTiming::TextElementTiming(LocalDOMWindow& window)
-    : Supplement<LocalDOMWindow>(window),
-      performance_(DOMWindowPerformance::performance(window)) {}
+    : local_dom_window_(window),
+      performance_(GlobalPerformance::performance(window)) {}
 
 // static
 gfx::RectF TextElementTiming::ComputeIntersectionRect(
@@ -68,8 +64,8 @@ bool TextElementTiming::CanReportElements() {
 void TextElementTiming::OnTextObjectPainted(
     const TextRecord& record,
     const DOMPaintTimingInfo& paint_timing_info) {
-  DCHECK(record.is_needed_for_timing_);
-  Node* node = record.node_;
+  DCHECK(record.IsNeededForElementTiming());
+  Node* node = record.GetNode();
 
   // Text aggregators need to be Elements. This will not be the case if the
   // aggregator is the LayoutView (a Document node), though. This will be the
@@ -89,19 +85,19 @@ void TextElementTiming::OnTextObjectPainted(
     DEFINE_STATIC_LOCAL(const AtomicString, kTextPaint, ("text-paint"));
     const AtomicString& id = element->GetIdAttribute();
     performance_->AddElementTiming(
-        kTextPaint, g_empty_string, record.element_timing_rect_,
+        kTextPaint, g_empty_string, record.ElementTimingRect(),
         paint_timing_info, base::TimeTicks(),
         element->FastGetAttribute(html_names::kElementtimingAttr), gfx::Size(),
         id, element);
   }
   if (CanReportToContainerTiming()) {
     container_timing_->OnElementPainted(paint_timing_info, element,
-                                        record.element_timing_rect_);
+                                        record.ElementTimingRect());
   }
 }
 
 void TextElementTiming::Trace(Visitor* visitor) const {
-  Supplement<LocalDOMWindow>::Trace(visitor);
+  visitor->Trace(local_dom_window_);
   visitor->Trace(performance_);
   visitor->Trace(container_timing_);
 }
@@ -110,7 +106,7 @@ void TextElementTiming::EnsureContainerTiming() {
   if (container_timing_) {
     return;
   }
-  LocalDOMWindow* window = GetSupplementable();
+  LocalDOMWindow* window = local_dom_window_;
   DCHECK(window);
   container_timing_ = ContainerTiming::From(*window);
 }

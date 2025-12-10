@@ -284,6 +284,8 @@
 //media/test/data/bear_audio_longer_than_video_vp8.ogv
 //media/test/data/bear_audio_shorter_than_video.ogv
 //media/test/data/bear_audio_shorter_than_video_vp8.ogv
+//media/test/data/bear_av1_720p_444_10bit.ivf
+//media/test/data/bear_av1_720p_444_8bit.ivf
 //media/test/data/bear_dtsc.mp4
 //media/test/data/bear_dtse.mp4
 //media/test/data/bear_dtsx.mp4
@@ -354,6 +356,7 @@
 //media/test/data/eme_player_js/widevine_player.js
 //media/test/data/eme_remove_session_test.html
 //media/test/data/encrypted_frame_size_change.html
+//media/test/data/extra-nalu.ts
 //media/test/data/four-colors-aspect-4x3.mp4
 //media/test/data/four-colors-av1.mp4
 //media/test/data/four-colors-hevc.mp4
@@ -424,6 +427,7 @@
 //media/test/data/nonzero-start-time.webm
 //media/test/data/npot-video.h264
 //media/test/data/one_frame_1280x720.mjpeg
+//media/test/data/opus-test.opus
 //media/test/data/opus-trimming-test.mp4
 //media/test/data/opus-trimming-test.ogg
 //media/test/data/opus-trimming-test.webm
@@ -438,6 +442,7 @@
 //media/test/data/pixel-41x22-yuv420.jpg
 //media/test/data/pixel-41x23-yuv420.jpg
 //media/test/data/player.html
+//media/test/data/populated-zero-value-padding.ogg
 //media/test/data/puppets-1280x720.i420.yuv.webm
 //media/test/data/puppets-1280x720.nv12.yuv.json
 //media/test/data/puppets-320x180.nv12.yuv.json
@@ -522,6 +527,8 @@
 //media/test/data/vp8-corrupt-I-frame
 //media/test/data/vp9-I-frame-1280x720
 //media/test/data/vp9-I-frame-320x240
+//media/test/data/vp9-agtm-country-code-extension.webm
+//media/test/data/vp9-agtm.webm
 //media/test/data/vp9-duplicate-frame.webm
 //media/test/data/vp9-hdr-init-segment.mp4
 //media/test/data/vp90_2_10_show_existing_frame2.vp9.ivf

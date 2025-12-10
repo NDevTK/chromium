@@ -4,27 +4,36 @@
 
 #include "third_party/blink/renderer/core/timing/soft_navigation_paint_attribution_tracker.h"
 
+#include "base/feature_list.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/paint/timing/paint_timing_utils.h"
+#include "third_party/blink/renderer/core/paint/timing/text_paint_timing_detector.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_context.h"
 
 namespace blink {
 
 namespace {
-// TODO(crbug.com/423670827): Consider moving this to ImagePaintTimingDetector.
-bool IsImageType(const LayoutObject& object) {
-  return object.IsImage() || object.IsSVGImage() || object.IsVideo() ||
-         object.StyleRef().HasBackgroundImage();
-}
+
+// When enabled, text aggregator nodes are marked as needing repaint in the
+// `TextPaintTimingDetector` when the `SoftNavigationContext` associated with
+// the node changes.
+BASE_FEATURE(kMarkTextNodesForRepaintOnContextChange,
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 }  // namespace
 
-SoftNavigationPaintAttributionTracker::SoftNavigationPaintAttributionTracker() =
-    default;
+SoftNavigationPaintAttributionTracker::SoftNavigationPaintAttributionTracker(
+    TextPaintTimingDetector* detector)
+    : text_paint_timing_detector_(detector) {
+  CHECK(text_paint_timing_detector_);
+}
 
 void SoftNavigationPaintAttributionTracker::Trace(Visitor* visitor) const {
   visitor->Trace(marked_nodes_);
+  visitor->Trace(text_paint_timing_detector_);
 }
 
 void SoftNavigationPaintAttributionTracker::MarkNodeAsDirectlyModified(
@@ -41,9 +50,11 @@ void SoftNavigationPaintAttributionTracker::MarkNodeAsDirectlyModified(
   // If this node is being modified again by the same context in the same
   // generation, there's no need to update anything, unless upgrading to a
   // direct modification.
-  if (auto* state = GetNodeState(node)) {
-    if (state->IsDirectlyModified() &&
-        state->ModificationId() == current_modification_generation_id_) {
+  NodeState* previous_node_state = GetNodeState(node);
+  if (previous_node_state) {
+    if (previous_node_state->IsDirectlyModified() &&
+        previous_node_state->ModificationId() ==
+            current_modification_generation_id_) {
       return;
     }
   }
@@ -54,6 +65,10 @@ void SoftNavigationPaintAttributionTracker::MarkNodeAsDirectlyModified(
   context->AddModifiedNode(node);
   if (auto* object = node->GetLayoutObject()) {
     object->MarkSoftNavigationContextChanged();
+    if (!previous_node_state ||
+        previous_node_state->GetSoftNavigationContext() != context) {
+      NotifyPaintTimingDetectorOnContextChanged(*object);
+    }
   }
 }
 
@@ -63,8 +78,16 @@ void SoftNavigationPaintAttributionTracker::MarkNodeForPaintTrackingIfNeeded(
   CHECK(node);
   CHECK(inherited_state);
 
-  NodeState* current_paint_state = GetNodeState(node);
-  if (current_paint_state && current_paint_state->ModificationId() >=
+  // For pseudo elements with background images, `node` is the parent or shadow
+  // host, not the pseudo element, and it might not have an associated layout
+  // object. Ignore these (PaintTimingDetector does the same).
+  LayoutObject* layout_object = node->GetLayoutObject();
+  if (!layout_object) {
+    return;
+  }
+
+  NodeState* previous_node_state = GetNodeState(node);
+  if (previous_node_state && previous_node_state->ModificationId() >=
                                  inherited_state->ModificationId()) {
     return;
   }
@@ -77,6 +100,10 @@ void SoftNavigationPaintAttributionTracker::MarkNodeForPaintTrackingIfNeeded(
                               inherited_state->GetSoftNavigationContext(),
                               inherited_state->ModificationId(),
                               /*is_directly_modified=*/false));
+  if (!previous_node_state || previous_node_state->GetSoftNavigationContext() !=
+                                  inherited_state->GetSoftNavigationContext()) {
+    NotifyPaintTimingDetectorOnContextChanged(*layout_object);
+  }
 }
 
 SoftNavigationPaintAttributionTracker::PrePaintUpdateResult
@@ -104,9 +131,11 @@ SoftNavigationPaintAttributionTracker::UpdateOnPrePaint(
     // that this also includes nodes with background images, which may not be
     // leaf nodes -- but it's fine to store intermediate nodes in the tree whose
     // parent and descendants have the same context.
-    if (node->IsTextNode() || IsImageType(*node->GetLayoutObject())) {
+    if (paint_timing::IsTextType(*node) || paint_timing::IsImageType(object)) {
       MarkNodeForPaintTrackingIfNeeded(
-          node->IsTextNode() ? text_aggregator : node, inherited_state);
+          node->IsTextNode() ? text_aggregator
+                             : paint_timing::ImageGeneratingNode(node),
+          inherited_state);
     } else if (auto iter = marked_nodes_.find(node);
                iter != marked_nodes_.end()) {
       // Otherwise, update the cached state if the inherited context is from a
@@ -130,6 +159,17 @@ SoftNavigationPaintAttributionTracker::UpdateOnPrePaint(
     return PrePaintUpdateResult::kPropagateCurrentNode;
   }
   return PrePaintUpdateResult::kPropagateAncestorNode;
+}
+
+void SoftNavigationPaintAttributionTracker::
+    NotifyPaintTimingDetectorOnContextChanged(const LayoutObject& object) {
+  if (!base::FeatureList::IsEnabled(kMarkTextNodesForRepaintOnContextChange)) {
+    return;
+  }
+  if (paint_timing::IsImageType(object)) {
+    return;
+  }
+  text_paint_timing_detector_->ResetPaintTrackingOnInteraction(object);
 }
 
 SoftNavigationPaintAttributionTracker::NodeState::NodeState(

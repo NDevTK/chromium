@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/ash/crosapi/keystore_service_ash.h"
 
 #include <initializer_list>
@@ -16,6 +11,7 @@
 #include <vector>
 
 #include "base/base64.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
@@ -29,7 +25,7 @@
 #include "chrome/browser/ash/attestation/tpm_challenge_key_result.h"
 #include "chrome/browser/ash/platform_keys/key_permissions/mock_key_permissions_service.h"
 #include "chrome/browser/ash/platform_keys/mock_platform_keys_service.h"
-#include "chrome/browser/chromeos/platform_keys/platform_keys.h"
+#include "chromeos/ash/components/platform_keys/platform_keys.h"
 #include "chromeos/crosapi/cpp/keystore_service_util.h"
 #include "chromeos/crosapi/mojom/keystore_error.mojom.h"
 #include "chromeos/crosapi/mojom/keystore_service.mojom.h"
@@ -129,7 +125,8 @@ std::vector<uint8_t> CertToBlob(
   const uint8_t* cert_buffer =
       reinterpret_cast<const uint8_t*>(CRYPTO_BUFFER_data(cert->cert_buffer()));
   return std::vector<uint8_t>(
-      cert_buffer, cert_buffer + CRYPTO_BUFFER_len(cert->cert_buffer()));
+      cert_buffer,
+      UNSAFE_TODO(cert_buffer + CRYPTO_BUFFER_len(cert->cert_buffer())));
 }
 
 void AssertBlobEq(const mojom::KeystoreBinaryResultPtr& result,

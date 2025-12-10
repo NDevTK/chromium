@@ -18,6 +18,7 @@
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "ui/aura/window_tree_host.h"
@@ -88,8 +89,7 @@ std::unique_ptr<viz::CompositorFrame> FastInkHost::CreateCompositorFrame(
 
   auto frame = fast_ink_internal::CreateCompositorFrame(
       begin_frame_ack, GetContentRect(), GetTotalDamage(), auto_update,
-      *host_window(), buffer_size_, &resource_manager, client_shared_image_,
-      sync_token_);
+      *host_window(), &resource_manager, client_shared_image_, sync_token_);
 
   ResetDamage();
 
@@ -238,9 +238,7 @@ void FastInkHost::DrawBitmap(SkBitmap bitmap, const gfx::Rect& damage_rect) {
 
 void FastInkHost::ResetGpuBuffer() {
   if (client_shared_image_) {
-    CHECK(context_provider_);
-    context_provider_->SharedImageInterface()->DestroySharedImage(
-        sync_token_, std::move(client_shared_image_));
+    client_shared_image_->UpdateDestructionSyncToken(sync_token_);
     client_shared_image_.reset();
     sync_token_.Clear();
   }

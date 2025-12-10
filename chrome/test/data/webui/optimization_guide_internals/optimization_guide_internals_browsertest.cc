@@ -8,6 +8,7 @@
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
+#include "base/task/thread_pool.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/browser_process.h"
@@ -158,9 +159,12 @@ class OptimizationGuideInternalsModelsPageBrowserTest
             }));
 
     OptimizationGuideKeyedServiceFactory::GetForProfile(browser()->profile())
-        ->AddObserverForOptimizationTargetModel(optimization_target,
-                                                /*model_metadata=*/std::nullopt,
-                                                &model_file_observer);
+        ->AddObserverForOptimizationTargetModel(
+            optimization_target,
+            /*model_metadata=*/std::nullopt,
+            base::ThreadPool::CreateSequencedTaskRunner(
+                {base::MayBlock(), base::TaskPriority::BEST_EFFORT}),
+            &model_file_observer);
 
     run_loop.Run();
   }
@@ -170,4 +174,40 @@ class OptimizationGuideInternalsModelsPageBrowserTest
 IN_PROC_BROWSER_TEST_F(OptimizationGuideInternalsModelsPageBrowserTest,
                        InternalsModelsPageOpen) {
   RunTestCase("InternalsModelsPageOpen");
+}
+
+class OptimizationGuideInternalsMqlsLogsBrowserTest
+    : public OptimizationGuideInternalsBrowserTest {
+ protected:
+  void SetUpOnMainThread() override {
+    auto* model_quality_logs_uploader_service =
+        OptimizationGuideKeyedServiceFactory::GetForProfile(
+            browser()->profile())
+            ->GetModelQualityLogsUploaderService();
+    std::unique_ptr<optimization_guide::ModelQualityLogEntry> log_entry =
+        std::make_unique<optimization_guide::ModelQualityLogEntry>(
+            model_quality_logs_uploader_service->GetWeakPtr());
+
+    optimization_guide::proto::ComposeLoggingData compose_logging_data;
+    optimization_guide::proto::ComposeRequest request;
+    request.mutable_generate_params()->set_user_input("a user typed this");
+    optimization_guide::proto::ComposeResponse response;
+    response.set_output("compose response");
+    optimization_guide::proto::ComposeQuality quality;
+    quality.set_final_status(
+        optimization_guide::proto::FinalStatus::STATUS_INSERTED);
+    *(compose_logging_data.mutable_request()) = request;
+    *(compose_logging_data.mutable_response()) = response;
+    *(compose_logging_data.mutable_quality()) = quality;
+    *(log_entry->log_ai_data_request()->mutable_compose()) =
+        compose_logging_data;
+
+    WebUIMochaBrowserTest::SetUpOnMainThread();
+  }
+};
+
+// Verifies MQLS logs are added when #mqls-logs page is open.
+IN_PROC_BROWSER_TEST_F(OptimizationGuideInternalsMqlsLogsBrowserTest,
+                       InternalsMqlsLogsPageOpen) {
+  RunTestCase("InternalsMqlsLogsPageOpen");
 }

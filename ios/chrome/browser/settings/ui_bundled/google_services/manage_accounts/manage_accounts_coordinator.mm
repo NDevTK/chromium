@@ -16,12 +16,12 @@
 #import "ios/chrome/browser/authentication/ui_bundled/signout_action_sheet/signout_action_sheet_coordinator.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/scoped_ui_blocker/ui_bundled/scoped_ui_blocker.h"
-#import "ios/chrome/browser/settings/ui_bundled/google_services/manage_accounts/legacy_accounts_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_accounts/manage_accounts_coordinator_delegate.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_accounts/manage_accounts_mediator.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_accounts/manage_accounts_mediator_delegate.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_accounts/manage_accounts_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_accounts/manage_accounts_table_view_controller_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_navigation_controller.h"
 #import "ios/chrome/browser/shared/coordinator/alert/action_sheet_coordinator.h"
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
@@ -57,8 +57,7 @@ using signin_metrics::PromoAction;
   ManageAccountsMediator* _mediator;
 
   // The view controller.
-  SettingsRootTableViewController<WithOverridableModelIdentityDataSource>*
-      _viewController;
+  ManageAccountsTableViewController* _viewController;
 
   BOOL _closeSettingsOnAddAccount;
 
@@ -76,32 +75,26 @@ using signin_metrics::PromoAction;
 
   // The Add Account coordinator
   SigninCoordinator* _addAccountSigninCoordinator;
+
+  // Whether a "Done" button must be displayed.
+  BOOL _showDoneButton;
 }
 
 @synthesize baseNavigationController = _baseNavigationController;
 
-- (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                                   browser:(Browser*)browser
-                 closeSettingsOnAddAccount:(BOOL)closeSettingsOnAddAccount {
-  DCHECK(browser);
-  DCHECK(!browser->GetProfile()->IsOffTheRecord());
-
-  self = [super initWithBaseViewController:viewController browser:browser];
-  if (self) {
-    _closeSettingsOnAddAccount = closeSettingsOnAddAccount;
-  }
-  return self;
-}
-
 - (instancetype)initWithBaseNavigationController:
                     (UINavigationController*)navigationController
                                          browser:(Browser*)browser
-                       closeSettingsOnAddAccount:
-                           (BOOL)closeSettingsOnAddAccount {
+                       closeSettingsOnAddAccount:(BOOL)closeSettingsOnAddAccount
+                                  showDoneButton:(BOOL)showDoneButton {
+  CHECK(browser, base::NotFatalUntil::M144);
+  DCHECK_EQ(browser->type(), Browser::Type::kRegular);
+  CHECK(navigationController, base::NotFatalUntil::M144);
   if ((self = [self initWithBaseViewController:navigationController
                                        browser:browser])) {
     _closeSettingsOnAddAccount = closeSettingsOnAddAccount;
     _baseNavigationController = navigationController;
+    _showDoneButton = showDoneButton;
   }
   return self;
 }
@@ -117,66 +110,41 @@ using signin_metrics::PromoAction;
                     identityManager:IdentityManagerFactory::GetForProfile(
                                         profile)];
 
-  if (IsIdentityDiscAccountMenuEnabled()) {
-    ManageAccountsTableViewController* viewController =
-        [[ManageAccountsTableViewController alloc]
-            initWithOfferSignout:self.showSignoutButton];
-    _viewController = viewController;
-    _mediator.consumer = viewController;
-    _mediator.delegate = self;
-    _viewController.modelIdentityDataSource = _mediator;
-    viewController.mutator = _mediator;
-  } else {
-    LegacyAccountsTableViewController* viewController =
-        [[LegacyAccountsTableViewController alloc]
-                                initWithBrowser:self.browser
-                      closeSettingsOnAddAccount:_closeSettingsOnAddAccount
-                     applicationCommandsHandler:
-                         HandlerForProtocol(
-                             self.browser->GetCommandDispatcher(),
-                             ApplicationCommands)
-            signoutDismissalByParentCoordinator:
-                self.signoutDismissalByParentCoordinator];
-    _viewController = viewController;
-    _mediator.consumer = viewController;
-    _viewController.modelIdentityDataSource = _mediator;
-  }
+  ManageAccountsTableViewController* viewController =
+      [[ManageAccountsTableViewController alloc]
+          initWithOfferSignout:self.showSignoutButton];
+  _viewController = viewController;
+  _mediator.consumer = viewController;
+  _mediator.delegate = self;
+  _viewController.modelIdentityDataSource = _mediator;
+  viewController.mutator = _mediator;
 
-  if (_baseNavigationController) {
-    [self.baseNavigationController pushViewController:_viewController
-                                             animated:YES];
-  } else {
-    SettingsNavigationController* navigationController =
-        [[SettingsNavigationController alloc]
-            initWithRootViewController:_viewController
-                               browser:self.browser
-                              delegate:self];
+  if (_showDoneButton) {
     UIBarButtonItem* doneButton = [[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemDone
                              target:self
                              action:@selector(closeSettings)];
     doneButton.accessibilityIdentifier = kSettingsAccountsTableViewDoneButtonId;
     _viewController.navigationItem.rightBarButtonItem = doneButton;
-    [self.baseViewController presentViewController:navigationController
-                                          animated:YES
-                                        completion:nil];
   }
+
+  [self.baseNavigationController pushViewController:_viewController
+                                           animated:YES];
 }
 
 - (void)stop {
   [super stop];
   [self stopAddAccountCoordinator];
-  ManageAccountsTableViewController* accountsTableViewController =
-      base::apple::ObjCCast<ManageAccountsTableViewController>(_viewController);
-  if (accountsTableViewController) {
-    accountsTableViewController.mutator = nil;
-  }
+  _viewController.modelIdentityDataSource = nil;
+  _viewController.mutator = nil;
   [_signoutCoordinator stop];
   _signoutCoordinator = nil;
-  [self closeViewController];
+  [self.baseNavigationController popViewControllerAnimated:NO];
+  _baseNavigationController = nil;
   _mediator.consumer = nil;
   [_mediator disconnect];
   _mediator = nil;
+  [self stopConfirmRemoveIdentityAlertCoordinator];
   _UIBlocker.reset();
 }
 
@@ -184,12 +152,11 @@ using signin_metrics::PromoAction;
 
 - (void)closeSettings {
   base::RecordAction(base::UserMetricsAction("Signin_AccountsTableView_Close"));
-  [self closeViewController];
-  [self requestStop];
+  [self.delegate manageAccountsCoordinatorWantsToBeStopped:self];
 }
 
 - (void)settingsWasDismissed {
-  [self requestStop];
+  [self.delegate manageAccountsCoordinatorWantsToBeStopped:self];
 }
 
 #pragma mark - SignoutActionSheetCoordinatorDelegate
@@ -243,18 +210,26 @@ using signin_metrics::PromoAction;
 }
 
 - (void)showAddAccountToDevice {
-  [_viewController preventUserInteraction];
+  if (_addAccountSigninCoordinator.viewWillPersist) {
+    return;
+  }
+  [_addAccountSigninCoordinator stop];
+  if (@available(iOS 26, *)) {
+    [_viewController preventUserInteraction];
+  }
   __weak __typeof(self) weakSelf = self;
   _addAccountSigninCoordinator = [SigninCoordinator
       addAccountCoordinatorWithBaseViewController:_viewController
                                           browser:self.browser
                                      contextStyle:SigninContextStyle::kDefault
                                       accessPoint:AccessPoint::kSettings
+                                   prefilledEmail:nil
                              continuationProvider:
                                  DoNothingContinuationProvider()];
   _addAccountSigninCoordinator.signinCompletion =
-      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
-        [weakSelf addAccountToDeviceCompleted];
+      ^(SigninCoordinator* coordinator, SigninCoordinatorResult result,
+        id<SystemIdentity> completionIdentity) {
+        [weakSelf addAccountToDeviceCompletedWithCoordinator:coordinator];
       };
   [_addAccountSigninCoordinator start];
 }
@@ -285,14 +260,7 @@ using signin_metrics::PromoAction;
   if ([_viewController respondsToSelector:@selector(settingsWillBeDismissed)]) {
     [_viewController performSelector:@selector(settingsWillBeDismissed)];
   }
-  if (_closeSettingsOnAddAccount) {
-    [base::apple::ObjCCastStrict<SettingsNavigationController>(
-        _viewController.navigationController)
-        popViewControllerOrCloseSettingsAnimated:YES];
-  } else {
-    [_viewController.navigationController dismissViewControllerAnimated:YES
-                                                             completion:nil];
-  }
+  [self.delegate manageAccountsCoordinatorWantsToBeStopped:self];
   _viewController.modelIdentityDataSource = nil;
   _viewController = nil;
 }
@@ -302,25 +270,12 @@ using signin_metrics::PromoAction;
   _addAccountSigninCoordinator = nil;
 }
 
-// Requests the delegate to stop the coordinator, if set. Otherwise stop itself.
-- (void)requestStop {
-  if (self.delegate) {
-    [self.delegate manageAccountsCoordinatorWantsToBeStopped:self];
-  } else {
-    // This is the case when the manage view controller is displayed in the
-    // settings’ navigation controller.
-    // TODO(crbug.com/375378864): request the owner to stop the current
-    // coordinator.
-    [self stop];
-  }
-}
-
 // Asks the user to confirm whether they want to delete `identity` from the
 // device. If the user confirms, delete the identity. Does nothing if the
 // current scene is blocked or the identity is not present on the device
 // anymore.
 - (void)removeAccountDialogConfirmedWithIdentity:(id<SystemIdentity>)identity {
-  [self dismissConfirmRemoveIdentityAlertCoordinator];
+  [self stopConfirmRemoveIdentityAlertCoordinator];
 
   NSArray<id<SystemIdentity>>* identitiesOnDevice =
       signin::GetIdentitiesOnDevice(self.profile);
@@ -379,7 +334,7 @@ using signin_metrics::PromoAction;
   _errorAlertCoordinator = nil;
 }
 
-- (void)dismissConfirmRemoveIdentityAlertCoordinator {
+- (void)stopConfirmRemoveIdentityAlertCoordinator {
   [_confirmRemoveIdentityAlertCoordinator stop];
   _confirmRemoveIdentityAlertCoordinator = nil;
 }
@@ -390,9 +345,14 @@ using signin_metrics::PromoAction;
   _confirmRemoveIdentityAlertCoordinator = nil;
 }
 
-- (void)addAccountToDeviceCompleted {
+- (void)addAccountToDeviceCompletedWithCoordinator:
+    (SigninCoordinator*)coordinator {
+  CHECK_EQ(_addAccountSigninCoordinator, coordinator,
+           base::NotFatalUntil::M151);
   [self stopAddAccountCoordinator];
-  [_viewController allowUserInteraction];
+  if (@available(iOS 26, *)) {
+    [_viewController allowUserInteraction];
+  }
   if (_closeSettingsOnAddAccount) {
     [self closeSettings];
   }

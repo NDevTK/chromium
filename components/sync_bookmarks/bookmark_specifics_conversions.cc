@@ -200,48 +200,6 @@ bool IsForbiddenTitleWithMaybeTrailingSpaces(const std::string& title) {
       base::TrimWhitespaceASCII(title, base::TrimPositions::TRIM_TRAILING));
 }
 
-void MoveAllChildren(BookmarkModelView* model,
-                     const bookmarks::BookmarkNode* old_parent,
-                     const bookmarks::BookmarkNode* new_parent) {
-  DCHECK(old_parent && old_parent->is_folder());
-  DCHECK(new_parent && new_parent->is_folder());
-  DCHECK(old_parent != new_parent);
-  DCHECK(new_parent->children().empty());
-
-  if (old_parent->children().empty()) {
-    return;
-  }
-
-  // This code relies on the underlying type to store children in the
-  // BookmarkModel which is vector. It moves the last child from |old_parent| to
-  // the end of |new_parent| step by step (which reverses the order of
-  // children). After that all children must be reordered to keep the original
-  // order in |new_parent|.
-  // This algorithm is used because of performance reasons.
-  std::vector<const bookmarks::BookmarkNode*> children_order(
-      old_parent->children().size(), nullptr);
-  for (size_t i = old_parent->children().size(); i > 0; --i) {
-    const size_t old_index = i - 1;
-    const bookmarks::BookmarkNode* child_to_move =
-        old_parent->children()[old_index].get();
-    children_order[old_index] = child_to_move;
-    model->Move(child_to_move, new_parent, new_parent->children().size());
-  }
-  model->ReorderChildren(new_parent, children_order);
-}
-
-}  // namespace
-
-std::string FullTitleToLegacyCanonicalizedTitle(const std::string& node_title) {
-  // Add an extra space for backward compatibility with legacy clients.
-  std::string specifics_title =
-      IsForbiddenTitleWithMaybeTrailingSpaces(node_title) ? node_title + " "
-                                                          : node_title;
-  base::TruncateUTF8ToByteSize(
-      specifics_title, kLegacyCanonicalizedTitleLimitBytes, &specifics_title);
-  return specifics_title;
-}
-
 std::u16string NodeTitleFromSpecifics(
     const sync_pb::BookmarkSpecifics& specifics) {
   if (specifics.has_full_title()) {
@@ -256,6 +214,53 @@ std::u16string NodeTitleFromSpecifics(
     node_title.pop_back();
   }
   return base::UTF8ToUTF16(node_title);
+}
+
+void MoveAllChildren(BookmarkModelView* model,
+                     const bookmarks::BookmarkNode* old_parent,
+                     const bookmarks::BookmarkNode* new_parent) {
+  DCHECK(old_parent && old_parent->is_folder());
+  DCHECK(new_parent && new_parent->is_folder());
+  DCHECK(old_parent != new_parent);
+  DCHECK(new_parent->children().empty());
+
+  if (old_parent->children().empty()) {
+    return;
+  }
+
+  // This code relies on the underlying type to store children in the
+  // BookmarkModel which is vector. It moves children from |old_parent| to
+  // the end of |new_parent| one by one, from last to first (which reverses the
+  // order of children). After that all children must be reordered to keep the
+  // original order in |new_parent|.
+  // This algorithm is used because of performance reasons.
+  std::vector<const bookmarks::BookmarkNode*> children_in_original_order;
+  children_in_original_order.reserve(old_parent->children().size());
+  for (const auto& child : old_parent->children()) {
+    children_in_original_order.push_back(child.get());
+  }
+
+  // Move children one by one, from last to first, to avoid O(n^2) performance.
+  while (!old_parent->children().empty()) {
+    model->Move(old_parent->children().back().get(), new_parent,
+                new_parent->children().size());
+  }
+
+  // The children are now in reversed order in `new_parent`. Restore original
+  // order.
+  model->ReorderChildren(new_parent, children_in_original_order);
+}
+
+}  // namespace
+
+std::string FullTitleToLegacyCanonicalizedTitle(const std::string& node_title) {
+  // Add an extra space for backward compatibility with legacy clients.
+  std::string specifics_title =
+      IsForbiddenTitleWithMaybeTrailingSpaces(node_title) ? node_title + " "
+                                                          : node_title;
+  base::TruncateUTF8ToByteSize(
+      specifics_title, kLegacyCanonicalizedTitleLimitBytes, &specifics_title);
+  return specifics_title;
 }
 
 bool IsBookmarkEntityReuploadNeeded(

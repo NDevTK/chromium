@@ -63,8 +63,8 @@ String UniversalGlobalScope::atob(const String& encoded_string,
 
 void UniversalGlobalScope::queueMicrotask(V8VoidFunction* callback) {
   GetExecutionContext()->GetAgent()->event_loop()->EnqueueMicrotask(
-      WTF::BindOnce(&V8VoidFunction::InvokeAndReportException,
-                    WrapPersistent(callback), nullptr));
+      BindOnce(&V8VoidFunction::InvokeAndReportException,
+               WrapPersistent(callback), nullptr));
 }
 
 ScriptValue UniversalGlobalScope::structuredClone(
@@ -121,10 +121,6 @@ void UniversalGlobalScope::reportError(ScriptState* script_state,
 bool UniversalGlobalScope::isSecureContextForBindings(
     ScriptState* script_state) const {
   return ExecutionContext::From(script_state)->IsSecureContext();
-}
-
-void UniversalGlobalScope::Trace(Visitor* visitor) const {
-  Supplementable<UniversalGlobalScope>::Trace(visitor);
 }
 
 }  // namespace blink

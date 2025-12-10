@@ -4,7 +4,8 @@
 
 package org.chromium.base.test.transit;
 
-import org.chromium.base.test.transit.Transition.Trigger;
+import android.app.Activity;
+
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 
@@ -19,11 +20,15 @@ import org.chromium.build.annotations.Nullable;
  * that determine its enter and exit {@link Condition}s.
  *
  * <p>Leaving the host {@link Station} causes this state to be left as well, and exit {@link
- * Condition}s will be waited upon for the {@link StationToStationTrip} to be complete.
+ * Condition}s will be waited upon for the {@link Trip} to be complete.
  *
  * <p>Transitions into and out of a Facility while the host {@link Station} is ACTIVE should be done
- * with {@link Station#enterFacilitySync(Facility, Trigger)} and {@link
- * Station#exitFacilitySync(Facility, Trigger)}.
+ * with:
+ *
+ * <ul>
+ *   <li>{@link TripBuilder#enterFacility(Facility)}
+ *   <li>{@link TripBuilder#exitFacility(Facility)}}
+ * </ul>
  *
  * @param <HostStationT> the type of host {@link Station} this is scoped to.
  */
@@ -82,7 +87,14 @@ public class Facility<HostStationT extends Station<?>> extends ConditionalState 
     }
 
     @Override
-    public String toString() {
-        return getName();
+    @Nullable ActivityElement<?> determineActivityElement() {
+        return mHostStation.determineActivityElement();
+    }
+
+    @Override
+    <T extends Activity> void onDeclaredActivityElement(ActivityElement<T> element) {
+        throw new UnsupportedOperationException(
+                "Facilities cannot declare ActivityElements, Views are searched in the host"
+                        + " Station's Activity");
     }
 }

@@ -17,6 +17,8 @@
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_draw_listener.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+#include "third_party/blink/renderer/core/html/canvas/unique_font_selector.h"
+#include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
 #include "third_party/blink/renderer/modules/canvas/htmlcanvas/html_canvas_element_module.h"
 #include "third_party/blink/renderer/modules/canvas/offscreencanvas2d/offscreen_canvas_rendering_context_2d.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
@@ -100,6 +102,10 @@ class OffscreenCanvasTest : public ::testing::Test,
 
   FakeGLES2Interface* GetGLInterface() { return &gl_; }
 
+  static uint32_t FrameGenerationOf(const UniqueFontSelector& selector) {
+    return selector.frame_generation_;
+  }
+
  private:
   test::TaskEnvironment task_environment_;
   std::unique_ptr<frame_test_helpers::WebViewHelper> web_view_helper_;
@@ -123,14 +129,14 @@ void OffscreenCanvasTest::SetUp() {
     return std::make_unique<FakeWebGraphicsContext3DProvider>(gl);
   };
   SharedGpuContext::SetContextProviderFactoryForTesting(
-      WTF::BindRepeating(factory, WTF::Unretained(&gl_)));
+      BindRepeating(factory, Unretained(&gl_)));
 
   web_view_helper_ = std::make_unique<frame_test_helpers::WebViewHelper>();
   web_view_helper_->Initialize();
   accelerated_compositing_scope_ = std::make_unique<
       ScopedTestingPlatformSupport<AcceleratedCompositingTestPlatform>>();
 
-  GetDocument().documentElement()->setInnerHTML(
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
       String::FromUTF8("<body><canvas id='c'></canvas></body>"));
 
   canvas_element_ =
@@ -196,16 +202,49 @@ TEST_F(OffscreenCanvasTest, AnimationUsesSyntheticTimerWhenHidden) {
   GetCanvasElement()->RemoveListener(listener);
 }
 
-// Verifies that an offscreen_canvas()s PushFrame()/Commit() has the appropriate
+TEST_F(OffscreenCanvasTest, SwitchFrameByCanvasImageSource) {
+  auto* canvas = MakeGarbageCollected<OffscreenCanvas>(
+      GetDocument().GetExecutionContext(), gfx::Size(100, 100));
+  // Make sure the canvas has the context.
+  ASSERT_TRUE(canvas->GetCanvasRenderingContext(
+      GetDocument().GetExecutionContext(),
+      CanvasRenderingContext::CanvasRenderingAPI::k2D, {}));
+  auto* selector = canvas->GetFontSelector();
+  uint32_t original_generation = FrameGenerationOf(*selector);
+
+  // GetSourceImageForCanvas() should call UniqueFontSelector::DidSwitchFrame().
+  SourceImageStatus source_image_status;
+  canvas->GetSourceImageForCanvas(&source_image_status, {100, 100});
+  EXPECT_GT(FrameGenerationOf(*selector), original_generation);
+}
+
+TEST_F(OffscreenCanvasTest, SwitchFrameByImageBitmapSource) {
+  auto* canvas = MakeGarbageCollected<OffscreenCanvas>(
+      GetDocument().GetExecutionContext(), gfx::Size(100, 100));
+  // Make sure the canvas has the context.
+  ASSERT_TRUE(canvas->GetCanvasRenderingContext(
+      GetDocument().GetExecutionContext(),
+      CanvasRenderingContext::CanvasRenderingAPI::k2D, {}));
+  auto* selector = canvas->GetFontSelector();
+  uint32_t original_generation = FrameGenerationOf(*selector);
+
+  // The ImageBitmap constructor should call
+  // UniqueFontSelector::DidSwitchFrame().
+  MakeGarbageCollected<ImageBitmap>(canvas, std::nullopt);
+  EXPECT_GT(FrameGenerationOf(*selector), original_generation);
+}
+
+// Verifies that an offscreen_canvas()s PushFrame() has the appropriate
 // opacity/blending information sent to the CompositorFrameSink.
 TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform;
   ScriptState::Scope scope(GetScriptState());
   ::testing::InSequence s;
 
-  // To intercept SubmitCompositorFrame/SubmitCompositorFrameSync messages sent
-  // by OffscreenCanvas's CanvasResourceDispatcher, we have to override the Mojo
-  // EmbeddedFrameSinkProvider interface impl and its CompositorFrameSinkClient.
+  // To intercept SubmitCompositorFrame messages sent by OffscreenCanvas's
+  // CanvasResourceDispatcher, we have to override the Mojo
+  // EmbeddedFrameSinkProvider interface impl and its
+  // CompositorFrameSinkClient.
   MockEmbeddedFrameSinkProvider mock_embedded_frame_sink_provider;
   mojo::Receiver<mojom::blink::EmbeddedFrameSinkProvider>
       embedded_frame_sink_provider_receiver(&mock_embedded_frame_sink_provider);
@@ -213,10 +252,10 @@ TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
       mock_embedded_frame_sink_provider.CreateScopedOverrideMojoInterface(
           &embedded_frame_sink_provider_receiver);
 
-  // Call here DidDraw() to simulate having drawn something before PushFrame()/
-  // Commit(); DidDraw() will in turn cause a CanvasResourceDispatcher to be
-  // created and a CreateCompositorFrameSink() to be issued; this sink will get
-  // a SetNeedsBeginFrame() message sent upon construction.
+  // Call here DidDraw() to simulate having drawn something before PushFrame();
+  // DidDraw() will in turn cause a CanvasResourceDispatcher to be created and
+  // a CreateCompositorFrameSink() to be issued; this sink will get a
+  // SetNeedsBeginFrame() message sent upon construction.
   mock_embedded_frame_sink_provider
       .set_num_expected_set_needs_begin_frame_on_sink_construction(1);
   EXPECT_CALL(mock_embedded_frame_sink_provider,
@@ -235,7 +274,7 @@ TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
   EXPECT_CALL(mock_embedded_frame_sink_provider.mock_compositor_frame_sink(),
               SubmitCompositorFrame_(_))
       .WillOnce(::testing::WithArg<0>(
-          ::testing::Invoke([context_alpha](const viz::CompositorFrame* frame) {
+          [context_alpha](const viz::CompositorFrame* frame) {
             ASSERT_EQ(frame->render_pass_list.size(), 1u);
 
             const auto& quad_list = frame->render_pass_list[0]->quad_list;
@@ -247,33 +286,9 @@ TEST_P(OffscreenCanvasTest, CompositorFrameOpacity) {
             ASSERT_EQ(shared_quad_state_list.size(), 1u);
             EXPECT_NE(shared_quad_state_list.front()->are_contents_opaque,
                       context_alpha);
-          })));
+          }));
   offscreen_canvas().PushFrame(std::move(canvas_resource),
                                SkIRect::MakeWH(10, 10));
-  platform->RunUntilIdle();
-
-  auto canvas_resource2 = CanvasResourceSharedImage::CreateSoftware(
-      offscreen_canvas().Size(), viz::SinglePlaneFormat::kBGRA_8888,
-      kPremul_SkAlphaType, gfx::ColorSpace::CreateSRGB(),
-      /*provider=*/nullptr, shared_image_interface_provider());
-  EXPECT_CALL(mock_embedded_frame_sink_provider.mock_compositor_frame_sink(),
-              SubmitCompositorFrameSync_(_))
-      .WillOnce(::testing::WithArg<0>(
-          ::testing::Invoke([context_alpha](const viz::CompositorFrame* frame) {
-            ASSERT_EQ(frame->render_pass_list.size(), 1u);
-
-            const auto& quad_list = frame->render_pass_list[0]->quad_list;
-            ASSERT_EQ(quad_list.size(), 1u);
-            EXPECT_EQ(quad_list.front()->needs_blending, context_alpha);
-
-            const auto& shared_quad_state_list =
-                frame->render_pass_list[0]->shared_quad_state_list;
-            ASSERT_EQ(shared_quad_state_list.size(), 1u);
-            EXPECT_NE(shared_quad_state_list.front()->are_contents_opaque,
-                      context_alpha);
-          })));
-  offscreen_canvas().Commit(std::move(canvas_resource2),
-                            SkIRect::MakeWH(10, 10));
   platform->RunUntilIdle();
 }
 
@@ -281,10 +296,10 @@ TEST_P(OffscreenCanvasTest, GetRasterModeAutoRecovery) {
   // Verifies that after a context loss, getting the raster mode from the
   // canvas will restore the context and succeed.
   GetGLInterface()->SetIsContextLost(true);
-  EXPECT_FALSE(SharedGpuContext::IsValidWithoutRestoring());
+  EXPECT_FALSE(SharedGpuContext::IsValidWithoutRestoringForTesting());
   offscreen_canvas().SetPreferred2DRasterMode(RasterModeHint::kPreferGPU);
   EXPECT_EQ(offscreen_canvas().GetRasterModeForCanvas2D(), RasterMode::kGPU);
-  EXPECT_TRUE(SharedGpuContext::IsValidWithoutRestoring());
+  EXPECT_TRUE(SharedGpuContext::IsValidWithoutRestoringForTesting());
 }
 
 const TestParams kTestCases[] = {

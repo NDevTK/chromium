@@ -1,14 +1,22 @@
 // Copyright 2022 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_spinner_style.css.js';
-import './shared_style.css.js';
-import './prefs/pref_toggle_button.js';
-import './user_utils_mixin.js';
-import '/shared/settings/controls/extension_controlled_indicator.js';
+import 'chrome://resources/cr_elements/cr_toast/cr_toast.js';
 import './dialogs/disconnect_cloud_authenticator_dialog.js';
+import './dialogs/remove_actor_login_permission_dialog.js';
+import './full_data_reset.js';
+import './passwords_exporter.js';
+import './passwords_importer.js';
+import './prefs/pref_toggle_button.js';
+import '/shared/settings/controls/extension_controlled_indicator.js';
+import './shared_style.css.js';
+import './site_favicon.js';
+import './user_utils_mixin.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
@@ -26,11 +34,12 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 // <if expr="is_win or is_macosx">
 import {PasskeysBrowserProxyImpl} from './passkeys_browser_proxy.js';
 // </if>
-import type {BlockedSite, BlockedSitesListChangedListener, CredentialsChangedListener} from './password_manager_proxy.js';
+import type {ActorLoginPermission} from './password_manager.mojom-webui.js';
+import type {BlockedSite, BlockedSitesListChangedListener, CredentialsChangedListener, ShouldShowAccountStorageToggleChangedListener} from './password_manager_proxy.js';
 import {PasswordManagerImpl} from './password_manager_proxy.js';
 import type {PrefToggleButtonElement} from './prefs/pref_toggle_button.js';
 import type {Route} from './router.js';
-import {RouteObserverMixin, Router, UrlParam} from './router.js';
+import {Page, RouteObserverMixin, Router, UrlParam} from './router.js';
 import {getTemplate} from './settings_section.html.js';
 import {BatchUploadPasswordsEntryPoint, SyncBrowserProxyImpl, TrustedVaultBannerState} from './sync_browser_proxy.js';
 import {UserUtilMixin} from './user_utils_mixin.js';
@@ -74,6 +83,25 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         value: () => [],
       },
 
+      /** An array of sites with permissions for actor login. */
+      actorLoginPermissions_: {
+        type: Array,
+        value: () => [],
+      },
+
+      isActorLoginPermissionsEnabled_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('enableActorLoginPermissions');
+        },
+      },
+
+      shouldShowActorLoginPermissions_: {
+        type: Boolean,
+        computed: 'computeShouldShowActorLoginPermissions_(' +
+            'actorLoginPermissions_.length, isActorLoginPermissionsEnabled_)',
+      },
+
       // <if expr="is_win or is_macosx or is_chromeos">
       isBiometricAuthenticationForFillingToggleVisible_: {
         type: Boolean,
@@ -88,6 +116,13 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('passkeyUpgradeSettingsToggleVisible');
+        },
+      },
+
+      isAutomatedPasswordChangeVisible_: {
+        type: Boolean,
+        value() {
+          return loadTimeData.getBoolean('passwordChangeAvailable');
         },
       },
 
@@ -151,9 +186,18 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
         value: false,
       },
 
+      removeActorLoginPermissionSite_: {
+        type: Object,
+      },
+
       localPasswordCount_: {
         type: Number,
         value: 0,
+      },
+
+      shouldShowAccountStorageSettingToggle_: {
+        type: Boolean,
+        value: false,
       },
     };
   }
@@ -168,6 +212,9 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
   }
 
   declare private blockedSites_: BlockedSite[];
+  declare private actorLoginPermissions_: ActorLoginPermission[];
+  declare private isActorLoginPermissionsEnabled_: boolean;
+  declare private shouldShowActorLoginPermissions_: boolean;
   // <if expr="is_win or is_macosx or is_chromeos">
   declare private isBiometricAuthenticationForFillingToggleVisible_: boolean;
   // </if>
@@ -175,6 +222,7 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
   declare private passwordManagerDisabled_: boolean;
   declare private hasPasswordsToExport_: boolean;
   declare private isPasskeyUpgradeSettingsToggleVisible_: boolean;
+  declare private isAutomatedPasswordChangeVisible_: boolean;
   declare private canAddShortcut_: boolean;
   declare private trustedVaultBannerState_: TrustedVaultBannerState;
   declare private movePasswordsLabel_: string;
@@ -183,14 +231,19 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
   declare private isDisconnectCloudAuthenticatorInProgress_: boolean;
   declare private toastMessage_: string;
   declare private showDisconnectCloudAuthenticatorDialog_: boolean;
+  declare private removeActorLoginPermissionSite_: ActorLoginPermission|
+      undefined;
   // This variable depend on the sync service API, which the Batch Upload Dialog
   // uses.
   declare private localPasswordCount_: number;
+  declare private shouldShowAccountStorageSettingToggle_: boolean;
 
   private setBlockedSitesListListener_: BlockedSitesListChangedListener|null =
       null;
   private setCredentialsChangedListener_: CredentialsChangedListener|null =
       null;
+  private shouldShowAccountStorageSettingToggleListener_:
+      ShouldShowAccountStorageToggleChangedListener|null = null;
 
   override ready() {
     super.ready();
@@ -229,11 +282,26 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
               (localPasswordCount: number) => {
                 this.updateLocalPasswordCount_(localPasswordCount);
               });
+          if (this.isActorLoginPermissionsEnabled_) {
+            PasswordManagerImpl.getInstance().getActorLoginPermissions().then(
+                actorLoginPermissions => this.actorLoginPermissions_ =
+                    actorLoginPermissions);
+          }
         };
     PasswordManagerImpl.getInstance().getSavedPasswordList().then(
         this.setCredentialsChangedListener_);
     PasswordManagerImpl.getInstance().addSavedPasswordListChangedListener(
         this.setCredentialsChangedListener_);
+
+    this.shouldShowAccountStorageSettingToggleListener_ = show => {
+      this.shouldShowAccountStorageSettingToggle_ = show;
+    };
+    PasswordManagerImpl.getInstance()
+        .shouldShowAccountStorageSettingToggle()
+        .then(this.shouldShowAccountStorageSettingToggleListener_);
+    PasswordManagerImpl.getInstance()
+        .addShouldShowAccountStorageSettingToggleListener(
+            this.shouldShowAccountStorageSettingToggleListener_);
 
     const trustedVaultStateChanged = (state: TrustedVaultBannerState) => {
       this.trustedVaultBannerState_ = state;
@@ -273,12 +341,32 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     PasswordManagerImpl.getInstance().removeSavedPasswordListChangedListener(
         this.setCredentialsChangedListener_);
     this.setCredentialsChangedListener_ = null;
+
+    assert(this.shouldShowAccountStorageSettingToggleListener_);
+    PasswordManagerImpl.getInstance()
+        .removeShouldShowAccountStorageSettingToggleListener(
+            this.shouldShowAccountStorageSettingToggleListener_);
+    this.shouldShowAccountStorageSettingToggleListener_ = null;
+
     this.$.toast.hide();
   }
 
-  override currentRouteChanged(route: Route): void {
+  override currentRouteChanged(newRoute: Route, oldRoute?: Route): void {
+    if (newRoute.page === Page.SETTINGS &&
+        oldRoute?.page === Page.PASSWORD_CHANGE &&
+        this.isAutomatedPasswordChangeVisible_) {
+      setTimeout(() => {
+        const automatedPasswordChangeRow =
+            this.shadowRoot!.querySelector<HTMLElement>(
+                '#automatedPasswordChange');
+        if (automatedPasswordChangeRow) {
+          automatedPasswordChangeRow.focus();
+        }
+      }, 0);
+    }
+
     const triggerImportParam =
-        route.queryParameters.get(UrlParam.START_IMPORT) || '';
+        newRoute.queryParameters.get(UrlParam.START_IMPORT) || '';
     if (triggerImportParam === 'true') {
       const importer = this.shadowRoot!.querySelector('passwords-importer');
       assert(importer);
@@ -313,6 +401,22 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
   private onRemoveBlockedSiteClick_(
       event: DomRepeatEvent<chrome.passwordsPrivate.ExceptionEntry>) {
     PasswordManagerImpl.getInstance().removeBlockedSite(event.model.item.id);
+  }
+
+  private onRemoveActorLoginPermissionClick_(
+      event: DomRepeatEvent<ActorLoginPermission>) {
+    this.removeActorLoginPermissionSite_ = event.model.item;
+  }
+
+  private onCloseRemoveActorLoginPermissionDialog_() {
+    this.removeActorLoginPermissionSite_ = undefined;
+  }
+
+  private onRemoveActorLoginPermission_() {
+    assert(this.removeActorLoginPermissionSite_);
+    PasswordManagerImpl.getInstance().revokeActorLoginPermission(
+        this.removeActorLoginPermissionSite_);
+    this.removeActorLoginPermissionSite_ = undefined;
   }
 
   // <if expr="is_win or is_macosx or is_chromeos">
@@ -376,7 +480,7 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
   }
 
   private changeAccountStorageEnabled_() {
-    if (this.isAccountStorageEnabled) {
+    if (this.isAccountStoreUser) {
       this.disableAccountStorage();
     } else {
       this.enableAccountStorage();
@@ -407,6 +511,12 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     }
 
     return !pref.value && isPolicyEnforced;
+  }
+
+  private computeShouldShowActorLoginPermissions_(
+      actorLoginPermissionsLength: number,
+      isActorLoginPermissionsEnabled: boolean): boolean {
+    return actorLoginPermissionsLength > 0 && isActorLoginPermissionsEnabled;
   }
 
   private onMovePasswordsClicked_(e: Event) {
@@ -491,6 +601,17 @@ export class SettingsSectionElement extends SettingsSectionElementBase {
     }
     this.toastMessage_ = this.i18n('passwordManagerPinChanged');
     this.$.toast.show();
+  }
+
+  private onAutomatedPasswordChangeClick_() {
+    Router.getInstance().navigateTo(Page.PASSWORD_CHANGE);
+  }
+
+  private getAriaLabelForAutomatedPasswordChange_(): string {
+    return [
+      this.i18n('automatedPasswordChangeTitle'),
+      this.i18n('automatedPasswordChangeDescription'),
+    ].join('. ');
   }
 }
 

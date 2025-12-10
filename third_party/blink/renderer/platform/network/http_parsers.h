@@ -59,7 +59,6 @@ namespace blink {
 class HTTPHeaderMap;
 class KURL;
 class ResourceResponse;
-class UseCounter;
 
 enum ContentTypeOptionsDisposition {
   kContentTypeOptionsNone,
@@ -98,10 +97,10 @@ PLATFORM_EXPORT bool IsValidHTTPToken(const String&);
 // |matcher| specifies a function to check a whitespace character. if |nullptr|
 // is specified, ' ' and '\t' are treated as whitespace characters.
 PLATFORM_EXPORT bool ParseHTTPRefresh(const String& refresh,
-                                      WTF::CharacterMatchFunctionPtr matcher,
+                                      CharacterMatchFunctionPtr matcher,
                                       base::TimeDelta& delay,
                                       String& url);
-PLATFORM_EXPORT std::optional<base::Time> ParseDate(const String&, UseCounter&);
+PLATFORM_EXPORT std::optional<base::Time> ParseDate(const String&);
 
 // Given a Media Type (like "foo/bar; baz=gazonk" - usually from the
 // 'Content-Type' HTTP header), extract and return the "type/subtype" portion

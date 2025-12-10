@@ -33,6 +33,8 @@ class ServiceWorkerState
     kActive,
     // Worker has completed starting (i.e. has seen DidStartWorkerForScope and
     // DidStartServiceWorkerContext).
+    // TODO(crbug.com/447640764): Remove this once
+    // `OptimizeServiceWorkerStateRequests` is the default behavior.
     kReady,
   };
 
@@ -53,7 +55,8 @@ class ServiceWorkerState
 
   class Observer : public base::CheckedObserver {
    public:
-    // Called when an extension service worker has started.
+    // Called when an extension service worker is ready (both browser and
+    // renderer sides are active).
     virtual void OnWorkerStart(const SequencedContextId& context_id,
                                const WorkerId& worker_id) {}
     // Called when an extension service worker has failed to start.
@@ -61,9 +64,7 @@ class ServiceWorkerState
                                    base::Time start_time,
                                    content::StatusCodeResponse status) {}
     // Called when an extension service worker is stopping or has stopped.
-    virtual void OnWorkerStop(
-        int64_t version_id,
-        const content::ServiceWorkerRunningInfo& worker_info) {}
+    virtual void OnWorkerStop(int64_t version_id, const GURL& scope) {}
   };
 
   void AddObserver(Observer* observer);
@@ -89,12 +90,23 @@ class ServiceWorkerState
   // global JavaScript scope, and all its global event listeners have been
   // registered with the //extensions layer. It is considered the
   // "renderer-side" signal that the worker is ready.
-  void DidStartServiceWorkerContext(const SequencedContextId& context_id,
-                                    const WorkerId& worker_id);
+  // NOTE: this can be called before or after `DidStartWorkerForScope`.
+  void RendererDidStartServiceWorkerContext(
+      const SequencedContextId& context_id,
+      const WorkerId& worker_id);
+
+  // Called when the render worker thread is preparing to terminate. It is
+  // considered the "renderer-side" signal that the worker is stopping.
+  // NOTE: this can be called before or after `OnStoppingSync` and
+  // `OnStoppedSync`, or not at all.
+  void RendererDidStopServiceWorkerContext(const WorkerId& worker_id,
+                                           const GURL& scope);
 
   // Called when the worker was requested to start and it verified that a worker
   // registration exists at the //content layer. It is considered the
   // "browser-side" signal that the worker is ready.
+  // NOTE: this can be called before or after
+  // `RendererDidStartServiceWorkerContext`.
   void DidStartWorkerForScope(const SequencedContextId& context_id,
                               base::Time start_time,
                               int64_t version_id,
@@ -113,17 +125,23 @@ class ServiceWorkerState
   void StopObservingContextForTest();
 
   // content::ServiceWorkerContextObserverSynchronous:
-  // Called when an extension service worker has stopped.
-  void OnStopped(int64_t version_id,
-                 const content::ServiceWorkerRunningInfo& worker_info) override;
+
   // Called when an extension service worker is stopping.
-  void OnStopping(
-      int64_t version_id,
-      const content::ServiceWorkerRunningInfo& worker_info) override;
+  // It is considered the "browser-side" signal that the worker is stopping.
+  // NOTE: this can be called before or after
+  // `RendererDidStopServiceWorkerContext`.
+  void OnStoppingSync(int64_t version_id, const GURL& scope) override;
+
+  // Called when an extension service worker has stopped.
+  // It is considered the "browser-side" signal that the worker has stopped.
+  // NOTE: this can be called before or after
+  // `RendererDidStopServiceWorkerContext`.
+  void OnStoppedSync(int64_t version_id, const GURL& scope) override;
 
  private:
   void SetWorkerId(const WorkerId& worker_id);
   void NotifyObserversIfReady(const SequencedContextId& context_id);
+  void HandleStop(int64_t version_id, const GURL& scope);
 
   BrowserState browser_state_ = BrowserState::kNotActive;
   RendererState renderer_state_ = RendererState::kNotActive;

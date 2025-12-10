@@ -22,11 +22,10 @@ PermissionRequestData::PermissionRequestData(
           context->content_settings_type())),
       id(id),
       user_gesture(request_description.user_gesture),
-      embedded_permission_element_initiated(
-          request_description.embedded_permission_element_initiated),
       requesting_origin(canonical_requesting_origin),
       embedding_origin(canonical_embedding_origin),
-      anchor_element_position(request_description.anchor_element_position),
+      embedded_permission_request_descriptor(
+          request_description.embedded_permission_request_descriptor.Clone()),
       requested_audio_capture_device_ids(
           request_description.requested_audio_capture_device_ids),
       requested_video_capture_device_ids(
@@ -35,35 +34,32 @@ PermissionRequestData::PermissionRequestData(
       request_description.permissions[request_description_permission_index]);
 }
 
-PermissionRequestData::PermissionRequestData(PermissionContextBase* context,
-                                             const PermissionRequestID& id,
-                                             bool user_gesture,
-                                             const GURL& requesting_origin,
-                                             const GURL& embedding_origin)
-    : request_type(ContentSettingsTypeToRequestTypeIfExists(
-          context->content_settings_type())),
+PermissionRequestData::PermissionRequestData(
+    std::unique_ptr<permissions::PermissionResolver> resolver,
+    const PermissionRequestID& id,
+    bool user_gesture,
+    const GURL& requesting_origin,
+    const GURL& embedding_origin)
+    : request_type(resolver->GetRequestType()),
+      resolver(std::move(resolver)),
       id(id),
       user_gesture(user_gesture),
-      embedded_permission_element_initiated(false),
       requesting_origin(requesting_origin),
-      embedding_origin(embedding_origin) {
-  resolver = context->CreateRequestIndependentPermissionResolver();
-}
+      embedding_origin(embedding_origin) {}
 
 PermissionRequestData::PermissionRequestData(
     std::unique_ptr<permissions::PermissionResolver> resolver,
     bool user_gesture,
     const GURL& requesting_origin,
     const GURL& embedding_origin)
-    : request_type(resolver->GetRequestType()),
-      resolver(std::move(resolver)),
-      id(PermissionRequestID(
-          content::GlobalRenderFrameHostId(0, 0),
-          permissions::PermissionRequestID::RequestLocalId())),
-      user_gesture(user_gesture),
-      embedded_permission_element_initiated(false),
-      requesting_origin(requesting_origin),
-      embedding_origin(embedding_origin) {}
+    : PermissionRequestData(
+          std::move(resolver),
+          PermissionRequestID(
+              content::GlobalRenderFrameHostId(0, 0),
+              permissions::PermissionRequestID::RequestLocalId()),
+          user_gesture,
+          requesting_origin,
+          embedding_origin) {}
 
 PermissionRequestData& PermissionRequestData::operator=(
     PermissionRequestData&&) = default;

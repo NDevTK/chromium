@@ -11,6 +11,7 @@
 #include "base/callback_list.h"
 #include "base/metrics/histogram_base.h"
 #include "base/scoped_observation.h"
+#include "base/strings/strcat.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/ui/toolbar/pinned_toolbar/pinned_toolbar_actions_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_pref_names.h"
@@ -390,8 +391,14 @@ TEST_F(PageActionControllerTest, ClearOverrideText) {
 TEST_F(PageActionControllerTest, NotifyActionClickedLogsHistogram) {
   base::HistogramTester histogram_tester;
 
+  auto observer = PageActionTestObserver();
+  TestPageActionModelObservation observation(&observer);
   controller()->Initialize(*tab_interface(), {kFirstActionItemId},
                            properties_provider_);
+  auto action_item = BuildActionItem(kFirstActionItemId);
+  base::CallbackListSubscription subscription =
+      controller()->CreateActionItemSubscription(action_item.get());
+  controller()->AddObserver(0, observation);
 
   const std::string general_histogram = "PageActionController.Icon.CTR2";
   const std::string specific_histogram = base::StrCat(
@@ -402,27 +409,31 @@ TEST_F(PageActionControllerTest, NotifyActionClickedLogsHistogram) {
   histogram_tester.ExpectTotalCount(general_histogram, 0);
   histogram_tester.ExpectTotalCount(specific_histogram, 0);
 
+  // Show the page icon first: Hidden → IconOnly transition (logs one kShown
+  // sample).
+  controller()->Show(kFirstActionItemId);
+
   controller()
       ->GetClickCallback(PageActionView::PassKeyForTesting(),
                          kFirstActionItemId)
       .Run(PageActionTrigger::kMouse);
 
-  histogram_tester.ExpectTotalCount(general_histogram, 1);
-  histogram_tester.ExpectUniqueSample(general_histogram,
-                                      PageActionCTREvent::kClicked, 1);
-  histogram_tester.ExpectTotalCount(specific_histogram, 1);
-  histogram_tester.ExpectUniqueSample(specific_histogram,
-                                      PageActionCTREvent::kClicked, 1);
+  histogram_tester.ExpectTotalCount(general_histogram, 2);
+  histogram_tester.ExpectBucketCount(general_histogram,
+                                     PageActionCTREvent::kClicked, 1);
+  histogram_tester.ExpectTotalCount(specific_histogram, 2);
+  histogram_tester.ExpectBucketCount(specific_histogram,
+                                     PageActionCTREvent::kClicked, 1);
 
   controller()
       ->GetClickCallback(PageActionView::PassKeyForTesting(),
                          kFirstActionItemId)
       .Run(PageActionTrigger::kKeyboard);
 
-  histogram_tester.ExpectTotalCount(general_histogram, 2);
+  histogram_tester.ExpectTotalCount(general_histogram, 3);
   histogram_tester.ExpectBucketCount(general_histogram,
                                      PageActionCTREvent::kClicked, 2);
-  histogram_tester.ExpectTotalCount(specific_histogram, 2);
+  histogram_tester.ExpectTotalCount(specific_histogram, 3);
   histogram_tester.ExpectBucketCount(specific_histogram,
                                      PageActionCTREvent::kClicked, 2);
 }
@@ -549,16 +560,32 @@ TEST_F(PageActionControllerMockModelTest, SetAndClearOverrideImage) {
   ui::ImageModel override_image =
       ui::ImageModel::FromImageSkia(gfx::test::CreateImageSkia(/*size=*/32));
 
-  EXPECT_CALL(
-      models().Get(kFirstActionItemId),
-      SetOverrideImage(_, std::optional<ui::ImageModel>(override_image)))
+  EXPECT_CALL(models().Get(kFirstActionItemId),
+              SetOverrideImage(_, std::optional<ui::ImageModel>(override_image),
+                               PageActionColorSource::kForeground))
       .Times(1);
   controller().OverrideImage(kFirstActionItemId, override_image);
 
   EXPECT_CALL(models().Get(kFirstActionItemId),
-              SetOverrideImage(_, std::optional<ui::ImageModel>(std::nullopt)))
+              SetOverrideImage(_, std::optional<ui::ImageModel>(std::nullopt),
+                               PageActionColorSource::kForeground))
       .Times(1);
   controller().ClearOverrideImage(kFirstActionItemId);
+}
+
+TEST_F(PageActionControllerMockModelTest, OverrideImageWithColorSource) {
+  controller().Initialize(tab_interface(), {kFirstActionItemId},
+                          properties_provider_);
+
+  ui::ImageModel override_image =
+      ui::ImageModel::FromImageSkia(gfx::test::CreateImageSkia(/*size=*/32));
+
+  EXPECT_CALL(models().Get(kFirstActionItemId),
+              SetOverrideImage(_, std::optional<ui::ImageModel>(override_image),
+                               PageActionColorSource::kCascadingAccent))
+      .Times(1);
+  controller().OverrideImage(kFirstActionItemId, override_image,
+                             PageActionColorSource::kCascadingAccent);
 }
 
 TEST_F(PageActionControllerMockModelTest, SetAndClearOverrideTooltip) {
@@ -583,13 +610,13 @@ TEST_F(PageActionControllerMockModelTest, ShouldForciblyHidePageActions) {
                           properties_provider_);
 
   EXPECT_CALL(models().Get(kFirstActionItemId),
-              SetShouldHidePageAction(_, /*should_hide_page_actions*/ true))
+              SetIsSuppressedByOmnibox(_, /*is_suppressed*/ true))
       .Times(1);
 
   controller().SetShouldHidePageActions(true);
 
   EXPECT_CALL(models().Get(kFirstActionItemId),
-              SetShouldHidePageAction(_, /*should_hide_page_actions*/ false))
+              SetIsSuppressedByOmnibox(_, /*is_suppressed*/ false))
       .Times(1);
 
   controller().SetShouldHidePageActions(false);
@@ -695,6 +722,37 @@ TEST_F(PageActionControllerMockModelTest, ActivityCounterAssignmentOperator) {
   Mock::VerifyAndClearExpectations(&models().Get(kFirstActionItemId));
   Mock::VerifyAndClearExpectations(&models().Get(kSecondActionItemId));
 
+  EXPECT_CALL(models().Get(kFirstActionItemId), SetActionActive(_, false))
+      .Times(1);
+  activity2.reset();
+  Mock::VerifyAndClearExpectations(&models().Get(kFirstActionItemId));
+}
+
+TEST_F(PageActionControllerMockModelTest,
+       ActivityResetsOnControllerDestruction) {
+  controller().Initialize(tab_interface(), {kFirstActionItemId},
+                          properties_provider_);
+
+  // Add first activity scope. Model becomes active.
+  EXPECT_CALL(models().Get(kFirstActionItemId), SetActionActive(_, true))
+      .Times(1);
+  auto activity1 = std::make_unique<ScopedPageActionActivity>(
+      controller().AddActivity(kFirstActionItemId));
+  Mock::VerifyAndClearExpectations(&models().Get(kFirstActionItemId));
+
+  // Add second activity scope. Model remains active.
+  EXPECT_CALL(models().Get(kFirstActionItemId), SetActionActive(_, true))
+      .Times(1);
+  auto activity2 = std::make_unique<ScopedPageActionActivity>(
+      controller().AddActivity(kFirstActionItemId));
+  Mock::VerifyAndClearExpectations(&models().Get(kFirstActionItemId));
+
+  // Destroy first activity scope. Model remains active.
+  EXPECT_CALL(models().Get(kFirstActionItemId), SetActionActive(_, _)).Times(0);
+  activity1.reset();
+  Mock::VerifyAndClearExpectations(&models().Get(kFirstActionItemId));
+
+  // Destroy second activity scope. Model becomes inactive.
   EXPECT_CALL(models().Get(kFirstActionItemId), SetActionActive(_, false))
       .Times(1);
   activity2.reset();

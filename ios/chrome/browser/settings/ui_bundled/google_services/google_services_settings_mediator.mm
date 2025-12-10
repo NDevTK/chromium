@@ -21,7 +21,6 @@
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_account_item.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
-#import "ios/chrome/browser/settings/ui_bundled/cells/account_sign_in_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_image_detail_text_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/sync_switch_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/google_services_settings_command_handler.h"
@@ -113,17 +112,10 @@ bool GetStatusForSigninPolicy() {
 
 @interface GoogleServicesSettingsMediator () <BooleanObserver>
 
-// Returns YES if the user is authenticated.
-@property(nonatomic, assign, readonly) BOOL hasPrimaryIdentity;
 // ** Non personalized section.
 // Preference value for the "Allow Chrome Sign-in" feature.
 @property(nonatomic, strong, readonly)
     PrefBackedBoolean* allowChromeSigninPreference;
-// Preference value for the "Help improve Chromium's features" for Wifi-Only.
-// TODO(crbug.com/40588486): Needs to create the UI to change from Wifi-Only to
-// always
-@property(nonatomic, strong, readonly)
-    PrefBackedBoolean* sendDataUsageWifiOnlyPreference;
 // Preference value for the "Make searches and browsing better" feature.
 @property(nonatomic, strong, readonly)
     PrefBackedBoolean* anonymizedDataCollectionPreference;
@@ -196,8 +188,6 @@ bool GetStatusForSigninPolicy() {
 - (void)disconnect {
   [_allowChromeSigninPreference stop];
   _allowChromeSigninPreference = nil;
-  [_sendDataUsageWifiOnlyPreference stop];
-  _sendDataUsageWifiOnlyPreference = nil;
   [_anonymizedDataCollectionPreference stop];
   _anonymizedDataCollectionPreference = nil;
   [_improveSearchSuggestionsPreference stop];
@@ -250,15 +240,15 @@ bool GetStatusForSigninPolicy() {
     ItemType type = static_cast<ItemType>(item.type);
     switch (type) {
       case AllowChromeSigninItemType: {
-        SyncSwitchItem* signinDisabledItem =
+        SyncSwitchItem* switchItem =
             base::apple::ObjCCast<SyncSwitchItem>(item);
         // Supervised users cannot manually enable/disable sign-in.
         if (![self isSubjectToParentalControls] &&
             IsControllingSigninAllowedByPolicy()) {
-          signinDisabledItem.on = self.allowChromeSigninPreference.value;
+          switchItem.on = self.allowChromeSigninPreference.value;
         } else {
-          signinDisabledItem.on = NO;
-          signinDisabledItem.enabled = NO;
+          switchItem.on = NO;
+          switchItem.enabled = NO;
         }
         break;
       }
@@ -299,19 +289,11 @@ bool GetStatusForSigninPolicy() {
     }
   }
   if (notifyConsumer) {
-    TableViewModel* model = self.consumer.tableViewModel;
-    NSUInteger sectionIndex =
-        [model sectionForSectionIdentifier:NonPersonalizedSectionIdentifier];
-    NSIndexSet* indexSet = [NSIndexSet indexSetWithIndex:sectionIndex];
-    [self.consumer reloadSections:indexSet];
+    [self reloadUniqueSection];
   }
 }
 
 #pragma mark - Properties
-
-- (BOOL)hasPrimaryIdentity {
-  return self.authService->HasPrimaryIdentity(signin::ConsentLevel::kSignin);
-}
 
 - (ItemArray)nonPersonalizedItems {
   if (!_nonPersonalizedItems) {
@@ -414,6 +396,10 @@ bool GetStatusForSigninPolicy() {
 
 #pragma mark - Private
 
+- (void)reloadUniqueSection {
+  [self.consumer reload];
+}
+
 // Creates an item with a switch toggle.
 - (SyncSwitchItem*)switchItemWithItemType:(NSInteger)itemType
                              textStringID:(int)textStringID
@@ -423,6 +409,9 @@ bool GetStatusForSigninPolicy() {
   if (detailStringID) {
     switchItem.detailText = GetNSString(detailStringID);
   }
+  switchItem.target = self;
+  switchItem.selector = @selector(itemSwitchToggled:);
+  switchItem.tag = itemType;
   return switchItem;
 }
 
@@ -442,12 +431,35 @@ bool GetStatusForSigninPolicy() {
     managedItem.iconTintColor = [UIColor colorNamed:kGrey300Color];
   }
 
+  if (itemType == AllowChromeSigninItemType &&
+      self.authService->GetServiceStatus() ==
+          AuthenticationService::ServiceStatus::SigninForcedByPolicy) {
+    // Use a specific target when tapping the info button of the allow
+    // sign-in item while forced sign-in is enabled. This is because the info
+    // bubble has different textual content.
+    managedItem.target = self;
+    managedItem.selector = @selector(didTapForcedSigninUIInfoButton:);
+  } else {
+    managedItem.target = self;
+    managedItem.selector = @selector(didTapManagedUIInfoButton:);
+  }
+
   // This item is not controllable; set to lighter colors.
   managedItem.textColor = [UIColor colorNamed:kTextSecondaryColor];
   managedItem.detailTextColor = [UIColor colorNamed:kTextTertiaryColor];
   managedItem.accessibilityHint =
       l10n_util::GetNSString(IDS_IOS_TOGGLE_SETTING_MANAGED_ACCESSIBILITY_HINT);
   return managedItem;
+}
+
+- (void)didTapManagedUIInfoButton:(UIButton*)buttonView {
+  [self.consumer showManagedInfoPopoverOnButton:buttonView
+                          isForcedSigninEnabled:NO];
+}
+
+- (void)didTapForcedSigninUIInfoButton:(UIButton*)buttonView {
+  [self.consumer showManagedInfoPopoverOnButton:buttonView
+                          isForcedSigninEnabled:YES];
 }
 
 #pragma mark - GoogleServicesSettingsViewControllerModelDelegate
@@ -458,35 +470,41 @@ bool GetStatusForSigninPolicy() {
   [self loadNonPersonalizedSection];
 }
 
-- (BOOL)isAllowChromeSigninItem:(int)type {
-  return type == AllowChromeSigninItemType;
-}
-
 - (BOOL)isViewControllerSubjectToParentalControls {
   return [self isSubjectToParentalControls];
 }
 
-#pragma mark - GoogleServicesSettingsServiceDelegate
+#pragma mark - BooleanObserver
 
-- (void)toggleSwitchItem:(TableViewItem*)item
-               withValue:(BOOL)value
-              targetRect:(CGRect)targetRect {
-  SyncSwitchItem* syncSwitchItem = base::apple::ObjCCast<SyncSwitchItem>(item);
+- (void)booleanDidChange:(id<ObservableBoolean>)observableBoolean {
+  [self updateNonPersonalizedSectionWithNotification:YES];
+}
+
+#pragma mark - Private
+
+// Handler for the switches.
+- (void)itemSwitchToggled:(UISwitch*)sender {
+  BOOL value = sender.on;
+  CGRect targetRect = [sender convertRect:sender.bounds toView:nil];
+
+  SyncSwitchItem* syncSwitchItem;
+  ItemType type = static_cast<ItemType>(sender.tag);
+  for (TableViewItem* item in self.nonPersonalizedItems) {
+    if (item.type == type) {
+      syncSwitchItem = base::apple::ObjCCastStrict<SyncSwitchItem>(item);
+      break;
+    }
+  }
   syncSwitchItem.on = value;
-  ItemType type = static_cast<ItemType>(item.type);
   switch (type) {
     case AllowChromeSigninItemType: {
-      [self handleUpdateIsSigninAllowedValue:value targetRect:targetRect];
+      [self handleUpdateIsSigninAllowedValue:value
+                                  targetRect:targetRect
+                                        item:syncSwitchItem];
       break;
     }
     case ImproveChromeItemType:
       self.sendDataUsagePreference.value = value;
-      // Don't set value if sendDataUsageWifiOnlyPreference has not been
-      // allocated.
-      if (value && self.sendDataUsageWifiOnlyPreference) {
-        // Should be wifi only, until https://crbug.com/872101 is fixed.
-        self.sendDataUsageWifiOnlyPreference.value = YES;
-      }
       break;
     case BetterSearchAndBrowsingItemType:
       self.anonymizedDataCollectionPreference.value = value;
@@ -504,32 +522,50 @@ bool GetStatusForSigninPolicy() {
   }
 }
 
-#pragma mark - BooleanObserver
-
-- (void)booleanDidChange:(id<ObservableBoolean>)observableBoolean {
-  [self updateNonPersonalizedSectionWithNotification:YES];
-}
-
-#pragma mark - Private
-
 - (BOOL)isSubjectToParentalControls {
   return self.identityManager &&
          supervised_user::IsPrimaryAccountSubjectToParentalControls(
              self.identityManager) == signin::Tribool::kTrue;
 }
 
+// The user toggled the "allow sign-in" toggle to `value`.
+// Register it, unless it requires a sign-out, in which case ask for
+// confirmation first.
 - (void)handleUpdateIsSigninAllowedValue:(BOOL)value
-                              targetRect:(CGRect)targetRect {
-  if (self.hasPrimaryIdentity) {
-    void (^completion)(BOOL, SceneState*) =
-        ^(BOOL success, SceneState* scene_state) {
-          GetApplicationContext()->GetLocalState()->SetBoolean(
-              prefs::kSigninAllowedOnDevice, success ? value : !value);
-        };
-    [self.commandHandler showSignOutFromTargetRect:targetRect
-                                        completion:completion];
-  } else {
-    self.allowChromeSigninPreference.value = value;
+                              targetRect:(CGRect)targetRect
+                                    item:(SyncSwitchItem*)item {
+  if (value) {
+    // The user can always allow sign-in.
+    self.allowChromeSigninPreference.value = YES;
+    return;
+  }
+  // Before signing-out, we need to check whether the user accepts to sign-out,
+  // here or in another profile. Furthermore, we must warn the user that this
+  // could cause loss of unsynced data if either there are unsynced data here or
+  // if another profile is signed-in.
+  __weak __typeof(self) weakSelf = self;
+  void (^completion)(BOOL, SceneState*) =
+      ^(BOOL success, SceneState* scene_state) {
+        BOOL newValue = !success;
+        // The pref change is in this block in order to ensure it is done even
+        // if weakSelf was set to nil.
+        GetApplicationContext()->GetLocalState()->SetBoolean(
+            prefs::kSigninAllowedOnDevice, newValue);
+        [weakSelf signoutCompletionWithToggledToValue:newValue
+                                              success:success
+                                                 item:item];
+      };
+  [self.commandHandler maybeShowSignOutFromTargetRect:targetRect
+                                           completion:completion];
+}
+
+- (void)signoutCompletionWithToggledToValue:(BOOL)newValue
+                                    success:(BOOL)success
+                                       item:(SyncSwitchItem*)item {
+  if (!success) {
+    item.on = newValue;
+    [self reloadUniqueSection];
   }
 }
+
 @end

@@ -24,37 +24,31 @@
 namespace blink {
 
 HighlightRegistry* HighlightRegistry::From(LocalDOMWindow& window) {
-  HighlightRegistry* supplement =
-      Supplement<LocalDOMWindow>::From<HighlightRegistry>(window);
+  HighlightRegistry* supplement = window.GetHighlightRegistry();
   if (!supplement) {
     supplement = MakeGarbageCollected<HighlightRegistry>(window);
-    Supplement<LocalDOMWindow>::ProvideTo(window, supplement);
+    window.SetHighlightRegistry(supplement);
   }
   return supplement;
 }
 
 HighlightRegistry::HighlightRegistry(LocalDOMWindow& window)
-    : Supplement<LocalDOMWindow>(window), frame_(window.GetFrame()) {}
+    : frame_(window.GetFrame()) {}
 
 HighlightRegistry::~HighlightRegistry() = default;
-
-const char HighlightRegistry::kSupplementName[] = "HighlightRegistry";
 
 void HighlightRegistry::Trace(blink::Visitor* visitor) const {
   visitor->Trace(highlights_);
   visitor->Trace(frame_);
   visitor->Trace(active_highlights_in_node_);
   ScriptWrappable::Trace(visitor);
-  Supplement<LocalDOMWindow>::Trace(visitor);
 }
 
 HighlightRegistry* HighlightRegistry::GetHighlightRegistry(const Node* node) {
   if (!node) {
     return nullptr;
   }
-  return node->GetDocument()
-      .domWindow()
-      ->Supplementable<LocalDOMWindow>::RequireSupplement<HighlightRegistry>();
+  return node->GetDocument().domWindow()->GetHighlightRegistry();
 }
 
 bool HighlightRegistry::IsAbstractRangePaintable(AbstractRange* abstract_range,
@@ -294,8 +288,7 @@ HighlightRegistry::IterationSource::IterationSource(
 
 bool HighlightRegistry::IterationSource::FetchNextItem(ScriptState*,
                                                        String& key,
-                                                       Highlight*& value,
-                                                       ExceptionState&) {
+                                                       Highlight*& value) {
   if (index_ >= highlights_snapshot_.size())
     return false;
   key = highlights_snapshot_[index_]->highlight_name;
@@ -309,7 +302,7 @@ void HighlightRegistry::IterationSource::Trace(blink::Visitor* visitor) const {
 }
 
 HighlightRegistryMapIterable::IterationSource*
-HighlightRegistry::CreateIterationSource(ScriptState*, ExceptionState&) {
+HighlightRegistry::CreateIterationSource(ScriptState*) {
   return MakeGarbageCollected<IterationSource>(*this);
 }
 

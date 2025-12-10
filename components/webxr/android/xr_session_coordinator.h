@@ -13,8 +13,8 @@
 
 namespace webxr {
 
-using ActivityReadyCallback = base::OnceCallback<void(
-    const base::android::JavaParamRef<jobject>& activity)>;
+using ActivityReadyCallback =
+    base::OnceCallback<void(const base::android::JavaRef<jobject>& activity)>;
 
 class XrSessionCoordinator : public device::XrJavaCoordinator {
  public:
@@ -63,30 +63,22 @@ class XrSessionCoordinator : public device::XrJavaCoordinator {
                         device::JavaShutdownCallback shutdown_callback);
 
   // Methods called from the Java side.
-  void OnDrawingSurfaceReady(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& surface,
-      const base::android::JavaParamRef<jobject>& root_window,
-      int rotation,
-      int width,
-      int height);
+  void OnDrawingSurfaceReady(JNIEnv* env,
+                             const base::android::JavaRef<jobject>& surface,
+                             const base::android::JavaRef<jobject>& root_window,
+                             int rotation,
+                             int width,
+                             int height);
   void OnDrawingSurfaceTouch(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj,
                              bool primary,
                              bool touching,
                              int32_t pointer_id,
                              float x,
                              float y);
-  void OnJavaShutdown(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& obj);
-  void OnXrSessionButtonTouched(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void OnXrHostActivityReady(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jobject>& activity);
+  void OnJavaShutdown(JNIEnv* env);
+  void OnXrSessionButtonTouched(JNIEnv* env);
+  void OnXrHostActivityReady(JNIEnv* env,
+                             const base::android::JavaRef<jobject>& activity);
 
  private:
   base::android::ScopedJavaGlobalRef<jobject> j_xr_session_coordinator_;

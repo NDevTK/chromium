@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "remoting/signaling/signaling_address.h"
 
 #include <string.h>
@@ -66,8 +61,17 @@ SignalingAddress::SignalingAddress(const std::string& address) {
   }
 }
 
+// static
+SignalingAddress SignalingAddress::CreateSystemAddress(const std::string& id) {
+  SignalingAddress address;
+  address.is_system_ = true;
+  address.id_ = id;
+  return address;
+}
+
 bool SignalingAddress::operator==(const SignalingAddress& other) const {
-  return (other.id_ == id_) && (other.channel_ == channel_);
+  return (other.id_ == id_) && (other.channel_ == channel_) &&
+         (other.is_system_ == is_system_);
 }
 
 bool SignalingAddress::operator!=(const SignalingAddress& other) const {
@@ -100,18 +104,23 @@ void SignalingAddress::SetInMessage(jingle_xmpp::XmlElement* iq,
   iq->SetAttr(GetIdQName(direction), id_);
 }
 
-bool SignalingAddress::GetFtlInfo(std::string* username,
+bool SignalingAddress::GetFtlInfo(std::string* email,
                                   std::string* registration_id) const {
   if (channel_ != Channel::FTL) {
     return false;
   }
   std::string resource;
-  bool has_resource = SplitSignalingIdResource(id_, username, &resource);
+  bool has_resource = SplitSignalingIdResource(id_, email, &resource);
   DCHECK(has_resource);
   size_t ftl_resource_prefix_length = strlen(kFtlResourcePrefix);
   DCHECK_LT(ftl_resource_prefix_length, resource.length());
   *registration_id = resource.substr(ftl_resource_prefix_length);
   return true;
+}
+
+bool SignalingAddress::GetFtlSenderEmail(std::string* email) const {
+  std::string unused_registration_id;
+  return GetFtlInfo(email, &unused_registration_id);
 }
 
 }  // namespace remoting

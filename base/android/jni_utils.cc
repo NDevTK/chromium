@@ -7,7 +7,6 @@
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/flat_map.h"
-#include "base/lazy_instance.h"
 #include "base/no_destructor.h"
 #include "base/synchronization/lock.h"
 
@@ -20,7 +19,8 @@ namespace android {
 namespace {
 struct LockAndMap {
   base::Lock lock;
-  base::flat_map<const char*, ScopedJavaGlobalRef<jobject>> map;
+  base::flat_map<const char*, ScopedJavaGlobalRef<jobject>> map
+      GUARDED_BY(lock);
 };
 LockAndMap* GetLockAndMap() {
   static base::NoDestructor<LockAndMap> lock_and_map;
@@ -46,4 +46,4 @@ jobject GetSplitClassLoader(JNIEnv* env, const char* split_name) {
 }  // namespace android
 }  // namespace base
 
-DEFINE_JNI_FOR_JNIUtils()
+DEFINE_JNI(JNIUtils)

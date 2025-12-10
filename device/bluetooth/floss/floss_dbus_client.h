@@ -17,6 +17,7 @@
 
 #include "base/containers/contains.h"
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
@@ -345,6 +346,7 @@ inline constexpr char kOnDevicePolicyEffectChanged[] =
 inline constexpr char kSetAllowedServices[] = "SetAllowedServices";
 inline constexpr char kGetAllowedServices[] = "GetAllowedServices";
 inline constexpr char kGetDevicePolicyEffect[] = "GetDevicePolicyEffect";
+inline constexpr char kSetSimpleSecurePairingEnabled[] = "SetAcceptSspRequest";
 }  // namespace admin
 
 namespace adapter_logging {

@@ -28,35 +28,10 @@ ACTION_TEMPLATE(SaveArgElementsTo,
   pointer->assign(span.begin(), span.end());
 }
 
-class MockAutofillDriver : public TestAutofillDriver {
- public:
-  using TestAutofillDriver::TestAutofillDriver;
-  MockAutofillDriver(const MockAutofillDriver&) = delete;
-  MockAutofillDriver& operator=(const MockAutofillDriver&) = delete;
-
-  // Mock methods to enable testability.
-  MOCK_METHOD((base::flat_set<FieldGlobalId>),
-              ApplyFormAction,
-              (mojom::FormActionType action_type,
-               mojom::ActionPersistence action_persistence,
-               base::span<const FormFieldData> data,
-               const url::Origin& triggered_origin,
-               (const base::flat_map<FieldGlobalId, FieldType>&)),
-              (override));
-};
-
 class PerFillMetricsTest : public AutofillMetricsBaseTest,
                            public testing::Test {
  public:
-  void SetUp() override {
-    SetUpHelper();
-
-    autofill_driver_ =
-        std::make_unique<MockAutofillDriver>(autofill_client_.get());
-    autofill_driver_->SetLocalFrameToken(test::MakeLocalFrameToken());
-    autofill_driver_->set_autofill_manager(
-        std::make_unique<TestBrowserAutofillManager>(autofill_driver_.get()));
-  }
+  void SetUp() override { SetUpHelper(); }
 
   void TearDown() override { TearDownHelper(); }
 
@@ -71,10 +46,6 @@ class PerFillMetricsTest : public AutofillMetricsBaseTest,
             AutofillTriggerSource::kPopup);
   }
 
-  MockAutofillDriver* mock_driver() {
-    return static_cast<MockAutofillDriver*>(autofill_driver_.get());
-  }
-
   // Lets `BrowserAutofillManager` fill `form` with `filling_payload` and
   // returns `form` as it would be extracted from the renderer afterwards, i.e.,
   // with the autofilled `FormFieldData::value`s.
@@ -84,7 +55,7 @@ class PerFillMetricsTest : public AutofillMetricsBaseTest,
     // After the call, `filled_fields` will only contain the fields that were
     // autofilled in this call of FillOrPreviewForm (% fields not filled due
     // to the iframe security policy).
-    EXPECT_CALL(*mock_driver(), ApplyFormAction)
+    EXPECT_CALL(autofill_driver(), ApplyFormAction)
         .WillOnce(DoAll(
             SaveArgElementsTo<2>(&filled_fields),
             Return(base::ToVector(form.fields(), &FormFieldData::global_id))));
@@ -115,7 +86,7 @@ TEST_F(PerFillMetricsTest, FillForm) {
   SeeForm({form});
 
   // Only the first three fields are actually filled.
-  EXPECT_CALL(*mock_driver(), ApplyFormAction)
+  EXPECT_CALL(autofill_driver(), ApplyFormAction)
       .WillOnce(Return(base::ToVector(base::span(form.fields()).first(3u),
                                       &FormFieldData::global_id)));
   FillForm(form, &autofill_profile);
@@ -140,7 +111,10 @@ TEST_F(PerFillMetricsTest, RefillTriggerReason_FormChanged) {
   FillForm(form, &credit_card);
 
   base::HistogramTester histogram_tester;
-  form.set_url(GURL("https://foo.com/bar"));
+  std::vector<FormFieldData> fields = form.ExtractFields();
+  fields.push_back(fields.back());
+  form.set_fields(std::move(fields));
+
   SeeForm({form});
 
   histogram_tester.ExpectUniqueSample("Autofill.RefillTriggerReason",
@@ -161,7 +135,8 @@ TEST_F(PerFillMetricsTest, RefillTriggerReason_OnSelectFieldOptionsDidChange) {
   FillForm(form, &credit_card);
 
   base::HistogramTester histogram_tester;
-  autofill_manager().OnSelectFieldOptionsDidChange(form);
+  autofill_manager().OnSelectFieldOptionsDidChange(
+      form, form.fields().back().global_id());
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.RefillTriggerReason",
@@ -212,12 +187,13 @@ TEST_F(PerFillMetricsTest, ModifiedFieldsCount) {
   test_api(form).fields().emplace_back();
 
   // Mock the router not blocking any field for filling.
-  EXPECT_CALL(*mock_driver(), ApplyFormAction)
-      .WillOnce([&](mojom::FormActionType action_type,
-                    mojom::ActionPersistence action_persistence,
-                    base::span<const FormFieldData> data,
-                    const url::Origin& triggered_origin,
-                    const base::flat_map<FieldGlobalId, FieldType>&) {
+  EXPECT_CALL(autofill_driver(), ApplyFormAction)
+      .WillOnce([](mojom::FormActionType action_type,
+                   mojom::ActionPersistence action_persistence,
+                   base::span<const FormFieldData> data, const FillId& fill_id,
+                   bool supports_refill, const url::Origin& triggered_origin,
+                   const base::flat_map<FieldGlobalId, FieldType>&,
+                   const Section&) {
         return base::ToVector(data, &FormFieldData::global_id);
       });
 

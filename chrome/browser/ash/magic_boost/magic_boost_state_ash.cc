@@ -14,7 +14,6 @@
 #include "ash/system/mahi/mahi_utils.h"
 #include "base/check_is_test.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/scoped_observation.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "base/types/expected.h"
@@ -35,15 +34,6 @@
 
 namespace ash {
 namespace {
-
-base::expected<bool, chromeos::MagicBoostState::Error>
-IsMagicBoostAvailableExpected() {
-  std::optional<bool> availability = mahi_availability::IsMahiAvailable();
-  if (!availability.has_value()) {
-    return base::unexpected(chromeos::MagicBoostState::Error::kUninitialized);
-  }
-  return availability.value();
-}
 
 // Wait for refresh tokens load and run the provided callback. This object
 // immediately runs the callback if refresh tokens are already loaded.
@@ -272,10 +262,24 @@ void MagicBoostStateAsh::RegisterPrefChanges(PrefService* pref_service) {
                      base::Unretained(this))));
 }
 
+base::expected<bool, chromeos::MagicBoostState::Error>
+MagicBoostStateAsh::IsUserEligibleForGenAIFeaturesExpected() const {
+  return mahi_availability::IsMahiAvailable().transform_error(
+      [](mahi_availability::Error error) {
+        // Use switch statement to get a compile error if new error types are
+        // added to mahi_availability::Error.
+        switch (error) {
+          case mahi_availability::Error::kMantaFeatureBitNotReady:
+            return chromeos::MagicBoostState::Error::kUninitialized;
+        }
+        CHECK(false) << "Unknown mahi_availability Error enum is passed";
+      });
+}
+
 void MagicBoostStateAsh::OnRefreshTokensReady() {
-  ASSIGN_OR_RETURN(bool available, IsMagicBoostAvailableExpected(),
+  ASSIGN_OR_RETURN(bool available, IsUserEligibleForGenAIFeaturesExpected(),
                    [](auto) {});
-  UpdateMagicBoostAvailable(available);
+  UpdateUserEligibleForGenAIFeatures(available);
 }
 
 void MagicBoostStateAsh::OnMagicBoostEnabledUpdated() {

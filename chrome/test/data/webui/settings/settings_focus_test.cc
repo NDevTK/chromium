@@ -9,14 +9,14 @@
 #include "components/content_settings/core/common/features.h"
 #include "content/public/test/browser_test.h"
 
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/test_support/glic_test_environment.h"
+#endif
+
 class SettingsFocusTest : public WebUIMochaFocusTest {
  protected:
   SettingsFocusTest() { set_test_loader_host(chrome::kChromeUISettingsHost); }
 };
-
-IN_PROC_BROWSER_TEST_F(SettingsFocusTest, AnimatedPages) {
-  RunTest("settings/settings_animated_pages_test.js", "mocha.run()");
-}
 
 IN_PROC_BROWSER_TEST_F(SettingsFocusTest, AutofillSectionFocus) {
   RunTest("settings/autofill_section_focus_test.js", "mocha.run()");
@@ -28,6 +28,10 @@ IN_PROC_BROWSER_TEST_F(SettingsFocusTest, PaymentsSectionInteractive) {
 
 IN_PROC_BROWSER_TEST_F(SettingsFocusTest, PaymentsSectionFocus) {
   RunTest("settings/payments_section_focus_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(SettingsFocusTest, SettingsViewMixin) {
+  RunTest("settings/settings_view_mixin_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(SettingsFocusTest, SyncPage) {
@@ -64,25 +68,22 @@ IN_PROC_BROWSER_TEST_F(SettingsFocusTest, Menu) {
 }
 
 #if BUILDFLAG(ENABLE_GLIC)
-class SettingsGlicPageFocusTest : public SettingsFocusTest {
+class SettingsGlicSubpageFocusTest : public SettingsFocusTest {
  public:
-  SettingsGlicPageFocusTest() {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kGlic, features::kTabstripComboButton}, {});
-  }
+  SettingsGlicSubpageFocusTest() = default;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  glic::GlicTestEnvironment glic_test_env_;
 };
 
 // TODO(crbug.com/424864547): Investigate flakiness and enable on Mac64 and
 // Win64.
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-#define MAYBE_GlicPageFocus DISABLED_GlicPageFocus
+#define MAYBE_GlicSubpageFocus DISABLED_GlicSubpageFocus
 #else
-#define MAYBE_GlicPageFocus GlicPageFocus
+#define MAYBE_GlicSubpageFocus GlicSubpageFocus
 #endif  // BUILDFLAG(IS_MAC)
-IN_PROC_BROWSER_TEST_F(SettingsGlicPageFocusTest, MAYBE_GlicPageFocus) {
-  RunTest("settings/glic_page_focus_test.js", "mocha.run()");
+IN_PROC_BROWSER_TEST_F(SettingsGlicSubpageFocusTest, MAYBE_GlicSubpageFocus) {
+  RunTest("settings/glic_subpage_focus_test.js", "mocha.run()");
 }
 #endif

@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_availability_status.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_settings.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_observable_array_speech_recognition_phrase.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_speech_recognition_options.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -56,6 +57,7 @@
 #include "third_party/blink/renderer/modules/speech/speech_recognition_controller.h"
 #include "third_party/blink/renderer/modules/speech/speech_recognition_error_event.h"
 #include "third_party/blink/renderer/modules/speech/speech_recognition_event.h"
+#include "third_party/blink/renderer/modules/speech/speech_recognition_phrase.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
@@ -96,34 +98,6 @@ SpeechRecognition* SpeechRecognition::Create(ExecutionContext* context) {
   return MakeGarbageCollected<SpeechRecognition>(To<LocalDOMWindow>(context));
 }
 
-void SpeechRecognition::setPhrases(SpeechRecognitionPhraseList* phrases) {
-  // Only on device speech recognition supports contextual biasing.
-  if (phrases->length() > 0 && !process_locally_) {
-    ErrorOccurred(media::mojom::blink::SpeechRecognitionError::New(
-        media::mojom::blink::SpeechRecognitionErrorCode::kPhrasesNotSupported,
-        media::mojom::blink::SpeechAudioErrorDetails::kNone));
-    return;
-  }
-  phrases_ = phrases;
-
-  // If the speech recognition session has started, update the phrases.
-  if (started_) {
-    CHECK(session_);
-    WTF::Vector<media::mojom::blink::SpeechRecognitionPhrasePtr> wtf_phrases;
-    for (unsigned int i = 0; i < phrases->length(); i++) {
-      SpeechRecognitionPhrase* phrase = phrases->item(i);
-      wtf_phrases.emplace_back(
-          media::mojom::blink::SpeechRecognitionPhrase::New(phrase->phrase(),
-                                                            phrase->boost()));
-    }
-    media::mojom::blink::SpeechRecognitionRecognitionContextPtr
-        recognition_context =
-            media::mojom::blink::SpeechRecognitionRecognitionContext::New(
-                std::move(wtf_phrases));
-    session_->UpdateRecognitionContext(std::move(recognition_context));
-  }
-}
-
 void SpeechRecognition::setProcessLocally(bool process_locally) {
   base::UmaHistogramBoolean(kWebSpeechSetProcessLocallyHistogram,
                             process_locally);
@@ -135,8 +109,8 @@ void SpeechRecognition::start(ExceptionState& exception_state) {
   // If this is called in prerendering, it should be deferred.
   if (DomWindow() && DomWindow()->document()->IsPrerendering()) {
     DomWindow()->document()->AddPostPrerenderingActivationStep(
-        WTF::BindOnce(&SpeechRecognition::CheckAvailabilityAndStart,
-                      WrapWeakPersistent(this), /*exception_state=*/nullptr));
+        BindOnce(&SpeechRecognition::CheckAvailabilityAndStart,
+                 WrapWeakPersistent(this), /*exception_state=*/nullptr));
     return;
   }
   CheckAvailabilityAndStart(&exception_state);
@@ -166,8 +140,8 @@ void SpeechRecognition::stopFunction() {
   // https://wicg.github.io/nav-speculation/prerendering.html#web-speech-patch
   // If this is called in prerendering, it should be deferred.
   if (DomWindow() && DomWindow()->document()->IsPrerendering()) {
-    DomWindow()->document()->AddPostPrerenderingActivationStep(WTF::BindOnce(
-        &SpeechRecognition::stopFunction, WrapWeakPersistent(this)));
+    DomWindow()->document()->AddPostPrerenderingActivationStep(
+        BindOnce(&SpeechRecognition::stopFunction, WrapWeakPersistent(this)));
     return;
   }
 
@@ -185,7 +159,7 @@ void SpeechRecognition::abort() {
   // If this is called in prerendering, it should be deferred.
   if (DomWindow() && DomWindow()->document()->IsPrerendering()) {
     DomWindow()->document()->AddPostPrerenderingActivationStep(
-        WTF::BindOnce(&SpeechRecognition::abort, WrapWeakPersistent(this)));
+        BindOnce(&SpeechRecognition::abort, WrapWeakPersistent(this)));
     return;
   }
 
@@ -236,7 +210,7 @@ ScriptPromise<V8AvailabilityStatus> SpeechRecognition::available(
   if (options->processLocally()) {
     controller->AvailableOnDevice(
         options->langs(),
-        WTF::BindOnce(
+        BindOnce(
             [](ScriptPromiseResolver<V8AvailabilityStatus>* resolver,
                media::mojom::blink::AvailabilityStatus status) {
               resolver->Resolve(AvailabilityStatusToV8(status));
@@ -298,7 +272,7 @@ ScriptPromise<IDLBoolean> SpeechRecognition::install(
 
   controller->AvailableOnDevice(
       options->langs(),
-      WTF::BindOnce(
+      BindOnce(
           [](ScriptPromiseResolver<IDLBoolean>* resolver,
              ScriptState* script_state, const Vector<String>& languages,
              media::mojom::blink::AvailabilityStatus status) {
@@ -317,9 +291,9 @@ ScriptPromise<IDLBoolean> SpeechRecognition::install(
             }
             controller->Install(
                 languages,
-                WTF::BindOnce([](ScriptPromiseResolver<IDLBoolean>* resolver,
-                                 bool success) { resolver->Resolve(success); },
-                              WrapPersistent(resolver)));
+                BindOnce([](ScriptPromiseResolver<IDLBoolean>* resolver,
+                            bool success) { resolver->Resolve(success); },
+                         WrapPersistent(resolver)));
           },
           WrapPersistent(resolver), WrapPersistent(script_state),
           options->langs()));
@@ -328,7 +302,7 @@ ScriptPromise<IDLBoolean> SpeechRecognition::install(
 }
 
 void SpeechRecognition::ResultRetrieved(
-    WTF::Vector<media::mojom::blink::WebSpeechRecognitionResultPtr> results) {
+    Vector<media::mojom::blink::WebSpeechRecognitionResultPtr> results) {
   auto it = std::stable_partition(
       results.begin(), results.end(),
       [](const auto& result) { return !result->is_provisional; });
@@ -436,6 +410,66 @@ void SpeechRecognition::PageVisibilityChanged() {
 #endif
 }
 
+void SpeechRecognition::OnPhrasesChanged() {
+  phrases_update_scheduled_ = false;
+  // Only on device speech recognition supports contextual biasing.
+  if (phrases_->size() > 0 && !process_locally_) {
+    ErrorOccurred(media::mojom::blink::SpeechRecognitionError::New(
+        media::mojom::blink::SpeechRecognitionErrorCode::kPhrasesNotSupported,
+        media::mojom::blink::SpeechAudioErrorDetails::kNone));
+    return;
+  }
+
+  // If the speech recognition session has started, update the phrases.
+  if (started_) {
+    CHECK(session_);
+    Vector<media::mojom::blink::SpeechRecognitionPhrasePtr> wtf_phrases;
+    for (const auto& phrase : *phrases_) {
+      wtf_phrases.emplace_back(
+          media::mojom::blink::SpeechRecognitionPhrase::New(phrase->phrase(),
+                                                            phrase->boost()));
+    }
+    media::mojom::blink::SpeechRecognitionRecognitionContextPtr
+        recognition_context =
+            media::mojom::blink::SpeechRecognitionRecognitionContext::New(
+                std::move(wtf_phrases));
+
+    session_->UpdateRecognitionContext(std::move(recognition_context));
+  }
+}
+
+void SpeechRecognition::SchedulePhrasesUpdate() {
+  if (phrases_update_scheduled_) {
+    return;
+  }
+  phrases_update_scheduled_ = true;
+  GetExecutionContext()
+      ->GetTaskRunner(TaskType::kMiscPlatformAPI)
+      ->PostTask(FROM_HERE, BindOnce(&SpeechRecognition::OnPhrasesChanged,
+                                     WrapWeakPersistent(this)));
+}
+
+void SpeechRecognition::OnPhrasesSet(
+    GarbageCollectedMixin* tree_scope,
+    ScriptState* script_state,
+    V8ObservableArraySpeechRecognitionPhrase& observable_array,
+    uint32_t index,
+    Member<SpeechRecognitionPhrase>& phrase) {
+  static_cast<SpeechRecognition*>(
+      reinterpret_cast<ActiveScriptWrappableBase*>(tree_scope))
+      ->SchedulePhrasesUpdate();
+}
+
+void SpeechRecognition::OnPhrasesDelete(
+    GarbageCollectedMixin* tree_scope,
+    ScriptState* script_state,
+    V8ObservableArraySpeechRecognitionPhrase& observable_array,
+    uint32_t index) {
+  static_cast<SpeechRecognition*>(
+      reinterpret_cast<ActiveScriptWrappableBase*>(tree_scope))
+      ->SchedulePhrasesUpdate();
+}
+
 void SpeechRecognition::OnConnectionError() {
   ErrorOccurred(media::mojom::blink::SpeechRecognitionError::New(
       media::mojom::blink::SpeechRecognitionErrorCode::kNetwork,
@@ -472,7 +506,7 @@ void SpeechRecognition::CheckAvailabilityAndStart(
   if (process_locally_ && lang_) {
     controller_->AvailableOnDevice(
         Vector<String>{lang_},
-        WTF::BindOnce(
+        BindOnce(
             [](SpeechRecognition* speech_recognition,
                media::mojom::blink::AvailabilityStatus status) {
               if (!speech_recognition) {
@@ -508,9 +542,8 @@ void SpeechRecognition::StartInternal() {
     SpeechRecognitionMediaStreamAudioSink* sink =
         MakeGarbageCollected<SpeechRecognitionMediaStreamAudioSink>(
             GetExecutionContext(),
-            WTF::BindOnce(&SpeechRecognition::StartController,
-                          WrapPersistent(this),
-                          session_.BindNewPipeAndPassReceiver(task_runner)));
+            BindOnce(&SpeechRecognition::StartController, WrapPersistent(this),
+                     session_.BindNewPipeAndPassReceiver(task_runner)));
     WebMediaStreamAudioSink::AddToAudioTrack(
         sink, WebMediaStreamTrack(stream_track_->Component()));
     stream_track_->RegisterSink(sink);
@@ -533,11 +566,11 @@ void SpeechRecognition::StartController(
   receiver_.Bind(
       session_client.InitWithNewPipeAndPassReceiver(),
       GetExecutionContext()->GetTaskRunner(TaskType::kMiscPlatformAPI));
-  receiver_.set_disconnect_handler(WTF::BindOnce(
+  receiver_.set_disconnect_handler(BindOnce(
       &SpeechRecognition::OnConnectionError, WrapWeakPersistent(this)));
   auto params = controller_->BuildStartSpeechRecognitionRequestParams(
       std::move(session_receiver), std::move(session_client), *grammars_,
-      phrases(), lang_, continuous_, interim_results_, max_alternatives_,
+      phrases_.Get(), lang_, continuous_, interim_results_, max_alternatives_,
       /*on_device=*/true,  // On-device speech recognition is always preferred.
       /*allow_cloud_fallback=*/!process_locally_,
       std::move(audio_forwarder_receiver), std::move(audio_parameters));
@@ -550,7 +583,10 @@ SpeechRecognition::SpeechRecognition(LocalDOMWindow* window)
       PageVisibilityObserver(window->GetFrame() ? window->GetFrame()->GetPage()
                                                 : nullptr),
       grammars_(SpeechGrammarList::Create()),
-      phrases_(SpeechRecognitionPhraseList::Create({})),
+      phrases_(MakeGarbageCollected<V8ObservableArraySpeechRecognitionPhrase>(
+          static_cast<ActiveScriptWrappableBase*>(this),
+          &OnPhrasesSet,
+          &OnPhrasesDelete)),
       controller_(SpeechRecognitionController::From(*window)),
       receiver_(this, window),
       session_(window) {}

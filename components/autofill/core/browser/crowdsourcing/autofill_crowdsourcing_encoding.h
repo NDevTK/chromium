@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 
-#include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/crowdsourcing/randomized_encoder.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/logging/log_manager.h"
@@ -38,8 +37,8 @@ struct EncodeUploadRequestOptions {
     Field& operator=(Field&&);
     ~Field();
 
-    // All date format strings that match the field value.
-    base::flat_set<std::u16string> format_strings;
+    // All format strings that match the field value.
+    std::set<std::pair<FormatString_Type, std::u16string>> format_strings;
 
     // Strength of the single username vote signal, if applicable.
     std::optional<AutofillUploadContents::Field::SingleUsernameVoteType>
@@ -87,6 +86,10 @@ struct EncodeUploadRequestOptions {
   // The randomized encoder to use to encode form metadata during upload.
   // If this is nullptr, no randomized metadata is sent.
   std::optional<RandomizedEncoder> encoder;
+
+  // The language detected for this form's page, before any translations
+  // performed by Chrome.
+  LanguageCode current_page_language;
 
   // The type of the event that was taken as an indication that the form has
   // been successfully submitted.
@@ -155,7 +158,7 @@ EncodeAutofillPageQueryRequest(
 // `ProcessServerPredictionsQueryResponse`.
 void ParseServerPredictionsQueryResponse(
     std::string_view payload,
-    const std::vector<raw_ptr<FormStructure, VectorExperimental>>& forms,
+    const std::vector<raw_ref<FormStructure>>& forms,
     const std::vector<FormSignature>& queried_form_signatures,
     LogManager* log_manager);
 
@@ -164,7 +167,7 @@ void ParseServerPredictionsQueryResponse(
 // constructing the query.
 void ProcessServerPredictionsQueryResponse(
     const AutofillQueryResponse& response,
-    const std::vector<raw_ptr<FormStructure, VectorExperimental>>& forms,
+    const std::vector<raw_ref<FormStructure>>& forms,
     const std::vector<FormSignature>& queried_form_signatures,
     LogManager* log_manager);
 

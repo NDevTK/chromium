@@ -30,8 +30,8 @@ class Browser;
 @property(nonatomic, weak) id<AuthenticationFlowDelegate> delegate;
 
 // Designated initializer.
-// * `browser` is the current browser where the authentication flow is being
-//   presented.
+// * `browser` is the current regular browser where the authentication flow is
+// being presented.
 // * `accessPoint` is the sign-in access point.
 // * `precedingHistorySync` specifies whether the History Sync Opt-In screen
 //   follows after the flow completes with success.
@@ -53,8 +53,6 @@ class Browser;
 // Starts the sign in flow for the identity given in the constructor. Displays
 // the signed in confirmation dialog allowing the user to sign out or configure
 // sync.
-// It is safe to destroy this authentication flow when `completion` is called.
-// `completion` must not be nil.
 - (void)startSignIn;
 
 // * Interrupts the current sign-in operation (if any).
@@ -62,13 +60,13 @@ class Browser;
 // * Calls synchronously the completion callback from
 // `startSignInWithCompletion` with the sign-in flag set to no.
 //
-// Does noting if the sign-in flow is already done
+// Does noting if the sign-in flow is already done.
 - (void)interrupt;
 
 // Identity to sign-in.
 @property(nonatomic, strong, readonly) id<SystemIdentity> identity;
 
-// Sign-in access point
+// Sign-in access point.
 @property(nonatomic, assign, readonly) signin_metrics::AccessPoint accessPoint;
 
 @end

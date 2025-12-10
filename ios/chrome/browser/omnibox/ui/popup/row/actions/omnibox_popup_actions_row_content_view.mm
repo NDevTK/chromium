@@ -12,6 +12,7 @@
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_icon_view.h"
 #import "ios/chrome/browser/omnibox/ui/popup/row/actions/actions_view.h"
 #import "ios/chrome/browser/omnibox/ui/popup/row/omnibox_popup_row_delegate.h"
+#import "ios/chrome/browser/omnibox/ui/popup/row/omnibox_popup_row_trailing_button.h"
 #import "ios/chrome/browser/omnibox/ui/popup/row/omnibox_popup_row_util.h"
 #import "ios/chrome/browser/shared/ui/elements/extended_touch_target_button.h"
 #import "ios/chrome/browser/shared/ui/elements/fade_truncating_label.h"
@@ -33,7 +34,6 @@ const CGFloat kMultilineTextTopMargin = 12.0;
 const CGFloat kTextTrailingMargin = 0.0;
 const CGFloat kMultilineTextTrailingMargin = 4.0;
 const CGFloat kMultilineLineSpacing = 2.0;
-const CGFloat kTrailingButtonSize = 24;
 const CGFloat kTrailingButtonTrailingMargin = 14;
 /// Trailing button trailing margin with popout omnibox.
 const CGFloat kTrailingButtonTrailingMarginPopout = 22.0;
@@ -59,7 +59,7 @@ const CGFloat kActionScrollViewSeparatorSpace = 8;
   FadeTruncatingLabel* _secondaryLabelFading;
   UILabel* _secondaryLabelTruncating;
   OmniboxIconView* _leadingIconView;
-  ExtendedTouchTargetButton* _trailingButton;
+  OmniboxPopupRowTrailingButton* _trailingButton;
   UIStackView* _textStackView;
   UIView* _separator;
   UIView* _selectedBackgroundView;
@@ -142,13 +142,15 @@ const CGFloat kActionScrollViewSeparatorSpace = 8;
 
     // Trailing Button.
     _trailingButton =
-        [ExtendedTouchTargetButton buttonWithType:UIButtonTypeCustom];
+        [[OmniboxPopupRowTrailingButton alloc] initWithFrame:CGRectZero];
     _trailingButton.translatesAutoresizingMaskIntoConstraints = NO;
     _trailingButton.isAccessibilityElement = NO;
+    _trailingButton.contentMode = UIViewContentModeScaleAspectFit;
+    _trailingButton.presentationContext = configuration.presentationContext;
+
     [_trailingButton addTarget:self
                         action:@selector(trailingButtonTapped)
               forControlEvents:UIControlEventTouchUpInside];
-    _trailingButton.hidden = YES;  // Optional view.
     [_richEntityView addSubview:_trailingButton];
     _actionsView = [[ActionsView alloc] initWithConfiguration:configuration];
 
@@ -225,9 +227,7 @@ const CGFloat kActionScrollViewSeparatorSpace = 8;
 
       // Trailing button constraints.
       [_trailingButton.heightAnchor
-          constraintEqualToConstant:kTrailingButtonSize],
-      [_trailingButton.widthAnchor
-          constraintEqualToConstant:kTrailingButtonSize],
+          constraintEqualToAnchor:_trailingButton.widthAnchor],
       _trailingButtonTrailingConstraint,
 
       // Separator height anchor added in `didMoveToWindow`.
@@ -357,19 +357,11 @@ const CGFloat kActionScrollViewSeparatorSpace = 8;
   }
 
   // Trailing Button.
-  if (configuration.trailingIcon) {
-    [_trailingButton setImage:configuration.trailingIcon
-                     forState:UIControlStateNormal];
-    _trailingButton.hidden = NO;
-    _trailingButton.tintColor = configuration.trailingIconTintColor;
-    _trailingButton.accessibilityIdentifier =
-        configuration.trailingButtonAccessibilityIdentifier;
-    _textTrailingToButtonConstraint.active = YES;
-  } else {
-    _textTrailingToButtonConstraint.active = NO;
-    _trailingButton.hidden = YES;
-    _trailingButton.accessibilityIdentifier = nil;
-  }
+  _trailingButton.trailingIconType = configuration.trailingIconType;
+  _trailingButton.isHighlighted = configuration.isBackgroundHighlighted;
+  _trailingButton.refineQueryArrowDirectionDown =
+      configuration.refineQueryArrowDirectionDown;
+  _textTrailingToButtonConstraint.active = !_trailingButton.hidden;
 
   // Separator.
   _separator.hidden = !configuration.showSeparator;

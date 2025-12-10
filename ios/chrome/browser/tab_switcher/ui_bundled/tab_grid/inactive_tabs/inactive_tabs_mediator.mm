@@ -354,7 +354,7 @@ web::WebState* WebStateWithSnapshotID(WebStateList& web_state_list,
 - (void)closeAllItems {
   // TODO(crbug.com/40257500): Add metrics when the user closes all inactive
   // tabs.
-  CloseAllWebStates(*_webStateList, WebStateList::CLOSE_USER_ACTION);
+  CloseAllWebStates(*_webStateList, WebStateList::ClosingReason::kUserAction);
   [_snapshotStorage removeAllImages];
 }
 
@@ -420,7 +420,8 @@ web::WebState* WebStateWithSnapshotID(WebStateList& web_state_list,
                                                   .identifier = itemID,
                                               });
   if (index != WebStateList::kInvalidIndex) {
-    _webStateList->CloseWebStateAt(index, WebStateList::CLOSE_USER_ACTION);
+    _webStateList->CloseWebStateAt(index,
+                                   WebStateList::ClosingReason::kUserAction);
   }
 }
 
@@ -495,6 +496,24 @@ web::WebState* WebStateWithSnapshotID(WebStateList& web_state_list,
 - (void)closeItemWithIdentifier:(GridItemIdentifier*)identifier {
   CHECK(identifier.type == GridItemType::kTab);
   [self closeItemWithID:identifier.tabSwitcherItem.identifier];
+}
+
+- (void)createTabGroupWithTitle:(NSString*)title
+                     sourceItem:(GridItemIdentifier*)sourceItem
+                     droppedTab:(TabInfo*)droppedTab
+                destinationItem:(GridItemIdentifier*)destinationItem {
+  // No-op
+}
+
+- (void)addDroppedTab:(TabInfo*)droppedTab
+           sourceItem:(GridItemIdentifier*)sourceItem
+              toGroup:(const TabGroup*)group {
+  // No-op
+}
+
+- (void)mergeGroup:(TabGroupItem*)droppedGroup
+    intoDestinationItem:(GridItemIdentifier*)destinationItem {
+  // No-op
 }
 
 @end

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "printing/backend/cups_jobs.h"
 
 #include <cups/ipp.h>
@@ -88,6 +83,10 @@ constexpr char kIppEverywhere[] = "ipp-everywhere";
 // job state reason values
 constexpr char kJobCompletedWithErrors[] = "job-completed-with-errors";
 constexpr char kCupsHeldForAuthentication[] = "cups-held-for-authentication";
+constexpr char kJobCanceledByUser[] = "job-canceled-by-user";
+constexpr char kJobCanceledByOperator[] = "job-canceled-by-operator";
+constexpr char kJobCanceledAtDevice[] = "job-canceled-at-device";
+constexpr char kJobCompletedSuccessfully[] = "job-completed-successfully";
 
 // printer state severities
 constexpr char kSeverityReport[] = "report";
@@ -486,6 +485,14 @@ const std::string_view ToJobStateReasonString(
       return kJobCompletedWithErrors;
     case CupsJob::JobStateReason::kCupsHeldForAuthentication:
       return kCupsHeldForAuthentication;
+    case CupsJob::JobStateReason::kJobCanceledByUser:
+      return kJobCanceledByUser;
+    case CupsJob::JobStateReason::kJobCanceledByOperator:
+      return kJobCanceledByOperator;
+    case CupsJob::JobStateReason::kJobCanceledAtDevice:
+      return kJobCanceledAtDevice;
+    case CupsJob::JobStateReason::kJobCompletedSuccessfully:
+      return kJobCompletedSuccessfully;
   }
   return "";
 }

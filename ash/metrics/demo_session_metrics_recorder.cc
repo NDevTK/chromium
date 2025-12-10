@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "ash/constants/web_app_id_constants.h"
 #include "ash/public/cpp/app_types_util.h"
 #include "ash/public/cpp/window_properties.h"
 #include "ash/shelf/shelf_window_watcher.h"
@@ -17,6 +18,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/scoped_multi_source_observation.h"
+#include "base/strings/strcat.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chromeos/ui/base/app_types.h"
@@ -138,7 +140,8 @@ DemoModeApp GetAppFromAppId(const std::string& app_id) {
   if (app_id == extension_misc::kGoogleDocsDemoAppId) {
     return DemoModeApp::kGoogleDocsChromeApp;
   }
-  if (app_id == extension_misc::kGoogleDocsPwaAppId) {
+  if (app_id == extension_misc::kGoogleDocsPwaAppId ||
+      app_id == ash::kGoogleDocsAppId) {
     return DemoModeApp::kGoogleDocsPwa;
   }
   if (app_id == extension_misc::kGoogleMeetPwaAppId) {

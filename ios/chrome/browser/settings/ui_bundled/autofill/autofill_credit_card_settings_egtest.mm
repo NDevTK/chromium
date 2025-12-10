@@ -145,6 +145,24 @@ id<GREYMatcher> BottomToolbar() {
       performAction:grey_tap()];
 }
 
+// Asserts that the toolbar is visible. On iOS26 assert that buttons in the
+// toolbar are visible.
+- (void)assertToolbarIsVisible {
+  if (!iOS26_OR_ABOVE()) {
+    [[EarlGrey selectElementWithMatcher:BottomToolbar()]
+        assertWithMatcher:grey_sufficientlyVisible()];
+  } else {
+    // accessibilityIdentifier of toolbars is not working on iOS26, check
+    // instead that buttons in the toolbar are visible.
+    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                            kSettingsToolbarEditDoneButtonId)]
+        assertWithMatcher:grey_sufficientlyVisible()];
+    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                            kSettingsToolbarDeleteButtonId)]
+        assertWithMatcher:grey_sufficientlyVisible()];
+  }
+}
+
 // Close the settings.
 - (void)exitSettingsMenu {
   [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton(0)]
@@ -322,7 +340,8 @@ id<GREYMatcher> BottomToolbar() {
 }
 
 // Test that the page for editing Autofill credit card details is accessible.
-- (void)testAccessibilityOnCreditCardEditPage {
+// TODO(crbug.com/379736649): Re-enable this test.
+- (void)FLAKY_testAccessibilityOnCreditCardEditPage {
   NSString* lastDigits = [AutofillAppInterface saveLocalCreditCard];
   [AutofillAppInterface mockReauthenticationModuleExpectedResult:
                             ReauthenticationResult::kSuccess];
@@ -368,9 +387,10 @@ id<GREYMatcher> BottomToolbar() {
     // Check the Autofill credit card switch is enabled if the reauthentication
     // result is a failure.
     bool enabled = (result == ReauthenticationResult::kFailure);
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::TableViewSwitchCell(
-                                            kAutofillCreditCardSwitchViewId,
-                                            YES, enabled)]
+    id<GREYMatcher> autofillCardSwitch = chrome_test_util::TableViewSwitchCell(
+        kAutofillCreditCardSwitchViewId, YES, enabled);
+    [ChromeEarlGrey waitForUIElementToAppearWithMatcher:autofillCardSwitch];
+    [[EarlGrey selectElementWithMatcher:autofillCardSwitch]
         assertWithMatcher:grey_notNil()];
 
     // Check the Autofill mandatory reauth switch is enabled if the
@@ -509,19 +529,17 @@ id<GREYMatcher> BottomToolbar() {
   [AutofillAppInterface mockReauthenticationModuleExpectedResult:
                             ReauthenticationResult::kSuccess];
   [self openCreditCardListInEditMode];
+  [self assertToolbarIsVisible];
 
-  [[EarlGrey selectElementWithMatcher:BottomToolbar()]
-      assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
                                           [self creditCardLabel:lastDigits])]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:BottomToolbar()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  [self assertToolbarIsVisible];
+
   [[EarlGrey selectElementWithMatcher:grey_accessibilityLabel(
                                           [self creditCardLabel:lastDigits])]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:BottomToolbar()]
-      assertWithMatcher:grey_sufficientlyVisible()];
+  [self assertToolbarIsVisible];
 }
 
 // Checks the 'Delete' button is always visible.

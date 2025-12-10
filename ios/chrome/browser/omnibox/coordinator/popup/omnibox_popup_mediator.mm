@@ -14,10 +14,10 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "components/feature_engagement/public/tracker.h"
-#import "components/omnibox/browser/actions/omnibox_action_concepts.h"
-#import "components/omnibox/browser/autocomplete_result.h"
 #import "components/omnibox/common/omnibox_features.h"
 #import "components/password_manager/core/browser/manage_passwords_referrer.h"
+#import "components/search_engines/template_url_service.h"
+#import "components/search_engines/util.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/variations/variations_associated_data.h"
 #import "components/variations/variations_ids_provider.h"
@@ -37,6 +37,7 @@
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_consumer.h"
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_presenter.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
 #import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
@@ -50,6 +51,7 @@ namespace {
 /// Maximum number of suggest tile types we want to record. Anything beyond this
 /// will be reported in the overflow bucket.
 const NSUInteger kMaxSuggestTileTypePosition = 15;
+
 }  // namespace
 
 @interface OmniboxPopupMediator ()
@@ -100,7 +102,10 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
             (OmniboxAutocompleteController*)autocompleteController
                                            hasSuggestions:(BOOL)hasSuggestions
                                                isFocusing:(BOOL)isFocusing {
+  [self.consumer setKeyboardAttachedBottomOmniboxHeight:
+                     self.presenter.keyboardAttachedBottomOmniboxHeight];
   [self.consumer newResultsAvailable];
+  [_consumer setUseBottomOmniboxInPopup:self.presenter.useBottomOmniboxInPopup];
 
   self.open = hasSuggestions;
   [self.presenter updatePopupOnFocus:isFocusing];
@@ -141,6 +146,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 
 - (void)onTraitCollectionChange {
   [self.presenter updatePopupAfterTraitCollectionChange];
+  [_consumer setUseBottomOmniboxInPopup:self.presenter.useBottomOmniboxInPopup];
 }
 
 - (void)selectSuggestion:(id<AutocompleteSuggestion>)suggestion
@@ -188,7 +194,9 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
     [self.omniboxAutocompleteController
         selectMatchForOpening:match
                         inRow:row
-                       openIn:WindowOpenDisposition::CURRENT_TAB];
+                       openIn:IsDiamondPrototypeEnabled()
+                                  ? WindowOpenDisposition::NEW_FOREGROUND_TAB
+                                  : WindowOpenDisposition::CURRENT_TAB];
   } else {
     DUMP_WILL_BE_NOTREACHED()
         << "Suggestion type " << NSStringFromClass(suggestion.class)
@@ -203,7 +211,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
                                                     true /* used */);
 
   switch (action.type) {
-    case omnibox::ActionInfo_ActionType_CALL: {
+    case omnibox::SuggestTemplateInfo_TemplateAction_ActionType_CALL: {
       NSURL* URL = net::NSURLWithGURL(action.actionURI);
       __weak __typeof__(self) weakSelf = self;
       [[UIApplication sharedApplication] openURL:URL
@@ -215,7 +223,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
                                }];
       break;
     }
-    case omnibox::ActionInfo_ActionType_DIRECTIONS: {
+    case omnibox::SuggestTemplateInfo_TemplateAction_ActionType_DIRECTIONS: {
       NSURL* URL = net::NSURLWithGURL(action.actionURI);
 
       if (IsGoogleMapsAppInstalled() && !self.incognito) {
@@ -227,7 +235,7 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
       }
       break;
     }
-    case omnibox::ActionInfo_ActionType_REVIEWS: {
+    case omnibox::SuggestTemplateInfo_TemplateAction_ActionType_REVIEWS: {
       [self openNewTabWithSuggestAction:action];
       break;
     }
@@ -238,6 +246,10 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
 
 - (void)tapTrailingButtonOnSuggestion:(id<AutocompleteSuggestion>)suggestion
                                 inRow:(NSUInteger)row {
+  if (!suggestion) {
+    return;
+  }
+
   if ([suggestion isKindOfClass:[AutocompleteMatchFormatter class]]) {
     AutocompleteMatchFormatter* autocompleteMatchFormatter =
         (AutocompleteMatchFormatter*)suggestion;
@@ -277,6 +289,11 @@ const NSUInteger kMaxSuggestTileTypePosition = 15;
         << "Suggestion type " << NSStringFromClass(suggestion.class)
         << " not handled for deletion.";
   }
+}
+
+- (void)closeButtonTapped {
+  [self.omniboxCommandsHandler cancelOmniboxEdit];
+  [self.omniboxAutocompleteController closeOmniboxPopup];
 }
 
 - (void)onScroll {

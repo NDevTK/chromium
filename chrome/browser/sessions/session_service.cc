@@ -37,14 +37,17 @@
 #include "chrome/browser/sessions/session_service_log.h"
 #include "chrome/browser/sessions/session_service_utils.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/session_crashed_bubble.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/web_applications/web_app_helpers.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
@@ -236,6 +239,43 @@ void SessionService::DeleteLastSession() {
   ++count_delete_last_session_for_testing_;
 }
 
+void SessionService::SetSplitTab(SessionID window_id,
+                                 SessionID tab_id,
+                                 std::optional<split_tabs::SplitTabId> split) {
+  if (!ShouldTrackChangesToWindow(window_id) ||
+      !features::IsRestoringSplitViewEnabled()) {
+    return;
+  }
+
+  // Tabs get unsplit as they close. However, if the whole window is closing
+  // tabs should stay in their split. So, ignore this call in that case.
+  if (base::Contains(pending_window_close_ids_, window_id) ||
+      base::Contains(window_closing_ids_, window_id)) {
+    return;
+  }
+
+  ScheduleCommand(sessions::CreateSplitTabCommand(tab_id, std::move(split)));
+}
+
+void SessionService::SetSplitTabData(
+    SessionID window_id,
+    const split_tabs::SplitTabId split,
+    const split_tabs::SplitTabVisualData* visual_data) {
+  if (!ShouldTrackChangesToWindow(window_id) ||
+      !features::IsRestoringSplitViewEnabled()) {
+    return;
+  }
+
+  // Any split metadata changes happening in a closing window can be ignored.
+  if (base::Contains(pending_window_close_ids_, window_id) ||
+      base::Contains(window_closing_ids_, window_id)) {
+    return;
+  }
+
+  ScheduleCommand(
+      sessions::CreateSplitTabDataUpdateCommand(split, visual_data));
+}
+
 void SessionService::SetTabGroup(SessionID window_id,
                                  SessionID tab_id,
                                  std::optional<tab_groups::TabGroupId> group) {
@@ -256,14 +296,15 @@ void SessionService::SetTabGroupMetadata(
     const tab_groups::TabGroupId& group_id,
     const tab_groups::TabGroupVisualData* visual_data) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile());
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile());
   std::optional<std::string> saved_guid;
   if (tab_group_service) {
     if (const std::optional<tab_groups::SavedTabGroup> saved_group =
             tab_group_service->GetGroup(group_id)) {
       saved_guid = saved_group->saved_guid().AsLowercaseString();
-    } else if (local_to_sync_id_mapping_.contains(group_id)) {
-      saved_guid = local_to_sync_id_mapping_.at(group_id);
+    } else if (auto it = local_to_sync_id_mapping_.find(group_id);
+               it != local_to_sync_id_mapping_.end()) {
+      saved_guid = it->second;
     }
   }
 
@@ -500,17 +541,10 @@ void SessionService::DidScheduleCommand() {
   if (is_first_session_service_)
     return;
 
-#if BUILDFLAG(IS_CHROMEOS)
-  // TODO(crbug.com/40196304): for debugging, remove once tracked down
-  // source of problem.
-  // A command has been scheduled for a SessionService other than the first.
-  // Recreating the SessionService happens if shutdown is canceled, which is
-  // valid, but bugs seem to indicate we are getting here in scenarios we don't
-  // expect. This debug code is attempting to identify how that is happening.
-  const bool shutdown_started = browser_shutdown::HasShutdownStarted();
-  base::debug::Alias(&shutdown_started);
-  base::debug::DumpWithoutCrashing();
-#endif
+  // TODO(crbug.com/40196304): A command has been scheduled for a SessionService
+  // other than the first. Recreating the SessionService happens if shutdown is
+  // canceled, which is valid, but bugs seem to indicate we are getting here in
+  // scenarios we don't expect. Investigate further.
 }
 
 bool SessionService::ShouldRestoreWindowOfType(
@@ -573,11 +607,12 @@ void SessionService::BuildCommandsForTab(
     WebContents* tab,
     int index_in_window,
     std::optional<tab_groups::TabGroupId> group,
+    std::optional<split_tabs::SplitTabId> split,
     bool is_pinned,
     IdToRange* tab_to_available_range) {
   DCHECK(is_saving_enabled());
   SessionServiceBase::BuildCommandsForTab(window_id, tab, index_in_window,
-                                          group, is_pinned,
+                                          group, split, is_pinned,
                                           tab_to_available_range);
 
   sessions::SessionTabHelper* session_tab_helper =
@@ -600,6 +635,11 @@ void SessionService::BuildCommandsForTab(
   if (group.has_value()) {
     command_storage_manager()->AppendRebuildCommand(
         sessions::CreateTabGroupCommand(session_id, std::move(group)));
+  }
+
+  if (features::IsRestoringSplitViewEnabled() && split.has_value()) {
+    command_storage_manager()->AppendRebuildCommand(
+        sessions::CreateSplitTabCommand(session_id, std::move(split)));
   }
 }
 
@@ -638,38 +678,51 @@ void SessionService::CommitPendingCloses() {
 }
 
 bool SessionService::IsOnlyOneTabLeft() const {
-  if (profile()->AsTestingProfile())
+  if (profile()->AsTestingProfile()) {
     return is_only_one_tab_left_for_test_;
+  }
 
   int window_count = 0;
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    const SessionID window_id = browser->session_id();
-    if (ShouldTrackBrowser(browser) &&
-        window_closing_ids_.find(window_id) == window_closing_ids_.end()) {
-      if (++window_count > 1)
-        return false;
-      // By the time this is invoked the tab has been removed. As such, we use
-      // > 0 here rather than > 1.
-      if (browser->tab_strip_model()->count() > 0)
-        return false;
-    }
-  }
-  return true;
+  bool is_only_one_tab_left = true;
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [this, &is_only_one_tab_left,
+       &window_count](BrowserWindowInterface* browser) {
+        const SessionID window_id = browser->GetSessionID();
+        if (ShouldTrackBrowser(browser->GetBrowserForMigrationOnly()) &&
+            window_closing_ids_.find(window_id) == window_closing_ids_.end()) {
+          if (++window_count > 1) {
+            is_only_one_tab_left = false;
+          }
+          // By the time this is invoked the tab has been removed. As such, we
+          // use > 0 here rather than > 1.
+          if (browser->GetTabStripModel()->count() > 0) {
+            is_only_one_tab_left = false;
+          }
+        }
+        // Continue until the above checks confirm there is more than one
+        // trackable tab left, or all browsers are exhausted.
+        return is_only_one_tab_left;
+      });
+  return is_only_one_tab_left;
 }
 
 bool SessionService::HasOpenTrackableBrowsers(SessionID window_id) const {
   if (profile()->AsTestingProfile())
     return has_open_trackable_browser_for_test_;
 
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    const SessionID browser_id = browser->session_id();
-    if (browser_id != window_id &&
-        window_closing_ids_.find(browser_id) == window_closing_ids_.end() &&
-        ShouldTrackBrowser(browser)) {
-      return true;
-    }
-  }
-  return false;
+  bool has_open_trackable = false;
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [this, window_id, &has_open_trackable](BrowserWindowInterface* browser) {
+        const SessionID browser_id = browser->GetSessionID();
+        if (browser_id != window_id &&
+            window_closing_ids_.find(browser_id) == window_closing_ids_.end()) {
+          if (ShouldTrackBrowser(browser->GetBrowserForMigrationOnly())) {
+            has_open_trackable = true;
+          }
+        }
+        return !has_open_trackable;
+      });
+  return has_open_trackable;
 }
 
 void SessionService::RebuildCommandsIfRequired() {
@@ -692,12 +745,14 @@ void SessionService::LogExitEvent() {
   RemoveExitEvent();
   int browser_count = 0;
   int tab_count = 0;
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    if (browser->profile() == profile()) {
-      ++browser_count;
-      tab_count += browser->tab_strip_model()->count();
-    }
-  }
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [this, &browser_count, &tab_count](BrowserWindowInterface* browser) {
+        if (browser->GetProfile() == profile()) {
+          ++browser_count;
+          tab_count += browser->GetTabStripModel()->count();
+        }
+        return true;
+      });
   did_log_exit_ = true;
   LogSessionServiceExitEvent(profile(), browser_count, tab_count,
                              is_first_session_service_, did_schedule_command_);

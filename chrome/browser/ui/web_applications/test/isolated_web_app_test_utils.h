@@ -15,13 +15,14 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/runtime_data/chrome_iwa_runtime_data_provider.h"
+#include "chrome/browser/web_applications/isolated_web_apps/update/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "components/version_info/channel.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
+#include "components/webapps/isolated_web_apps/types/source.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "extensions/common/features/feature_channel.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/window_open_disposition.h"
@@ -56,8 +57,13 @@ class IsolatedWebAppBrowserTestHarness : public WebAppBrowserTestBase {
   ~IsolatedWebAppBrowserTestHarness() override;
 
  protected:
+  void CreatedBrowserMainParts(content::BrowserMainParts* parts) override;
+
   std::unique_ptr<net::EmbeddedTestServer> CreateAndStartServer(
       base::FilePath::StringViewType chrome_test_data_relative_root);
+
+  virtual ChromeIwaRuntimeDataProvider* GetRuntimeDataProvider();
+
   IsolatedWebAppUrlInfo InstallDevModeProxyIsolatedWebApp(
       const url::Origin& origin);
   content::RenderFrameHost* OpenApp(
@@ -106,8 +112,8 @@ class UpdateDiscoveryTaskResultWaiter
 
 class UpdateApplyTaskResultWaiter
     : public IsolatedWebAppUpdateManager::Observer {
-  using TaskResultCallback = base::OnceCallback<void(
-      IsolatedWebAppUpdateApplyTask::CompletionStatus status)>;
+  using TaskResultCallback =
+      base::OnceCallback<void(IsolatedWebAppApplyUpdateCommandResult status)>;
 
  public:
   UpdateApplyTaskResultWaiter(WebAppProvider& provider,
@@ -118,7 +124,7 @@ class UpdateApplyTaskResultWaiter
   // IsolatedWebAppUpdateManager::Observer:
   void OnUpdateApplyTaskCompleted(
       const webapps::AppId& app_id,
-      IsolatedWebAppUpdateApplyTask::CompletionStatus status) override;
+      IsolatedWebAppApplyUpdateCommandResult status) override;
 
  private:
   const webapps::AppId expected_app_id_;

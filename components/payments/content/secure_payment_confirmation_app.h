@@ -83,8 +83,6 @@ class SecurePaymentConfirmationApp : public PaymentApp,
   std::u16string GetLabel() const override;
   std::u16string GetSublabel() const override;
   const SkBitmap* icon_bitmap() const override;
-  const SkBitmap* issuer_bitmap() const override;
-  const SkBitmap* network_bitmap() const override;
   std::vector<PaymentEntityLogo*> GetPaymentEntitiesLogos() override;
   bool IsValidForModifier(const std::string& method) const override;
   base::WeakPtr<PaymentApp> AsWeakPtr() override;
@@ -103,13 +101,12 @@ class SecurePaymentConfirmationApp : public PaymentApp,
   // WebContentsObserver implementation.
   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
 
-  // TODO(https://crbug.com/416516287): Remove issuer and network label once
-  // all callers use GetPaymentEntitiesLogos() instead.
-  std::u16string network_label() const;
-
-  std::u16string issuer_label() const;
-
   PasskeyBrowserBinder* GetPasskeyBrowserBinderForTesting();
+
+  void SetWaitForGetBrowserBoundKeyForTesting(
+      base::OnceClosure wait_for_get_bbk) {
+    wait_for_get_bbk_for_tests_ = std::move(wait_for_get_bbk);
+  }
 
  private:
   void OnGetBrowserBoundKey(
@@ -146,12 +143,10 @@ class SecurePaymentConfirmationApp : public PaymentApp,
 
   // This contains the logos of the entities facilitating the transaction. There
   // may be up to 2 logos.
-  //
-  // Payment entities can be of any type. However, when the
-  // SecurePaymentConfirmationNetworkAndIssuerIcons feature flag is enabled and
-  // network and issuer icons are provided by the page, this list will contain
-  // the network logo followed by the issuer logo.
   std::vector<PaymentEntityLogo> payment_entities_logos_;
+
+  // Used to block test completion until OnGetBrowserBoundKey is run.
+  base::OnceClosure wait_for_get_bbk_for_tests_;
 
   base::WeakPtrFactory<SecurePaymentConfirmationApp> weak_ptr_factory_{this};
 };

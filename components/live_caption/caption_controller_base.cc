@@ -58,9 +58,10 @@ class CaptionControllerDelgateImpl : public CaptionControllerBase::Delegate {
 }  // namespace
 
 CaptionControllerBase::~CaptionControllerBase() {
-  // The caption bubble controller, if we have one, will be cleaned up as part
-  // of destruction.  Don't leave the raw ptr alias to it dangling.
-  caption_bubble_controller_ = nullptr;
+  // Both tests and production code may create the UI without destroying it
+  // before reaching here. Ensure observers are deregistered properly. This is a
+  // no-op if `!is_ui_constructed_`.
+  DestroyUI();
 }
 
 CaptionControllerBase::CaptionControllerBase(
@@ -163,6 +164,9 @@ void CaptionControllerBase::OnCaptionStyleUpdated() {
 
 void CaptionControllerBase::AddListener(std::unique_ptr<Listener> listener) {
   listeners_.push_back(std::move(listener));
+  if (listeners_.size() == 1) {
+    OnFirstListenerAdded();
+  }
 }
 
 void CaptionControllerBase::RemoveListener(Listener* listener) {
@@ -176,13 +180,17 @@ void CaptionControllerBase::RemoveListener(Listener* listener) {
     }
 
     listeners_.erase(iter);
+
+    if (listeners_.empty()) {
+      OnLastListenerRemoved();
+    }
     return;
   }
   NOTREACHED();
 }
 
 bool CaptionControllerBase::DispatchTranscription(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* rfh,
     CaptionBubbleContext* caption_bubble_context,
     const media::SpeechRecognitionResult& result) {
   bool success = false;
@@ -190,29 +198,27 @@ bool CaptionControllerBase::DispatchTranscription(
   // Consider deleting the listener if it returns false.  It's unclear if
   // `caption_bubble_controller_` would allow this, but maybe.
   for (auto& listener : listeners_) {
-    success |=
-        listener->OnTranscription(web_contents, caption_bubble_context, result);
+    success |= listener->OnTranscription(rfh, caption_bubble_context, result);
   }
 
   return success;
 }
 
 void CaptionControllerBase::OnAudioStreamEnd(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* rfh,
     CaptionBubbleContext* caption_bubble_context) {
   for (auto& listener : listeners_) {
-    listener->OnAudioStreamEnd(web_contents, caption_bubble_context);
+    listener->OnAudioStreamEnd(rfh, caption_bubble_context);
   }
 }
 
 void CaptionControllerBase::OnLanguageIdentificationEvent(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* rfh,
     CaptionBubbleContext* caption_bubble_context,
     const media::mojom::LanguageIdentificationEventPtr& event) {
   // TODO(crbug.com/40167928): Implement the UI for language identification.
   for (auto& listener : listeners_) {
-    listener->OnLanguageIdentificationEvent(web_contents,
-                                            caption_bubble_context, event);
+    listener->OnLanguageIdentificationEvent(rfh, caption_bubble_context, event);
   }
 }
 

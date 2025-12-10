@@ -13,11 +13,9 @@
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/common/privacy_budget/identifiability_study_settings.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_image_encode_options.h"
-#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/unique_font_selector.h"
@@ -29,7 +27,7 @@
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 
@@ -48,7 +46,14 @@ bool CanUseGPU() {
 
 CanvasRenderingContextHost::CanvasRenderingContextHost(HostType host_type,
                                                        const gfx::Size& size)
-    : host_type_(host_type), size_(size) {}
+    : size_(size), host_type_(host_type) {}
+
+CanvasRenderingContextHost::~CanvasRenderingContextHost() {
+  if (externally_allocated_memory_.is_positive()) {
+    external_memory_accounter_.Decrease(v8::Isolate::GetCurrent(),
+                                        externally_allocated_memory_.InBytes());
+  }
+}
 
 void CanvasRenderingContextHost::Trace(Visitor* visitor) const {
   visitor->Trace(plain_text_painter_);
@@ -74,6 +79,39 @@ void CanvasRenderingContextHost::RecordCanvasSizeToUMA() {
   }
 }
 
+void CanvasRenderingContextHost::NotifyCachesOfSwitchingFrame() {
+  if (plain_text_painter_) {
+    plain_text_painter_->DidSwitchFrame();
+  }
+  if (unique_font_selector_) {
+    unique_font_selector_->DidSwitchFrame();
+  }
+}
+
+void CanvasRenderingContextHost::UpdateMemoryUsage() {
+  base::ByteCount externally_allocated_memory =
+      RenderingContext() ? RenderingContext()->AllocatedBufferSize()
+                         : base::ByteCount(0);
+
+  // Subtracting two intptr_t that are known to be positive will never
+  // underflow.
+  base::ByteCount delta_bytes =
+      externally_allocated_memory - externally_allocated_memory_;
+
+  // TODO(junov): We assume that it is impossible to be inside a FastAPICall
+  // from a host interface other than the rendering context.  This assumption
+  // may need to be revisited in the future depending on how the usage of
+  // [NoAllocDirectCall] evolves.
+
+  // ExternalMemoryAccounter::Update() with a positive delta can trigger a GC,
+  // which is not allowed when `IsAllocationAllowed() == false`.
+  CHECK(!delta_bytes.is_positive() ||
+        ThreadState::Current()->IsAllocationAllowed());
+  external_memory_accounter_.Update(v8::Isolate::GetCurrent(),
+                                    delta_bytes.InBytes());
+  externally_allocated_memory_ = externally_allocated_memory;
+}
+
 scoped_refptr<StaticBitmapImage>
 CanvasRenderingContextHost::CreateTransparentImage() const {
   if (!IsValidImageSize()) {
@@ -89,12 +127,6 @@ CanvasRenderingContextHost::CreateTransparentImage() const {
     return nullptr;
   }
   return UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot());
-}
-
-bool CanvasRenderingContextHost::Commit(scoped_refptr<CanvasResource>&&,
-                                        const SkIRect&) {
-  NOTIMPLEMENTED();
-  return false;
 }
 
 bool CanvasRenderingContextHost::IsValidImageSize() const {
@@ -169,26 +201,13 @@ PlainTextPainter& CanvasRenderingContextHost::GetPlainTextPainter() {
   if (!plain_text_painter_) {
     plain_text_painter_ =
         MakeGarbageCollected<PlainTextPainter>(PlainTextPainter::kCanvas);
-    UseCounter::Count(GetTopExecutionContext(), WebFeature::kCanvasTextNg);
   }
   return *plain_text_painter_;
 }
 
 RasterMode CanvasRenderingContextHost::GetRasterModeForCanvas2D() const {
   CHECK(IsRenderingContext2D());
-  if (IsHibernating()) {
-    return RasterMode::kCPU;
-  }
-  CanvasResourceProvider* resource_provider = GetResourceProviderForCanvas2D();
-
-  if (resource_provider) {
-    return resource_provider->IsAccelerated() ? RasterMode::kGPU
-                                              : RasterMode::kCPU;
-  }
-
-  // Whether or not to accelerate is not yet resolved, the canvas cannot be
-  // accelerated if the gpu context is lost.
-  return ShouldTryToUseGpuRaster() ? RasterMode::kGPU : RasterMode::kCPU;
+  return IsAccelerated() ? RasterMode::kGPU : RasterMode::kCPU;
 }
 
 bool CanvasRenderingContextHost::IsOffscreenCanvas() const {
@@ -196,12 +215,10 @@ bool CanvasRenderingContextHost::IsOffscreenCanvas() const {
 }
 
 bool CanvasRenderingContextHost::IsAccelerated() const {
-  if (IsHibernating()) {
-    return false;
-  }
-
   if (RenderingContext()) {
-    return RenderingContext()->IsAccelerated();
+    // This method is supported only on 2D contexts.
+    CHECK(IsRenderingContext2D());
+    return RenderingContext()->Is2DCanvasAccelerated();
   }
 
   // Whether or not to accelerate is not yet resolved, the canvas cannot be
@@ -217,32 +234,6 @@ ImageBitmapSourceStatus CanvasRenderingContextHost::CheckUsability() const {
                                 : ImageBitmapSourceError::kZeroHeight);
   }
   return base::ok();
-}
-
-IdentifiableToken CanvasRenderingContextHost::IdentifiabilityInputDigest(
-    const CanvasRenderingContext* const context) const {
-  const uint64_t context_digest =
-      context ? context->IdentifiableTextToken().ToUkmMetricValue() : 0;
-  const uint64_t context_type = static_cast<uint64_t>(
-      context ? context->GetRenderingAPI()
-              : CanvasRenderingContext::CanvasRenderingAPI::kUnknown);
-  const bool encountered_skipped_ops =
-      context && context->IdentifiabilityEncounteredSkippedOps();
-  const bool encountered_sensitive_ops =
-      context && context->IdentifiabilityEncounteredSensitiveOps();
-  const bool encountered_partially_digested_image =
-      context && context->IdentifiabilityEncounteredPartiallyDigestedImage();
-  // Bits [0-3] are the context type, bits [4-6] are skipped ops, sensitive
-  // ops, and partial image ops bits, respectively. The remaining bits are
-  // for the canvas digest.
-  uint64_t final_digest = (context_digest << 7) | context_type;
-  if (encountered_skipped_ops)
-    final_digest |= IdentifiableSurface::CanvasTaintBit::kSkipped;
-  if (encountered_sensitive_ops)
-    final_digest |= IdentifiableSurface::CanvasTaintBit::kSensitive;
-  if (encountered_partially_digested_image)
-    final_digest |= IdentifiableSurface::CanvasTaintBit::kPartiallyDigested;
-  return final_digest;
 }
 
 void CanvasRenderingContextHost::PageVisibilityChanged() {
@@ -264,11 +255,6 @@ bool CanvasRenderingContextHost::ContextHasOpenLayers(
          context->LayerCount() != 0;
 }
 
-bool CanvasRenderingContextHost::IsContextLost() const {
-  CanvasRenderingContext* context = RenderingContext();
-  return !context || context->isContextLost();
-}
-
 void CanvasRenderingContextHost::SetPreferred2DRasterMode(RasterModeHint hint) {
   // TODO(junov): move code that switches between CPU and GPU rasterization
   // to here.
@@ -277,32 +263,6 @@ void CanvasRenderingContextHost::SetPreferred2DRasterMode(RasterModeHint hint) {
 
 bool CanvasRenderingContextHost::ShouldTryToUseGpuRaster() const {
   return preferred_2d_raster_mode_ == RasterModeHint::kPreferGPU && CanUseGPU();
-}
-
-std::unique_ptr<CanvasResourceProvider>
-CanvasRenderingContextHost::ReplaceResourceProviderForCanvas2D(
-    std::unique_ptr<CanvasResourceProvider> new_resource_provider) {
-  CHECK(IsRenderingContext2D());
-  std::unique_ptr<CanvasResourceProvider> old_resource_provider =
-      std::move(resource_provider_for_canvas2d_);
-  resource_provider_for_canvas2d_ = std::move(new_resource_provider);
-  UpdateMemoryUsage();
-  if (old_resource_provider) {
-    old_resource_provider->SetCanvasResourceHost(nullptr);
-  }
-  return old_resource_provider;
-}
-
-void CanvasRenderingContextHost::DiscardResources() {
-  resource_provider_for_canvas2d_ = nullptr;
-  UpdateMemoryUsage();
-}
-
-void CanvasRenderingContextHost::FlushRecordingForCanvas2D(FlushReason reason) {
-  CHECK(IsRenderingContext2D());
-  if (auto* provider = GetResourceProviderForCanvas2D()) {
-    provider->FlushCanvas(reason);
-  }
 }
 
 }  // namespace blink

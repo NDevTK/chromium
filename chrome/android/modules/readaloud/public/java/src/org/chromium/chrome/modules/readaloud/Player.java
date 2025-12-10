@@ -114,6 +114,10 @@ public interface Player {
         void onNegativeFeedback(NegativeFeedbackReason negativeFeedbackReason);
 
         ObservableSupplier<FeedbackType> getFeedbackTypeSupplier();
+
+        void moveToPrevious();
+
+        void moveToNext();
     }
 
     /** Observer interface to provide updates about player UI. */
@@ -164,7 +168,7 @@ public interface Player {
     default void playbackFailed() {}
 
     /** Show mini player. Assumes the playback is running. */
-    default void restoreMiniPlayer() {}
+    default void restoreMiniPlayer(boolean animate) {}
 
     /** Only called after playback is released and no more events are coming. */
     default void recordPlaybackDuration() {}

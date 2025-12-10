@@ -35,18 +35,58 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/platform/forward_declared_member.h"
+#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
 
-class CORE_EXPORT WindowOrWorkerGlobalScope {
+class GlobalCacheStorage;
+class GlobalCrypto;
+
+template <typename T>
+class GlobalFetchImpl;
+
+class CORE_EXPORT WindowOrWorkerGlobalScope : public GarbageCollectedMixin {
  public:
   bool crossOriginIsolated();
   String crossOriginEmbedderPolicy();
 
- protected:
+  ForwardDeclaredMember<GlobalCacheStorage> GetGlobalCacheStorage() const {
+    return global_cache_storage_;
+  }
+  void SetGlobalCacheStorage(
+      ForwardDeclaredMember<GlobalCacheStorage> global_cache_storage) {
+    global_cache_storage_ = global_cache_storage;
+  }
+
+  ForwardDeclaredMember<GlobalCrypto> GetGlobalCrypto() const {
+    return global_crypto_;
+  }
+  void SetGlobalCrypto(ForwardDeclaredMember<GlobalCrypto> global_crypto) {
+    global_crypto_ = global_crypto;
+  }
+
+  ForwardDeclaredMember<GlobalFetchImpl<WindowOrWorkerGlobalScope>>
+  GetGlobalFetchImpl() const {
+    return global_fetch_impl_;
+  }
+  void SetGlobalFetchImpl(
+      ForwardDeclaredMember<GlobalFetchImpl<WindowOrWorkerGlobalScope>>
+          global_fetch_impl) {
+    global_fetch_impl_ = global_fetch_impl;
+  }
+
+  void Trace(Visitor*) const override;
+
   virtual ExecutionContext* GetExecutionContext() const = 0;
+
+ private:
+  ForwardDeclaredMember<GlobalCacheStorage> global_cache_storage_;
+  ForwardDeclaredMember<GlobalCrypto> global_crypto_;
+  ForwardDeclaredMember<GlobalFetchImpl<WindowOrWorkerGlobalScope>>
+      global_fetch_impl_;
 };
 
 }  // namespace blink

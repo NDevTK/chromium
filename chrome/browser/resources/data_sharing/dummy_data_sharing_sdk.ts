@@ -6,6 +6,8 @@
 import type {AddAccessTokenParams, AddAccessTokenResult, AddMemberParams, CreateGroupParams, CreateGroupResult, DataSharingSdk, DataSharingSdkGroupData, DataSharingSdkResponse, DeleteGroupParams, LeaveGroupParams, ReadGroupOptions, ReadGroupParams, ReadGroupResult, ReadGroupsParams, ReadGroupsResult, RunCloseFlowParams, RunDeleteFlowParams, RunInviteFlowParams, RunJoinFlowParams, RunManageFlowParams} from './data_sharing_sdk_types.js';
 import {Code} from './data_sharing_sdk_types.js';
 
+export const SHAREKIT_SDK_VERSION = '42';
+
 // Add something to the dialog to tell which flow it is.
 function appendTextForTesting(text: string) {
   const newDiv: HTMLElement = document.createElement('div');
@@ -33,6 +35,8 @@ const groupMemberMapFunction =
           role: 'member',
           avatarUrl: 'http://example.com',
           givenName: 'MEMBER_NAME',
+          createdAtTimeMs: 0,
+          lastUpdatedAtTimeMs: 0,
         },
       ],
       formerMembers: [
@@ -43,6 +47,8 @@ const groupMemberMapFunction =
           role: 'former_member',
           avatarUrl: 'http://example2.com',
           givenName: 'MEMBER_NAME2',
+          createdAtTimeMs: 0,
+          lastUpdatedAtTimeMs: 0,
         },
       ],
     });
@@ -116,6 +122,10 @@ export class DataSharingSdkImpl implements DataSharingSdk {
   // Setup Helpers
   setOauthAccessToken(_params: {accessToken: string}): void {}
   updateClearcut(_params: {enabled: boolean}): void {}
+  setClientVersionAndResetPeopleStore(
+      _versionString: string,
+      _baselineCl: number,
+      ): void {}
 
   static getInstance(): DataSharingSdk {
     return dataSharingSdkInstance ||

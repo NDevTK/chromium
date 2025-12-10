@@ -32,7 +32,6 @@
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/webrtc/api/ice_transport_factory.h"
 #include "third_party/webrtc/api/ice_transport_interface.h"
-#include "third_party/webrtc/api/jsep_ice_candidate.h"
 #include "third_party/webrtc/api/peer_connection_interface.h"
 #include "third_party/webrtc/p2p/base/port_allocator.h"
 #include "third_party/webrtc/p2p/base/transport_description.h"
@@ -43,8 +42,9 @@ namespace {
 
 RTCIceCandidate* ConvertToRtcIceCandidate(const webrtc::Candidate& candidate) {
   // The "" mid and sdpMLineIndex 0 are wrong, see https://crbug.com/1385446
+  const bool kIncludeUfrag = true;
   return RTCIceCandidate::Create(MakeGarbageCollected<RTCIceCandidatePlatform>(
-      String::FromUTF8(webrtc::SdpSerializeCandidate(candidate)), "", 0,
+      String::FromUTF8(candidate.ToCandidateAttribute(kIncludeUfrag)), "", 0,
       String(candidate.username()), String(candidate.url())));
 }
 

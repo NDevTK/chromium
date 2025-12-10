@@ -5,14 +5,20 @@
 #ifndef CHROME_BROWSER_AI_AI_TEST_UTILS_H_
 #define CHROME_BROWSER_AI_AI_TEST_UTILS_H_
 
+#include <cstdint>
 #include <vector>
 
+#include "base/functional/callback_forward.h"
+#include "base/run_loop.h"
 #include "base/supports_user_data.h"
 #include "chrome/browser/ai/ai_manager.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/component_updater/mock_component_updater_service.h"
-#include "components/optimization_guide/core/mock_optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/test/fake_model_assets.h"
+#include "components/optimization_guide/core/model_execution/test/fake_model_broker.h"
+#include "components/optimization_guide/core/model_execution/test/mock_on_device_capability.h"
+#include "components/optimization_guide/proto/on_device_model_execution_config.pb.h"
 #include "components/update_client/crx_update_item.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -26,31 +32,51 @@
 
 class AITestUtils {
  public:
-  class MockModelStreamingResponder
-      : public blink::mojom::ModelStreamingResponder {
+  class TestStreamingResponder : public blink::mojom::ModelStreamingResponder {
    public:
-    MockModelStreamingResponder();
-    ~MockModelStreamingResponder() override;
-    MockModelStreamingResponder(const MockModelStreamingResponder&) = delete;
-    MockModelStreamingResponder& operator=(const MockModelStreamingResponder&) =
-        delete;
+    TestStreamingResponder();
+    ~TestStreamingResponder() override;
 
-    mojo::PendingRemote<blink::mojom::ModelStreamingResponder>
-    BindNewPipeAndPassRemote();
+    mojo::PendingRemote<blink::mojom::ModelStreamingResponder> BindRemote();
 
-    MOCK_METHOD(void, OnStreaming, (const std::string& text), (override));
-    MOCK_METHOD(void,
-                OnError,
-                (blink::mojom::ModelStreamingResponseStatus status,
-                 blink::mojom::QuotaErrorInfoPtr quota_error_info),
-                (override));
-    MOCK_METHOD(void,
-                OnCompletion,
-                (blink::mojom::ModelExecutionContextInfoPtr context_info),
-                (override));
-    MOCK_METHOD(void, OnQuotaOverflow, (), (override));
+    // Returns true on successful completion and false on error.
+    bool WaitForCompletion();
+
+    void WaitForQuotaOverflow();
+
+    blink::mojom::ModelStreamingResponseStatus error_status() const {
+      EXPECT_TRUE(error_status_.has_value());
+      return *error_status_;
+    }
+
+    blink::mojom::QuotaErrorInfo quota_error_info() const {
+      return *quota_error_info_;
+    }
+
+    const std::vector<std::string> responses() const { return responses_; }
+    const std::vector<std::string> responses_without_last() const {
+      EXPECT_TRUE(responses_.size() > 1);
+      EXPECT_EQ(responses_.back(), "");
+      return std::vector<std::string>(responses_.begin(), responses_.end() - 1);
+    }
+
+    uint64_t current_tokens() const { return current_tokens_; }
 
    private:
+    // blink::mojom::ModelStreamingResponder:
+    void OnError(blink::mojom::ModelStreamingResponseStatus status,
+                 blink::mojom::QuotaErrorInfoPtr quota_error_info) override;
+    void OnStreaming(const std::string& text) override;
+    void OnCompletion(
+        blink::mojom::ModelExecutionContextInfoPtr context_info) override;
+    void OnQuotaOverflow() override;
+
+    std::optional<blink::mojom::ModelStreamingResponseStatus> error_status_;
+    blink::mojom::QuotaErrorInfoPtr quota_error_info_;
+    std::vector<std::string> responses_;
+    uint64_t current_tokens_ = 0;
+    base::RunLoop run_loop_;
+    base::RunLoop quota_overflow_run_loop_;
     mojo::Receiver<blink::mojom::ModelStreamingResponder> receiver_{this};
   };
 
@@ -113,11 +139,24 @@ class AITestUtils {
     mojo::PendingRemote<blink::mojom::ModelDownloadProgressObserver>
     BindNewPipeAndPassRemote();
 
+    // Expects that the next `OnDownloadProgressUpdate` is called with
+    // `expected_downloaded_bytes` and `expected_total_bytes`. Once it receives
+    // an update, calls `callback`.
+    void ExpectReceivedUpdate(uint64_t expected_downloaded_bytes,
+                              uint64_t expected_total_bytes,
+                              base::OnceClosure callback);
+
+    // Overload that waits until the update is received.
     void ExpectReceivedUpdate(uint64_t expected_downloaded_bytes,
                               uint64_t expected_total_bytes);
 
     // Same as `ExpectReceivedUpdate` except it normalizes
     // `expected_downloaded_bytes` and `expected_total_bytes`.
+    void ExpectReceivedNormalizedUpdate(uint64_t expected_downloaded_bytes,
+                                        uint64_t expected_total_bytes,
+                                        base::OnceClosure callback);
+
+    // Overload that waits until the update is received.
     void ExpectReceivedNormalizedUpdate(uint64_t expected_downloaded_bytes,
                                         uint64_t expected_total_bytes);
 
@@ -176,9 +215,8 @@ class AITestUtils {
     virtual void SetupMockOptimizationGuideKeyedService();
     virtual void SetupNullOptimizationGuideKeyedService();
 
-    // Optimization guide keyed service should be set up before calling this
-    // method.
-    void SetupMockSession();
+    virtual optimization_guide::proto::OnDeviceModelExecutionFeatureConfig
+    CreateConfig() = 0;
 
     blink::mojom::AIManager* GetAIManagerInterface();
     mojo::Remote<blink::mojom::AIManager> GetAIManagerRemote();
@@ -187,14 +225,12 @@ class AITestUtils {
 
     raw_ptr<MockOptimizationGuideKeyedService>
         mock_optimization_guide_keyed_service_;
-    testing::NiceMock<optimization_guide::MockSession> session_;
     AITestUtils::MockComponentUpdateService component_update_service_;
+    std::unique_ptr<optimization_guide::FakeModelBroker> fake_broker_;
+    std::unique_ptr<optimization_guide::FakeAdaptationAsset> fake_asset_;
 
     std::unique_ptr<AIManager> ai_manager_;
   };
-
-  static const optimization_guide::TokenLimits& GetFakeTokenLimits();
-  static const optimization_guide::proto::Any& GetFakeFeatureMetadata();
 
   // Converts string language codes to AILanguageCode mojo struct.
   static std::vector<blink::mojom::AILanguageCodePtr> ToMojoLanguageCodes(

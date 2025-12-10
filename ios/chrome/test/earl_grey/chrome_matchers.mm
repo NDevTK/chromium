@@ -52,8 +52,20 @@ id<GREYMatcher> ButtonWithForegroundColor(NSString* colorName) {
   return [ChromeMatchersAppInterface buttonWithForegroundColor:colorName];
 }
 
+id<GREYMatcher> ButtonWithPrimaryColor() {
+  return [ChromeMatchersAppInterface buttonWithPrimaryColor];
+}
+
+id<GREYMatcher> ButtonWithSecondaryColor() {
+  return [ChromeMatchersAppInterface buttonWithSecondaryColor];
+}
+
+id<GREYMatcher> ButtonWithEqualWeightColor() {
+  return [ChromeMatchersAppInterface buttonWithEqualWeightColor];
+}
+
 id<GREYMatcher> ButtonWithBackgroundColor(NSString* colorName) {
-  return [ChromeMatchersAppInterface buttonWithBackgroundColor:colorName];
+  return [ChromeMatchersAppInterface buttonWithBackgroundColorNamed:colorName];
 }
 
 id<GREYMatcher> ContextMenuItemWithAccessibilityLabel(NSString* label) {
@@ -157,6 +169,14 @@ id<GREYMatcher> CancelButton() {
   return [ChromeMatchersAppInterface cancelButton];
 }
 
+id<GREYMatcher> ActionSheetCancelButton() {
+  return [ChromeMatchersAppInterface actionSheetCancelButton];
+}
+
+id<GREYMatcher> CloseButton() {
+  return [ChromeMatchersAppInterface closeButton];
+}
+
 id<GREYMatcher> NavigationBarCancelButton() {
   return [ChromeMatchersAppInterface navigationBarCancelButton];
 }
@@ -179,6 +199,10 @@ id<GREYMatcher> ReloadButton() {
 
 id<GREYMatcher> StopButton() {
   return [ChromeMatchersAppInterface stopButton];
+}
+
+id<GREYMatcher> SearchBarClearTextButton() {
+  return [ChromeMatchersAppInterface searchBarClearTextButton];
 }
 
 id<GREYMatcher> Omnibox() {
@@ -307,6 +331,10 @@ id<GREYMatcher> OpenLinkInIncognitoButton() {
 
 id<GREYMatcher> OpenLinkInNewWindowButton() {
   return [ChromeMatchersAppInterface openLinkInNewWindowButton];
+}
+
+id<GREYMatcher> NavigationBarCloseButton() {
+  return [ChromeMatchersAppInterface navigationBarCloseButton];
 }
 
 id<GREYMatcher> NavigationBarDoneButton() {
@@ -491,14 +519,6 @@ id<GREYMatcher> SettingsMenuSafetyCheckButton() {
   return [ChromeMatchersAppInterface settingsMenuSafetyCheckButton];
 }
 
-id<GREYMatcher> PaymentRequestView() {
-  return [ChromeMatchersAppInterface paymentRequestView];
-}
-
-id<GREYMatcher> PaymentRequestErrorView() {
-  return [ChromeMatchersAppInterface paymentRequestErrorView];
-}
-
 id<GREYMatcher> VoiceSearchButton() {
   return [ChromeMatchersAppInterface voiceSearchButton];
 }
@@ -563,20 +583,12 @@ id<GREYMatcher> NTPFeedMenuDisableButton() {
   return [ChromeMatchersAppInterface ntpFeedMenuDisableButton];
 }
 
-id<GREYMatcher> WarningMessageView() {
-  return [ChromeMatchersAppInterface warningMessageView];
-}
-
-id<GREYMatcher> PaymentRequestPickerRow() {
-  return [ChromeMatchersAppInterface paymentRequestPickerRow];
-}
-
-id<GREYMatcher> PaymentRequestPickerSearchBar() {
-  return [ChromeMatchersAppInterface paymentRequestPickerSearchBar];
-}
-
 id<GREYMatcher> OpenNewWindowMenuButton() {
   return [ChromeMatchersAppInterface openNewWindowMenuButton];
+}
+
+id<GREYMatcher> SearchBar() {
+  return [ChromeMatchersAppInterface searchBar];
 }
 
 id<GREYMatcher> SystemSelectionCallout() {
@@ -631,6 +643,10 @@ id<GREYMatcher> DeleteButton() {
   return [ChromeMatchersAppInterface deleteButton];
 }
 
+id<GREYMatcher> SwipeActionDeleteButton() {
+  return [ChromeMatchersAppInterface swipeActionDeleteButton];
+}
+
 id<GREYMatcher> ContextMenuCopyButton() {
   return [ChromeMatchersAppInterface contextMenuCopyButton];
 }
@@ -641,6 +657,10 @@ id<GREYMatcher> NewTabPageOmnibox() {
 
 id<GREYMatcher> FakeOmnibox() {
   return [ChromeMatchersAppInterface fakeOmnibox];
+}
+
+id<GREYMatcher> SnackbarViewMatcher() {
+  return [ChromeMatchersAppInterface snackbarViewMatcher];
 }
 
 id<GREYMatcher> DiscoverHeaderLabel() {
@@ -717,9 +737,11 @@ id<GREYMatcher> TabGroupsPanelCellAtIndex(unsigned int index) {
 }
 
 id<GREYMatcher> TabGroupsPanelCellWithName(NSString* group_name,
-                                           NSInteger tab_count) {
+                                           NSInteger tab_count,
+                                           bool shared) {
   return [ChromeMatchersAppInterface tabGroupsPanelCellWithName:group_name
-                                                          count:tab_count];
+                                                          count:tab_count
+                                                         shared:shared];
 }
 
 id<GREYMatcher> TabGroupRecentActivityCellAtIndex(unsigned int index) {
@@ -740,8 +762,8 @@ id<GREYMatcher> TabGridDoneButton() {
   return [ChromeMatchersAppInterface tabGridDoneButton];
 }
 
-id<GREYMatcher> TabGridCloseAllButton() {
-  return [ChromeMatchersAppInterface tabGridCloseAllButton];
+id<GREYMatcher> TabGridOverflowMenuButton() {
+  return [ChromeMatchersAppInterface tabGridOverflowMenuButton];
 }
 
 id<GREYMatcher> TabGridUndoCloseAllButton() {
@@ -786,10 +808,6 @@ id<GREYMatcher> TabGroupSnackBarAction() {
 
 id<GREYMatcher> TabGridTabGroupsPanelButton() {
   return [ChromeMatchersAppInterface tabGridTabGroupsPanelButton];
-}
-
-id<GREYMatcher> TabGridThirdPanelButton() {
-  return [ChromeMatchersAppInterface tabGridThirdPanelButton];
 }
 
 id<GREYMatcher> TabGridNormalModePageControl() {
@@ -862,9 +880,11 @@ id<GREYMatcher> ContentViewSmallerThanScrollView() {
 }
 
 id<GREYMatcher> HistoryEntry(const std::string& url, const std::string& title) {
-  return [ChromeMatchersAppInterface
-      historyEntryForURL:base::SysUTF8ToNSString(url)
-                   title:base::SysUTF8ToNSString(title)];
+  return grey_allOf(
+      grey_accessibilityLabel(
+          [NSString stringWithFormat:@"%@, %@", base::SysUTF8ToNSString(title),
+                                     base::SysUTF8ToNSString(url)]),
+      grey_sufficientlyVisible(), nil);
 }
 
 id<GREYMatcher> HistoryEntry(const GURL& url, const std::string& title) {
@@ -915,6 +935,10 @@ id<GREYMatcher> UseSuggestedPasswordMatcher() {
   return [ChromeMatchersAppInterface useSuggestedPasswordMatcher];
 }
 
+id<GREYMatcher> ToolbarButtonWithID(NSString* button_id) {
+  return [ChromeMatchersAppInterface toolbarButtonWithID:button_id];
+}
+
 #pragma mark - Overflow Menu Destinations
 
 id<GREYMatcher> BookmarksDestinationButton() {
@@ -953,6 +977,10 @@ id<GREYMatcher> SettingsDestinationButton() {
   return [ChromeMatchersAppInterface settingsDestinationButton];
 }
 
+id<GREYMatcher> TranslateDestinationButton() {
+  return [ChromeMatchersAppInterface translateDestinationButton];
+}
+
 id<GREYMatcher> WhatsNewDestinationButton() {
   return [ChromeMatchersAppInterface whatsNewDestinationButton];
 }
@@ -965,12 +993,16 @@ id<GREYMatcher> SettingsActionButton() {
 
 #pragma mark - Promo style view controller
 
+// TODO(crbug.com/444648926): Remove this matcher once downstream dependencies
+// have been updated.
 id<GREYMatcher> PromoScreenPrimaryButtonMatcher() {
-  return [ChromeMatchersAppInterface promoScreenPrimaryButtonMatcher];
+  return chrome_test_util::ButtonStackPrimaryButton();
 }
 
+// TODO(crbug.com/444648926): Remove this matcher once downstream dependencies
+// have been updated.
 id<GREYMatcher> PromoScreenSecondaryButtonMatcher() {
-  return [ChromeMatchersAppInterface promoScreenSecondaryButtonMatcher];
+  return chrome_test_util::ButtonStackSecondaryButton();
 }
 
 #pragma mark - Incognito Interstitial
@@ -1175,6 +1207,24 @@ id<GREYMatcher> FakeJoinFlowView() {
 
 id<GREYMatcher> TabGroupsPanel() {
   return [ChromeMatchersAppInterface tabGroupsPanel];
+}
+
+#pragma mark - Button Stack
+
+id<GREYMatcher> ButtonStackPrimaryButton() {
+  return [ChromeMatchersAppInterface buttonStackPrimaryButton];
+}
+
+id<GREYMatcher> ButtonStackSecondaryButton() {
+  return [ChromeMatchersAppInterface buttonStackSecondaryButton];
+}
+
+id<GREYMatcher> ButtonStackTertiaryButton() {
+  return [ChromeMatchersAppInterface buttonStackTertiaryButton];
+}
+
+id<GREYMatcher> ButtonStackCheckmarkSymbol() {
+  return [ChromeMatchersAppInterface buttonStackCheckmarkSymbol];
 }
 
 }  // namespace chrome_test_util

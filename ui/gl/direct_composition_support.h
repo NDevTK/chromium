@@ -167,6 +167,10 @@ struct DirectCompositionOverlayWorkarounds {
 GL_EXPORT void SetDirectCompositionOverlayWorkarounds(
     const DirectCompositionOverlayWorkarounds& workarounds);
 
+// Returns true if the swap chain format is forced to be a YUV format via a GPU
+// workaround flag.
+GL_EXPORT bool IsSwapChainYuvFormatForced();
+
 // Returns monitor size.
 GL_EXPORT gfx::Size GetDirectCompositionPrimaryMonitorSize();
 
@@ -222,7 +226,6 @@ class GL_EXPORT DirectCompositionOverlayCapsMonitor
   void NotifyOverlayCapsChanged();
 
   // Implements GpuSwitchingObserver.
-  void OnGpuSwitched(gl::GpuPreference active_gpu_heuristic) override;
   void OnDisplayAdded() override;
   void OnDisplayRemoved() override;
   void OnDisplayMetricsChanged() override;

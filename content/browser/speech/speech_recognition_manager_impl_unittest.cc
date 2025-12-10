@@ -12,6 +12,7 @@
 #include "content/public/browser/speech_recognition_audio_forwarder_config.h"
 #include "content/public/test/browser_task_environment.h"
 #include "content/test/mock_speech_recognition_event_listener.h"
+#include "media/base/limits.h"
 #include "media/base/media_switches.h"
 #include "media/mojo/mojom/speech_recognizer.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -69,7 +70,13 @@ class SpeechRecognitionManagerImplTest
   bool ended_ = false;
 };
 
-TEST_F(SpeechRecognitionManagerImplTest, SodaNotInstalled) {
+// TODO(crbug.com/446260680): Disabled on Windows due to flakiness.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_SodaNotInstalled DISABLED_SodaNotInstalled
+#else
+#define MAYBE_SodaNotInstalled SodaNotInstalled
+#endif
+TEST_F(SpeechRecognitionManagerImplTest, MAYBE_SodaNotInstalled) {
   if (!on_device_speech_recognition_supported_) {
     return;
   }
@@ -82,7 +89,7 @@ TEST_F(SpeechRecognitionManagerImplTest, SodaNotInstalled) {
         return langs;
       }));
 
-  EXPECT_EQ(speech::IsOnDeviceSpeechRecognitionAvailable("en-US"),
+  EXPECT_EQ(speech::GetSodaAvailabilityStatus("en-US"),
             media::mojom::AvailabilityStatus::kDownloadable);
 }
 
@@ -97,7 +104,7 @@ TEST_F(SpeechRecognitionManagerImplTest, SodaLanguagesNotAvailable) {
   EXPECT_CALL(mock_soda_installer_, GetAvailableLanguages())
       .WillOnce(InvokeWithoutArgs([]() { return std::vector<std::string>(); }));
 
-  EXPECT_EQ(speech::IsOnDeviceSpeechRecognitionAvailable("en-US"),
+  EXPECT_EQ(speech::GetSodaAvailabilityStatus("en-US"),
             media::mojom::AvailabilityStatus::kUnavailable);
 }
 
@@ -116,7 +123,7 @@ TEST_F(SpeechRecognitionManagerImplTest, SodaLanguageNotInstalled) {
         return langs;
       }));
 
-  EXPECT_EQ(speech::IsOnDeviceSpeechRecognitionAvailable("en-US"),
+  EXPECT_EQ(speech::GetSodaAvailabilityStatus("en-US"),
             media::mojom::AvailabilityStatus::kDownloadable);
 }
 
@@ -137,7 +144,7 @@ TEST_F(SpeechRecognitionManagerImplTest, SodaLanguageInstalled) {
         return langs;
       }));
 
-  EXPECT_EQ(speech::IsOnDeviceSpeechRecognitionAvailable("en-US"),
+  EXPECT_EQ(speech::GetSodaAvailabilityStatus("en-US"),
             media::mojom::AvailabilityStatus::kAvailable);
 }
 
@@ -158,7 +165,7 @@ TEST_F(SpeechRecognitionManagerImplTest, SodaLangcodeMatch) {
         return langs;
       }));
 
-  EXPECT_EQ(speech::IsOnDeviceSpeechRecognitionAvailable("en-US"),
+  EXPECT_EQ(speech::GetSodaAvailabilityStatus("en-US"),
             media::mojom::AvailabilityStatus::kAvailable);
 }
 
@@ -169,6 +176,7 @@ TEST_F(SpeechRecognitionManagerImplTest, LanguageNotSupportedError) {
 
   SpeechRecognitionSessionConfig config;
   config.on_device = true;
+  config.on_device_available = false;
   config.allow_cloud_fallback = false;
   config.language = "en-US";
 
@@ -176,7 +184,7 @@ TEST_F(SpeechRecognitionManagerImplTest, LanguageNotSupportedError) {
   EXPECT_CALL(mock_soda_installer_, GetAvailableLanguages())
       .WillRepeatedly(
           InvokeWithoutArgs([]() { return std::vector<std::string>(); }));
-  EXPECT_EQ(speech::IsOnDeviceSpeechRecognitionAvailable("en-US"),
+  EXPECT_EQ(speech::GetSodaAvailabilityStatus("en-US"),
             media::mojom::AvailabilityStatus::kUnavailable);
 
   manager_->CreateSession(config, mojo::NullReceiver(),
@@ -186,6 +194,81 @@ TEST_F(SpeechRecognitionManagerImplTest, LanguageNotSupportedError) {
   EXPECT_TRUE(base::test::RunUntil([&]() {
     return error_ == media::mojom::SpeechRecognitionErrorCode::
                          kLanguageNotSupported &&
+           ended_;
+  }));
+}
+
+TEST_F(SpeechRecognitionManagerImplTest, AudioForwarderSampleRateTooHigh) {
+  SpeechRecognitionSessionConfig config;
+  config.on_device = false;
+  config.language = "en-US";
+
+  std::optional<SpeechRecognitionAudioForwarderConfig> audio_forwarder_config(
+      std::in_place, mojo::NullReceiver(), /*channel_count=*/1,
+      /*sample_rate=*/media::limits::kMaxSampleRate + 1);
+
+  manager_->CreateSession(config, mojo::NullReceiver(),
+                          receiver_.BindNewPipeAndPassRemote(),
+                          audio_forwarder_config.value());
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return error_ == media::mojom::SpeechRecognitionErrorCode::kAudioCapture &&
+           ended_;
+  }));
+}
+
+TEST_F(SpeechRecognitionManagerImplTest, AudioForwarderSampleRateTooLow) {
+  SpeechRecognitionSessionConfig config;
+  config.on_device = false;
+  config.language = "en-US";
+
+  std::optional<SpeechRecognitionAudioForwarderConfig> audio_forwarder_config(
+      std::in_place, mojo::NullReceiver(), /*channel_count=*/1,
+      /*sample_rate=*/media::limits::kMinSampleRate - 1);
+
+  manager_->CreateSession(config, mojo::NullReceiver(),
+                          receiver_.BindNewPipeAndPassRemote(),
+                          audio_forwarder_config.value());
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return error_ == media::mojom::SpeechRecognitionErrorCode::kAudioCapture &&
+           ended_;
+  }));
+}
+
+TEST_F(SpeechRecognitionManagerImplTest, AudioForwarderChannelCountTooLow) {
+  SpeechRecognitionSessionConfig config;
+  config.on_device = false;
+  config.language = "en-US";
+
+  std::optional<SpeechRecognitionAudioForwarderConfig> audio_forwarder_config(
+      std::in_place, mojo::NullReceiver(), /*channel_count=*/0, 48000);
+
+  manager_->CreateSession(config, mojo::NullReceiver(),
+                          receiver_.BindNewPipeAndPassRemote(),
+                          audio_forwarder_config.value());
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return error_ == media::mojom::SpeechRecognitionErrorCode::kAudioCapture &&
+           ended_;
+  }));
+}
+
+TEST_F(SpeechRecognitionManagerImplTest, AudioForwarderChannelCountTooHigh) {
+  SpeechRecognitionSessionConfig config;
+  config.on_device = false;
+  config.language = "en-US";
+
+  std::optional<SpeechRecognitionAudioForwarderConfig> audio_forwarder_config(
+      std::in_place, mojo::NullReceiver(),
+      /*channel_count=*/media::limits::kMaxChannels + 1, 48000);
+
+  manager_->CreateSession(config, mojo::NullReceiver(),
+                          receiver_.BindNewPipeAndPassRemote(),
+                          audio_forwarder_config.value());
+
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return error_ == media::mojom::SpeechRecognitionErrorCode::kAudioCapture &&
            ended_;
   }));
 }

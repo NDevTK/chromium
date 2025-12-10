@@ -11,6 +11,7 @@
 #include <string>
 
 #include "skia/ext/skcolorspace_primaries.h"
+#include "third_party/skia/include/private/SkHdrMetadata.h"
 #include "ui/gfx/color_space_export.h"
 #include "ui/gfx/geometry/point_f.h"
 
@@ -40,6 +41,8 @@ struct COLOR_SPACE_EXPORT HdrMetadataCta861_3 {
   }
   friend bool operator==(const HdrMetadataCta861_3&,
                          const HdrMetadataCta861_3&) = default;
+  friend auto operator<=>(const HdrMetadataCta861_3&,
+                          const HdrMetadataCta861_3&) = default;
 };
 
 // SMPTE ST 2086 color volume metadata.
@@ -65,8 +68,8 @@ struct COLOR_SPACE_EXPORT HdrMetadataSmpteSt2086 {
            luminance_min != 0.f;
   }
 
-  friend bool operator==(const HdrMetadataSmpteSt2086&,
-                         const HdrMetadataSmpteSt2086&) = default;
+  bool operator==(const HdrMetadataSmpteSt2086&) const = default;
+  std::partial_ordering operator<=>(const HdrMetadataSmpteSt2086&) const;
 };
 
 // Nominal diffuse white level (NDWL) metadata.
@@ -82,6 +85,8 @@ struct COLOR_SPACE_EXPORT HdrMetadataNdwl {
 
   friend bool operator==(const HdrMetadataNdwl&,
                          const HdrMetadataNdwl&) = default;
+  friend auto operator<=>(const HdrMetadataNdwl&,
+                          const HdrMetadataNdwl&) = default;
 };
 
 // HDR metadata for extended range color spaces.
@@ -108,6 +113,8 @@ struct COLOR_SPACE_EXPORT HdrMetadataExtendedRange {
 
   friend bool operator==(const HdrMetadataExtendedRange&,
                          const HdrMetadataExtendedRange&) = default;
+  friend auto operator<=>(const HdrMetadataExtendedRange&,
+                          const HdrMetadataExtendedRange&) = default;
 };
 
 struct COLOR_SPACE_EXPORT HdrMetadataAgtm {
@@ -123,6 +130,7 @@ struct COLOR_SPACE_EXPORT HdrMetadataAgtm {
   std::string ToString() const;
 
   bool operator==(const HdrMetadataAgtm& rhs) const;
+  std::strong_ordering operator<=>(const HdrMetadataAgtm& rhs) const;
 
   // The raw encoded AGTM metadata payload.
   sk_sp<SkData> payload;
@@ -146,6 +154,7 @@ struct COLOR_SPACE_EXPORT HDRMetadata {
   std::optional<HdrMetadataAgtm> agtm;
 
   HDRMetadata();
+  HDRMetadata(const skhdr::Metadata& sk_hdr_metadata);
   HDRMetadata(const HdrMetadataSmpteSt2086& smpte_st_2086,
               const HdrMetadataCta861_3& cta_861_3);
   explicit HDRMetadata(const HdrMetadataSmpteSt2086& smpte_st_2086);
@@ -153,6 +162,13 @@ struct COLOR_SPACE_EXPORT HDRMetadata {
   HDRMetadata(const HDRMetadata& rhs);
   HDRMetadata& operator=(const HDRMetadata& rhs);
   ~HDRMetadata();
+
+  // Return true if this structure holds no metadata.
+  bool IsEmpty() const {
+    return !smpte_st_2086.has_value() && !cta_861_3.has_value() &&
+           !ndwl.has_value() && !extended_range.has_value() &&
+           !agtm.has_value();
+  }
 
   bool IsValid() const {
     return (cta_861_3 && cta_861_3->IsValid()) ||
@@ -163,8 +179,7 @@ struct COLOR_SPACE_EXPORT HDRMetadata {
   // - return the CTA 861.3 max content light level metadata, if present
   // - return the SMPTE ST 2086 luminance max metadata, if present
   // - otherwise return 1,000 nits
-  static float GetContentMaxLuminance(
-      const std::optional<gfx::HDRMetadata>& metadata);
+  static float GetContentMaxLuminance(const gfx::HDRMetadata& metadata);
 
   // Return a copy of `hdr_metadata` with its `smpte_st_2086` fully
   // populated. Any unspecified values are set to default values (in particular,
@@ -173,11 +188,12 @@ struct COLOR_SPACE_EXPORT HDRMetadata {
   // `max_frame_average_light_level` values are not changed (they may stay
   // zero).
   static HDRMetadata PopulateUnspecifiedWithDefaults(
-      const std::optional<gfx::HDRMetadata>& hdr_metadata);
+      const gfx::HDRMetadata& hdr_metadata);
 
   std::string ToString() const;
 
   friend bool operator==(const HDRMetadata&, const HDRMetadata&) = default;
+  friend auto operator<=>(const HDRMetadata&, const HDRMetadata&) = default;
 };
 
 // HDR metadata types as described in

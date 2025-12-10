@@ -36,7 +36,7 @@ suite('LanguagesPage', function() {
     assertTrue(!!i18nString);
     const menuItems = actionMenu.querySelectorAll<T>('.dropdown-item');
     const menuItem = Array.from(menuItems).find(
-        item => item.textContent!.trim() === i18nString);
+        item => item.textContent.trim() === i18nString);
     assertTrue(!!menuItem, 'Menu item "' + i18nKey + '" not found');
     return menuItem;
   }
@@ -136,7 +136,8 @@ suite('LanguagesPage', function() {
         dialogClosedResolver = new PromiseResolver();
         dialogClosedObserver = new MutationObserver(onMutation);
         dialogClosedObserver.observe(
-            languagesPage.shadowRoot!, {childList: true});
+            languagesPage.shadowRoot!.querySelector('settings-section')!,
+            {childList: true});
 
         actionButton = dialog.shadowRoot!.querySelector<CrButtonElement>(
             '.action-button')!;
@@ -288,7 +289,7 @@ suite('LanguagesPage', function() {
     /*
      * This suite tests that the translate target language is labelled
      */
-    test('test translate target language is labelled', function() {
+    test('translate target language is labelled', function() {
       // Translate target language disabled.
       const targetLanguageCode = languageHelper.languages!.translateTarget;
       assertTrue(!!targetLanguageCode);

@@ -16,20 +16,25 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/permission_decision.h"
-#include "components/permissions/permission_hats_trigger_helper.h"
 #include "components/permissions/permission_request_data.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/request_type.h"
+#include "components/permissions/resolvers/permission_prompt_options.h"
 #include "content/public/browser/global_routing_id.h"
 #include "url/gurl.h"
 
+namespace content {
+class PermissionController;
+}
+
 namespace permissions {
+
 enum class RequestType;
 // Describes the interface a feature making permission requests should
 // implement. A class of this type is registered with the permission request
 // manager to receive updates about the result of the permissions request
 // from the bubble or infobar. It should live until it is unregistered or until
-// RequestFinished is called.
+// its destructor is called.
 // Note that no particular guarantees are made about what exact UI surface
 // is presented to the user. The delegate may be coalesced with other bubble
 // requests, or depending on the situation, not shown at all.
@@ -84,7 +89,7 @@ class PermissionRequest {
   // need to be shown in the UI.
   virtual bool IsDuplicateOf(PermissionRequest* other_request) const;
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   // A message text with formatting information.
   struct AnnotatedMessageText {
     // |text| specifies the text string itself.
@@ -112,12 +117,12 @@ class PermissionRequest {
       std::u16string requesting_origin_formatted_for_display,
       int message_id,
       bool format_origin_bold);
-#endif
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 
   // Returns a weak pointer to this instance.
   base::WeakPtr<PermissionRequest> GetWeakPtr();
 
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   // Returns whether displaying a confirmation chip for the request is
   // supported.
   bool IsConfirmationChipSupported();
@@ -137,7 +142,7 @@ class PermissionRequest {
   // Returns prompt text appropriate for displaying under the dialog title
   // "[domain] wants to:".
   virtual std::u16string GetMessageTextFragment() const;
-#endif
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 
   // Returns the text to be used in the "allow always" button of the
   // permission prompt.
@@ -155,6 +160,14 @@ class PermissionRequest {
   // Whether the request was initiated by the user clicking on the permission
   // element.
   bool IsEmbeddedPermissionElementInitiated() const;
+
+  // Whether the request was initiated by the user clicking on the geolocation
+  // element.
+  bool IsGeolocationElementInitiated() const;
+
+  // Returns if a request can be auto-granted heuristically. No prompt will be
+  // shown for the request.
+  bool IsEligibleForHeuristicAutoGrant() const;
 
   // Returns the position of the element that caused the prompt to open.
   std::optional<gfx::Rect> GetAnchorElementPosition() const;
@@ -182,6 +195,12 @@ class PermissionRequest {
   // request types.
   PermissionRequestGestureType GetGestureType() const;
 
+  // Used to store the prompt options for the permission request.
+  void SetPromptOptions(PromptOptions prompt_options);
+
+  // Return stored prompt options.
+  const PromptOptions& prompt_options() const { return data_->prompt_options; }
+
   virtual const std::vector<std::string>& GetRequestedAudioCaptureDeviceIds()
       const;
   virtual const std::vector<std::string>& GetRequestedVideoCaptureDeviceIds()
@@ -191,11 +210,16 @@ class PermissionRequest {
   // this permission request.
   ContentSettingsType GetContentSettingsType() const;
 
+  // Whether the source frame that is the origin of this permission request has
+  // a permission on status change event listener subscribed.
+  bool IsSourceSubscribedToPermissionChangeEvent(
+      content::PermissionController* controller) const;
+
   void set_requesting_frame_id(content::GlobalRenderFrameHostId id) {
     data_->id.set_global_render_frame_host_id(id);
   }
 
-  const content::GlobalRenderFrameHostId& get_requesting_frame_id() {
+  const content::GlobalRenderFrameHostId& get_requesting_frame_id() const {
     return data_->id.global_render_frame_host_id();
   }
 
@@ -205,11 +229,10 @@ class PermissionRequest {
 
   bool uses_automatic_embargo() const { return uses_automatic_embargo_; }
 
-  std::optional<PermissionHatsTriggerHelper::PreviewParametersForHats>
-  get_preview_parameters() const;
-
-  void set_preview_parameters(
-      PermissionHatsTriggerHelper::PreviewParametersForHats preview_parmeters);
+  void set_request_finished_callback(
+      base::OnceClosure request_finished_callback) {
+    request_finished_callback_ = std::move(request_finished_callback);
+  }
 
  protected:
   // Sets whether this request is permission element initiated, for testing
@@ -228,9 +251,6 @@ class PermissionRequest {
   base::OnceClosure request_finished_callback_;
 
   const bool uses_automatic_embargo_ = true;
-
-  std::optional<PermissionHatsTriggerHelper::PreviewParametersForHats>
-      preview_parameters_;
 
   base::WeakPtrFactory<PermissionRequest> weak_factory_{this};
 };

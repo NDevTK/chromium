@@ -75,7 +75,7 @@ String CharacterData::substringData(unsigned offset,
 }
 
 void CharacterData::ParserAppendData(const String& data) {
-  String new_str = this->data() + data;
+  String new_str = StrCat({this->data(), data});
 
   SetDataAndUpdate(new_str,
                    TextDiffRange::Insert(this->data().length(), data.length()),
@@ -83,7 +83,7 @@ void CharacterData::ParserAppendData(const String& data) {
 }
 
 void CharacterData::appendData(const String& data) {
-  String new_str = this->data() + data;
+  String new_str = StrCat({this->data(), data});
 
   SetDataAndUpdate(new_str,
                    TextDiffRange::Insert(this->data().length(), data.length()),
@@ -238,6 +238,7 @@ void CharacterData::DidModifyData(const String& old_data, UpdateSource source) {
 Node* CharacterData::Clone(Document& factory,
                            NodeCloningData& cloning_data,
                            ContainerNode* append_to,
+                           CustomElementRegistry*,
                            ExceptionState& append_exception_state) const {
   CharacterData* clone = CloneWithData(factory, data());
   if (cloning_data.Has(CloneOption::kPreserveDOMPartsMinimalAPI) &&

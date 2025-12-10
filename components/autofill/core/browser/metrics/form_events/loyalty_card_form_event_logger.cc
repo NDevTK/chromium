@@ -28,7 +28,7 @@ AffiliationCategoryMetricBucket AffiliationCategoriesToMetricBucket(
   if (affiliation_categories.empty()) {
     return AffiliationCategoryMetricBucket::kNone;
   }
-  if (affiliation_categories.size() > 1) {
+  if (affiliation_categories.size() > 1u) {
     return AffiliationCategoryMetricBucket::kMixed;
   }
   switch (*affiliation_categories.begin()) {
@@ -56,12 +56,22 @@ std::string_view GetAffiliationCategoriesSuffix(
 
 }  // namespace
 
-// TODO(crbug.com/422366498): Complete the class implementation.
 LoyaltyCardFormEventLogger::LoyaltyCardFormEventLogger(
     BrowserAutofillManager* owner)
     : FormEventLoggerBase("LoyaltyCard", owner) {}
 
 LoyaltyCardFormEventLogger::~LoyaltyCardFormEventLogger() = default;
+
+void LoyaltyCardFormEventLogger::OnDidShowSuggestions(
+    const FormStructure& form,
+    const AutofillField& field,
+    base::TimeTicks form_parsed_timestamp,
+    bool off_the_record,
+    base::span<const Suggestion> suggestions) {
+  FormEventLoggerBase::OnDidShowSuggestions(
+      form, field, field.Type().GetLoyaltyCardType(), form_parsed_timestamp,
+      off_the_record, suggestions);
+}
 
 void LoyaltyCardFormEventLogger::UpdateLoyaltyCardsAvailabilityForReadiness(
     const std::vector<LoyaltyCard>& loyalty_cards,
@@ -79,13 +89,14 @@ void LoyaltyCardFormEventLogger::OnDidFillSuggestion(
     const LoyaltyCard& loyalty_card,
     const GURL& url) {
   client().GetFormInteractionsUkmLogger().LogDidFillSuggestion(
-      driver().GetPageUkmSourceId(), form, field);
+      driver().GetPageUkmSourceId(), form, field,
+      /*record_type=*/std::nullopt);
   Log(FORM_EVENT_LOCAL_SUGGESTION_FILLED, form);
   if (!has_logged_form_filling_suggestion_filled_) {
     has_logged_form_filling_suggestion_filled_ = true;
     Log(FORM_EVENT_LOCAL_SUGGESTION_FILLED_ONCE, form);
   }
-  FieldType field_type = field.Type().GetStorableType();
+  FieldType field_type = field.Type().GetLoyaltyCardType();
   field_types_with_shown_suggestions_.erase(field_type);
   field_types_with_accepted_suggestions_.insert(field_type);
   ++form_interaction_counts_.autofill_fills;
@@ -93,11 +104,14 @@ void LoyaltyCardFormEventLogger::OnDidFillSuggestion(
   card_categories_filled_.insert(loyalty_card.GetAffiliationCategory(url));
 }
 
-void LoyaltyCardFormEventLogger::RecordPollSuggestions() {}
+void LoyaltyCardFormEventLogger::RecordParseForm() {
+  base::RecordAction(base::UserMetricsAction("Autofill_ParsedLoyaltyCardForm"));
+}
 
-void LoyaltyCardFormEventLogger::RecordParseForm() {}
-
-void LoyaltyCardFormEventLogger::RecordShowSuggestions() {}
+void LoyaltyCardFormEventLogger::RecordShowSuggestions() {
+  base::RecordAction(
+      base::UserMetricsAction("Autofill_ShowedLoyaltyCardSuggestions"));
+}
 
 void LoyaltyCardFormEventLogger::RecordFillingReadiness(LogBuffer& logs) const {
   FormEventLoggerBase::RecordFillingReadiness(logs);

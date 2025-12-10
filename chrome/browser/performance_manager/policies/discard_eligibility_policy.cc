@@ -4,24 +4,38 @@
 
 #include "chrome/browser/performance_manager/policies/discard_eligibility_policy.h"
 
+#include "chrome/common/chrome_features.h"
 #include "components/performance_manager/graph/page_node_impl.h"
 #include "components/performance_manager/public/decorators/page_live_state_decorator.h"
 #include "components/performance_manager/public/graph/node_data_describer_registry.h"
 #include "components/url_matcher/url_matcher.h"
 #include "components/url_matcher/url_util.h"
+#include "content/public/browser/web_contents.h"
+
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "components/tabs/public/tab_interface.h"
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/web_applications/web_app_tab_helper.h"
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 namespace performance_manager::policies {
 
 namespace {
 
-BASE_FEATURE(kIgnoreDiscardAttemptMarker,
-             "IgnoreDiscardAttemptMarker",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kIgnoreDiscardAttemptMarker, base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Not intended for launch.
+// This feature can be used during testing to ensure realistic priority
+// ordering of tabs even when devtools is connected.
+BASE_FEATURE(kAllowDevtoolsConnectedDiscard, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // NodeAttachedData used to indicate that there's already been an attempt to
 // discard a PageNode.
-class DiscardAttemptMarker
-    : public ExternalNodeAttachedDataImpl<DiscardAttemptMarker> {
+class DiscardAttemptMarker : public NodeAttachedDataImpl<DiscardAttemptMarker> {
  public:
   explicit DiscardAttemptMarker(const PageNodeImpl* page_node) {}
   ~DiscardAttemptMarker() override = default;
@@ -141,6 +155,8 @@ CanDiscardResult DiscardEligibilityPolicy::CanDiscard(
 
   // Don't discard tabs that don't have a main frame (restored tab which is not
   // loaded yet, discarded tab, crashed tab).
+  // TODO(crbug.com/463291982): Add test to verify crashed page cannot be
+  // discarded.
   if (!page_node->GetMainFrameNode()) {
     add_reason(CannotDiscardReason::kNoMainFrame);
     return CanDiscardResult::kDisallowed;
@@ -220,6 +236,36 @@ CanDiscardResult DiscardEligibilityPolicy::CanDiscard(
     add_reason_and_update_result(CannotDiscardReason::kInvalidURL,
                                  CanDiscardResult::kProtected);
   }
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Do not discard Desktop PWA windows. Preserve native-app experience.
+  content::WebContents* web_contents = page_node->GetWebContents().get();
+  if (web_contents) {
+    web_app::WebAppTabHelper* tab_helper =
+        web_app::WebAppTabHelper::FromWebContents(web_contents);
+    if (tab_helper && tab_helper->is_in_app_window()) {
+      add_reason_and_update_result(CannotDiscardReason::kWebApp,
+                                   CanDiscardResult::kProtected);
+    }
+  }
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(ENABLE_GLIC)
+  // Do not discard pages that are pin-shared with Glic.
+  if (web_contents && is_proactive_or_suggested) {
+    auto* tab_interface =
+        tabs::TabInterface::MaybeGetFromContents(web_contents);
+    if (tab_interface) {
+      auto* glic_service = glic::GlicKeyedServiceFactory::GetGlicKeyedService(
+          web_contents->GetBrowserContext());
+      if (glic_service && glic_service->sharing_manager().IsTabPinned(
+                              tab_interface->GetHandle())) {
+        add_reason_and_update_result(CannotDiscardReason::kGlicShared,
+                                     CanDiscardResult::kProtected);
+      }
+    }
+  }
+#endif
 
   // Only discard http(s) pages and internal pages to make sure that we don't
   // discard extensions or other PageNode that don't correspond to a tab.
@@ -303,7 +349,8 @@ CanDiscardResult DiscardEligibilityPolicy::CanDiscard(
     // Don't discard pages with devtools attached, because when it's restored
     // the devtools window won't come back. The user may be monitoring the page
     // in the background with devtools.
-    if (live_state_data->IsDevToolsOpen()) {
+    if (live_state_data->IsDevToolsOpen() &&
+        !base::FeatureList::IsEnabled(kAllowDevtoolsConnectedDiscard)) {
       add_reason_and_update_result(CannotDiscardReason::kDevToolsOpen,
                                    CanDiscardResult::kProtected);
     }

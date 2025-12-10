@@ -337,7 +337,7 @@ public class FakeBookmarkModel extends BookmarkModel {
                 .ifPresent(
                         node -> {
                             getMutableChildIds(parent).add(index, id);
-                            bookmarkNodeAdded(node, index);
+                            bookmarkNodeAdded(node, index, /* addedByUser= */ false);
                         });
 
         return id;
@@ -612,10 +612,6 @@ public class FakeBookmarkModel extends BookmarkModel {
         public boolean doesBookmarkExist(long nativeBookmarkBridge, long id, int type) {
             return mBookmarkIdToItemMap.containsKey(new BookmarkId(id, type));
         }
-
-        @Override
-        public void getBookmarksForFolder(
-                long nativeBookmarkBridge, BookmarkId folderId, List<BookmarkItem> bookmarksList) {}
 
         @Override
         public boolean isFolderVisible(long nativeBookmarkBridge, long id, int type) {

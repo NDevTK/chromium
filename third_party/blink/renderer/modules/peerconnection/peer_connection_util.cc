@@ -8,9 +8,8 @@
 
 #include "base/time/time.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/performance.h"
-#include "third_party/blink/renderer/core/timing/worker_global_scope_performance.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 
 namespace blink {
@@ -25,9 +24,9 @@ constexpr base::TimeDelta kNtpUnixEpochOffset =
 
 Performance* GetPerformanceFromExecutionContext(ExecutionContext* context) {
   if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
-    return DOMWindowPerformance::performance(*window);
+    return GlobalPerformance::performance(*window);
   } else if (auto* worker = DynamicTo<WorkerGlobalScope>(context)) {
-    return WorkerGlobalScopePerformance::performance(*worker);
+    return GlobalPerformance::performance(*worker);
   }
   NOTREACHED();
 }
@@ -43,9 +42,8 @@ DOMHighResTimeStamp RTCEncodedFrameTimestampFromUnixRealClock(
 
 }  // namespace
 
-DOMHighResTimeStamp RTCEncodedFrameTimestampFromTimeTicks(
-    ExecutionContext* context,
-    base::TimeTicks timestamp) {
+DOMHighResTimeStamp RTCTimeStampFromTimeTicks(ExecutionContext* context,
+                                              base::TimeTicks timestamp) {
   Performance* performance = GetPerformanceFromExecutionContext(context);
   return Performance::MonotonicTimeToDOMHighResTimeStamp(
       performance->GetTimeOriginInternal(), timestamp,
@@ -58,7 +56,7 @@ DOMHighResTimeStamp RTCEncodedFrameTimestampFromCaptureTimeInfo(
     CaptureTimeInfo capture_time_info) {
   switch (capture_time_info.clock_type) {
     case CaptureTimeInfo::ClockType::kTimeTicks:
-      return RTCEncodedFrameTimestampFromTimeTicks(
+      return RTCTimeStampFromTimeTicks(
           context, base::TimeTicks() + capture_time_info.capture_time);
     case CaptureTimeInfo::ClockType::kNtpRealClock:
       base::TimeDelta time_since_unix_epoch =

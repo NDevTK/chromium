@@ -8,62 +8,76 @@
 #include <variant>
 
 #include "base/strings/strcat.h"
-#include "chrome/browser/actor/ui/helpers.h"
+#include "chrome/browser/actor/shared_types.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/abseil-cpp/absl/strings/str_format.h"
 
 namespace actor::ui {
-
 namespace {
-std::string_view DebugString(const MouseClickType& t) {
-  switch (t) {
-    case MouseClickType::kLeft:
-      return "LeftClick";
-    case MouseClickType::kRight:
-      return "RightClick";
-    default:
-      NOTREACHED();
+
+// TODO(crbug.com/388070065): Replace with std::optional::transform when C++23
+// is available.
+template <typename In, typename TransformT>
+std::optional<std::invoke_result_t<TransformT, In>> transform(
+    std::optional<In> opt,
+    TransformT&& fn) {
+  if (!opt.has_value()) {
+    return std::nullopt;
   }
+  return std::invoke(std::forward<TransformT>(fn), opt.value());
 }
 
-std::string_view DebugString(const MouseClickCount& c) {
-  switch (c) {
-    case MouseClickCount::kSingle:
-      return "SingleClick";
-    case MouseClickCount::kDouble:
-      return "DoubleClick";
-    default:
-      NOTREACHED();
-  }
-}
-
-std::string DebugString(const PageTarget& t) {
-  if (std::holds_alternative<gfx::Point>(t)) {
-    return std::get<gfx::Point>(t).ToString();
-  } else if (std::holds_alternative<DomNode>(t)) {
-    const DomNode& d = std::get<DomNode>(t);
-    return absl::StrFormat("DomNode[id=%d doc_id=%s]", d.node_id,
-                           d.document_identifier);
-  }
-  NOTREACHED();
-}
-
-constexpr Visitor UiEventToDebugStringFn{
+constexpr absl::Overload UiEventToDebugStringFn{
     [](const StartTask& e) -> std::string {
       return absl::StrFormat("StartTask[id=%d]", e.task_id.value());
     },
+    [](const TaskStateChanged& e) -> std::string {
+      return absl::StrFormat("TaskStateChanged[task_id=%d, state=%s]",
+                             e.task_id.value(), ToString(e.state));
+    },
+    [](const StartingToActOnTab& e) -> std::string {
+      return absl::StrFormat("StartingToActOnTab[task_id=%d, tab=%d]",
+                             e.task_id.value(), e.tab_handle.raw_value());
+    },
+    [](const StoppedActingOnTab& e) -> std::string {
+      return absl::StrFormat("StoppedActingOnTab[tab=%d]",
+                             e.tab_handle.raw_value());
+    },
     [](const MouseClick& e) -> std::string {
       return absl::StrFormat("MouseClick[type=%s, count=%s]",
-                             DebugString(e.click_type),
-                             DebugString(e.click_count));
+                             actor::DebugString(e.click_type),
+                             actor::DebugString(e.click_count));
     },
     [](const MouseMove& e) -> std::string {
-      return absl::StrFormat("MouseMove[target=%s]", DebugString(e.target));
+      return absl::StrFormat(
+          "MouseMove[target=%s target_source=%s]",
+          transform(e.target, &gfx::Point::ToString).value_or("null"),
+          DebugString(e.target_source));
     },
 };
 }  // namespace
 
 std::string DebugString(const UiEvent& event) {
   return std::visit(UiEventToDebugStringFn, event);
+}
+
+std::string DebugString(const AsyncUiEvent& event) {
+  return std::visit(UiEventToDebugStringFn, event);
+}
+
+std::string DebugString(const SyncUiEvent& event) {
+  return std::visit(UiEventToDebugStringFn, event);
+}
+
+std::string DebugString(TargetSource source) {
+  switch (source) {
+    case TargetSource::kUnresolvableInApc:
+      return "UnresolvableInApc";
+    case TargetSource::kToolRequest:
+      return "ToolRequest";
+    case TargetSource::kDerivedFromApc:
+      return "DerivedFromApc";
+  }
 }
 
 }  // namespace actor::ui

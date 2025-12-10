@@ -38,6 +38,8 @@ import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.components.tab_group_sync.TabGroupUiActionHandler;
 
+import java.util.List;
+
 /** Unit tests for {@link TabSwitcherUtils}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
@@ -59,6 +61,7 @@ public class TabSwitcherUtilsUnitTest {
     public void setUp() {
         when(mTabModelSelector.getModel(false)).thenReturn(mTabModel);
         when(mTabModel.getCount()).thenReturn(1);
+        when(mTabModel.iterator()).thenAnswer(inv -> List.of(mTab).iterator());
         when(mTabModel.getTabAt(0)).thenReturn(mTab);
         when(mTabModel.getTabById(TAB_ID_1)).thenReturn(mTab);
         when(mTab.getId()).thenReturn(TAB_ID_1);
@@ -93,7 +96,7 @@ public class TabSwitcherUtilsUnitTest {
         SavedTabGroup syncGroup2 = new SavedTabGroup();
         syncGroup2.localId = new LocalTabGroupId(TAB_GROUP_ID_1);
         when(mTabGroupSyncService.getGroup(SYNC_GROUP_ID1)).thenReturn(syncGroup1);
-        when(mTabGroupModelFilter.getRootIdFromTabGroupId(TAB_GROUP_ID_1)).thenReturn(TAB_ID_1);
+        when(mTabGroupModelFilter.getGroupLastShownTabId(TAB_GROUP_ID_1)).thenReturn(TAB_ID_1);
         doAnswer(
                         invocation -> {
                             Mockito.reset(mTabGroupSyncService);
@@ -119,7 +122,7 @@ public class TabSwitcherUtilsUnitTest {
         SavedTabGroup syncGroup = new SavedTabGroup();
         syncGroup.localId = new LocalTabGroupId(TAB_GROUP_ID_1);
         when(mTabGroupSyncService.getGroup(SYNC_GROUP_ID1)).thenReturn(syncGroup);
-        when(mTabGroupModelFilter.getRootIdFromTabGroupId(TAB_GROUP_ID_1))
+        when(mTabGroupModelFilter.getGroupLastShownTabId(TAB_GROUP_ID_1))
                 .thenReturn(INVALID_TAB_ID);
 
         TabSwitcherUtils.openTabGroupDialog(
@@ -138,7 +141,7 @@ public class TabSwitcherUtilsUnitTest {
         SavedTabGroup syncGroup = new SavedTabGroup();
         syncGroup.localId = new LocalTabGroupId(TAB_GROUP_ID_1);
         when(mTabGroupSyncService.getGroup(SYNC_GROUP_ID1)).thenReturn(syncGroup);
-        when(mTabGroupModelFilter.getRootIdFromTabGroupId(TAB_GROUP_ID_1)).thenReturn(TAB_ID_1);
+        when(mTabGroupModelFilter.getGroupLastShownTabId(TAB_GROUP_ID_1)).thenReturn(TAB_ID_1);
 
         TabSwitcherUtils.openTabGroupDialog(
                 SYNC_GROUP_ID1,

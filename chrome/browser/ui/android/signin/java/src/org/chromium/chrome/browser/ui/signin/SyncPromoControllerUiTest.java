@@ -48,14 +48,16 @@ import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.ProfileDataCache;
 import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.NoAccountSigninMode;
 import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.WithAccountSigninMode;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetStrings;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
-import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
+import org.chromium.chrome.test.OverrideContextWrapperTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
+import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.test.util.TestAccounts;
 import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
@@ -71,13 +73,10 @@ import org.chromium.ui.test.util.RenderTestRule;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class SyncPromoControllerUiTest {
     @Rule
-    public AutomotiveContextWrapperTestRule mAutomotiveContextWrapperTestRule =
-            new AutomotiveContextWrapperTestRule();
+    public OverrideContextWrapperTestRule mAutomotiveContextWrapperTestRule =
+            new OverrideContextWrapperTestRule();
 
-    private static final AccountPickerBottomSheetStrings BOTTOM_SHEET_STRINGS =
-            new AccountPickerBottomSheetStrings.Builder(
-                            R.string.signin_account_picker_bottom_sheet_title)
-                    .build();
+    private AccountPickerBottomSheetStrings mBottomSheetStrings;
 
     @Rule
     public final RenderTestRule mRenderTestRule =
@@ -95,12 +94,27 @@ public class SyncPromoControllerUiTest {
             new BaseActivityTestRule<>(BlankUiTestActivity.class);
 
     @Mock private SigninAndHistorySyncActivityLauncher mSigninAndHistorySyncActivityLauncher;
+    private IdentityManager mIdentityManager;
 
     @Before
     public void setUp() {
         NativeLibraryTestUtils.loadNativeLibraryAndInitBrowserProcess();
         mActivityTestRule.launchActivity(null);
         ApplicationTestUtils.waitForActivityState(mActivityTestRule.getActivity(), Stage.RESUMED);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    Profile profile = ProfileManager.getLastUsedRegularProfile();
+                    mIdentityManager = IdentityServicesProvider.get().getIdentityManager(profile);
+                });
+
+        mBottomSheetStrings =
+                new AccountPickerBottomSheetStrings.Builder(
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(
+                                                R.string.signin_account_picker_bottom_sheet_title))
+                        .build();
     }
 
     @Test
@@ -110,7 +124,7 @@ public class SyncPromoControllerUiTest {
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return ProfileDataCache.createWithDefaultImageSizeAndNoBadge(
-                                    mActivityTestRule.getActivity());
+                                    mActivityTestRule.getActivity(), mIdentityManager);
                         });
         setUpSyncPromoView(
                 SigninAccessPoint.BOOKMARK_MANAGER,
@@ -140,7 +154,7 @@ public class SyncPromoControllerUiTest {
     @Test
     @MediumTest
     public void testBookmarkSyncPromoContinueButtonLaunchesSigninFlow() throws Throwable {
-        mSigninTestRule.addAccount("test@" + SyncPromoController.GMAIL_DOMAIN);
+        mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
         ProfileDataCache profileDataCache = createProfileDataCache();
         setUpSyncPromoView(
                 SigninAccessPoint.BOOKMARK_MANAGER,
@@ -154,10 +168,16 @@ public class SyncPromoControllerUiTest {
 
         BottomSheetSigninAndHistorySyncConfig expectedConfig =
                 new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                BOTTOM_SHEET_STRINGS,
+                                mBottomSheetStrings,
                                 NoAccountSigninMode.BOTTOM_SHEET,
                                 WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                HistorySyncConfig.OptInMode.NONE)
+                                HistorySyncConfig.OptInMode.NONE,
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_title),
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_subtitle))
                         .build();
         verify(mSigninAndHistorySyncActivityLauncher)
                 .createBottomSheetSigninIntentOrShowError(
@@ -172,7 +192,7 @@ public class SyncPromoControllerUiTest {
     // Disabled on Automotive since the choose account button doesn't exist on Automotive.
     @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
     public void testBookmarkSyncPromoChooseAccountButtonLaunchesSigninFlow() throws Throwable {
-        mSigninTestRule.addAccount("test@" + SyncPromoController.GMAIL_DOMAIN);
+        mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
         ProfileDataCache profileDataCache = createProfileDataCache();
         setUpSyncPromoView(
                 SigninAccessPoint.BOOKMARK_MANAGER,
@@ -186,10 +206,16 @@ public class SyncPromoControllerUiTest {
 
         BottomSheetSigninAndHistorySyncConfig expectedConfig =
                 new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                BOTTOM_SHEET_STRINGS,
+                                mBottomSheetStrings,
                                 NoAccountSigninMode.BOTTOM_SHEET,
                                 WithAccountSigninMode.CHOOSE_ACCOUNT_BOTTOM_SHEET,
-                                HistorySyncConfig.OptInMode.NONE)
+                                HistorySyncConfig.OptInMode.NONE,
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_title),
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_subtitle))
                         .build();
         verify(mSigninAndHistorySyncActivityLauncher)
                 .createBottomSheetSigninIntentOrShowError(
@@ -207,7 +233,7 @@ public class SyncPromoControllerUiTest {
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return ProfileDataCache.createWithDefaultImageSizeAndNoBadge(
-                                    mActivityTestRule.getActivity());
+                                    mActivityTestRule.getActivity(), mIdentityManager);
                         });
         setUpSyncPromoView(
                 SigninAccessPoint.RECENT_TABS,
@@ -223,10 +249,16 @@ public class SyncPromoControllerUiTest {
 
         BottomSheetSigninAndHistorySyncConfig expectedConfig =
                 new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                BOTTOM_SHEET_STRINGS,
+                                mBottomSheetStrings,
                                 NoAccountSigninMode.BOTTOM_SHEET,
                                 WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                HistorySyncConfig.OptInMode.REQUIRED)
+                                HistorySyncConfig.OptInMode.REQUIRED,
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_title),
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_subtitle))
                         .build();
         verify(mSigninAndHistorySyncActivityLauncher)
                 .createBottomSheetSigninIntentOrShowError(
@@ -256,10 +288,16 @@ public class SyncPromoControllerUiTest {
 
         BottomSheetSigninAndHistorySyncConfig expectedConfig =
                 new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                BOTTOM_SHEET_STRINGS,
+                                mBottomSheetStrings,
                                 NoAccountSigninMode.BOTTOM_SHEET,
                                 WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                HistorySyncConfig.OptInMode.REQUIRED)
+                                HistorySyncConfig.OptInMode.REQUIRED,
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_title),
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_subtitle))
                         .build();
         verify(mSigninAndHistorySyncActivityLauncher)
                 .createBottomSheetSigninIntentOrShowError(
@@ -289,10 +327,16 @@ public class SyncPromoControllerUiTest {
 
         BottomSheetSigninAndHistorySyncConfig expectedConfig =
                 new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                BOTTOM_SHEET_STRINGS,
+                                mBottomSheetStrings,
                                 NoAccountSigninMode.BOTTOM_SHEET,
                                 WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                HistorySyncConfig.OptInMode.REQUIRED)
+                                HistorySyncConfig.OptInMode.REQUIRED,
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_title),
+                                mActivityTestRule
+                                        .getActivity()
+                                        .getString(R.string.history_sync_subtitle))
                         .build();
         verify(mSigninAndHistorySyncActivityLauncher)
                 .createBottomSheetSigninIntentOrShowError(
@@ -341,7 +385,7 @@ public class SyncPromoControllerUiTest {
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             return ProfileDataCache.createWithDefaultImageSizeAndNoBadge(
-                                    mActivityTestRule.getActivity());
+                                    mActivityTestRule.getActivity(), mIdentityManager);
                         });
         View view =
                 setUpSyncPromoView(
@@ -379,7 +423,7 @@ public class SyncPromoControllerUiTest {
         return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     return ProfileDataCache.createWithDefaultImageSizeAndNoBadge(
-                            mActivityTestRule.getActivity());
+                            mActivityTestRule.getActivity(), mIdentityManager);
                 });
     }
 
@@ -404,7 +448,7 @@ public class SyncPromoControllerUiTest {
                             SyncPromoController syncPromoController =
                                     new SyncPromoController(
                                             ProfileManager.getLastUsedRegularProfile(),
-                                            BOTTOM_SHEET_STRINGS,
+                                            mBottomSheetStrings,
                                             accessPoint,
                                             mSigninAndHistorySyncActivityLauncher);
                             syncPromoController.setUpSyncPromoView(

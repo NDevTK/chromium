@@ -28,7 +28,6 @@
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/test/permission_request_observer.h"
 #include "components/prefs/pref_service.h"
-#include "components/privacy_sandbox/tracking_protection_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/common/content_features.h"
@@ -211,8 +210,14 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   }
 }
 
+// TODO(crbug.com/430164064): Re-enable this test
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_GetUserMediaOnUnFocusedTab DISABLED_GetUserMediaOnUnFocusedTab
+#else
+#define MAYBE_GetUserMediaOnUnFocusedTab GetUserMediaOnUnFocusedTab
+#endif
 IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
-                       GetUserMediaOnUnFocusedTab) {
+                       MAYBE_GetUserMediaOnUnFocusedTab) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url(embedded_test_server()->GetURL(kMainWebrtcTestHtmlPage));
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
@@ -229,7 +234,8 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
 }
 
 // Flakes on Linux TSan Tests; crbug.com/1396123.
-#if BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)
+// Flakes on Mac. crbug.com/430093040.
+#if (BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)) || BUILDFLAG(IS_MAC)
 #define MAYBE_GetUserMediaTabRegainsFocus DISABLED_GetUserMediaTabRegainsFocus
 #else
 #define MAYBE_GetUserMediaTabRegainsFocus GetUserMediaTabRegainsFocus
@@ -317,8 +323,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   CookieSettingsFactory::GetForProfile(browser()->profile())
       ->SetDefaultCookieSetting(CONTENT_SETTING_BLOCK);
-  browser()->profile()->GetPrefs()->SetBoolean(prefs::kBlockAll3pcToggleEnabled,
-                                               true);
   content::WebContents* tab1 =
       browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -348,8 +352,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   CookieSettingsFactory::GetForProfile(browser()->profile())
       ->SetDefaultCookieSetting(CONTENT_SETTING_BLOCK);
-  browser()->profile()->GetPrefs()->SetBoolean(prefs::kBlockAll3pcToggleEnabled,
-                                               true);
   content::WebContents* tab =
       browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -374,7 +376,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
       [](const net::test_server::HttpRequest& request)
           -> std::unique_ptr<net::test_server::HttpResponse> {
-        if (request.GetURL().path() == kClearCookiesPage) {
+        if (request.GetURL().GetPath() == kClearCookiesPage) {
           auto response =
               std::make_unique<net::test_server::BasicHttpResponse>();
           response->AddCustomHeader("Clear-Site-Data", "\"cookies\"");
@@ -445,8 +447,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcMediaDevicesInteractiveUITest,
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
   CookieSettingsFactory::GetForProfile(browser()->profile())
       ->SetDefaultCookieSetting(CONTENT_SETTING_BLOCK);
-  browser()->profile()->GetPrefs()->SetBoolean(prefs::kBlockAll3pcToggleEnabled,
-                                               true);
   content::WebContents* tab =
       browser()->tab_strip_model()->GetActiveWebContents();
   std::vector<MediaDeviceInfo> devices;

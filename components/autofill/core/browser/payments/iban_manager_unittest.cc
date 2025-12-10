@@ -20,8 +20,9 @@
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_structure_test_api.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
-#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide.h"
+#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide_decider.h"
 #include "components/autofill/core/browser/payments/iban_manager_test_api.h"
+#include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/grit/components_scaled_resources.h"
@@ -29,7 +30,6 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/mock_resource_bundle_delegate.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
 using testing::_;
@@ -82,18 +82,7 @@ class IbanManagerTest : public testing::Test,
     test_api(*form_structure_).SetFieldTypes({IBAN_VALUE});
     autofill_field_ = form_structure_->field(0);
 
-    ui::ResourceBundle::InitSharedInstanceWithLocale(
-        "en-US", &mock_resource_delegate_,
-        ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
-    if (IsNewFopDisplayEnabled()) {
-      ON_CALL(mock_resource_delegate_, GetImageNamed(IDR_AUTOFILL_IBAN))
-          .WillByDefault(testing::Return(gfx::test::CreateImage(100, 50)));
-    } else {
-      ON_CALL(mock_resource_delegate_, GetImageNamed(IDR_AUTOFILL_IBAN_OLD))
-          .WillByDefault(testing::Return(gfx::test::CreateImage(100, 50)));
-    }
-
-    ON_CALL(*autofill_client_.GetAutofillOptimizationGuide(),
+    ON_CALL(*autofill_client_.GetAutofillOptimizationGuideDecider(),
             ShouldBlockSingleFieldSuggestions)
         .WillByDefault(testing::Return(false));
   }
@@ -104,10 +93,6 @@ class IbanManagerTest : public testing::Test,
 #else
     return GetParam();
 #endif
-  }
-
-  void TearDown() override {
-    ui::ResourceBundle::CleanupSharedInstance();
   }
 
   // Sets up the TestPersonalDataManager with a local IBAN.
@@ -134,7 +119,7 @@ class IbanManagerTest : public testing::Test,
 
   // Get an IBAN suggestion with the given `iban`.
   Suggestion GetSuggestionForIban(const Iban& iban) {
-    Suggestion iban_suggestion;
+    Suggestion iban_suggestion(SuggestionType::kIbanEntry);
     const std::u16string iban_identifier =
         iban.GetIdentifierStringForAutofillDisplay();
     if constexpr (BUILDFLAG(IS_ANDROID)) {
@@ -155,7 +140,6 @@ class IbanManagerTest : public testing::Test,
       }
     }
 
-    iban_suggestion.type = SuggestionType::kIbanEntry;
     if (iban.record_type() == Iban::kServerIban) {
       iban_suggestion.payload = Suggestion::InstrumentId(iban.instrument_id());
     } else {
@@ -164,16 +148,10 @@ class IbanManagerTest : public testing::Test,
     return iban_suggestion;
   }
 
-  Suggestion SetUpSeparator() {
-    Suggestion separator;
-    separator.type = SuggestionType::kSeparator;
-    return separator;
-  }
-
   Suggestion SetUpFooterManagePaymentMethods() {
     Suggestion footer_suggestion(
-        l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS));
-    footer_suggestion.type = SuggestionType::kManageIban;
+        l10n_util::GetStringUTF16(IDS_AUTOFILL_MANAGE_PAYMENT_METHODS),
+        SuggestionType::kManageIban);
     footer_suggestion.icon = Suggestion::Icon::kSettings;
     return footer_suggestion;
   }
@@ -191,8 +169,6 @@ class IbanManagerTest : public testing::Test,
   raw_ptr<AutofillField> autofill_field_;
   IbanManager iban_manager_{
       &autofill_client_.GetPersonalDataManager().payments_data_manager()};
-  testing::NiceMock<ui::MockResourceBundleDelegate> mock_resource_delegate_;
-  ui::ResourceBundle::SharedInstanceSwapperForTesting resource_bundle_swapper_;
   base::test::ScopedFeatureList feature_list_metadata_;
 };
 
@@ -214,7 +190,7 @@ TEST_P(IbanManagerTest, ShowsAllIbanSuggestions) {
   Suggestion server_iban_suggestion_1 = GetSuggestionForIban(SetUpServerIban(
       /*instrument_id=*/12346, /*prefix=*/"BE71", /*suffix=*/"6769",
       kNickname_1));
-  Suggestion separator_suggestion = SetUpSeparator();
+  Suggestion separator_suggestion(SuggestionType::kSeparator);
   Suggestion footer_suggestion = SetUpFooterManagePaymentMethods();
 
   // Setting up mock to verify that the handler is returned a list of
@@ -256,7 +232,7 @@ TEST_P(IbanManagerTest, PaymentsAutofillEnabledPrefOff_NoIbanSuggestionsShown) {
 TEST_P(IbanManagerTest, IbanSuggestions_SeparatorAndFooter) {
   Suggestion iban_suggestion_0 =
       GetSuggestionForIban(SetUpLocalIban(test::kIbanValue, kNickname_0));
-  Suggestion iban_suggestion_1 = SetUpSeparator();
+  Suggestion iban_suggestion_1(SuggestionType::kSeparator);
   Suggestion iban_suggestion_2 = SetUpFooterManagePaymentMethods();
 
   // Setting up mock to verify that the handler is returned IBAN-based
@@ -304,7 +280,7 @@ TEST_P(IbanManagerTest,
       GetSuggestionForIban(SetUpLocalIban(test::kIbanValue_1, kNickname_0));
   Suggestion iban_suggestion_1 =
       GetSuggestionForIban(SetUpLocalIban(test::kIbanValue_2, kNickname_1));
-  Suggestion iban_suggestion_2 = SetUpSeparator();
+  Suggestion iban_suggestion_2(SuggestionType::kSeparator);
   Suggestion iban_suggestion_3 = SetUpFooterManagePaymentMethods();
 
   autofill_field_->set_value(u"CH");
@@ -375,7 +351,7 @@ TEST_P(IbanManagerTest,
   Suggestion server_iban_suggestion_1 = GetSuggestionForIban(SetUpServerIban(
       /*instrument_id=*/12346, /*prefix=*/"CH78", /*suffix=*/"8009",
       /*nickname=*/"My doctor's IBAN"));
-  Suggestion separator_suggestion = SetUpSeparator();
+  Suggestion separator_suggestion(SuggestionType::kSeparator);
   Suggestion footer_suggestion = SetUpFooterManagePaymentMethods();
 
   autofill_field_->set_value(u"CH");
@@ -413,7 +389,7 @@ TEST_P(IbanManagerTest,
   Suggestion server_iban_suggestion_1 = GetSuggestionForIban(SetUpServerIban(
       /*instrument_id=*/12346, /*prefix=*/"CH78", /*suffix=*/"8009",
       /*nickname=*/"My doctor's IBAN"));
-  Suggestion separator_suggestion = SetUpSeparator();
+  Suggestion separator_suggestion(SuggestionType::kSeparator);
   Suggestion footer_suggestion = SetUpFooterManagePaymentMethods();
 
   autofill_field_->set_value(u"CH567");
@@ -454,7 +430,7 @@ TEST_P(
   Suggestion server_iban_suggestion_2 = GetSuggestionForIban(SetUpServerIban(
       /*instrument_id=*/12347, /*prefix=*/"", /*suffix=*/"9123",
       /*nickname=*/"My sister's IBAN"));
-  Suggestion separator_suggestion = SetUpSeparator();
+  Suggestion separator_suggestion(SuggestionType::kSeparator);
   Suggestion footer_suggestion = SetUpFooterManagePaymentMethods();
 
   // Expect that all server IBANs are returned.
@@ -513,7 +489,7 @@ TEST_P(
   Suggestion server_iban_suggestion_2 = GetSuggestionForIban(SetUpServerIban(
       /*instrument_id=*/12347, /*prefix=*/"", /*suffix=*/"9123",
       /*nickname=*/"My sister's IBAN"));
-  Suggestion separator_suggestion = SetUpSeparator();
+  Suggestion separator_suggestion(SuggestionType::kSeparator);
   Suggestion footer_suggestion = SetUpFooterManagePaymentMethods();
 
   autofill_field_->set_value(u"AB5678");
@@ -536,7 +512,7 @@ TEST_P(IbanManagerTest, DoesNotShowIbansForBlockedWebsite) {
   // the website is blocked.
   MockSuggestionsReturnedCallback mock_callback;
   EXPECT_CALL(mock_callback, Run).Times(0);
-  ON_CALL(*autofill_client_.GetAutofillOptimizationGuide(),
+  ON_CALL(*autofill_client_.GetAutofillOptimizationGuideDecider(),
           ShouldBlockSingleFieldSuggestions)
       .WillByDefault(testing::Return(true));
 
@@ -547,14 +523,14 @@ TEST_P(IbanManagerTest, DoesNotShowIbansForBlockedWebsite) {
 }
 
 // Test that suggestions are returned on platforms that don't have an
-// AutofillOptimizationGuide. Having no AutofillOptimizationGuide means that
-// suggestions cannot and will not be blocked.
+// AutofillOptimizationGuideDecider. Having no AutofillOptimizationGuideDecider
+// means that suggestions cannot and will not be blocked.
 TEST_P(IbanManagerTest, ShowsIbanSuggestions_OptimizationGuideNotPresent) {
   Suggestion iban_suggestion_0 =
       GetSuggestionForIban(SetUpLocalIban(test::kIbanValue, kNickname_0));
 
-  // Delete the AutofillOptimizationGuide.
-  autofill_client_.ResetAutofillOptimizationGuide();
+  // Delete the AutofillOptimizationGuideDecider.
+  autofill_client_.ResetAutofillOptimizationGuideDecider();
 
   // Setting up mock to verify that the handler is returned a list of
   // IBAN-based suggestions.
@@ -619,7 +595,7 @@ TEST_P(IbanManagerTest, Metrics_Suggestions_Blocked) {
   // the website is blocked.
   MockSuggestionsReturnedCallback mock_callback;
   EXPECT_CALL(mock_callback, Run).Times(0);
-  ON_CALL(*autofill_client_.GetAutofillOptimizationGuide(),
+  ON_CALL(*autofill_client_.GetAutofillOptimizationGuideDecider(),
           ShouldBlockSingleFieldSuggestions)
       .WillByDefault(testing::Return(true));
   // Simulate request for suggestions.
@@ -638,8 +614,8 @@ TEST_P(IbanManagerTest, Metrics_Suggestions_Blocked) {
 TEST_P(IbanManagerTest, Metrics_Suggestions_BlocklistNotAccessible) {
   base::HistogramTester histogram_tester;
   SetUpLocalIban(test::kIbanValue, kNickname_0);
-  // Delete the AutofillOptimizationGuide.
-  autofill_client_.ResetAutofillOptimizationGuide();
+  // Delete the AutofillOptimizationGuideDecider.
+  autofill_client_.ResetAutofillOptimizationGuideDecider();
 
   // Simulate request for suggestions.
   // TODO: handle return value.

@@ -7,11 +7,11 @@
 #import <tuple>
 
 #import "base/test/scoped_feature_list.h"
-#import "ios/chrome/browser/sessions/model/ios_chrome_session_tab_helper.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
-#import "ios/chrome/browser/tabs/model/features.h"
 #import "ios/chrome/browser/tips_manager/model/tips_manager_ios_factory.h"
+#import "ios/chrome/browser/voice/model/voice_search_navigations_tab_helper.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
+#import "ios/web/common/features.h"
 #import "ios/web/public/test/fakes/fake_web_frames_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_task_environment.h"
@@ -24,7 +24,7 @@ namespace {
 // don't depend on a specific tab helper. Using an alias allow to change
 // how the check is performed if in the future `AttachTabHelpers(...)`
 // is modified.
-using ExpectedTabHelper = IOSChromeSessionTabHelper;
+using ExpectedTabHelper = VoiceSearchNavigationTabHelper;
 
 // Represents state of the kCreateTabHelperOnlyForRealizedWebStates
 // feature for a test case.
@@ -64,7 +64,7 @@ class BrowserWebStateListDelegateTest
     : public testing::TestWithParam<BrowserWebStateListDelegateTestParam> {
  public:
   BrowserWebStateListDelegateTest()
-      : feature_list_(kCreateTabHelperOnlyForRealizedWebStates,
+      : feature_list_(web::features::kCreateTabHelperOnlyForRealizedWebStates,
                       std::get<FeatureState>(GetParam())) {
     profile_ = TestProfileIOS::Builder().Build();
     profile_->CreateOffTheRecordProfileWithTestingFactories(
@@ -165,7 +165,7 @@ TEST_P(BrowserWebStateListDelegateTest, InsertionPolicy_UnrealizedWebState) {
 
     case BrowserWebStateListDelegate::InsertionPolicy::kAttachTabHelpers:
       EXPECT_FALSE(web_state->IsRealized());
-      EXPECT_EQ(CreateTabHelperOnlyForRealizedWebStates(),
+      EXPECT_EQ(web::features::CreateTabHelperOnlyForRealizedWebStates(),
                 ExpectedTabHelper::FromWebState(web_state.get()) == nullptr);
       break;
   }
@@ -213,7 +213,7 @@ TEST_P(BrowserWebStateListDelegateTest, InsertionPolicy_RemovedBeforeRealized) {
 
     case BrowserWebStateListDelegate::InsertionPolicy::kAttachTabHelpers:
       EXPECT_FALSE(web_state->IsRealized());
-      EXPECT_EQ(CreateTabHelperOnlyForRealizedWebStates(),
+      EXPECT_EQ(web::features::CreateTabHelperOnlyForRealizedWebStates(),
                 ExpectedTabHelper::FromWebState(web_state.get()) == nullptr);
       break;
   }
@@ -232,7 +232,7 @@ TEST_P(BrowserWebStateListDelegateTest, InsertionPolicy_RemovedBeforeRealized) {
 
     case BrowserWebStateListDelegate::InsertionPolicy::kAttachTabHelpers:
       EXPECT_TRUE(web_state->IsRealized());
-      EXPECT_EQ(CreateTabHelperOnlyForRealizedWebStates(),
+      EXPECT_EQ(web::features::CreateTabHelperOnlyForRealizedWebStates(),
                 ExpectedTabHelper::FromWebState(web_state.get()) == nullptr);
       break;
   }

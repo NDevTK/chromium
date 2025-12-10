@@ -5,28 +5,40 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_TABS_TABS_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_TABS_TABS_API_H_
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/values.h"
+#include "chrome/browser/extensions/chrome_extension_function_details.h"
+#include "chrome/browser/extensions/window_controller.h"
 #include "chrome/common/extensions/api/tabs.h"
+#include "chrome/common/extensions/api/windows.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/translate/core/browser/translate_driver.h"
 #include "components/zoom/zoom_controller.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/api/execute_code_function.h"
 #include "extensions/browser/api/web_contents_capture_client.h"
 #include "extensions/browser/extension_function.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/user_script.h"
+#include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/chrome_extension_function_details.h"
+#if BUILDFLAG(FULL_SAFE_BROWSING)
+#include "chrome/browser/safe_browsing/extension_telemetry/tabs_api_signal.h"
 #endif
 
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
+class BrowserWindowInterface;
 class GURL;
+class SessionID;
 class SkBitmap;
 class TabStripModel;
 
@@ -38,6 +50,10 @@ namespace content {
 class WebContents;
 }
 
+namespace tabs {
+class TabInterface;
+}
+
 namespace ui {
 class ListSelectionModel;
 }
@@ -47,6 +63,110 @@ class PrefRegistrySyncable;
 }
 
 namespace extensions {
+
+namespace api::windows {
+enum class WindowState;
+}
+
+// This namespace includes a collection of conceptually-internal helper methods
+// and constants that are currently here because they are used by both
+// tabs_api.cc and tabs_api_non_android.cc. Eventually, they should only be
+// used by tabs_api.cc, and we can move them to an anonymous namespace in
+// tabs_api.cc.
+// TODO(devlin): Do that. ^^
+namespace tabs_internal {
+
+inline constexpr char kMissingLockWindowFullscreenPrivatePermission[] =
+    "Cannot lock window to fullscreen or close a locked fullscreen window "
+    "without lockWindowFullscreenPrivate manifest permission";
+
+// A helper class to extract popular properties from different arguments.
+template <typename T>
+class ApiParameterExtractor {
+ public:
+  explicit ApiParameterExtractor(std::optional<T>& params) : params_(*params) {}
+  ~ApiParameterExtractor() = default;
+
+  bool populate_tabs() {
+    if (params_->query_options && params_->query_options->populate) {
+      return *params_->query_options->populate;
+    }
+    return false;
+  }
+
+  WindowController::TypeFilter type_filters() {
+    if (params_->query_options && params_->query_options->window_types) {
+      return WindowController::GetFilterFromWindowTypes(
+          *params_->query_options->window_types);
+    }
+    return WindowController::kNoWindowFilter;
+  }
+
+ private:
+  raw_ref<T> params_;
+};
+
+// Returns true if the given `extension` has API access to the locked
+// fullscreen permission.
+bool ExtensionHasLockedFullscreenPermission(const Extension* extension);
+
+// Helper method to generate a new tab object for the given `contents`,
+// appropriately scrubbed of data for the given `extension`.
+api::tabs::Tab CreateTabObjectHelper(content::WebContents* contents,
+                                     const Extension* extension,
+                                     mojom::ContextType context,
+                                     BrowserWindowInterface* browser,
+                                     int tab_index);
+
+// Retrieves the tab associated with the given `tab_id`, populating
+// `contents_out`, `window_out`, and `index_out` with the result. If the tab
+// isn't found and `error_out` is non-null, populates `error_out` with an
+// appropriate error.
+// Returns true if the tab was found.
+bool GetTabById(int tab_id,
+                content::BrowserContext* context,
+                bool include_incognito,
+                WindowController** window_out,
+                content::WebContents** contents_out,
+                int* index_out,
+                std::string* error_out);
+
+#if BUILDFLAG(FULL_SAFE_BROWSING)
+// Notifies the safe browsing telemetry service of a relevant extension action.
+void NotifyExtensionTelemetry(Profile* profile,
+                              const Extension* extension,
+                              safe_browsing::TabsApiInfo::ApiMethod api_method,
+                              const std::string& current_url,
+                              const std::string& new_url,
+                              const std::optional<StackTrace>& js_callstack);
+#endif
+
+// Gets the WebContents for `tab_id` if it is specified. Otherwise get the
+// WebContents for the active tab in the `function`'s current window.
+// Returns nullptr and fills `error` if failed.
+content::WebContents* GetTabsAPIDefaultWebContents(ExtensionFunction* function,
+                                                   int tab_id,
+                                                   std::string* error);
+
+// Converts the given `state` to the mojom::WindowShowState equivalent.
+ui::mojom::WindowShowState ConvertToWindowShowState(
+    api::windows::WindowState state);
+
+// Returns whether the given `bounds` intersect with at least 50% of all the
+// displays.
+bool WindowBoundsIntersectDisplays(const gfx::Rect& bounds);
+
+// Moves the given tab to the `target_browser`. On success, returns the
+// new index of the tab in the target tabstrip. On failure, returns -1.
+// Assumes that the caller has already checked whether the target window is
+// different from the source.
+int MoveTabToWindow(ExtensionFunction* function,
+                    int tab_id,
+                    BrowserWindowInterface* target_browser,
+                    int new_index,
+                    std::string* error);
+
+}  // namespace tabs_internal
 
 // Converts a ZoomMode to its ZoomSettings representation.
 void ZoomModeToZoomSettings(zoom::ZoomController::ZoomMode zoom_mode,
@@ -77,11 +197,40 @@ class WindowsCreateFunction : public ExtensionFunction {
   ~WindowsCreateFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("windows.create", WINDOWS_CREATE)
+
+ private:
+  // Ensures the tab for the window is valid. Returns an error string, or the
+  // empty string if the tab is valid.
+  static std::string ValidateTab(WindowController* source_window,
+                                 Profile* window_profile,
+                                 Profile* calling_profile,
+                                 content::WebContents* web_contents,
+                                 bool is_locked_fullscreen,
+                                 const std::vector<GURL>& urls);
+
+  // Uses `create_data` to set the window position and size in `window_bounds`.
+  // Returns an error string, or the empty string if the bounds are valid.
+  static std::string SetWindowBounds(
+      const api::windows::Create::Params::CreateData& create_data,
+      gfx::Rect& window_bounds);
+
+#if BUILDFLAG(IS_CHROMEOS)
+  void OnWindowCreatedAsynchronously(const SessionID& session_id);
+#endif  // BUILDFLAG(IS_CHROMEOS)
 };
 class WindowsUpdateFunction : public ExtensionFunction {
   ~WindowsUpdateFunction() override = default;
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("windows.update", WINDOWS_UPDATE)
+
+ private:
+  // Applies the updates from `params` to the `browser` window.
+  void UpdateWindowState(const api::windows::Update::Params& params,
+                         BrowserWindowInterface* browser,
+                         WindowController* window_controller,
+                         ui::mojom::WindowShowState show_state,
+                         bool set_window_bounds,
+                         const gfx::Rect& window_bounds);
 };
 class WindowsRemoveFunction : public ExtensionFunction {
   ~WindowsRemoveFunction() override = default;
@@ -111,9 +260,36 @@ class TabsGetAllInWindowFunction : public ExtensionFunction {
   DECLARE_EXTENSION_FUNCTION("tabs.getAllInWindow", TABS_GETALLINWINDOW)
 };
 class TabsQueryFunction : public ExtensionFunction {
-  ~TabsQueryFunction() override = default;
+ public:
   ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("tabs.query", TABS_QUERY)
+
+ private:
+  ~TabsQueryFunction() override = default;
+
+  // Builds the list of tab objects to return.
+  base::Value::List BuildTabList(BrowserWindowInterface* current_browser,
+                                 BrowserWindowInterface* last_active_browser,
+                                 const URLPatternSet& url_patterns,
+                                 const std::string& window_type,
+                                 int window_id,
+                                 int tab_index);
+
+  // Returns true if the given `candidate_profile` matches the calling
+  // extension's profile (taking into account incognito access).
+  bool MatchesProfile(Profile* candidate_profile);
+
+  bool MatchesWindow(BrowserWindowInterface* candidate_browser,
+                     BrowserWindowInterface* current_browser,
+                     BrowserWindowInterface* last_active_browser,
+                     const std::string& target_window_type,
+                     int target_window_id);
+
+  bool MatchesTab(tabs::TabInterface* candidate_tab,
+                  const URLPatternSet& target_url_patterns);
+
+  // The query parameters passed by the extension.
+  api::tabs::Query::Params::QueryInfo query_info_;
 };
 class TabsCreateFunction : public ExtensionFunction {
   ~TabsCreateFunction() override = default;
@@ -141,15 +317,35 @@ class TabsUpdateFunction : public ExtensionFunction {
 
  protected:
   ~TabsUpdateFunction() override = default;
-  bool UpdateURL(const std::string& url,
+  bool UpdateURL(content::WebContents* web_contents,
+                 const std::string& url,
                  int tab_id,
                  std::string* error);
-  ResponseValue GetResult();
-
-  raw_ptr<content::WebContents, DanglingUntriaged> web_contents_;
+  ResponseValue GetResult(content::WebContents* web_contents);
 
  private:
   ResponseAction Run() override;
+
+  // Returns true on success. Out parameters are the ID of the default tab to
+  // update and its web contents, or an error string.
+  bool ComputeDefaultTabId(int& tab_id,
+                           content::WebContents*& contents,
+                           std::string& error);
+
+  // Updates the active or selected tab. Returns true on success or if there was
+  // nothing to do. Returns false on failure with an error message.
+  bool UpdateActiveTab(const api::tabs::Update::Params& params,
+                       TabStripModel* tab_strip,
+                       int tab_index,
+                       const content::WebContents* contents,
+                       std::string& error);
+
+  // Updates the highlight state of the given tab. Returns true on success or if
+  // there was nothing to do. Returns false on failure with an error.
+  bool UpdateHighlightedTab(const api::tabs::Update::Params& params,
+                            TabStripModel* tab_strip,
+                            int tab_index,
+                            std::string& error);
 
   DECLARE_EXTENSION_FUNCTION("tabs.update", TABS_UPDATE)
 };
@@ -174,15 +370,17 @@ class TabsRemoveFunction : public ExtensionFunction {
   void TabDestroyed();
 
  private:
-  class WebContentsDestroyedObserver;
   ~TabsRemoveFunction() override;
   ResponseAction Run() override;
   bool RemoveTab(int tab_id, std::string* error);
 
   int remaining_tabs_count_ = 0;
   bool triggered_all_tab_removals_ = false;
+
+  class WebContentsDestroyedObserver;
   std::vector<std::unique_ptr<WebContentsDestroyedObserver>>
       web_contents_destroyed_observers_;
+
   DECLARE_EXTENSION_FUNCTION("tabs.remove", TABS_REMOVE)
 };
 class TabsGroupFunction : public ExtensionFunction {
@@ -204,6 +402,9 @@ class TabsDetectLanguageFunction
   ~TabsDetectLanguageFunction() override = default;
   ResponseAction Run() override;
 
+  // Starts the language detection process, which is asynchronous.
+  ResponseAction StartLanguageDetection(content::WebContents* contents);
+
   // content::WebContentsObserver:
   void NavigationEntryCommitted(
       const content::LoadCommittedDetails& load_details) override;
@@ -224,17 +425,15 @@ class TabsDetectLanguageFunction
   DECLARE_EXTENSION_FUNCTION("tabs.detectLanguage", TABS_DETECTLANGUAGE)
 };
 
-class TabsCaptureVisibleTabFunction
-    : public extensions::WebContentsCaptureClient,
-      public ExtensionFunction {
+class TabsCaptureVisibleTabFunction :
+    public extensions::WebContentsCaptureClient,
+    public ExtensionFunction {
  public:
   TabsCaptureVisibleTabFunction();
 
   TabsCaptureVisibleTabFunction(const TabsCaptureVisibleTabFunction&) = delete;
   TabsCaptureVisibleTabFunction& operator=(
       const TabsCaptureVisibleTabFunction&) = delete;
-
-  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
   static void set_disable_throttling_for_tests(
       bool disable_throttling_for_test) {
@@ -250,9 +449,7 @@ class TabsCaptureVisibleTabFunction
   ~TabsCaptureVisibleTabFunction() override = default;
 
  private:
-#if BUILDFLAG(ENABLE_EXTENSIONS)
   ChromeExtensionFunctionDetails chrome_details_;
-#endif
 
   content::WebContents* GetWebContentsForID(int window_id, std::string* error);
 
@@ -295,12 +492,10 @@ class ExecuteCodeInTabFunction : public ExecuteCodeFunction {
   const GURL& GetWebViewSrc() const override;
 
  private:
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  const ChromeExtensionFunctionDetails chrome_details_;
-#endif
+  const ChromeExtensionFunctionDetails chrome_details_{this};
 
   // Id of tab which executes code.
-  int execute_tab_id_;
+  int execute_tab_id_ = -1;
 };
 
 class TabsExecuteScriptFunction : public ExecuteCodeInTabFunction {

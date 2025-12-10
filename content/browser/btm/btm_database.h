@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/sequence_checker.h"
 #include "base/strings/cstring_view.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
@@ -38,10 +39,10 @@ class CONTENT_EXPORT BtmDatabase {
   // Version number of the database schema.
   // NOTE: When changing the version, add a new golden file for the new version
   // at `//chrome/test/data/dips/v<N>.sql`.
-  static constexpr int kLatestSchemaVersion = 9;
+  static constexpr int kLatestSchemaVersion = 11;
 
   // The minimum database schema version this Chrome code is compatible with.
-  static constexpr int kMinCompatibleSchemaVersion = 9;
+  static constexpr int kMinCompatibleSchemaVersion = 11;
 
   static constexpr char kPrepopulatedKey[] = "prepopulated";
 
@@ -66,9 +67,7 @@ class CONTENT_EXPORT BtmDatabase {
 
   // DIPS Bounce table functions -----------------------------------------------
   bool Write(const std::string& site,
-             const TimestampRange& storage_times,
              const TimestampRange& user_activation_times,
-             const TimestampRange& stateful_bounce_times,
              const TimestampRange& bounce_times,
              const TimestampRange& web_authn_assertion_times);
 
@@ -115,33 +114,6 @@ class CONTENT_EXPORT BtmDatabase {
   // NOTE: This method's main procedure is performed after calling
   // `ClearExpiredRows()`.
   std::vector<std::string> GetSitesThatBounced(base::TimeDelta grace_period);
-
-  // Returns all sites which used storage and aren't protected from DIPS.
-  //
-  // A site can be protected in several ways:
-  // - it's still in its grace period after the first storage
-  // - it received user activation or WAA before the first storage
-  // - it received user activation or WAA in the grace period after the first
-  // storage.
-  //
-  // NOTE: This method's main procedure is performed after calling
-  // `ClearExpiredRows()`.
-  std::vector<std::string> GetSitesThatUsedStorage(
-      base::TimeDelta grace_period);
-
-  // Returns all sites which statefully bounced the user and aren't protected
-  // from DIPS.
-  //
-  // A site can be protected in several ways:
-  // - it's still in its grace period after the first stateful bounce
-  // - it received user activation or WAA before the first stateful bounce
-  // - it received user activation or WAA in the grace period after the first
-  // stateful bounce.
-  //
-  // NOTE: This method's main procedure is performed after calling
-  // `ClearExpiredRows()`.
-  std::vector<std::string> GetSitesThatBouncedWithState(
-      base::TimeDelta grace_period);
 
   // Deletes all rows in the database whose interactions have expired out.
   //

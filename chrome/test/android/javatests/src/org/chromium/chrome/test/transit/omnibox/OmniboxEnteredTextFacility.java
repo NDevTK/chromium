@@ -6,11 +6,8 @@ package org.chromium.chrome.test.transit.omnibox;
 
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
-import android.view.View;
-
 import org.chromium.base.test.transit.Facility;
 import org.chromium.base.test.transit.Station;
-import org.chromium.base.test.transit.ViewElement;
 
 /**
  * Represents test entered into the Omnibox.
@@ -21,40 +18,54 @@ import org.chromium.base.test.transit.ViewElement;
 public class OmniboxEnteredTextFacility extends Facility<Station<?>> {
     private final OmniboxFacility mOmniboxFacility;
     private final String mText;
-    public ViewElement<View> urlBarElement;
-    public ViewElement<View> deleteButtonElement;
 
     public OmniboxEnteredTextFacility(OmniboxFacility omniboxFacility, String text) {
         mOmniboxFacility = omniboxFacility;
         mText = text;
 
-        urlBarElement = declareView(OmniboxFacility.URL_FIELD.and(withText(mText)));
-        deleteButtonElement =
-                declareView(OmniboxFacility.DELETE_BUTTON, ViewElement.displayingAtLeastOption(50));
-        declareNoView(OmniboxFacility.MIC_BUTTON);
+        declareEnterCondition(omniboxFacility.urlBarElement.matches(withText(mText)));
+        if (mText.isEmpty()) {
+            declareEnterCondition(omniboxFacility.deleteButtonElement.absent());
+
+            if (omniboxFacility.getHostStation().isIncognito()) {
+                declareEnterCondition(omniboxFacility.micButtonElement.absent());
+            } else {
+                declareEnterCondition(omniboxFacility.micButtonElement.present());
+            }
+        } else {
+            declareEnterCondition(omniboxFacility.deleteButtonElement.present());
+            declareEnterCondition(omniboxFacility.micButtonElement.absent());
+        }
     }
 
     /** Enter text into the omnibox. */
     public OmniboxEnteredTextFacility typeText(String textToType, String textToExpect) {
-        return mHostStation.swapFacilitySync(
-                this,
-                new OmniboxEnteredTextFacility(mOmniboxFacility, textToExpect),
-                urlBarElement.getTypeTextTrigger(textToType));
+        return mOmniboxFacility
+                .urlBarElement
+                .typeTextTo(textToType)
+                .exitFacilityAnd()
+                .enterFacility(new OmniboxEnteredTextFacility(mOmniboxFacility, textToExpect));
     }
 
     /** Simulate autocomplete suggestion received from the server. */
     public OmniboxEnteredTextFacility simulateAutocomplete(String autocompleted) {
-        return mHostStation.swapFacilitySync(
-                this,
-                new OmniboxEnteredTextFacility(mOmniboxFacility, mText + autocompleted),
-                () ->
-                        mOmniboxFacility
-                                .getFakeSuggestions()
-                                .simulateAutocompleteSuggestion(mText, autocompleted));
+        return runTo(
+                        () ->
+                                mOmniboxFacility
+                                        .getFakeSuggestions()
+                                        .simulateAutocompleteSuggestion(mText, autocompleted))
+                .exitFacilityAnd()
+                .enterFacility(
+                        new OmniboxEnteredTextFacility(mOmniboxFacility, mText + autocompleted));
     }
 
     /** Click the delete button to erase the text entered. */
-    public void clickDelete() {
-        mHostStation.exitFacilitySync(this, deleteButtonElement.getForgivingClickTrigger());
+    public OmniboxEnteredTextFacility clickDelete() {
+        assert !mText.isEmpty();
+        return mOmniboxFacility
+                .deleteButtonElement
+                .clickTo()
+                .exitFacilityAnd(this)
+                .enterFacility(new OmniboxEnteredTextFacility(mOmniboxFacility, ""));
     }
 }

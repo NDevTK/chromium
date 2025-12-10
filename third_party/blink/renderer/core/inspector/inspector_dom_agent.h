@@ -33,7 +33,6 @@
 #include <memory>
 
 #include "base/functional/callback.h"
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener_map.h"
 #include "third_party/blink/renderer/core/inspector/inspector_base_agent.h"
@@ -57,6 +56,7 @@ class Document;
 class DocumentLoader;
 class DummyExceptionStateForTesting;
 class Element;
+class HTMLElement;
 class HTMLFrameOwnerElement;
 class HTMLSlotElement;
 class InspectedFrames;
@@ -148,6 +148,7 @@ class CORE_EXPORT InspectorDOMAgent final
   protocol::Response getOuterHTML(std::optional<int> node_id,
                                   std::optional<int> backend_node_id,
                                   std::optional<String> object_id,
+                                  std::optional<bool> include_shadow_dom,
                                   String* outer_html) override;
   protocol::Response setOuterHTML(int node_id,
                                   const String& outer_html) override;
@@ -257,6 +258,7 @@ class CORE_EXPORT InspectorDOMAgent final
       std::optional<protocol::DOM::PhysicalAxes> physical_axes,
       std::optional<protocol::DOM::LogicalAxes> logical_axes,
       std::optional<bool> queries_scroll_state,
+      std::optional<bool> queries_anchored,
       std::optional<int>* container_node_id) override;
   protocol::Response getQueryingDescendantsForContainer(
       int node_id,
@@ -271,6 +273,12 @@ class CORE_EXPORT InspectorDOMAgent final
   protocol::Response getAnchorElement(int node_id,
                                       std::optional<String> anchor_specifier,
                                       int* out_node_id) override;
+
+  protocol::Response forceShowPopover(
+      int node_id,
+      bool enable,
+      std::unique_ptr<protocol::Array<int>>* out_nodeIds) override;
+  void WillHidePopover(HTMLElement* element, bool* force_open);
 
   bool Enabled() const;
   IncludeWhitespaceEnum IncludeWhitespace() const;
@@ -290,6 +298,8 @@ class CORE_EXPORT InspectorDOMAgent final
                         const AtomicString& value);
   void DidRemoveDOMAttr(Element*, const QualifiedName&);
   void StyleAttributeInvalidated(const HeapVector<Member<Element>>& elements);
+  void DidModifyAdoptedStyleSheets(Node*);
+  void AdoptedStyleSheetsInvalidated(Node*);
   void CharacterDataModified(CharacterData*);
   void DidInvalidateStyleAttr(Node*);
   void DidPushShadowRoot(Element* host, ShadowRoot*);
@@ -302,6 +312,7 @@ class CORE_EXPORT InspectorDOMAgent final
   void PseudoElementDestroyed(PseudoElement*);
   void NodeCreated(Node* node);
   void UpdateScrollableFlag(Node* node, std::optional<bool>);
+  void UpdateAffectedByStartingStylesFlag(Node* node, std::optional<bool>);
 
   Node* NodeForId(int node_id) const;
   int BoundNodeId(Node*) const;
@@ -400,10 +411,12 @@ class CORE_EXPORT InspectorDOMAgent final
   Node* NodeForPath(const String& path);
 
   void DiscardFrontendBindings();
+  void ReleaseForcedPopovers();
 
   InspectorRevalidateDOMTask* RevalidateTask();
 
   bool isNodeScrollable(Node*);
+  bool AffectedByStartingStyles(Node*);
 
   v8::Isolate* isolate_;  // null after Dispose().
   Member<InspectedFrames> inspected_frames_;
@@ -419,6 +432,7 @@ class CORE_EXPORT InspectorDOMAgent final
   HashSet<int> children_requested_;
   HashSet<int> distributed_nodes_requested_;
   HashMap<int, int> cached_child_count_;
+  HeapHashSet<WeakMember<Node>> forced_popovers_;
   int last_node_id_;
   Member<Document> document_;
   using SearchResults =

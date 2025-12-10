@@ -173,6 +173,10 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
   virtual std::unique_ptr<enterprise_connectors::ClientMetadata>
   GetClientMetadata() const = 0;
 
+  // Returns the content area email address. This is the email address used for
+  // active Gaia filtering.
+  virtual std::string GetContentAreaAccountEmail(const GURL& tab_url) const = 0;
+
   // Returns true if `url`'s scheme can be checked, or if it should be checked
   // anyway because of "EnterpriseRealTimeUrlCheckMode".
   virtual bool CanCheckUrl(const GURL& url) = 0;
@@ -183,6 +187,11 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
 
   // Suffix for logging metrics.
   virtual std::string GetMetricSuffix() const = 0;
+
+  // Overrides safe url check from browser throttle. This is used
+  // to send requests for sites that would usually be safe in case
+  // they are blocked by an enterprise data protection rule.
+  virtual bool ShouldOverrideKnownSafeUrlDecision(const GURL& url) const = 0;
 
   // Fragments, usernames and passwords are removed, because fragments are only
   // used for local navigations and usernames/passwords are too privacy
@@ -348,7 +357,7 @@ class RealTimeUrlLookupServiceBase : public KeyedService {
       bool is_sampled_report,
       scoped_refptr<base::SequencedTaskRunner> response_callback_task_runner,
       std::optional<int> webui_token,
-      std::unique_ptr<std::string> response_body);
+      std::optional<std::string> response_body);
 
   // Fills in fields in |RTLookupRequest|.  |url| is expected to be already
   // sanitized.

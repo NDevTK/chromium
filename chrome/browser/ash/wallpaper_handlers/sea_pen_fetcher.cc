@@ -18,7 +18,6 @@
 #include "base/barrier_callback.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_view_util.h"
@@ -233,7 +232,6 @@ class SeaPenFetcherImpl : public SeaPenFetcher {
       : snapper_provider_(std::move(snapper_provider)) {
     CHECK(ash::features::IsSeaPenEnabled() ||
           ash::features::IsVcBackgroundReplaceEnabled());
-    CHECK(manta::features::IsMantaServiceEnabled());
   }
 
   SeaPenFetcherImpl(const SeaPenFetcherImpl&) = delete;

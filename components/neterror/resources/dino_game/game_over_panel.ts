@@ -6,10 +6,11 @@ import {assert} from 'chrome://resources/js/assert.js';
 
 import {IS_HIDPI, IS_RTL} from './constants.js';
 import type {Dimensions} from './dimensions.js';
+import type {ImageSpriteProvider} from './image_sprite_provider.js';
 import {spriteDefinitionByType} from './offline_sprite_definitions.js';
 import type {SpritePosition} from './sprite_position.js';
 import type {Trex} from './trex.js';
-import {getRunnerAltCommonImageSprite, getRunnerOrigImageSprite, getRunnerSpriteDefinition, getTimeStamp} from './utils.js';
+import {getTimeStamp} from './utils.js';
 
 const RESTART_ANIM_DURATION: number = 875;
 const LOGO_PAUSE_DURATION: number = 875;
@@ -68,6 +69,7 @@ export class GameOverPanel {
   private canvasDimensions: Dimensions;
   private textImgPos: SpritePosition;
   private restartImgPos: SpritePosition;
+  private imageSpriteProvider: ImageSpriteProvider;
   private altGameEndImgPos: SpritePosition|null;
   private altGameModeActive: boolean;
   private frameTimeStamp: number = 0;
@@ -84,6 +86,7 @@ export class GameOverPanel {
   constructor(
       canvas: HTMLCanvasElement, textImgPos: SpritePosition,
       restartImgPos: SpritePosition, dimensions: Dimensions,
+      imageSpriteProvider: ImageSpriteProvider,
       altGameEndImgPos?: SpritePosition, altGameActive?: boolean) {
     const canvasContext = canvas.getContext('2d');
     assert(canvasContext);
@@ -91,6 +94,7 @@ export class GameOverPanel {
     this.canvasDimensions = dimensions;
     this.textImgPos = textImgPos;
     this.restartImgPos = restartImgPos;
+    this.imageSpriteProvider = imageSpriteProvider;
     this.altGameEndImgPos = altGameEndImgPos ?? null;
     this.altGameModeActive = altGameActive ?? false;
   }
@@ -134,8 +138,9 @@ export class GameOverPanel {
       textSourceY += this.textImgPos.y;
     }
 
-    const spriteSource = useAltText ? getRunnerAltCommonImageSprite() :
-                                      getRunnerOrigImageSprite();
+    const spriteSource = useAltText ?
+        this.imageSpriteProvider.getAltCommonImageSprite() :
+        this.imageSpriteProvider.getOrigImageSprite();
     assert(spriteSource);
 
     this.canvasCtx.save();
@@ -158,8 +163,7 @@ export class GameOverPanel {
    * Draw additional adornments for alternative game types.
    */
   private drawAltGameElements(tRex: Trex) {
-    const spriteDefinition = getRunnerSpriteDefinition();
-    assert(spriteDefinition);
+    const spriteDefinition = this.imageSpriteProvider.getSpriteDefinition();
     // Additional adornments.
     if (this.altGameModeActive && spriteDefinition) {
       assert(this.altGameEndImgPos);
@@ -176,7 +180,8 @@ export class GameOverPanel {
         altGameEndSourceHeight *= 2;
       }
 
-      const altCommonImageSprite = getRunnerAltCommonImageSprite();
+      const altCommonImageSprite =
+          this.imageSpriteProvider.getAltCommonImageSprite();
       assert(altCommonImageSprite);
 
 
@@ -212,8 +217,7 @@ export class GameOverPanel {
       this.canvasCtx.translate(this.canvasDimensions.width, 0);
       this.canvasCtx.scale(-1, 1);
     }
-    const origImageSprite = getRunnerOrigImageSprite();
-    assert(origImageSprite);
+    const origImageSprite = this.imageSpriteProvider.getOrigImageSprite();
 
     this.canvasCtx.drawImage(
         origImageSprite, this.restartImgPos.x + framePosX, this.restartImgPos.y,

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/actor/tools/click_tool_request.h"
 
+#include <optional>
+
 #include "chrome/browser/actor/tools/tool_request_visitor_functor.h"
 #include "chrome/common/actor.mojom.h"
 
@@ -12,9 +14,9 @@ namespace actor {
 using ::tabs::TabHandle;
 
 ClickToolRequest::ClickToolRequest(TabHandle tab_handle,
-                                   const Target& target,
-                                   ClickType type,
-                                   ClickCount count)
+                                   const PageTarget& target,
+                                   MouseClickType type,
+                                   MouseClickCount count)
     : PageToolRequest(tab_handle, target),
       click_type_(type),
       click_count_(count) {}
@@ -25,38 +27,27 @@ void ClickToolRequest::Apply(ToolRequestVisitorFunctor& f) const {
   f.Apply(*this);
 }
 
-std::string ClickToolRequest::JournalEvent() const {
-  return "Click";
+std::string_view ClickToolRequest::Name() const {
+  return kName;
 }
 
-mojom::ToolActionPtr ClickToolRequest::ToMojoToolAction() const {
+mojom::ToolActionPtr ClickToolRequest::ToMojoToolAction(
+    content::RenderFrameHost& frame) const {
   auto click = mojom::ClickAction::New();
-
-  click->target = PageToolRequest::ToMojoToolTarget(GetTarget());
-
-  switch (click_type_) {
-    case ClickType::kLeft:
-      click->type = actor::mojom::ClickAction::Type::kLeft;
-      break;
-    case ClickType::kRight:
-      click->type = actor::mojom::ClickAction::Type::kRight;
-      break;
-  }
-
-  switch (click_count_) {
-    case ClickCount::kSingle:
-      click->count = actor::mojom::ClickAction::Count::kSingle;
-      break;
-    case ClickCount::kDouble:
-      click->count = actor::mojom::ClickAction::Count::kDouble;
-      break;
-  }
-
+  click->type = click_type_;
+  click->count = click_count_;
   return mojom::ToolAction::NewClick(std::move(click));
 }
 
 std::unique_ptr<PageToolRequest> ClickToolRequest::Clone() const {
   return std::make_unique<ClickToolRequest>(*this);
+}
+
+ObservationDelayController::PageStabilityConfig
+ClickToolRequest::GetObservationPageStabilityConfig() const {
+  return ObservationDelayController::PageStabilityConfig{
+      .supports_paint_stability = true,
+  };
 }
 
 }  // namespace actor

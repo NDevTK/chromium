@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 
+#include "base/auto_reset.h"
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -15,7 +16,9 @@
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tabs/public/split_tab_id.h"
 #include "components/tabs/public/tab_interface.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
+#include "ui/base/unowned_user_data/unowned_user_data_host.h"
 
 namespace content {
 class WebContents;
@@ -27,7 +30,9 @@ namespace tabs {
 class TabCollection;
 class TabFeatures;
 
-class TabModel final : public TabInterface, public TabStripModelObserver {
+class TabModel final : public TabInterface,
+                       public TabStripModelObserver,
+                       public content::WebContentsObserver {
  public:
   // Conceptually, tabs should always be a part of a normal window. There are
   // currently 2 cases where they are not:
@@ -51,7 +56,6 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   bool reset_opener_on_active_tab_change() const {
     return reset_opener_on_active_tab_change_;
   }
-  bool blocked() const { return blocked_; }
   std::optional<tab_groups::TabGroupId> group() const { return group_; }
 
   void set_opener(tabs::TabInterface* opener) { opener_ = opener; }
@@ -71,6 +75,12 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   void set_will_be_detaching_for_testing(bool will_be_detaching) {
     will_be_detaching_ = will_be_detaching;
   }
+
+  // Returns the UnownedUserDataHost associated with this tab. This is used to
+  // retrieve arbitrary features from the tab without requiring TabModel to have
+  // knowledge of them.
+  ui::UnownedUserDataHost& GetUnownedUserDataHost() override;
+  const ui::UnownedUserDataHost& GetUnownedUserDataHost() const override;
 
   void WriteIntoTrace(perfetto::TracedValue context) const;
 
@@ -96,10 +106,13 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   // mechanisms.
   TabCollection* GetParentCollectionForTesting() { return parent_collection_; }
 
-  // Called by TabStripModel when a tab is going to be backgrounded (any
-  // operation that makes the tab no longer visible, including removal from the
-  // TabStripModel). Not called if TabStripModel is being destroyed.
-  void WillEnterBackground(base::PassKey<TabStripModel>);
+  // Called by TabStripModel when a tab is going to be hidden. Not called if
+  // TabStripModel is being destroyed.
+  void WillBecomeHidden(base::PassKey<TabStripModel>);
+
+  // Called by TabStripModel when a tab is going to be deactivated. Not called
+  // if TabStripModel is being destroyed.
+  void WillDeactivate(base::PassKey<TabStripModel>);
 
   // Called by TabStripModel when a tab is going to be detached for reinsertion
   // into a different tab strip.
@@ -120,6 +133,7 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   base::CallbackListSubscription RegisterWillDeactivate(
       TabInterface::WillDeactivateCallback callback) override;
   bool IsVisible() const override;
+  bool IsSelected() const override;
   base::CallbackListSubscription RegisterDidBecomeVisible(
       DidBecomeVisibleCallback callback) override;
   base::CallbackListSubscription RegisterWillBecomeHidden(
@@ -145,6 +159,7 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   tabs::TabFeatures* GetTabFeatures() override;
   const tabs::TabFeatures* GetTabFeatures() const override;
   bool IsPinned() const override;
+  bool IsBlocked() const override;
   bool IsSplit() const override;
   std::optional<tab_groups::TabGroupId> GetGroup() const override;
   std::optional<split_tabs::SplitTabId> GetSplit() const override;
@@ -157,12 +172,31 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   void OnAncestorChanged(base::PassKey<TabCollection>) override;
   void Close() override;
 
+  // Helper class that prevents initialization of tab features.
+  // Prevents initialization of TabFeatures while in scope.
+  // In most cases you can simply declare one in your test class.
+  class PreventFeatureInitializationForTesting {
+   public:
+    PreventFeatureInitializationForTesting();
+    PreventFeatureInitializationForTesting(
+        PreventFeatureInitializationForTesting&&) noexcept;
+    PreventFeatureInitializationForTesting& operator=(
+        PreventFeatureInitializationForTesting&&) noexcept;
+    ~PreventFeatureInitializationForTesting();
+
+   private:
+    base::AutoReset<bool> scoped_prevent_initialization_;
+  };
+
  private:
   // Overridden from TabStripModelObserver:
   void OnTabStripModelChanged(
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override;
+
+  // content::WebContentsObserver:
+  void OnVisibilityChanged(content::Visibility visibility) override;
 
   // TODO(https://crbug.com/346692548): This will not be necessary once
   // soon_to_be_owning_model_ is removed. TabInterface logic can only be invoked
@@ -201,6 +235,7 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
   bool reset_opener_on_active_tab_change_ = false;
   bool pinned_ = false;
   bool blocked_ = false;
+  bool visible_ = false;
   // TODO(crbug.com/392951786): Remove this property, and instead determine a
   // tab's split status based on whether it is part of a split tab collection.
   std::optional<split_tabs::SplitTabId> split_ = std::nullopt;
@@ -217,7 +252,7 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
 
   using WillDeactivateCallbackList =
       base::RepeatingCallbackList<void(TabInterface*)>;
-  WillDeactivateCallbackList will_enter_background_callback_list_;
+  WillDeactivateCallbackList will_deactivate_callback_list_;
 
   using DidBecomeVisibleCallback =
       base::RepeatingCallbackList<void(TabInterface*)>;
@@ -250,6 +285,9 @@ class TabModel final : public TabInterface, public TabStripModelObserver {
 
   // Tracks whether a modal UI is showing.
   bool showing_modal_ui_ = false;
+
+  // The unowned user data host that can be used by `tab_features_`.
+  ui::UnownedUserDataHost unowned_user_data_host_;
 
   // Features that are per-tab will be owned by this class.
   std::unique_ptr<TabFeatures> tab_features_;

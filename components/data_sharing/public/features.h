@@ -11,15 +11,16 @@
 
 namespace data_sharing::features {
 
-// Feature flag for enabling collaboration on automotive.
-BASE_DECLARE_FEATURE(kCollaborationAutomotive);
-
 // Feature flag for enabling collaboration in entreprise v2.
 BASE_DECLARE_FEATURE(kCollaborationEntrepriseV2);
 
 // Core feature flag for data sharing. Disabling this feature ensures an empty
 // implementation of the service is returned.
 BASE_DECLARE_FEATURE(kDataSharingFeature);
+
+// Migration flag of the SharedTabGroupAccountDataSpecifics into
+// //components/data_sharing.
+BASE_DECLARE_FEATURE(kDataSharingAccountDataMigration);
 
 // Join only feature flag for data sharing. Enabled partial data sharing related
 // functionalities.
@@ -66,6 +67,10 @@ bool IsDataSharingFunctionalityEnabled();
 // installed, and the user will see the web fallback for the sharing URL.
 // Note : Don't use this method for other versioning related checks.
 bool ShouldInterceptUrlForVersioning();
+
+// Returns the ServerEnvironment to be used for making RPCs call for data
+// sharing service.
+ServerEnvironment GetServerEnvironment();
 
 }  // namespace data_sharing::features
 

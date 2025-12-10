@@ -31,6 +31,7 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/trace_event/trace_event.h"
+#include "base/unguessable_token.h"
 #include "components/embedder_support/android/util/features.h"
 #include "components/embedder_support/android/util/input_stream.h"
 #include "components/embedder_support/android/util/web_resource_response.h"
@@ -42,6 +43,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/web_contents_user_data.h"
 #include "net/base/data_url.h"
 #include "services/network/public/cpp/resource_request.h"
 
@@ -359,10 +361,30 @@ void ClientMapEntryUpdater::WebContentsDestroyed() {
   delete this;
 }
 
+class WebContentsKeyHolder
+    : public content::WebContentsUserData<WebContentsKeyHolder> {
+ public:
+  ~WebContentsKeyHolder() override = default;
+
+  const base::UnguessableToken& GetToken() { return token_; }
+
+ private:
+  explicit WebContentsKeyHolder(WebContents* contents)
+      : content::WebContentsUserData<WebContentsKeyHolder>(*contents),
+        token_(base::UnguessableToken::Create()) {}
+  friend class WebContentsUserData<WebContentsKeyHolder>;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
+  const base::UnguessableToken token_;
+};
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(WebContentsKeyHolder);
+
 }  // namespace
 
 WebContentsKey GetWebContentsKey(content::WebContents& web_contents) {
-  return safe_browsing::GetWebContentsKey(&web_contents);
+  return WebContentsKeyHolder::GetOrCreateForWebContents(&web_contents)
+      ->GetToken();
 }
 
 // AwContentsIoThreadClient -----------------------------------------------
@@ -520,21 +542,6 @@ void StartShouldInterceptRequest(
                               std::move(callback))));
 }
 
-// Utility class to increment the delta with the time taken by the rest of the
-// current scope.
-class CallTimer {
- public:
-  explicit CallTimer(base::TimeDelta& counter)
-      : counter_(counter), start_(base::TimeTicks::Now()) {}
-
-  // Destructor increments the timedelta with the elapsed time.
-  ~CallTimer() { *counter_ += base::TimeTicks::Now() - start_; }
-
- private:
-  raw_ref<base::TimeDelta> counter_;
-  base::TimeTicks start_;
-};
-
 }  // namespace
 
 AwContentsIoThreadClient::InterceptResponseData::InterceptResponseData() =
@@ -575,49 +582,39 @@ void AwContentsIoThreadClient::ShouldInterceptRequestAsync(
   }
 }
 
-bool AwContentsIoThreadClient::ShouldBlockContentUrls(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldBlockContentUrls() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldBlockContentUrls(env,
                                                               java_object_);
 }
 
-bool AwContentsIoThreadClient::ShouldBlockFileUrls(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldBlockFileUrls() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldBlockFileUrls(env, java_object_);
 }
 
-bool AwContentsIoThreadClient::ShouldBlockSpecialFileUrls(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldBlockSpecialFileUrls() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldBlockSpecialFileUrls(env,
                                                                   java_object_);
 }
 
-bool AwContentsIoThreadClient::ShouldAcceptCookies(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldAcceptCookies() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldAcceptCookies(env, java_object_);
 }
 
-bool AwContentsIoThreadClient::ShouldAcceptThirdPartyCookies(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldAcceptThirdPartyCookies() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldAcceptThirdPartyCookies(
       env, java_object_);
@@ -631,24 +628,23 @@ bool AwContentsIoThreadClient::GetSafeBrowsingEnabled() const {
                                                               java_object_);
 }
 
-bool AwContentsIoThreadClient::ShouldBlockNetworkLoads(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldBlockNetworkLoads() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldBlockNetworkLoads(env,
                                                                java_object_);
 }
 
-bool AwContentsIoThreadClient::ShouldIncludeCookiesOnIntercept(
-    base::TimeDelta& counter) const {
+bool AwContentsIoThreadClient::ShouldIncludeCookiesOnIntercept() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  CallTimer timer(counter);
   JNIEnv* env = AttachCurrentThread();
   return Java_AwContentsIoThreadClient_shouldIncludeCookiesInIntercept(
       env, java_object_);
 }
 
 }  // namespace android_webview
+
+DEFINE_JNI(AwContentsIoThreadClient)
+DEFINE_JNI(ShouldInterceptRequestMediator)

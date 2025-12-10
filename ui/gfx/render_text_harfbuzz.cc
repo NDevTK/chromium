@@ -13,8 +13,6 @@
 #include "base/containers/lru_cache.h"
 #include "base/containers/span.h"
 #include "base/debug/alias.h"
-#include "base/debug/crash_logging.h"
-#include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
 #include "base/hash/hash.h"
 #include "base/i18n/base_i18n_switches.h"
@@ -80,6 +78,24 @@ const size_t kMaxTextLength = 10000;
 // character to belong to more scripts.
 const size_t kMaxScripts = 32;
 
+// A kill switch to ignore (copy the previous value) of the script extension
+// property, in case problems occur by changes in ICU/CLDR.
+// Be aware that this feature is off-by-default, unlike other kill switches.
+BASE_FEATURE(kCombiningMarkScript, base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsCombiningMarkScriptEnabled() {
+  static bool is_enabled = false;
+  static std::once_flag once_flag;
+  std::call_once(once_flag, [] {
+    is_enabled = base::FeatureList::IsEnabled(kCombiningMarkScript);
+  });
+  return is_enabled;
+}
+
+bool IsCombiningMarkCodepoint(UChar32 codepoint) {
+  return U_GET_GC_MASK(codepoint) & U_GC_M_MASK;
+}
+
 // Returns whether the codepoint has the 'extended pictographic' property.
 bool IsExtendedPictographicCodepoint(UChar32 codepoint) {
   return u_hasBinaryProperty(codepoint, UCHAR_EXTENDED_PICTOGRAPHIC);
@@ -117,6 +133,14 @@ std::vector<UScriptCode> GetScriptExtensions(UChar32 codepoint) {
 // Intersects the script extensions set of |codepoint| with |result| and writes
 // to |result|.
 void ScriptSetIntersect(UChar32 codepoint, std::vector<UScriptCode>& result) {
+  // The recommended implementation strategy is to treat all the characters of a
+  // combining character sequence, including spacing combining marks, as having
+  // the Script property value of the first character in the sequence.
+  // https://www.unicode.org/reports/tr24/#Nonspacing_Marks
+  if (IsCombiningMarkScriptEnabled() && IsCombiningMarkCodepoint(codepoint)) {
+    return;
+  }
+
   // Each codepoint has a Script property and a Script Extensions (Scx)
   // property.
   //
@@ -787,37 +811,10 @@ internal::TextRunHarfBuzz::FontParams CreateFontParams(
   return font_params;
 }
 
-BASE_FEATURE(kRemoveFontLinkFallbacks,
-             "RemoveFontLinkFallbacks",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kRemoveFontLinkFallbacks, base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsRemoveFontLinkFallbacks() {
   return base::FeatureList::IsEnabled(kRemoveFontLinkFallbacks);
-}
-
-BASE_FEATURE(kEnableFallbackFontsCrashReporting,
-             "EnableFallbackFontsCrashReporting",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-bool IsEnableFallbackFontsCrashReporting() {
-  return base::FeatureList::IsEnabled(kEnableFallbackFontsCrashReporting);
-}
-
-// Append to `in_out_report` the font name and the text correlating to the runs
-// shaped by that font. This crash report will be used to debug why text is
-// being shaped through the GetFallbackFonts path as we shouldn't need to
-// fallback to that call path. crbug.com/995789
-void AppendFontNameAndShapedTextToCrashDumpReport(
-    std::u16string_view text,
-    const std::vector<internal::TextRunHarfBuzz*>& shaped_runs,
-    std::string_view font_name,
-    std::u16string& report) {
-  report += u"[font name] " + base::ASCIIToUTF16(font_name);
-  for (internal::TextRunHarfBuzz* run : shaped_runs) {
-    report += base::StrCat({u"[run start] ",
-                            text.substr(run->range.start(), run->range.end()),
-                            u" [run end]"});
-  }
 }
 
 }  // namespace
@@ -1967,10 +1964,6 @@ void RenderTextHarfBuzz::ItemizeAndShapeText(std::u16string_view text,
     if (BuildResolvedTypefaceBreakList(run_list)) {
       ItemizeAndShapeTextImpl(&commonized_run_map, text, run_list);
     }
-
-    // Resolved typefaces are no longer used and can be cleared.
-    layout_resolved_typefaces().Reset();
-    resolved_typefaces().Reset();
   }
 
   // Now that potentially two passes to ItemizeAndShapeTextImpl have occurred,
@@ -2209,11 +2202,7 @@ bool RenderTextHarfBuzz::ShapeRuns(
   }
 
   if (!IsRemoveFontLinkFallbacks()) {
-    // Used for crash reporting below.
-    static bool is_first_crash = true;
-
     std::vector<Font> fallback_font_list;
-    std::u16string crash_report_string;
     {
       SCOPED_UMA_HISTOGRAM_LONG_TIMER(
           "RenderTextHarfBuzz.GetFallbackFontsTime");
@@ -2273,11 +2262,6 @@ bool RenderTextHarfBuzz::ShapeRuns(
                           &fallback_fonts_shaped_runs);
         MarkFontAsTried(test_font_params.skia_face,
                         &fallback_fonts_already_tried);
-        if (fallback_fonts_shaped_runs.size() > 0 && is_first_crash &&
-            IsEnableFallbackFontsCrashReporting()) {
-          AppendFontNameAndShapedTextToCrashDumpReport(
-              text, fallback_fonts_shaped_runs, font_name, crash_report_string);
-        }
       }
       if (runs.empty()) {
         TRACE_EVENT_INSTANT2("ui", "RenderTextHarfBuzz::FallbackFont",
@@ -2285,23 +2269,6 @@ bool RenderTextHarfBuzz::ShapeRuns(
                              TRACE_STR_COPY(font_name.c_str()),
                              "primary_font_name", primary_font.GetFontName());
         RecordShapeRunsFallback(internal::ShapeRunFallback::FALLBACKS);
-        // Resolving fallback fonts using the registry keys on windows will be
-        // deprecated and removed (see: http://crbug.com/995789). The crashes
-        // reported here should be fixed before deprecating the code.
-        if (is_first_crash && IsEnableFallbackFontsCrashReporting()) {
-          is_first_crash = false;
-          const size_t crash_report_size = 256;
-          DEBUG_ALIAS_FOR_U16CSTR(aliased_crash_report_string,
-                                  crash_report_string.c_str(),
-                                  crash_report_size);
-          DEBUG_ALIAS_FOR_U16CSTR(aliased_full_text, text.data(),
-                                  crash_report_size);
-          SCOPED_CRASH_KEY_STRING32("RenderTextFallbacks", "primaryfont_name",
-                                    primary_font.GetFontName());
-          SCOPED_CRASH_KEY_STRING32("RenderTextFallbacks", "primaryfont_script",
-                                    uscript_getShortName(font_params.script));
-          base::debug::DumpWithoutCrashing();
-        }
         return true;
       }
     }

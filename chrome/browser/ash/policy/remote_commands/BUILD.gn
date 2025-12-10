@@ -10,8 +10,6 @@ assert(is_chromeos)
 
 static_library("remote_commands") {
   sources = [
-    "affiliated_remote_commands_invalidator.cc",
-    "affiliated_remote_commands_invalidator.h",
     "device_command_fetch_status_job.cc",
     "device_command_fetch_status_job.h",
     "device_command_fetch_support_packet_job.cc",
@@ -59,11 +57,11 @@ static_library("remote_commands") {
     "//chrome/browser:browser_process",
     "//chrome/browser/ash/attestation",
     "//chrome/browser/ash/policy/core",
-    "//chrome/browser/ash/policy/invalidation",
     "//chrome/browser/ash/policy/remote_commands/crd",
     "//chrome/browser/ash/policy/scheduled_task_handler",
     "//chrome/browser/ash/policy/uploading",
     "//chrome/browser/ash/system",
+    "//chrome/browser/device_identity",
     "//chrome/browser/policy/messaging_layer/proto:log_upload_event_proto",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/support_tool:support_tool_proto",

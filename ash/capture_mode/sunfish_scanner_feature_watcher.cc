@@ -10,7 +10,6 @@
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/functional/bind.h"
-#include "base/functional/callback_forward.h"
 #include "components/lens/lens_overlay_permission_utils.h"
 #include "ui/aura/window.h"
 
@@ -74,8 +73,6 @@ void SunfishScannerFeatureWatcher::OnActiveUserPrefServiceChanged(
 
   // Sunfish prefs:
   pref_change_registrar_.Add(lens::prefs::kLensOverlaySettings,
-                             update_feature_states);
-  pref_change_registrar_.Add(lens::prefs::kGenAiLensOverlaySettings,
                              update_feature_states);
 
   // Scanner prefs:

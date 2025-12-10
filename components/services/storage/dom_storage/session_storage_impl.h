@@ -16,7 +16,6 @@
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/sequence_bound.h"
@@ -30,12 +29,8 @@
 #include "components/services/storage/public/mojom/session_storage_control.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "storage/common/database/db_status.h"
 #include "third_party/blink/public/mojom/dom_storage/session_storage_namespace.mojom.h"
-#include "third_party/leveldatabase/src/include/leveldb/status.h"
-
-namespace base {
-class SequencedTaskRunner;
-}  // namespace base
 
 namespace blink {
 class StorageKey;
@@ -71,8 +66,6 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
       base::OnceCallback<void(SessionStorageImpl*)>;
   SessionStorageImpl(
       const base::FilePath& partition_directory,
-      scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
-      scoped_refptr<base::SequencedTaskRunner> memory_dump_task_runner,
       BackingMode backing_option,
       std::string database_name,
       DestructSessionStorageCallback destruct_callback,
@@ -129,8 +122,8 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
   void FlushAreaForTesting(const std::string& namespace_id,
                            const blink::StorageKey& storage_key);
 
-  // Access the underlying DomStorageDatabase. May be null if the database is
-  // not yet open.
+  // Access the underlying DomStorageDatabaseLevelDB. May be null if the
+  // database is not yet open.
   base::SequenceBound<DomStorageDatabase>& GetDatabaseForTesting() {
     return database_->database();
   }
@@ -153,35 +146,22 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
  private:
   friend class DOMStorageBrowserTest;
 
-  // These values are written to logs.  New enum values can be added, but
-  // existing enums must never be renumbered or deleted and reused.
-  enum class OpenResult {
-    kDirectoryOpenFailed = 0,
-    kDatabaseOpenFailed = 1,
-    kInvalidVersion = 2,
-    kVersionReadError = 3,
-    kNamespacesReadError = 4,
-    kSuccess = 6,
-    kMaxValue = kSuccess
-  };
-
   scoped_refptr<SessionStorageMetadata::MapData> RegisterNewAreaMap(
-      SessionStorageMetadata::NamespaceEntry namespace_entry,
+      const std::string& namespace_id,
       const blink::StorageKey& storage_key);
 
   // SessionStorageAreaImpl::Listener implementation:
   void OnDataMapCreation(const std::vector<uint8_t>& map_prefix,
                          SessionStorageDataMap* map) override;
   void OnDataMapDestruction(const std::vector<uint8_t>& map_prefix) override;
-  void OnCommitResult(leveldb::Status status) override;
-  void OnCommitResultWithCallback(base::OnceClosure callback,
-                                  leveldb::Status status);
+  void OnCommitResult(DbStatus status) override;
+  void OnCommitResultWithCallback(base::OnceClosure callback, DbStatus status);
 
   // SessionStorageNamespaceImpl::Delegate implementation:
   scoped_refptr<SessionStorageDataMap> MaybeGetExistingDataMapForId(
       const std::vector<uint8_t>& map_number_as_bytes) override;
   void RegisterShallowClonedNamespace(
-      SessionStorageMetadata::NamespaceEntry source_namespace_entry,
+      const std::string& source_namespace_id,
       const std::string& new_namespace_id,
       const SessionStorageNamespaceImpl::StorageKeyAreas&
           clone_from_storage_keys) override;
@@ -189,7 +169,11 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
   std::unique_ptr<SessionStorageNamespaceImpl>
   CreateSessionStorageNamespaceImpl(std::string namespace_id);
 
-  void DoDatabaseDelete(const std::string& namespace_id);
+  // Removes the namespaces in `namespace_ids` from `metadata_` and `database_`.
+  // Deletes map key/value pairs from `database_` for maps that no longer have
+  // any references.
+  void DeleteNamespacesFromMetadataAndDatabase(
+      std::vector<std::string> namespace_ids);
 
   // Runs |callback| immediately if already connected to a database, otherwise
   // delays running |callback| untill after a connection has been established.
@@ -198,50 +182,17 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
 
   // Part of our asynchronous directory opening called from RunWhenConnected().
   void InitiateConnection(bool in_memory_only = false);
-  void OnDatabaseOpened(leveldb::Status status);
-
-  struct ValueAndStatus {
-    ValueAndStatus();
-    ValueAndStatus(ValueAndStatus&&);
-    ~ValueAndStatus();
-    leveldb::Status status;
-    DomStorageDatabase::Value value;
-  };
-
-  struct KeyValuePairsAndStatus {
-    KeyValuePairsAndStatus();
-    KeyValuePairsAndStatus(KeyValuePairsAndStatus&&);
-    ~KeyValuePairsAndStatus();
-    leveldb::Status status;
-    std::vector<DomStorageDatabase::KeyValuePair> key_value_pairs;
-  };
-
-  void OnGotDatabaseMetadata(ValueAndStatus version,
-                             KeyValuePairsAndStatus namespaces,
-                             ValueAndStatus next_map_id);
-
-  struct MetadataParseResult {
-    OpenResult open_result;
-    const char* histogram_name;
-  };
-  MetadataParseResult ParseDatabaseVersion(
-      ValueAndStatus version,
-      std::vector<AsyncDomStorageDatabase::BatchDatabaseTask>* migration_tasks);
-  MetadataParseResult ParseNamespaces(
-      KeyValuePairsAndStatus namespaces,
-      std::vector<AsyncDomStorageDatabase::BatchDatabaseTask> migration_tasks);
-  MetadataParseResult ParseNextMapId(ValueAndStatus next_map_id);
-
+  void OnDatabaseOpened(DbStatus status);
+  void OnGotDatabaseMetadata(
+      StatusOr<DomStorageDatabase::Metadata> all_metadata);
   void OnConnectionFinished();
   void PurgeAllNamespaces();
-  void DeleteAndRecreateDatabase(const char* histogram_name);
-  void OnDBDestroyed(bool recreate_in_memory, leveldb::Status status);
+  void DeleteAndRecreateDatabase();
+  void OnDBDestroyed(bool recreate_in_memory, DbStatus status);
 
   void OnShutdownComplete();
 
   void GetStatistics(size_t* total_cache_size, size_t* unused_areas_count);
-
-  void LogDatabaseOpenResult(OpenResult result);
 
   void OnReceiverDisconnected();
 
@@ -262,16 +213,17 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
     CONNECTION_FINISHED,
     CONNECTION_SHUTDOWN
   } connection_state_ = NO_CONNECTION;
-  bool database_initialized_ = false;
 
   const base::FilePath partition_directory_;
-  const scoped_refptr<base::SequencedTaskRunner> database_task_runner_;
 
   base::trace_event::MemoryAllocatorDumpGuid memory_dump_id_;
 
   mojo::Receiver<mojom::SessionStorageControl> receiver_;
 
   std::unique_ptr<AsyncDomStorageDatabase> database_;
+  // This can be true even if the profile is not in-memory, since we attempt
+  // to create an in-memory DB if on-disk fails. This variable has no meaning
+  // if `database_` is null.
   bool in_memory_ = false;
   bool tried_to_recreate_during_open_ = false;
 
@@ -300,9 +252,6 @@ class SessionStorageImpl : public base::trace_event::MemoryDumpProvider,
   // whole database is thrown away.
   int commit_error_count_ = 0;
   bool tried_to_recover_from_commit_errors_ = false;
-
-  // Name of an extra histogram to log open results to, if not null.
-  const char* open_result_histogram_ = nullptr;
 
   base::OnceClosure shutdown_complete_callback_;
 

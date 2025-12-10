@@ -15,6 +15,7 @@
 #include "chrome/browser/ash/floating_sso/floating_sso_sync_bridge.h"
 #include "chrome/browser/ash/floating_workspace/floating_workspace_util.h"
 #include "chrome/common/pref_names.h"
+#include "chromeos/constants/pref_names.h"
 #include "components/google/core/common/google_util.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
@@ -60,7 +61,7 @@ void FloatingSsoService::Shutdown() {
 
 void FloatingSsoService::RegisterPolicyListeners() {
   pref_change_registrar_->Add(
-      ::prefs::kFloatingSsoEnabled,
+      chromeos::prefs::kFloatingSsoEnabled,
       base::BindRepeating(&FloatingSsoService::StartOrStop,
                           base::Unretained(this)));
   pref_change_registrar_->Add(
@@ -126,7 +127,7 @@ void FloatingSsoService::StartOrStop() {
 
 bool FloatingSsoService::IsFloatingSsoEnabled() {
   // Check FloatingSsoEnabled policy.
-  if (!prefs_->GetBoolean(::prefs::kFloatingSsoEnabled)) {
+  if (!prefs_->GetBoolean(chromeos::prefs::kFloatingSsoEnabled)) {
     return false;
   }
   // Check SyncDisabled policy (it maps to kSyncManaged pref).
@@ -202,7 +203,8 @@ void FloatingSsoService::OnCookieChange(const net::CookieChangeInfo& change) {
 
   switch (change.cause) {
     case net::CookieChangeCause::INSERTED:
-    case net::CookieChangeCause::INSERTED_NO_CHANGE_OVERWRITE: {
+    case net::CookieChangeCause::INSERTED_NO_CHANGE_OVERWRITE:
+    case net::CookieChangeCause::INSERTED_NO_VALUE_CHANGE_OVERWRITE: {
       bridge_->AddOrUpdateCookie(cookie);
       break;
     }
@@ -285,15 +287,28 @@ bool FloatingSsoService::ShouldSyncCookie(
   if (cookie.SourceType() != net::CookieSourceType::kHTTP) {
     return false;
   }
-  // Filter out session cookies (except when Floating Workspace is enabled).
-  if (!cookie.IsPersistent() &&
-      !ash::floating_workspace_util::IsFloatingWorkspaceV2Enabled()) {
+
+  if (!cookie.IsPersistent() && !ShouldSyncSessionCookies()) {
     return false;
   }
 
   const GURL cookie_domain_url = net::cookie_util::CookieOriginToURL(
       cookie.Domain(), cookie.SecureAttribute());
   return ShouldSyncCookiesForUrl(cookie_domain_url);
+}
+
+bool FloatingSsoService::ShouldSyncSessionCookies() const {
+  const PrefService::Preference* session_cookies_pref =
+      prefs_->FindPreference(::prefs::kFloatingSsoSessionCookiesIncluded);
+
+  // If the pref is null or the policy isn't managed, the FWS logic applies.
+  // Otherwise, the FloatingSsoSessionCookiesIncluded policy value directly
+  // determines if session cookies are synced, overriding any FWS logic.
+  if (session_cookies_pref && session_cookies_pref->IsManaged()) {
+    return session_cookies_pref->GetValue()->GetBool();
+  }
+
+  return ash::floating_workspace_util::IsFloatingWorkspaceV2Enabled();
 }
 
 bool FloatingSsoService::ShouldSyncCookiesForUrl(const GURL& url) const {

@@ -27,7 +27,6 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/site_instance.h"
-#include "ipc/ipc_message.h"
 #include "net/base/net_errors.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-shared.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
@@ -108,8 +107,7 @@ CastWebViewDefault::CastWebViewDefault(
 #if defined(USE_AURA)
   web_contents_->GetNativeView()->SetName(params_->activity_id);
   if (params_->force_720p_resolution) {
-    const auto primary_display =
-        display::Screen::GetScreen()->GetPrimaryDisplay();
+    const auto primary_display = display::Screen::Get()->GetPrimaryDisplay();
 
     // Force scale factor to 1.0 and screen bounds to 720p.
     // When performed prior to the creation of the web view this causes blink to

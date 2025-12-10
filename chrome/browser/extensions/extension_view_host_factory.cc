@@ -12,68 +12,27 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
-#include "extensions/browser/process_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/mojom/view_type.mojom.h"
 
-#if !BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/ui/browser.h"
-#endif  // !BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
 namespace {
 
-#if BUILDFLAG(IS_ANDROID)
-
-// Delegate for ExtensionViewHost on Android.
-class ExtensionViewHostDelegateAndroid : public ExtensionViewHost::Delegate {
- public:
-  ExtensionViewHostDelegateAndroid() = default;
-  ExtensionViewHostDelegateAndroid(const ExtensionViewHostDelegateAndroid&) =
-      delete;
-  ExtensionViewHostDelegateAndroid& operator=(
-      const ExtensionViewHostDelegateAndroid&) = delete;
-  ~ExtensionViewHostDelegateAndroid() override = default;
-
-  content::WebContents* OpenURL(
-      const content::OpenURLParams& params,
-      base::OnceCallback<void(content::NavigationHandle&)>
-          navigation_handle_callback) override {
-    // TODO(cbrug.com/385987224): Implement this method for Android.
-    NOTIMPLEMENTED();
-    return nullptr;
-  }
-
-  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
-      content::WebContents* source,
-      const input::NativeWebKeyboardEvent& event) override {
-    // TODO(cbrug.com/385987224): Implement this method for Android.
-    NOTIMPLEMENTED();
-    return content::KeyboardEventProcessingResult::NOT_HANDLED;
-  }
-
-  std::unique_ptr<content::EyeDropper> OpenEyeDropper(
-      content::RenderFrameHost* frame,
-      content::EyeDropperListener* listener) override {
-    // TODO(cbrug.com/385987224): Implement this method for Android.
-    NOTIMPLEMENTED();
-    return nullptr;
-  }
-
-  WindowController* GetExtensionWindowController() const override {
-    // TODO(cbrug.com/385987224): Implement this method for Android.
-    NOTIMPLEMENTED();
-    return nullptr;
-  }
-};
-
-#else   // BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Delegate for ExtensionViewHost attached to a specific browser window.
 class ExtensionViewHostBrowserDelegate : public ExtensionViewHost::Delegate {
@@ -108,7 +67,7 @@ class ExtensionViewHostBrowserDelegate : public ExtensionViewHost::Delegate {
   }
 
   WindowController* GetExtensionWindowController() const override {
-    return browser_->GetFeatures().extension_window_controller();
+    return BrowserExtensionWindowController::From(browser_);
   }
 
  private:
@@ -163,7 +122,7 @@ class ExtensionViewHostTabDelegate : public ExtensionViewHost::Delegate {
     if (browser == nullptr) {
       return nullptr;
     }
-    return browser->GetFeatures().extension_window_controller();
+    return BrowserExtensionWindowController::From(browser);
   }
 
  private:
@@ -173,7 +132,52 @@ class ExtensionViewHostTabDelegate : public ExtensionViewHost::Delegate {
 
   raw_ptr<content::WebContents> web_contents_;
 };
-#endif  // BUILDFLAG(IS_ANDROID)
+
+#else  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+// Delegate for ExtensionViewHost on Android.
+class ExtensionViewHostDelegateAndroid : public ExtensionViewHost::Delegate {
+ public:
+  ExtensionViewHostDelegateAndroid() = default;
+  ExtensionViewHostDelegateAndroid(const ExtensionViewHostDelegateAndroid&) =
+      delete;
+  ExtensionViewHostDelegateAndroid& operator=(
+      const ExtensionViewHostDelegateAndroid&) = delete;
+  ~ExtensionViewHostDelegateAndroid() override = default;
+
+  content::WebContents* OpenURL(
+      const content::OpenURLParams& params,
+      base::OnceCallback<void(content::NavigationHandle&)>
+          navigation_handle_callback) override {
+    // TODO(cbrug.com/385987224): Implement this method for Android.
+    NOTIMPLEMENTED();
+    return nullptr;
+  }
+
+  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
+      content::WebContents* source,
+      const input::NativeWebKeyboardEvent& event) override {
+    // TODO(cbrug.com/385987224): Implement this method for Android.
+    NOTIMPLEMENTED();
+    return content::KeyboardEventProcessingResult::NOT_HANDLED;
+  }
+
+  std::unique_ptr<content::EyeDropper> OpenEyeDropper(
+      content::RenderFrameHost* frame,
+      content::EyeDropperListener* listener) override {
+    // TODO(cbrug.com/385987224): Implement this method for Android.
+    NOTIMPLEMENTED();
+    return nullptr;
+  }
+
+  WindowController* GetExtensionWindowController() const override {
+    // TODO(cbrug.com/385987224): Implement this method for Android.
+    NOTIMPLEMENTED();
+    return nullptr;
+  }
+};
+
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Creates a new ExtensionHost with its associated view, grouping it in the
 // appropriate SiteInstance (and therefore process) based on the URL and
@@ -185,10 +189,7 @@ std::unique_ptr<ExtensionViewHost> CreateViewHostForExtension(
     mojom::ViewType view_type,
     std::unique_ptr<ExtensionViewHost::Delegate> delegate) {
   DCHECK(profile);
-  scoped_refptr<content::SiteInstance> site_instance =
-      ProcessManager::Get(profile)->GetSiteInstanceForURL(url);
-  return std::make_unique<ExtensionViewHost>(extension, site_instance.get(),
-                                             profile, url, view_type,
+  return std::make_unique<ExtensionViewHost>(extension, profile, url, view_type,
                                              std::move(delegate));
 }
 
@@ -225,8 +226,25 @@ const Extension* GetExtensionForUrl(Profile* profile, const GURL& url) {
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile);
   if (!registry)
     return nullptr;
-  std::string extension_id = url.host();
+  std::string extension_id = url.GetHost();
   return registry->enabled_extensions().GetByID(extension_id);
+}
+
+std::unique_ptr<ExtensionViewHost> CreateExtensionViewHost(
+    const Extension& extension,
+    const GURL& url,
+    Profile* profile,
+    extensions::mojom::ViewType view_type,
+    std::unique_ptr<ExtensionViewHost::Delegate> delegate) {
+  CHECK(profile);
+
+  if (profile->IsOffTheRecord()) {
+    return CreateViewHostForIncognito(&extension, url, profile, view_type,
+                                      std::move(delegate));
+  }
+
+  return CreateViewHostForExtension(&extension, url, profile, view_type,
+                                    std::move(delegate));
 }
 
 // Creates and initializes an ExtensionViewHost for the extension with |url|.
@@ -235,47 +253,40 @@ std::unique_ptr<ExtensionViewHost> CreateViewHost(
     Profile* profile,
     extensions::mojom::ViewType view_type,
     std::unique_ptr<ExtensionViewHost::Delegate> delegate) {
-  DCHECK(profile);
+  CHECK(profile);
 
   const Extension* extension = GetExtensionForUrl(profile, url);
-  if (!extension)
+  if (!extension) {
     return nullptr;
-  if (profile->IsOffTheRecord()) {
-    return CreateViewHostForIncognito(extension, url, profile, view_type,
-                                      std::move(delegate));
   }
 
-  return CreateViewHostForExtension(extension, url, profile, view_type,
-                                    std::move(delegate));
+  return CreateExtensionViewHost(*extension, url, profile, view_type,
+                                 std::move(delegate));
 }
 
 }  // namespace
 
-#if BUILDFLAG(IS_ANDROID)
-
 // static
 std::unique_ptr<ExtensionViewHost> ExtensionViewHostFactory::CreatePopupHost(
     const GURL& url,
-    Profile* profile) {
-  return CreateViewHost(url, profile, mojom::ViewType::kExtensionPopup,
-                        std::make_unique<ExtensionViewHostDelegateAndroid>());
-}
-
-#else  // BUILDFLAG(IS_ANDROID)
-
-// static
-std::unique_ptr<ExtensionViewHost> ExtensionViewHostFactory::CreatePopupHost(
-    const GURL& url,
-    Browser* browser) {
+    BrowserWindowInterface* browser) {
   DCHECK(browser);
-  return CreateViewHost(
-      url, browser->profile(), mojom::ViewType::kExtensionPopup,
-      std::make_unique<ExtensionViewHostBrowserDelegate>(browser));
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  auto delegate = std::make_unique<ExtensionViewHostBrowserDelegate>(
+      browser->GetBrowserForMigrationOnly());
+#else   // BUILDFLAG(ENABLE_EXTENSIONS)
+  auto delegate = std::make_unique<ExtensionViewHostDelegateAndroid>();
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+  return CreateViewHost(url, browser->GetProfile(),
+                        mojom::ViewType::kExtensionPopup, std::move(delegate));
 }
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 
 // static
 std::unique_ptr<ExtensionViewHost>
 ExtensionViewHostFactory::CreateSidePanelHost(
+    const Extension& extension,
     const GURL& url,
     BrowserWindowInterface* browser,
     tabs::TabInterface* tab_interface) {
@@ -292,10 +303,11 @@ ExtensionViewHostFactory::CreateSidePanelHost(
               : std::make_unique<ExtensionViewHostTabDelegate>(
                     tab_interface->GetContents());
 
-  return CreateViewHost(url, profile, mojom::ViewType::kExtensionSidePanel,
-                        std::move(delegate));
+  return CreateExtensionViewHost(extension, url, profile,
+                                 mojom::ViewType::kExtensionSidePanel,
+                                 std::move(delegate));
 }
 
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 }  // namespace extensions

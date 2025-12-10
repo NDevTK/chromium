@@ -9,9 +9,7 @@
 #import "base/apple/foundation_util.h"
 #import "base/containers/contains.h"
 #import "base/files/file_path.h"
-#import "base/files/file_util.h"
 #import "base/functional/bind.h"
-#import "base/functional/callback_forward.h"
 #import "base/ios/crb_protocol_observers.h"
 #import "base/logging.h"
 #import "base/metrics/histogram_functions.h"
@@ -43,12 +41,6 @@ const NSUInteger kLRUCacheBaseCapacity = 6;
 // for pinned tabs feature.
 const NSUInteger kLRUCacheAdditionalCapacityForPinnedTabsEnabled = 4;
 
-// Additional capacity of elements that the LRU cache can hold before starting
-// to evict elements when the Tab Group feature is enabled.
-//
-// A tab group cell requests up to 7 snapshots from the first item.
-const NSUInteger kLRUCacheAdditionalCapacityForTabGroupEnabled = 7;
-
 // Convert `wrappers` to a vector of SnapshotID.
 std::vector<SnapshotID> ToSnapshotIDs(NSArray<SnapshotIDWrapper*>* wrappers) {
   std::vector<SnapshotID> snapshot_ids;
@@ -64,9 +56,6 @@ LegacySnapshotLRUCache<UIImage*>* CreateDefaultSnapshotLRUCache() {
   NSUInteger cacheSize = kLRUCacheBaseCapacity;
   if (IsPinnedTabsEnabled()) {
     cacheSize += kLRUCacheAdditionalCapacityForPinnedTabsEnabled;
-  }
-  if (IsLargeCapacityInSnapshotLRUCacheEnabled()) {
-    cacheSize += kLRUCacheAdditionalCapacityForTabGroupEnabled;
   }
   return [[LegacySnapshotLRUCache alloc] initWithCacheSize:cacheSize];
 }
@@ -101,13 +90,11 @@ LegacySnapshotLRUCache<UIImage*>* CreateDefaultSnapshotLRUCache() {
 }
 
 - (instancetype)initWithLRUCache:(LegacySnapshotLRUCache*)lruCache
-                     storagePath:(const base::FilePath&)storagePath
-                      legacyPath:(const base::FilePath&)legacyPath {
+                     storagePath:(const base::FilePath&)storagePath {
   if ((self = [super init])) {
     _lruCache = lruCache;
     _fileManager =
-        [[LegacyImageFileManager alloc] initWithStoragePath:storagePath
-                                                 legacyPath:legacyPath];
+        [[LegacyImageFileManager alloc] initWithStoragePath:storagePath];
 
     _observers = [SnapshotStorageObservers observers];
 
@@ -126,15 +113,9 @@ LegacySnapshotLRUCache<UIImage*>* CreateDefaultSnapshotLRUCache() {
   return self;
 }
 
-- (instancetype)initWithStoragePath:(const base::FilePath&)storagePath
-                         legacyPath:(const base::FilePath&)legacyPath {
-  return [self initWithLRUCache:CreateDefaultSnapshotLRUCache()
-                    storagePath:storagePath
-                     legacyPath:legacyPath];
-}
-
 - (instancetype)initWithStoragePath:(const base::FilePath&)storagePath {
-  return [self initWithStoragePath:storagePath legacyPath:base::FilePath()];
+  return [self initWithLRUCache:CreateDefaultSnapshotLRUCache()
+                    storagePath:storagePath];
 }
 
 - (void)dealloc {
@@ -203,12 +184,6 @@ LegacySnapshotLRUCache<UIImage*>* CreateDefaultSnapshotLRUCache() {
                                                   liveSnapshotIDs {
   [_fileManager purgeImagesOlderThan:base::Time::FromNSDate(thresholdDate)
                              keeping:ToSnapshotIDs(liveSnapshotIDs)];
-}
-
-- (void)renameSnapshotsWithOldIDs:(NSArray<NSString*>*)oldIDs
-                           newIDs:(NSArray<SnapshotIDWrapper*>*)newIDs {
-  DCHECK_EQ(oldIDs.count, newIDs.count);
-  [_fileManager renameSnapshotsWithIDs:oldIDs toIDs:ToSnapshotIDs(newIDs)];
 }
 
 - (void)migrateImageWithSnapshotID:(SnapshotIDWrapper*)snapshotIDWrapper

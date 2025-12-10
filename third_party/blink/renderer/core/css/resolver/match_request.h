@@ -216,11 +216,6 @@ class CORE_EXPORT MatchRequest {
       return bitmap_ == other.bitmap_;
     }
 
-    bool operator!=(const RuleSetIterator& other) const {
-      DCHECK_EQ(&rule_set_group_, &other.rule_set_group_);
-      return bitmap_ != other.bitmap_;
-    }
-
    private:
     const RuleSetGroup& rule_set_group_;
     RuleSetGroup::RuleSetBitmap bitmap_;
@@ -309,17 +304,12 @@ class CORE_EXPORT MatchRequest {
 void AddRuleSetToRuleSetGroupList(RuleSet* rule_set,
                                   HeapVector<RuleSetGroup>& rule_set_group);
 
-}  // namespace blink
-
-namespace WTF {
-
 template <>
-struct VectorTraits<blink::RuleSetGroup>
-    : VectorTraitsBase<blink::RuleSetGroup> {
+struct VectorTraits<RuleSetGroup> : VectorTraitsBase<RuleSetGroup> {
   static constexpr bool kCanClearUnusedSlotsWithMemset = true;
   static constexpr bool kCanMoveWithMemcpy = true;
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_MATCH_REQUEST_H_

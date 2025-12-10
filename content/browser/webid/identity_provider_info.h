@@ -8,14 +8,14 @@
 #include <optional>
 
 #include "content/browser/webid/idp_network_request_manager.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 #include "third_party/blink/public/mojom/webid/federated_auth_request.mojom.h"
 
 namespace gfx {
 class Image;
 }
 
-namespace content {
+namespace content::webid {
 
 using IdentityProviderDataPtr = scoped_refptr<content::IdentityProviderData>;
 
@@ -41,11 +41,9 @@ class IdentityProviderInfo {
   std::optional<blink::mojom::Format> format;
   IdentityProviderDataPtr data;
   gfx::Image decoded_idp_brand_icon;
-  // nullopt if the server did not send a value or if the FedCmIframeOrigin
-  // flag is not enabled.
-  std::optional<bool> client_matches_top_frame_origin;
+  bool client_is_third_party_to_top_frame_origin{false};
 };
 
-}  // namespace content
+}  // namespace content::webid
 
 #endif  // CONTENT_BROWSER_WEBID_IDENTITY_PROVIDER_INFO

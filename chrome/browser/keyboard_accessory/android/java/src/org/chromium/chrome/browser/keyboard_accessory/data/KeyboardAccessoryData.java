@@ -34,7 +34,7 @@ public class KeyboardAccessoryData {
         private final int mTabLayout;
         private final @AccessoryTabType int mRecordingType;
         private final @Nullable Listener mListener;
-        private final PropertyProvider<Drawable> mIconProvider = new PropertyProvider<>();
+        private final Provider<Drawable> mIconProvider = new Provider<>();
 
         /** A Tab's Listener get's notified when e.g. the Tab was assigned a view. */
         public interface Listener {
@@ -182,6 +182,9 @@ public class KeyboardAccessoryData {
                     break;
                 case AccessoryAction.CREDMAN_CONDITIONAL_UI_REENTRY:
                     typeName = "CREDMAN_CONDITIONAL_UI_REENTRY";
+                    break;
+                case AccessoryAction.RETRIEVE_TRUSTED_VAULT_KEY:
+                    typeName = "RETRIEVE_TRUSTED_VAULT_KEY";
                     break;
             }
             return typeName;

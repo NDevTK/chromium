@@ -11,7 +11,6 @@
 #import "base/apple/foundation_util.h"
 #import "base/check.h"
 #import "base/check_op.h"
-#import "base/feature_list.h"
 #import "base/i18n/message_formatter.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/user_metrics.h"
@@ -21,19 +20,14 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/credential_provider/model/features.h"
-#import "ios/chrome/browser/passwords/model/features.h"
-#import "ios/chrome/browser/settings/ui_bundled/password/password_manager_ui_features.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_settings/password_settings_constants.h"
 #import "ios/chrome/browser/shared/coordinator/utils/credential_provider_settings_utils.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_image_item.h"
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_link_header_footer_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_multi_detail_text_item.h"
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
@@ -68,7 +62,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeOnDeviceEncryptionOptedInLearnMore,
   ItemTypeOnDeviceEncryptionSetUp,
   ItemTypeExportPasswordsButton,
-  ItemTypeImportPasswordsButton,
   ItemTypeDeleteCredentialsButton,
   ItemTypeFooter,
 };
@@ -97,18 +90,12 @@ base::TimeDelta GetDelayForReEnablingTurnOnPasswordsInOtherAppsButton() {
 // Helper method that returns the string to use as title for `savePasswordsItem`
 // and `managedSavePasswordsItem`.
 NSString* GetSavePasswordsItemTitle() {
-  return l10n_util::GetNSString(IOSPasskeysM2Enabled()
-                                    ? IDS_IOS_OFFER_TO_SAVE_PASSWORDS_PASSKEYS
-                                    : IDS_IOS_OFFER_TO_SAVE_PASSWORDS);
+  return l10n_util::GetNSString(IDS_IOS_OFFER_TO_SAVE_PASSWORDS_PASSKEYS);
 }
 
 // Helper method that returns the string to use as title for the
 // `passwordsInOtherAppsItem`.
 NSString* GetPasswordsInOtherAppsItemTitle() {
-  if (!IOSPasskeysM2Enabled()) {
-    return l10n_util::GetNSString(IDS_IOS_SETTINGS_PASSWORDS_IN_OTHER_APPS);
-  }
-
   if (@available(iOS 18.0, *)) {
     return l10n_util::GetNSString(
         IDS_IOS_SETTINGS_PASSWORDS_PASSKEYS_IN_OTHER_APPS_IOS18);
@@ -125,16 +112,9 @@ BOOL ShouldShowTurnOnPasswordsInOtherAppsItem(
     BOOL passwords_in_other_apps_enabled) {
   BOOL should_show_item = NO;
   if (@available(iOS 18, *)) {
-    should_show_item =
-        IOSPasskeysM2Enabled() && !passwords_in_other_apps_enabled;
+    should_show_item = !passwords_in_other_apps_enabled;
   }
   return should_show_item;
-}
-
-// Whether automatic passkey upgrades feature is enabled.
-BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
-  return base::FeatureList::IsEnabled(
-      kCredentialProviderAutomaticPasskeyUpgrade);
 }
 
 }  // namespace
@@ -152,8 +132,8 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   // Whether the credential delete button should be enabled.
   BOOL _canDeleteAllCredentials;
 
-  // Whether the exporter should be enabled.
-  BOOL _canExportPasswords;
+  // Whether credentials are available for export.
+  BOOL _canExportCredentials;
 
   // Whether automatic passkey upgrades is enabled.
   BOOL _automaticPasskeyUpgradesEnabled;
@@ -179,9 +159,7 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   // Whether Chromium has been enabled as a credential provider at the iOS
   // level. This may not be known at load time; the detail text showing on or
   // off status will be omitted until this is populated.
-  // TODO(crbug.com/396694707): Should become a plain bool once the Passkeys M2
-  // feature is launched.
-  std::optional<bool> _passwordsInOtherAppsEnabled;
+  BOOL _passwordsInOtherAppsEnabled;
 
   // Whether the `turnOnPasswordsInOtherAppsItem` should be visible.
   BOOL _shouldShowTurnOnPasswordsInOtherAppsItem;
@@ -217,24 +195,14 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
 
   // The item related to the button for exporting passwords.
   TableViewTextItem* _exportPasswordsItem;
-
-  // The item related to the button for importing passwords.
-  TableViewTextItem* _importPasswordsItem;
 }
 
 - (instancetype)init {
   self = [super initWithStyle:ChromeTableViewStyle()];
   if (self) {
-    if (IOSPasskeysM2Enabled()) {
-      // An "undefined" `passwordsInOtherAppsEnabled` value isn't supported when
-      // the Passkeys M2 feature is enabled.
-      _passwordsInOtherAppsEnabled = NO;
-      _shouldShowTurnOnPasswordsInOtherAppsItem =
-          ShouldShowTurnOnPasswordsInOtherAppsItem(
-              _passwordsInOtherAppsEnabled.value());
-    } else {
-      _shouldShowTurnOnPasswordsInOtherAppsItem = NO;
-    }
+    _passwordsInOtherAppsEnabled = NO;
+    _shouldShowTurnOnPasswordsInOtherAppsItem =
+        ShouldShowTurnOnPasswordsInOtherAppsItem(_passwordsInOtherAppsEnabled);
   }
   return self;
 }
@@ -298,7 +266,9 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   if ([self shouldDisplayPasskeyUpgradesSwitch]) {
     [model addSectionWithIdentifier:
                SectionIdentifierAutomaticPasskeyUpgradesSwitch];
-    [model addItem:[self createAutomaticPasskeyUpgradesSwitchItem]
+    _automaticPasskeyUpgradesSwitchItem =
+        [self createAutomaticPasskeyUpgradesSwitchItem];
+    [model addItem:_automaticPasskeyUpgradesSwitchItem
         toSectionWithIdentifier:
             SectionIdentifierAutomaticPasskeyUpgradesSwitch];
   }
@@ -320,68 +290,23 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   [model addItem:_exportPasswordsItem
       toSectionWithIdentifier:SectionIdentifierExportPasswordsButton];
 
-  // Import passwords button.
-  if (base::FeatureList::IsEnabled(kImportPasswordsFromSafari)) {
-    [model addSectionWithIdentifier:SectionIdentifierImportPasswordsButton];
-    _importPasswordsItem = [self createImportPasswordsItem];
-    [model addItem:_importPasswordsItem
-        toSectionWithIdentifier:SectionIdentifierImportPasswordsButton];
-  }
+  // Delete credentials button.
+  [model addSectionWithIdentifier:SectionIdentifierDeleteCredentialsButton];
+  _deleteCredentialsItem = [self createDeleteCredentialsItem];
+  _deleteCredentialsFooterItem = [self createCredentialDeletionFooterItem];
+  [self updateDeleteAllCredentialsSection];
+  [model addItem:_deleteCredentialsItem
+      toSectionWithIdentifier:SectionIdentifierDeleteCredentialsButton];
 
-    // Delete credentials button.
-    [model addSectionWithIdentifier:SectionIdentifierDeleteCredentialsButton];
-    _deleteCredentialsItem = [self createDeleteCredentialsItem];
-    _deleteCredentialsFooterItem = [self createCredentialDeletionFooterItem];
-    [self updateDeleteAllCredentialsSection];
-    [model addItem:_deleteCredentialsItem
-        toSectionWithIdentifier:SectionIdentifierDeleteCredentialsButton];
-
-    // Add footer for the delete credential section.
-    [model setFooter:_deleteCredentialsFooterItem
-        forSectionWithIdentifier:SectionIdentifierDeleteCredentialsButton];
+  // Add footer for the delete credential section.
+  [model setFooter:_deleteCredentialsFooterItem
+      forSectionWithIdentifier:SectionIdentifierDeleteCredentialsButton];
 
   if (_canBulkMoveLocalPasswordsToAccount) {
     [self updateBulkMovePasswordsToAccountSection];
   }
 
   _modelLoadStatus = ModelLoadComplete;
-}
-
-#pragma mark - UITableViewDataSource
-
-- (UITableViewCell*)tableView:(UITableView*)tableView
-        cellForRowAtIndexPath:(NSIndexPath*)indexPath {
-  UITableViewCell* cell = [super tableView:tableView
-                     cellForRowAtIndexPath:indexPath];
-
-  switch ([self.tableViewModel itemTypeForIndexPath:indexPath]) {
-    case ItemTypeSavePasswordsSwitch: {
-      TableViewSwitchCell* switchCell =
-          base::apple::ObjCCastStrict<TableViewSwitchCell>(cell);
-      [switchCell.switchView addTarget:self
-                                action:@selector(savePasswordsSwitchChanged:)
-                      forControlEvents:UIControlEventValueChanged];
-      break;
-    }
-    case ItemTypeManagedSavePasswords: {
-      TableViewInfoButtonCell* managedCell =
-          base::apple::ObjCCastStrict<TableViewInfoButtonCell>(cell);
-      [managedCell.trailingButton
-                 addTarget:self
-                    action:@selector(didTapManagedUIInfoButton:)
-          forControlEvents:UIControlEventTouchUpInside];
-      break;
-    }
-    case ItemTypeAutomaticPasskeyUpgradesSwitch: {
-      TableViewSwitchCell* switchCell =
-          base::apple::ObjCCastStrict<TableViewSwitchCell>(cell);
-      [switchCell.switchView
-                 addTarget:self
-                    action:@selector(automaticPasskeyUpgradesSwitchChanged:)
-          forControlEvents:(UIControlEvents)UIControlEventValueChanged];
-    }
-  }
-  return cell;
 }
 
 #pragma mark - UITableViewDelegate
@@ -436,13 +361,9 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
       break;
     }
     case ItemTypeExportPasswordsButton: {
-      if (_canExportPasswords) {
+      if (_canExportCredentials) {
         [self.presentationDelegate startExportFlow];
       }
-      break;
-    }
-    case ItemTypeImportPasswordsButton: {
-      // TODO(crbug.com/407587751): Start import flow.
       break;
     }
     case ItemTypeOnDeviceEncryptionSetUp: {
@@ -474,7 +395,7 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
     case ItemTypeDeleteCredentialsButton:
       return _canDeleteAllCredentials;
     case ItemTypeExportPasswordsButton:
-      return _canExportPasswords;
+      return _canExportCredentials;
     case ItemTypeSavePasswordsSwitch:
       return NO;
     case ItemTypePasswordsInOtherApps:
@@ -493,6 +414,8 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   savePasswordsItem.accessibilityIdentifier =
       kPasswordSettingsSavePasswordSwitchTableViewId;
   savePasswordsItem.on = _savingPasswordsEnabled;
+  savePasswordsItem.target = self;
+  savePasswordsItem.selector = @selector(savePasswordsSwitchChanged:);
   return savePasswordsItem;
 }
 
@@ -509,6 +432,8 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
       kPasswordSettingsManagedSavePasswordSwitchTableViewId;
   managedSavePasswordsItem.statusText = l10n_util::GetNSString(
       _savingPasswordsEnabled ? IDS_IOS_SETTING_ON : IDS_IOS_SETTING_OFF);
+  managedSavePasswordsItem.target = self;
+  managedSavePasswordsItem.selector = @selector(didTapManagedUIInfoButton:);
   return managedSavePasswordsItem;
 }
 
@@ -557,15 +482,9 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
       [[TableViewMultiDetailTextItem alloc]
           initWithType:ItemTypePasswordsInOtherApps];
   passwordsInOtherAppsItem.text = GetPasswordsInOtherAppsItemTitle();
-  if (IOSPasskeysM2Enabled()) {
-    if (@available(iOS 18.0, *)) {
-      passwordsInOtherAppsItem.leadingDetailText = l10n_util::GetNSString(
-          IDS_IOS_PASSWORD_SETTINGS_PASSWORDS_IN_OTHER_APPS_DESCRIPTION);
-    }
-  } else {
-    passwordsInOtherAppsItem.accessoryType =
-        UITableViewCellAccessoryDisclosureIndicator;
-    passwordsInOtherAppsItem.accessibilityTraits |= UIAccessibilityTraitButton;
+  if (@available(iOS 18.0, *)) {
+    passwordsInOtherAppsItem.leadingDetailText = l10n_util::GetNSString(
+        IDS_IOS_PASSWORD_SETTINGS_PASSWORDS_IN_OTHER_APPS_DESCRIPTION);
   }
   passwordsInOtherAppsItem.accessibilityIdentifier =
       kPasswordSettingsPasswordsInOtherAppsRowId;
@@ -592,6 +511,11 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   automaticPasskeyUpgradesSwitchItem.detailText =
       l10n_util::GetNSString(IDS_IOS_ALLOW_AUTOMATIC_PASSKEY_UPGRADES_SUBTITLE);
   automaticPasskeyUpgradesSwitchItem.on = _automaticPasskeyUpgradesEnabled;
+  automaticPasskeyUpgradesSwitchItem.accessibilityIdentifier =
+      kPasswordSettingsAutomaticPasskeyUpgradeToggleId;
+  automaticPasskeyUpgradesSwitchItem.target = self;
+  automaticPasskeyUpgradesSwitchItem.selector =
+      @selector(automaticPasskeyUpgradesSwitchChanged:);
   return automaticPasskeyUpgradesSwitchItem;
 }
 
@@ -686,18 +610,16 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   TableViewTextItem* exportPasswordsItem =
       [[TableViewTextItem alloc] initWithType:ItemTypeExportPasswordsButton];
   exportPasswordsItem.text = l10n_util::GetNSString(IDS_IOS_EXPORT_PASSWORDS);
+  if (@available(iOS 26, *)) {
+    if (CredentialExchangeEnabled()) {
+      exportPasswordsItem.text =
+          l10n_util::GetNSString(IDS_IOS_EXPORT_PASSWORDS_AND_PASSKEYS);
+    }
+  }
   exportPasswordsItem.accessibilityTraits = UIAccessibilityTraitButton;
+  exportPasswordsItem.accessibilityIdentifier =
+      kPasswordSettingsCredentialExportButtonId;
   return exportPasswordsItem;
-}
-
-// Creates the "Import Passwords..." button.
-- (TableViewTextItem*)createImportPasswordsItem {
-  TableViewTextItem* importPasswordsItem =
-      [[TableViewTextItem alloc] initWithType:ItemTypeImportPasswordsButton];
-  importPasswordsItem.text = l10n_util::GetNSString(IDS_IOS_IMPORT_PASSWORDS);
-  importPasswordsItem.accessibilityTraits = UIAccessibilityTraitButton;
-  importPasswordsItem.textColor = [UIColor colorNamed:kBlueColor];
-  return importPasswordsItem;
 }
 
 // Creates the "Delete all data" button.
@@ -797,12 +719,11 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
   [self updateDeleteAllCredentialsSection];
 }
 
-- (void)setCanExportPasswords:(BOOL)canExportPasswords {
-  if (_canExportPasswords == canExportPasswords) {
+- (void)setCanExportCredentials:(BOOL)canExportCredentials {
+  if (_canExportCredentials == canExportCredentials) {
     return;
   }
-
-  _canExportPasswords = canExportPasswords;
+  _canExportCredentials = canExportCredentials;
   [self updateExportPasswordsButton];
 }
 
@@ -820,15 +741,13 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
 }
 
 - (void)setPasswordsInOtherAppsEnabled:(BOOL)enabled {
-  if (_passwordsInOtherAppsEnabled.has_value() &&
-      _passwordsInOtherAppsEnabled.value() == enabled) {
+  if (_passwordsInOtherAppsEnabled == enabled) {
     return;
   }
 
   _passwordsInOtherAppsEnabled = enabled;
   _shouldShowTurnOnPasswordsInOtherAppsItem =
-      ShouldShowTurnOnPasswordsInOtherAppsItem(
-          _passwordsInOtherAppsEnabled.value());
+      ShouldShowTurnOnPasswordsInOtherAppsItem(_passwordsInOtherAppsEnabled);
 
   if (_modelLoadStatus == ModelNotLoaded) {
     return;
@@ -991,13 +910,6 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
 // Updates the appearance of the Passwords In Other Apps item to reflect the
 // current state of `_passwordsInOtherAppsEnabled`.
 - (void)updatePasswordsInOtherAppsItem {
-  if (!_passwordsInOtherAppsEnabled.has_value()) {
-    // A value should have been set upon initialization of this class when the
-    // Passkeys M2 feature is on.
-    CHECK(!IOSPasskeysM2Enabled());
-    return;
-  }
-
   // Whether the `passwordsInOtherAppsItem` should be tappable and allow the
   // user to access the Passwords in Other Apps view. The UI of the cell varies
   // depending on whether or not it is tappable.
@@ -1006,7 +918,7 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
 
   if (shouldPasswordsInOtherAppsItemBeTappable) {
     _passwordsInOtherAppsItem.trailingDetailText =
-        _passwordsInOtherAppsEnabled.value()
+        _passwordsInOtherAppsEnabled
             ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
             : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
     _passwordsInOtherAppsItem.accessoryType =
@@ -1301,8 +1213,7 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
 // Automatic passkey upgrades switch should be displayed if the feature is
 // enabled and both saving passkeys and password setting is enabled.
 - (BOOL)shouldDisplayPasskeyUpgradesSwitch {
-  return AutomaticPasskeyUpgradeFeatureEnabled() && _savingPasswordsEnabled &&
-         _savingPasskeysEnabled;
+  return _savingPasswordsEnabled && _savingPasskeysEnabled;
 }
 
 - (void)updateDeleteAllCredentialsSection {
@@ -1343,7 +1254,7 @@ BOOL AutomaticPasskeyUpgradeFeatureEnabled() {
     return;
   }
 
-  if (_canExportPasswords) {
+  if (_canExportCredentials) {
     _exportPasswordsItem.textColor = [UIColor colorNamed:kBlueColor];
     _exportPasswordsItem.accessibilityTraits &= ~UIAccessibilityTraitNotEnabled;
   } else {

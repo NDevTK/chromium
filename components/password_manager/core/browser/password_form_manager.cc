@@ -15,6 +15,7 @@
 
 #include "base/check.h"
 #include "base/containers/lru_cache.h"
+#include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/i18n/case_conversion.h"
 #include "base/memory/ptr_util.h"
@@ -66,10 +67,6 @@
 #include "components/webauthn/android/webauthn_cred_man_delegate.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-#include "components/os_crypt/sync/os_crypt.h"
-#endif
-
 using autofill::FieldDataManager;
 using autofill::FieldRendererId;
 using autofill::FormData;
@@ -94,9 +91,14 @@ bool PasswordFormManager::wait_for_server_predictions_for_filling_ = true;
 
 namespace {
 
-bool FormContainsFieldWithName(const FormData& form,
+// Number of fields that recently had user input to be considered as potential
+// single username fields for forgot password voting purposes (to allow for one
+// possible username and one OTP/captcha field).
+constexpr size_t kNumFieldsForForgotPasswordVoting = 2;
+
+bool FormContainsFieldWithName(const FormData* form,
                                const std::u16string& element) {
-  if (element.empty()) {
+  if (element.empty() || !form) {
     return false;
   }
 
@@ -104,7 +106,7 @@ bool FormContainsFieldWithName(const FormData& form,
       [&element](const std::u16string& name) {
         return base::EqualsCaseInsensitiveASCII(name, element);
       };
-  return std::ranges::any_of(form.fields(), equals_element_case_insensitive,
+  return std::ranges::any_of(form->fields(), equals_element_case_insensitive,
                              &FormFieldData::name);
 }
 
@@ -121,20 +123,11 @@ void LogUsingPossibleUsername(PasswordManagerClient* client,
 }
 
 #if BUILDFLAG(IS_ANDROID)
-bool IsCurrentUserEvicted(PasswordManagerClient* client) {
-  return client->GetPrefs()->GetBoolean(
-      password_manager::prefs::kUnenrolledFromGoogleMobileServicesDueToErrors);
-}
-
 std::optional<PasswordStoreBackendError> GetErrorForErrorMessage(
     std::optional<PasswordStoreBackendError> profile_store_backend_error,
     std::optional<PasswordStoreBackendError> account_store_backend_error,
     PasswordManagerClient* client) {
   if (!profile_store_backend_error && !account_store_backend_error) {
-    return std::nullopt;
-  }
-
-  if (IsCurrentUserEvicted(client)) {
     return std::nullopt;
   }
 
@@ -266,6 +259,35 @@ void RecordSavingIsDisabled(PasswordManagerClient* client) {
   }
 }
 
+bool AreFormsSimilar(const autofill::FormData* form,
+                     const PasswordForm* parsed_other_form) {
+  if (!form || !parsed_other_form) {
+    return false;
+  }
+  if (form->action().is_valid() && !form->is_action_empty() &&
+      !parsed_other_form->form_data.is_action_empty() &&
+      parsed_other_form->form_data.action() == form->action()) {
+    return true;
+  }
+
+  // Match the form if username and password fields are same.
+  if (FormContainsFieldWithName(form, parsed_other_form->username_element) &&
+      FormContainsFieldWithName(form, parsed_other_form->password_element)) {
+    return true;
+  }
+
+  // Match the form if the observed username field has the same value as in
+  // the other form.
+  if (!parsed_other_form->username_value.empty()) {
+    for (const auto& field : form->fields()) {
+      if (field.value() == parsed_other_form->username_value) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 PasswordFormManager::PasswordFormManager(
@@ -325,6 +347,18 @@ PasswordFormManager::~PasswordFormManager() {
   form_fetcher_->RemoveConsumer(this);
 }
 
+void PasswordFormManager::OnPasswordFilledManually() {
+  if (!base::FeatureList::IsEnabled(features::kPasswordDateLastFilled) ||
+      !parsed_submitted_form_ ||
+      !password_save_manager_->IsEqualToSavedMatch()) {
+    return;
+  }
+  password_save_manager_->UpdateDateLastFilled(*parsed_submitted_form_);
+  // Refresh data in the form fetcher so it has the updated date_last_filled
+  // when the password is saved after form submission.
+  form_fetcher_->Fetch();
+}
+
 bool PasswordFormManager::DoesManage(
     autofill::FormRendererId form_renderer_id,
     const PasswordManagerDriver* driver) const {
@@ -348,40 +382,31 @@ bool PasswordFormManager::DoesManage(
         return field.renderer_id() == field_renderer_id;
       });
 }
+bool PasswordFormManager::DoesManageSimilarForm(
+    const PasswordForm& form,
+    const PasswordManagerDriver* driver) const {
+  if (driver != driver_.get()) {
+    return false;
+  }
+  CHECK(observed_form());
+  return IsEqualToObservedForm(form);
+}
 
 bool PasswordFormManager::IsEqualToSubmittedForm(
     const autofill::FormData& form) const {
-  if (!is_submitted_) {
+  if (!is_submitted_ || IsHttpAuth()) {
     return false;
   }
+  return AreFormsSimilar(&form, parsed_submitted_form_.get());
+}
+
+bool PasswordFormManager::IsEqualToObservedForm(
+    const PasswordForm& form) const {
   if (IsHttpAuth()) {
     return false;
   }
 
-  if (form.action().is_valid() && !form.is_action_empty() &&
-      !submitted_form_.is_action_empty() &&
-      submitted_form_.action() == form.action()) {
-    return true;
-  }
-
-  // Match the form if username and password fields are same.
-  if (FormContainsFieldWithName(form,
-                                parsed_submitted_form_->username_element) &&
-      FormContainsFieldWithName(form,
-                                parsed_submitted_form_->password_element)) {
-    return true;
-  }
-
-  // Match the form if the observed username field has the same value as in
-  // the submitted form.
-  if (!parsed_submitted_form_->username_value.empty()) {
-    for (const auto& field : form.fields()) {
-      if (field.value() == parsed_submitted_form_->username_value) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return AreFormsSimilar(observed_form(), &form);
 }
 
 const GURL& PasswordFormManager::GetURL() const {
@@ -447,8 +472,8 @@ bool PasswordFormManager::IsMovableToAccountStore() const {
 
   const std::u16string& username = GetPendingCredentials().username_value;
   const std::u16string& password = GetPendingCredentials().password_value;
-  // If no match in the profile store with the same username and password exist,
-  // then there is nothing to move.
+  // If no match in the profile store with the same username and password
+  // exists, then there is nothing to move.
   auto is_movable = [&username, &password](const PasswordForm& match) {
     return !match.IsUsingAccountStore() && match.username_value == username &&
            match.password_value == password;
@@ -483,8 +508,8 @@ bool PasswordFormManager::IsUpdateAffectingPasswordsStoredInTheGoogleAccount()
           .gaia;
 
   const std::u16string& username = GetPendingCredentials().username_value;
-  //  If no match in the account store with the same username exists, then there
-  //  is nothing to update in this store.
+  //  If no match in the account store with the same username exists, then
+  //  there is nothing to update in this store.
   auto same_username_in_account_store = [&](const PasswordForm& match) {
     return match.IsUsingAccountStore() && match.username_value == username;
   };
@@ -693,7 +718,6 @@ void PasswordFormManager::SetGenerationPopupWasShown(
 
 void PasswordFormManager::SetGenerationElement(
     FieldRendererId generation_element) {
-  generation_element_ = generation_element;
   if (votes_uploader_.has_value()) {
     votes_uploader_->set_generation_element(generation_element);
   }
@@ -740,19 +764,11 @@ void PasswordFormManager::UpdateStateOnUserInput(
   modified_field->set_value(field_value);
   mutable_observed_form()->set_fields(std::move(fields));
 
-  if (!HasGeneratedPassword()) {
-    return;
+  if (HasGeneratedPassword()) {
+    // Update the presaved password form in the case the username has changed.
+    PresaveGeneratedPasswordInternal(
+        *observed_form(), password_save_manager_->GetGeneratedPassword());
   }
-  // Update the presaved password form. Even if generated password was not
-  // modified, the user might have modified the username.
-  std::u16string generated_password =
-      password_save_manager_->GetGeneratedPassword();
-  CHECK(!generated_password.empty());
-  if (generation_element_ == field_id) {
-    generated_password = field_value;
-    CHECK(!generated_password.empty());
-  }
-  PresaveGeneratedPasswordInternal(*observed_form(), generated_password);
 }
 
 void PasswordFormManager::SetDriver(
@@ -853,6 +869,10 @@ std::unique_ptr<PasswordFormManager> PasswordFormManager::Clone() const {
     result->parser_.set_server_predictions(*parser_.server_predictions());
   }
 
+  if (parser_.model_predictions()) {
+    result->parser_.set_model_predictions(*parser_.model_predictions());
+  }
+
   if (parsed_submitted_form_) {
     result->parsed_submitted_form_ =
         std::make_unique<PasswordForm>(*parsed_submitted_form_);
@@ -921,7 +941,7 @@ void PasswordFormManager::OnFetchCompleted() {
           form_fetcher_->GetProfileStoreBackendError())) {
     client_->NotifyKeychainError();
   } else {
-    if (OSCrypt::IsEncryptionAvailable() && client_->GetPrefs()) {
+    if (client_->GetPrefs()) {
       client_->GetPrefs()->SetInteger(
           password_manager::prefs::kRelaunchChromeBubbleDismissedCounter, 0);
     }
@@ -1037,9 +1057,23 @@ bool PasswordFormManager::ProvisionallySave(
     is_saving_allowed_ = false;
   }
 
-  bool have_password_to_save =
+  // Check if the password field was autofilled with an OTP value.
+  const bool password_field_is_otp_field =
       form_parsing_result.password_form &&
-      form_parsing_result.password_form->HasNonEmptyPasswordValue();
+      std::ranges::any_of(
+          submitted_form.fields(), [&](const FormFieldData& submitted_field) {
+            return submitted_field.renderer_id() ==
+                       form_parsing_result.password_form
+                           ->password_element_renderer_id &&
+                   client_->IsFieldFilledWithOtp(submitted_form.global_id(),
+                                                 submitted_field.global_id());
+          });
+
+  const bool have_password_to_save =
+      form_parsing_result.password_form &&
+      form_parsing_result.password_form->HasNonEmptyPasswordValue() &&
+      !password_field_is_otp_field;
+
   if (!have_password_to_save) {
     // In case of error during parsing, reset the state.
     parsed_submitted_form_.reset();
@@ -1054,7 +1088,6 @@ bool PasswordFormManager::ProvisionallySave(
   is_submitted_ = true;
   CalculateSubmittedFormFrameMetric();
   CalculateSubmittedFormTypeMetric();
-  metrics_recorder_->set_possible_username_used(false);
   if (votes_uploader_.has_value()) {
     votes_uploader_->clear_single_username_votes_data();
     votes_uploader_->set_should_send_username_first_flow_votes(false);
@@ -1184,8 +1217,9 @@ void PasswordFormManager::FillNow() {
   if (!parsed_observed_form_) {
     return;
   }
-  if (form_parsed_observer_) {
-    form_parsed_observer_->OnPasswordFormParsed(this);
+  for (PasswordFormManagerObserver& form_parsed_observer :
+       form_parsed_observers_) {
+    form_parsed_observer.OnPasswordFormParsed(this);
   }
   metrics_recorder_->CacheParsingResultInFillingMode(
       *parsed_observed_form_.get());
@@ -1723,7 +1757,6 @@ void PasswordFormManager::HandleUsernameFirstFlow(
     SetUsernameValueFromOutsideOfForm(picked_username.data.value,
                                       *parsed_submitted_form_.get());
   }
-  metrics_recorder_->set_possible_username_used(true);
 }
 
 void PasswordFormManager::HandleForgotPasswordFormData() {
@@ -1733,8 +1766,9 @@ void PasswordFormManager::HandleForgotPasswordFormData() {
     return;
   }
 
-  std::vector<FieldInfo> field_info =
-      field_info_manager->GetFieldInfo(parsed_submitted_form_->signon_realm);
+  std::vector<FieldInfo> field_info = field_info_manager->GetFieldInfo(
+      parsed_submitted_form_->signon_realm,
+      /*num_fields_to_consider=*/kNumFieldsForForgotPasswordVoting);
   // No info available for the current eTLD => no voting on potential username
   // forms.
   if (field_info.empty() &&
@@ -1843,6 +1877,14 @@ bool HasObservedFormChanged(const FormData& form_data,
     if (lhs_field.name() != rhs_field.name()) {
       differences_bitmask |= PasswordFormMetricsRecorder::kFormFieldNames;
     }
+
+    // This needs to propagate to the form manager in order for users
+    // of the form manager cache (e.g. actor login) to have updated information
+    // about the password form.
+    if (lhs_field.is_focusable() != rhs_field.is_focusable()) {
+      differences_bitmask |=
+          PasswordFormMetricsRecorder::kFormFieldFocusability;
+    }
   }
 
   form_manager.GetMetricsRecorder()->RecordFormChangeBitmask(
@@ -1862,13 +1904,19 @@ base::flat_set<std::u16string> PasswordFormManager::GetStoredUsernames() const {
   return stored_usernames;
 }
 
-void PasswordFormManager::SetObserver(
-    base::WeakPtr<PasswordFormManagerObserver> observer) {
-  form_parsed_observer_ = observer;
+void PasswordFormManager::AddObserver(PasswordFormManagerObserver* observer) {
+  if (!form_parsed_observers_.HasObserver(observer)) {
+    form_parsed_observers_.AddObserver(observer);
+  }
 }
 
-void PasswordFormManager::ResetObserver() {
-  form_parsed_observer_.reset();
+void PasswordFormManager::RemoveObserver(
+    PasswordFormManagerObserver* observer) {
+  form_parsed_observers_.RemoveObserver(observer);
+}
+
+void PasswordFormManager::SetShouldStoreActorLoginPermission() {
+  password_save_manager_->SetShouldStoreActorLoginPermission();
 }
 
 }  // namespace password_manager

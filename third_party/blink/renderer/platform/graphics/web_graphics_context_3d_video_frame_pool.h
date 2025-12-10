@@ -7,6 +7,7 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/cancelable_callback.h"
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
@@ -32,6 +33,8 @@ class VideoFrame;
 }  // namespace media
 
 namespace blink {
+
+PLATFORM_EXPORT BASE_DECLARE_FEATURE(kUseCopyToGpuMemoryBufferAsync);
 
 class WebGraphicsContext3DProviderWrapper;
 
@@ -82,7 +85,7 @@ class PLATFORM_EXPORT WebGraphicsContext3DVideoFramePool {
   const std::unique_ptr<media::RenderableGpuMemoryBufferVideoFramePool> pool_;
   base::AtomicSequenceNumber trace_flow_seqno_;
 
-  WTF::Deque<std::unique_ptr<base::CancelableOnceClosure>>
+  Deque<std::unique_ptr<base::CancelableOnceClosure>>
       pending_gpu_completion_callbacks_;
 };
 

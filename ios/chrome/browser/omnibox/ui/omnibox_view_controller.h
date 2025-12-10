@@ -7,6 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/omnibox/public/omnibox_presentation_context.h"
 #import "ios/chrome/browser/omnibox/ui/omnibox_consumer.h"
 #import "ios/chrome/browser/omnibox/ui/omnibox_text_field_ios.h"
 #import "ios/chrome/browser/orchestrator/ui_bundled/edit_view_animatee.h"
@@ -15,23 +16,9 @@
 @class LayoutGuideCenter;
 @protocol OmniboxMutator;
 @protocol OmniboxKeyboardDelegate;
+@protocol OmniboxTextInput;
 @protocol TextFieldViewContaining;
-
-// Delegate for paste actions in OmniboxViewController.
-@protocol OmniboxViewControllerPasteDelegate
-
-// User tapped on the keyboard accessory's paste button.
-- (void)didTapPasteToSearchButton:(NSArray<NSItemProvider*>*)itemProviders;
-// User tapped on the Search Copied Text from the omnibox menu.
-- (void)didTapSearchCopiedText;
-// User tapped on the Search Copied Image from the omnibox menu.
-- (void)didTapSearchCopiedImage;
-// User tapped on the Lens Image from the omnibox menu.
-- (void)didTapLensCopiedImage;
-// User tapped on the Visit Copied Link from the omnibox menu.
-- (void)didTapVisitCopiedLink;
-
-@end
+@class OmniboxMetricsRecorder;
 
 @interface OmniboxViewController : UIViewController <EditViewAnimatee,
                                                      LocationBarOffsetProvider,
@@ -40,11 +27,14 @@
 /// Mutator of the omnibox.
 @property(nonatomic, weak) id<OmniboxMutator> mutator;
 
+/// The metrics recorder.
+@property(nonatomic, weak) OmniboxMetricsRecorder* metricsRecorder;
+
 /// Whether the UI is configured for search-only mode.
 @property(nonatomic, assign) BOOL searchOnlyUI;
 
-// The textfield used by this view controller.
-@property(nonatomic, readonly, strong) OmniboxTextFieldIOS* textField;
+// The text input used by this view controller.
+@property(nonatomic, readonly, strong) id<OmniboxTextInput> textInput;
 
 // The view, which contains a text field view.
 @property(nonatomic, readonly)
@@ -62,16 +52,14 @@
 @property(nonatomic, assign)
     UISemanticContentAttribute semanticContentAttribute;
 
-/// Delegate for paste actions.
-@property(nonatomic, weak) id<OmniboxViewControllerPasteDelegate> pasteDelegate;
 /// Delegate for keyboard actions.
 @property(nonatomic, weak) id<OmniboxKeyboardDelegate> popupKeyboardDelegate;
 
 // The layout guide center to use to refer to the omnibox leading image.
 @property(nonatomic, strong) LayoutGuideCenter* layoutGuideCenter;
 
-- (instancetype)initWithIsLensOverlay:(BOOL)isLensOverlay
-    NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithPresentationContext:
+    (OmniboxPresentationContext)presentationContext NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithNibName:(NSString*)nibNameOrNil
                          bundle:(NSBundle*)nibBundleOrNil NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder*)coder NS_UNAVAILABLE;

@@ -226,7 +226,6 @@ bool ShouldShowCastButton(HTMLMediaElement& media_element) {
 
 bool ShouldShowCastOverlayButton(HTMLMediaElement& media_element) {
   return !media_element.ShouldShowControls() &&
-         RuntimeEnabledFeatures::MediaCastOverlayButtonEnabled() &&
          ShouldShowCastButton(media_element);
 }
 
@@ -704,9 +703,9 @@ void MediaControlsImpl::InitializeControls() {
 
 void MediaControlsImpl::PopulatePanel() {
   // Clear the panels.
-  panel_->setInnerHTML("");
+  panel_->SetInnerHTMLWithoutTrustedTypes("");
   if (media_button_panel_)
-    media_button_panel_->setInnerHTML("");
+    media_button_panel_->SetInnerHTMLWithoutTrustedTypes("");
 
   Element* button_panel = panel_;
   if (ShouldShowVideoControls()) {

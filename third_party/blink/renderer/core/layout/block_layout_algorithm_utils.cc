@@ -95,10 +95,14 @@ BlockContentAlignment ComputeContentAlignment(const ComputedStyle& style,
           return BlockContentAlignment::kBaseline;
 
         case EVerticalAlign::kMiddle:
-          return BlockContentAlignment::kUnsafeCenter;
+          return RuntimeEnabledFeatures::LayoutTableCellAlignmentSafeEnabled()
+                     ? BlockContentAlignment::kSafeCenter
+                     : BlockContentAlignment::kUnsafeCenter;
 
         case EVerticalAlign::kBottom:
-          return BlockContentAlignment::kUnsafeEnd;
+          return RuntimeEnabledFeatures::LayoutTableCellAlignmentSafeEnabled()
+                     ? BlockContentAlignment::kSafeEnd
+                     : BlockContentAlignment::kUnsafeEnd;
       }
       break;
 
@@ -193,7 +197,8 @@ void AlignBlockContent(const ComputedStyle& style,
     if (builder.Node().IsButtonOrInputButton()) {
       free_space = free_space.ClampNegativeToZero();
     }
-    builder.MoveChildrenInBlockDirection(free_space / 2);
+    builder.MoveChildrenInDirection(free_space / 2,
+                                    /*is_block_direction=*/true);
     return;
   }
 
@@ -216,11 +221,12 @@ void AlignBlockContent(const ComputedStyle& style,
       break;
     case BlockContentAlignment::kSafeCenter:
     case BlockContentAlignment::kUnsafeCenter:
-      builder.MoveChildrenInBlockDirection(free_space / 2);
+      builder.MoveChildrenInDirection(free_space / 2,
+                                      /*is_block_direction=*/true);
       break;
     case BlockContentAlignment::kSafeEnd:
     case BlockContentAlignment::kUnsafeEnd:
-      builder.MoveChildrenInBlockDirection(free_space);
+      builder.MoveChildrenInDirection(free_space, /*is_block_direction=*/true);
   }
 }
 
@@ -230,11 +236,6 @@ LogicalStaticPosition::InlineEdge InlineStaticPositionEdge(
     WritingDirectionMode parent_writing_direction,
     bool should_swap_inline_axis) {
   CHECK(oof_node.IsOutOfFlowPositioned());
-  if (!RuntimeEnabledFeatures::CSSAlignBlockAndInlineOutOfFlowsEnabled()) {
-    return should_swap_inline_axis ? LogicalStaticPosition::kInlineEnd
-                                   : LogicalStaticPosition::kInlineStart;
-  }
-
   StyleSelfAlignmentData normal_value_behavior = {ItemPosition::kStart,
                                                   OverflowAlignment::kDefault};
   const ItemPosition align_self =
@@ -284,10 +285,6 @@ LogicalStaticPosition::BlockEdge BlockStaticPositionEdge(
     const ComputedStyle* align_items_style,
     WritingDirectionMode parent_writing_direction) {
   CHECK(oof_node.IsOutOfFlowPositioned());
-  if (!RuntimeEnabledFeatures::CSSAlignBlockAndInlineOutOfFlowsEnabled()) {
-    return LogicalStaticPosition::kBlockStart;
-  }
-
   StyleSelfAlignmentData normal_value_behavior = {ItemPosition::kStart,
                                                   OverflowAlignment::kDefault};
   const ItemPosition align_self =

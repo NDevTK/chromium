@@ -99,7 +99,6 @@ void OptimizationGuideInternalsUI::RequestLoggedModelQualityClientIds(
 
   // Get the client ids for the compose and tab organization feature for the
   // past 28 days to show on chrome://optimization-guide-internals.
-  // TODO(b/308642692): Add other features client id as requested.
   std::vector<optimization_guide_internals::mojom::LoggedClientIdsPtr>
       logged_client_ids;
   // Initialize time outside to have it change when generating the client ids
@@ -132,6 +131,28 @@ void OptimizationGuideInternalsUI::RequestLoggedModelQualityClientIds(
   }
 
   std::move(callback).Run(std::move(logged_client_ids));
+}
+
+void OptimizationGuideInternalsUI::RequestMqlsLogs(
+    RequestMqlsLogsCallback callback) {
+  Profile* profile = Profile::FromWebUI(web_ui());
+  auto* service = OptimizationGuideKeyedServiceFactory::GetForProfile(profile);
+  if (!service) {
+    std::move(callback).Run({});
+    return;
+  }
+
+  optimization_guide::ModelQualityLogsUploaderService*
+      model_quality_logs_uploader_service =
+          service->GetModelQualityLogsUploaderService();
+  if (!model_quality_logs_uploader_service) {
+    std::move(callback).Run({});
+    return;
+  }
+
+  std::vector<optimization_guide_internals::mojom::MqlsLogPtr> mqls_logs =
+      model_quality_logs_uploader_service->GetMqlsLogsForWebUI();
+  std::move(callback).Run(std::move(mqls_logs));
 }
 
 WEB_UI_CONTROLLER_TYPE_IMPL(OptimizationGuideInternalsUI)

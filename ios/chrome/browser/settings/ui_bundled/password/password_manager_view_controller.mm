@@ -37,7 +37,6 @@
 #import "ios/chrome/browser/passwords/model/password_checkup_metrics.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/inline_promo_cell.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/inline_promo_item.h"
-#import "ios/chrome/browser/settings/ui_bundled/cells/settings_check_cell.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_check_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/elements/enterprise_info_popover_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/create_password_manager_title_view.h"
@@ -49,22 +48,20 @@
 #import "ios/chrome/browser/settings/ui_bundled/password/passwords_consumer.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/passwords_settings_commands.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/passwords_table_view_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/settings_root_table_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_root_table_view_controller+toolbar_add.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_root_table_view_controller+toolbar_settings.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_root_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/utils/password_utils.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/home_waiting_view.h"
-#import "ios/chrome/browser/shared/ui/symbols/symbols.h"
+#import "ios/chrome/browser/shared/ui/image/image_names.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_icon_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_image_item.h"
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_link_header_footer_item.h"
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_header_footer_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_item.h"
@@ -309,6 +306,19 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   std::optional<password_manager::CredentialUIEntry> _mostRecentlyUpdatedCred;
   // Stores an email address of a user.
   std::u16string _userEmail;
+  // Whether the VC is currently reloading data. Used to avoid modifying the
+  // content while it is reloading.
+  BOOL _isReloadingData;
+  // The button to close the password manager.
+  UIBarButtonItem* _closeButton;
+  // The button for the navigation bar to finish editing passwords.
+  UIBarButtonItem* _doneEditingButtonForNavigationBar;
+  // The button for the toolbar to finish editing passwords. When the search bar
+  // is active, the navigation bar is hidden. That is when this button is needed
+  // on the bottom toolbar.
+  UIBarButtonItem* _doneEditingButtonForToolbar;
+  // The button to start editing passwords.
+  UIBarButtonItem* _selectButton;
 }
 
 @synthesize manageAccountLinkItem = _manageAccountLinkItem;
@@ -416,7 +426,6 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
 - (void)viewWillAppear:(BOOL)animated {
   [super viewWillAppear:animated];
-  self.navigationController.toolbarHidden = NO;
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -490,6 +499,13 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   [self updateWidgetPromoCellLayoutIfNeeded];
 }
 
+- (void)viewDidLayoutSubviews {
+  [super viewDidLayoutSubviews];
+  if ([self.scrimView isDescendantOfView:self.view]) {
+    [self.view bringSubviewToFront:self.scrimView];
+  }
+}
+
 #pragma mark - SettingsRootTableViewController
 
 - (void)loadModel {
@@ -518,9 +534,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
         forSectionWithIdentifier:SectionIdentifierManageAccountHeader];
 
     // Trusted Vault widget promo.
-    if (password_manager::features::
-            IsPasswordManagerTrustedVaultWidgetEnabled() &&
-        _shouldShowTrustedVaultWidgetPromo) {
+    if (_shouldShowTrustedVaultWidgetPromo) {
       [model addSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
       [model addItem:self.trustedVaultWidgetPromoItem
           toSectionWithIdentifier:SectionIdentifierTrustedVaultWidgetPromo];
@@ -564,9 +578,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     TableViewTextHeaderFooterItem* headerItem =
         [[TableViewTextHeaderFooterItem alloc] initWithType:ItemTypeHeader];
     headerItem.text = l10n_util::GetNSString(
-        IOSPasskeysM2Enabled()
-            ? IDS_IOS_SETTINGS_PASSWORDS_PASSKEYS_SAVED_HEADING
-            : IDS_IOS_SETTINGS_PASSWORDS_SAVED_HEADING);
+        IDS_IOS_SETTINGS_PASSWORDS_PASSKEYS_SAVED_HEADING);
     [model setHeader:headerItem
         forSectionWithIdentifier:SectionIdentifierSavedPasswords];
   }
@@ -583,6 +595,12 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   }
 
   [self filterItems:self.searchTerm];
+}
+
+- (void)reloadData {
+  _isReloadingData = YES;
+  [super reloadData];
+  _isReloadingData = NO;
 }
 
 // Returns YES if the array of index path contains a saved password. This is to
@@ -639,8 +657,40 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 }
 
 - (void)updateUIForEditState {
-  [super updateUIForEditState];
+  [self.navigationController setToolbarHidden:self.shouldHideToolbar
+                                     animated:YES];
+
+  self.navigationItem.rightBarButtonItem =
+      self.tableView.editing ? self.doneEditingButtonForNavigationBar
+                             : self.closeButton;
   [self updatedToolbarForEditState];
+}
+
+// Updates the toolbar based on the current edit state.
+- (void)updatedToolbarForEditState {
+  UIBarButtonItem* flexibleSpace = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace
+                           target:nil
+                           action:nil];
+
+  UIBarButtonItem* leadingButton = flexibleSpace;
+  UIBarButtonItem* trailingButton = flexibleSpace;
+  UIBarButtonItem* middleButton = flexibleSpace;
+  BOOL isEditing = self.tableView.editing;
+
+  if (_tableIsInSearchMode) {
+    trailingButton =
+        isEditing ? self.doneEditingButtonForToolbar : self.selectButton;
+    leadingButton =
+        isEditing ? self.deleteButton : self.settingsButtonInToolbar;
+  } else {
+    trailingButton = isEditing ? flexibleSpace : self.addOrSelectButton;
+    middleButton = isEditing ? self.deleteButton : flexibleSpace;
+    leadingButton = isEditing ? flexibleSpace : self.settingsButtonInToolbar;
+  }
+
+  [self setToolbarItems:@[ leadingButton, middleButton, trailingButton ]
+               animated:YES];
 }
 
 - (void)editButtonPressed {
@@ -648,23 +698,8 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   // because parent method -editButtonPressed is calling setEditing to change
   // the state).
   self.shouldEnableSearchBar = self.tableView.editing;
+  self.deleteButton.enabled = NO;
   [super editButtonPressed];
-}
-
-- (UIBarButtonItem*)customLeftToolbarButton {
-  return self.tableView.isEditing ? nil : self.settingsButtonInToolbar;
-}
-
-- (UIBarButtonItem*)customRightToolbarButton {
-  if (!self.tableView.isEditing) {
-    // Display Add button on the right side of the toolbar when the empty state
-    // is displayed. The Settings button will be on the left. When the tableView
-    // is not empty, the Add button is displayed in a row.
-    if ([self shouldShowEmptyStateView]) {
-      return self.addButtonInToolbar;
-    }
-  }
-  return nil;
 }
 
 #pragma mark - SettingsControllerProtocol
@@ -750,6 +785,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   _passwordProblemsItem.detailText =
       l10n_util::GetNSString(IDS_IOS_PASSWORD_CHECKUP_DESCRIPTION);
   _passwordProblemsItem.accessibilityTraits = UIAccessibilityTraitHeader;
+  _passwordProblemsItem.infoButtonTarget = self;
+  _passwordProblemsItem.infoButtonSelector =
+      @selector(didTapPasswordCheckInfoButton:);
   return _passwordProblemsItem;
 }
 
@@ -1016,9 +1054,15 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   // Reload items in sections.
   if (sectionsToUpdate.count > 0) {
     [self filterItems:self.searchTerm];
-    [self.tableView reloadSections:sectionsToUpdate
-                  withRowAnimation:UITableViewRowAnimationAutomatic];
-    [self scrollToLastUpdatedItem];
+    __weak __typeof(self) weakSelf = self;
+    [self.tableView
+        performBatchUpdates:^{
+          [weakSelf.tableView reloadSections:sectionsToUpdate
+                            withRowAnimation:UITableViewRowAnimationAutomatic];
+        }
+        completion:^(BOOL) {
+          [weakSelf scrollToLastUpdatedItem];
+        }];
   } else if (_affiliatedGroups.empty() && _blockedSites.empty()) {
     [self setEditing:NO animated:YES];
   }
@@ -1082,9 +1126,6 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
         [self clearSectionWithIdentifier:SectionIdentifierManageAccountHeader
                         withRowAnimation:UITableViewRowAnimationTop];
-
-        // Hide the toolbar when the search controller is presented.
-        self.navigationController.toolbarHidden = YES;
       }
                         completion:nil];
 }
@@ -1123,9 +1164,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
         sectionIndex++;
         // Add the trusted vault promo section.
-        if (password_manager::features::
-                IsPasswordManagerTrustedVaultWidgetEnabled() &&
-            _shouldShowTrustedVaultWidgetPromo) {
+        if (_shouldShowTrustedVaultWidgetPromo) {
           [model insertSectionWithIdentifier:
                      SectionIdentifierTrustedVaultWidgetPromo
                                      atIndex:sectionIndex];
@@ -1198,13 +1237,6 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
         [self.tableView insertRowsAtIndexPaths:rowsIndexPaths
                               withRowAnimation:UITableViewRowAnimationTop];
 
-        //  We want to restart the toolbar (display it) when the search bar is
-        //  dismissed only if the current view is the Password Manager.
-        if ([self.navigationController.topViewController
-                isKindOfClass:[PasswordManagerViewController class]]) {
-          self.navigationController.toolbarHidden = NO;
-        }
-
         _tableIsInSearchMode = NO;
       }
                completion:nil];
@@ -1249,10 +1281,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   }
   if (_savingPasswordsToAccount) {
     _manageAccountLinkItem.text = l10n_util::GetNSString(
-        IOSPasskeysM2Enabled()
-            ? IDS_IOS_SAVE_PASSWORDS_PASSKEYS_MANAGE_ACCOUNT_HEADER
-            : IDS_IOS_SAVE_PASSWORDS_MANAGE_ACCOUNT_HEADER);
-
+        IDS_IOS_SAVE_PASSWORDS_PASSKEYS_MANAGE_ACCOUNT_HEADER);
     _manageAccountLinkItem.urls = @[ [[CrURL alloc]
         initWithGURL:
             google_util::AppendGoogleLocaleParam(
@@ -1316,18 +1345,28 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 
 // Shows scrim overlay and hide toolbar.
 - (void)showScrim {
-  if (self.scrimView.alpha < 1.0f) {
-    self.scrimView.alpha = 0.0f;
-    [self.tableView addSubview:self.scrimView];
-    // We attach our constraints to the superview because the tableView is
-    // a scrollView and it seems that we get an empty frame when attaching to
-    // it.
-    AddSameConstraints(self.scrimView, self.view.superview);
+  UIView* scrimView = self.scrimView;
+  if (scrimView.alpha < 1.0f) {
+    scrimView.alpha = 0.0f;
+    [self.tableView addSubview:scrimView];
+
+    UIView* superview = self.tableView.superview;
+
+    [NSLayoutConstraint activateConstraints:@[
+      [scrimView.leadingAnchor constraintEqualToAnchor:superview.leadingAnchor],
+      [scrimView.trailingAnchor
+          constraintEqualToAnchor:superview.trailingAnchor],
+      [scrimView.bottomAnchor constraintEqualToAnchor:superview.bottomAnchor],
+      [scrimView.topAnchor
+          constraintEqualToAnchor:self.navigationController.navigationBar
+                                      .bottomAnchor],
+
+    ]];
     self.tableView.accessibilityElementsHidden = YES;
     self.tableView.scrollEnabled = NO;
     [UIView animateWithDuration:kTableViewNavigationScrimFadeDuration
                      animations:^{
-                       self.scrimView.alpha = 1.0f;
+                       scrimView.alpha = 1.0f;
                        [self.view layoutIfNeeded];
                      }];
   }
@@ -1557,7 +1596,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   self.widgetPromoItem.promoImage =
       [UIImage imageNamed:enabled ? WidgetPromoImageName()
                                   : WidgetPromoDisabledImageName()];
-  [self reconfigureCellsForItems:@[ self.widgetPromoItem ]];
+  if (!_isReloadingData) {
+    [self reconfigureCellsForItems:@[ self.widgetPromoItem ]];
+  }
 }
 
 // Enables or disables the `trustedVaultWidgetPromoItem`.
@@ -1571,7 +1612,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
       imageNamed:enabled
                      ? kPasswordManagerTrustedVaultWidgetPromoImage
                      : kPasswordManagerTrustedVaultWidgetPromoDisabledImage];
-  [self reconfigureCellsForItems:@[ self.trustedVaultWidgetPromoItem ]];
+  if (!_isReloadingData) {
+    [self reconfigureCellsForItems:@[ self.trustedVaultWidgetPromoItem ]];
+  }
 }
 
 // Enables or disables the `checkForProblemsItem` and sets it up accordingly.
@@ -1597,7 +1640,9 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
     self.addPasswordItem.textColor = [UIColor colorNamed:kTextSecondaryColor];
     self.addPasswordItem.accessibilityTraits |= UIAccessibilityTraitNotEnabled;
   }
-  [self reconfigureCellsForItems:@[ self.addPasswordItem ]];
+  if (!_isReloadingData) {
+    [self reconfigureCellsForItems:@[ self.addPasswordItem ]];
+  }
 }
 
 // Removes the given section if it exists.
@@ -1892,9 +1937,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
 // tableView, otherwise hides the empty state view if one is being displayed.
 - (void)showOrHideEmptyView {
   if ([self shouldShowEmptyStateView]) {
-    if (password_manager::features::
-            IsPasswordManagerTrustedVaultWidgetEnabled() &&
-        _shouldShowTrustedVaultWidgetPromo) {
+    if (_shouldShowTrustedVaultWidgetPromo) {
       // Instead of displaying empty state with image we are currently
       // displaying the Trusted Vault promo widget.
       // TODO(crbug.com/407605858): Discuss with UX the UI behvior in case of
@@ -2071,6 +2114,68 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
   }
 }
 
+// Returns the button that closes the password manager.
+- (UIBarButtonItem*)closeButton {
+  if (!_closeButton) {
+    _closeButton = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemClose
+                             target:self
+                             action:@selector(closePasswordManager)];
+    _closeButton.accessibilityIdentifier = kSettingsDoneButtonId;
+  }
+  return _closeButton;
+}
+
+// Returns the button that starts editing passwords.
+- (UIBarButtonItem*)selectButton {
+  if (!_selectButton) {
+    _selectButton = [[UIBarButtonItem alloc]
+        initWithTitle:l10n_util::GetNSString(IDS_IOS_SETTINGS_TOOLBAR_SELECT)
+                style:UIBarButtonItemStylePlain
+               target:self
+               action:@selector(editButtonPressed)];
+    _selectButton.accessibilityIdentifier = kSettingsToolbarEditButtonId;
+  }
+  return _selectButton;
+}
+
+// Returns the button for the navigation bar that finishes editing passwords.
+- (UIBarButtonItem*)doneEditingButtonForNavigationBar {
+  if (!_doneEditingButtonForNavigationBar) {
+    _doneEditingButtonForNavigationBar = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                             target:self
+                             action:@selector(editButtonPressed)];
+    _doneEditingButtonForNavigationBar.accessibilityIdentifier =
+        kSettingsToolbarEditDoneButtonId;
+  }
+  return _doneEditingButtonForNavigationBar;
+}
+
+// Returns the button for the toolbar that finishes editing passwords.
+- (UIBarButtonItem*)doneEditingButtonForToolbar {
+  if (!_doneEditingButtonForToolbar) {
+    _doneEditingButtonForToolbar =
+        [self createEditModeDoneButtonForToolbar:YES];
+  }
+  return _doneEditingButtonForToolbar;
+}
+
+// Returns either the "Add" button or the "Select" button based on the current
+// state.
+- (UIBarButtonItem*)addOrSelectButton {
+  return [self shouldShowEmptyStateView] ? [self addButtonInToolbar]
+                                         : [self selectButton];
+}
+
+// Closes the password manager.
+- (void)closePasswordManager {
+  SettingsNavigationController* navigationController =
+      base::apple::ObjCCast<SettingsNavigationController>(
+          self.navigationController);
+  [navigationController closeSettings];
+}
+
 #pragma mark - UITableViewDelegate
 
 - (void)tableView:(UITableView*)tableView
@@ -2211,7 +2316,7 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
                      cellForRowAtIndexPath:indexPath];
   UIView* selectedBackgroundView = [[UIView alloc] init];
   selectedBackgroundView.backgroundColor =
-      [UIColor colorNamed:kUpdatedTertiaryBackgroundColor];
+      [UIColor colorNamed:kTertiaryBackgroundColor];
   cell.selectedBackgroundView = selectedBackgroundView;
   switch ([self.tableViewModel itemTypeForIndexPath:indexPath]) {
     case ItemTypeTrustedVaultWidgetPromo: {
@@ -2242,15 +2347,8 @@ bool AreIssuesEqual(const std::vector<password_manager::AffiliatedGroup>& lhs,
           kWidgetPromoImageID;
       break;
     }
-    case ItemTypePasswordCheckStatus: {
-      SettingsCheckCell* passwordCheckCell =
-          base::apple::ObjCCastStrict<SettingsCheckCell>(cell);
-      [passwordCheckCell.infoButton
-                 addTarget:self
-                    action:@selector(didTapPasswordCheckInfoButton:)
-          forControlEvents:UIControlEventTouchUpInside];
+    case ItemTypePasswordCheckStatus:
       break;
-    }
     case ItemTypeSavedPassword:
     case ItemTypeBlocked: {
       // Load the favicon from cache.

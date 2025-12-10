@@ -118,10 +118,12 @@ bool LayoutSVGBlock::UpdateTransformAfterLayout(
   return true;
 }
 
-void LayoutSVGBlock::StyleDidChange(StyleDifference diff,
-                                    const ComputedStyle* old_style) {
+void LayoutSVGBlock::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutBlockFlow::StyleDidChange(diff, old_style);
+  LayoutBlockFlow::StyleDidChange(diff, old_style, style_change_context);
 
   const ComputedStyle& style = StyleRef();
 
@@ -150,9 +152,13 @@ void LayoutSVGBlock::StyleDidChange(StyleDifference diff,
                              : kDescendantIsolationNeedsUpdate);
   }
 
-  if (style.HasCurrentTransformRelatedAnimation() &&
-      !old_style->HasCurrentTransformRelatedAnimation()) {
-    Parent()->SetSVGDescendantMayHaveTransformRelatedAnimation();
+  if ((style.HasCurrentTransformRelatedAnimation() &&
+       !old_style->HasCurrentTransformRelatedAnimation()) ||
+      (RuntimeEnabledFeatures::
+           SvgAvoidCullingElementsWithTransformOperationsEnabled() &&
+       style.HasNonIdentityTransformOperation() &&
+       !old_style->HasNonIdentityTransformOperation())) {
+    Parent()->SetSVGDescendantMayHaveTransformRelatedOperations();
   }
 
   if (diff.HasDifference())

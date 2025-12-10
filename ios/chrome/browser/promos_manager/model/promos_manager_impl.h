@@ -37,7 +37,7 @@ class PromosManagerImpl : public PromosManager {
     bool was_pending;
   };
 
-  PromosManagerImpl(PrefService* local_state,
+  PromosManagerImpl(PrefService* pref_service,
                     base::Clock* clock,
                     feature_engagement::Tracker* tracker);
   ~PromosManagerImpl() override;
@@ -75,6 +75,9 @@ class PromosManagerImpl : public PromosManager {
   int GetEligiblePromoCount(
       const std::vector<promos_manager::Promo>& promo_queue);
 
+  // The internal implementation that performs the actual deregistration logic.
+  void DeregisterPromoInternal(promos_manager::Promo promo);
+
   // PromosManager implementation.
   void Init() override;
   void InitializePromoConfigs(PromoConfigsSet promo_configs) override;
@@ -87,8 +90,8 @@ class PromosManagerImpl : public PromosManager {
       base::TimeDelta becomes_active_after_period) override;
   void DeregisterPromo(promos_manager::Promo promo) override;
 
-  // Weak pointer to the local state prefs store.
-  const raw_ptr<PrefService> local_state_;
+  // Weak pointer to the profile prefs store.
+  const raw_ptr<PrefService> pref_service_;
 
   // The time provider.
   const raw_ptr<base::Clock> clock_;

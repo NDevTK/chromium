@@ -30,7 +30,8 @@ const CGFloat kLargeSize = 44;
 const CGFloat kLargeSymbolSizeIPad = 34;
 // Size of the button when using a large symbol.
 const CGFloat kLargeSizeIPad = 52;
-
+// The corner radius to display the button in a square container.
+const CGFloat kSquareCornerRadius = 10;
 }  // namespace
 
 @implementation TabGridNewTabButton {
@@ -58,7 +59,14 @@ const CGFloat kLargeSizeIPad = 52;
       symbolSize = kSmallSymbolSize;
       buttonSize = kSmallSize;
     }
+
     _symbol = CustomSymbolWithPointSize(kPlusCircleFillSymbol, symbolSize);
+
+    if (@available(iOS 26, *)) {
+      self.configuration = [UIButtonConfiguration glassButtonConfiguration];
+      _symbol = DefaultSymbolWithPointSize(kPlusSymbol, symbolSize);
+      self.tintColor = UIColor.blackColor;
+    }
 
     _imageContainer = [[UIImageView alloc] initWithImage:_symbol];
     _imageContainer.translatesAutoresizingMaskIntoConstraints = NO;
@@ -95,20 +103,58 @@ const CGFloat kLargeSizeIPad = 52;
     case TabGridPageIncognitoTabs:
       self.accessibilityLabel =
           l10n_util::GetNSString(IDS_IOS_TAB_GRID_CREATE_NEW_INCOGNITO_TAB);
-      _imageContainer.image = SymbolWithPalette(_symbol, @[
-        UIColor.blackColor,
-        self.enabled ? UIColor.whiteColor : UIColor.grayColor
-      ]);
+
+      if (@available(iOS 26, *)) {
+        UIButtonConfiguration* config = self.configuration;
+        config.background.backgroundColor = UIColor.whiteColor;
+        // Set the corner style to display a circle button.
+        config.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        self.configuration = config;
+      } else {
+        _imageContainer.image = SymbolWithPalette(_symbol, @[
+          UIColor.blackColor,
+          self.enabled ? UIColor.whiteColor : UIColor.whiteColor
+        ]);
+      }
+
       break;
     case TabGridPageRegularTabs:
       self.accessibilityLabel =
           l10n_util::GetNSString(IDS_IOS_TAB_GRID_CREATE_NEW_TAB);
-      _imageContainer.image = SymbolWithPalette(
-          _symbol,
-          @[ UIColor.blackColor, [UIColor colorNamed:kStaticBlue400Color] ]);
+
+      if (@available(iOS 26, *)) {
+        UIButtonConfiguration* config = self.configuration;
+        config.background.backgroundColor =
+            [UIColor colorNamed:kStaticBlue400Color];
+        // Set the corner style to display a circle button.
+        config.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        self.configuration = config;
+      } else {
+        _imageContainer.image = SymbolWithPalette(
+            _symbol,
+            @[ UIColor.blackColor, [UIColor colorNamed:kStaticBlue400Color] ]);
+      }
+
       break;
-    case TabGridPageRemoteTabs:
     case TabGridPageTabGroups:
+      if (base::FeatureList::IsEnabled(kTabRecallNewTabGroupButton)) {
+        self.accessibilityLabel =
+            l10n_util::GetNSString(IDS_IOS_TAB_GRID_CREATE_NEW_TAB_GROUP);
+
+        if (@available(iOS 26, *)) {
+          UIButtonConfiguration* config = self.configuration;
+          config.background.backgroundColor =
+              [UIColor colorNamed:kStaticBlue400Color];
+          // Set the corner style and radius to display a square button.
+          config.cornerStyle = UIButtonConfigurationCornerStyleFixed;
+          config.background.cornerRadius = kSquareCornerRadius;
+          self.configuration = config;
+        } else {
+          _imageContainer.image = SymbolWithPalette(_symbol, @[
+            UIColor.blackColor, [UIColor colorNamed:kStaticBlue400Color]
+          ]);
+        }
+      }
       break;
   }
   _page = page;

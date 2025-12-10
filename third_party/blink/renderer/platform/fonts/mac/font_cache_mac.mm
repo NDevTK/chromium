@@ -60,7 +60,6 @@
 
 using base::apple::CFToNSOwnershipCast;
 using base::apple::CFToNSPtrCast;
-using base::apple::NSToCFOwnershipCast;
 using base::apple::NSToCFPtrCast;
 using base::apple::ScopedCFTypeRef;
 
@@ -158,9 +157,9 @@ ScopedCFTypeRef<CTFontRef> GetSubstituteFont(CTFontRef ct_font,
                       kCFCompareCaseInsensitive) == kCFCompareEqualTo &&
       Character::IsEmoji(character)) {
     NSArray* lang_list = @[ @"en" ];
-    NSArray* cascade_list(
+    NSArray* cascade_list =
         CFToNSOwnershipCast(CTFontCopyDefaultCascadeListForLanguages(
-            substitute_font.get(), NSToCFOwnershipCast(lang_list))));
+            substitute_font.get(), NSToCFPtrCast(lang_list)));
     NSDictionary* mono_emoji_attributes = @{
       CFToNSPtrCast(kCTFontNameAttribute) : @"Apple Symbols",
       CFToNSPtrCast(kCTFontCascadeListAttribute) : cascade_list,
@@ -302,8 +301,7 @@ void FontCache::InvalidateFromAnyThread() {
   if (!IsMainThread()) {
     Thread::MainThread()
         ->GetTaskRunner(MainThreadTaskRunnerRestricted())
-        ->PostTask(FROM_HERE,
-                   WTF::BindOnce(&FontCache::InvalidateFromAnyThread));
+        ->PostTask(FROM_HERE, BindOnce(&FontCache::InvalidateFromAnyThread));
     return;
   }
   FontCache::Get().Invalidate();

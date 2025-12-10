@@ -66,23 +66,29 @@ class Extension;
 // Starting:
 //
 // A worker must be started before it can become ready to process the event
-// tasks. Every task added outside of when the worker is starting will cause
-// this class to request the worker to start. This is done this way because it
-// is difficult to know if a worker is currently running and ready to process
-// tasks.
+// tasks. When a task arrives, the task queue checks if the worker is ready. If
+// the worker is ready (and `OptimizeServiceWorkerStartRequests` is enabled),
+// the task is dispatched immediately. If the worker is not ready (or the
+// optimization is disabled), the task is queued, and the queue requests the
+// worker to start (if it hasn't already).
 //
-// `DidStartServiceWorkerContext()` is called asynchronously from the extension
-// renderer process (potentially before or after `DidStartWorkerForScope()`) and
-// it records that the worker has started in the renderer (process).
+// `RendererDidStartServiceWorkerContext()` is called asynchronously from the
+// extension renderer process (potentially before or after
+// `DidStartWorkerForScope()`) and it records that the worker has started in the
+// renderer (process).
 //
 // Stopping:
 //
-// TODO(crbug.com/40936639): update the below once `OnStopped()` is called to
-// track browser starting.
-//
-// `DidStopServiceWorkerContext()` is called when the worker is stopped to track
-// renderer stopping. `DidStopServiceWorkerContext()` is not always guaranteed
-// to be called.
+// The worker stopping sequence involves signals from both the renderer and the
+// browser process.
+//   * Renderer-side: `RendererDidStopServiceWorkerContext()` is called when the
+//     worker is stopped to track renderer stopping. It is not always guaranteed
+//     to be called (e.g. if the render process is destroyed).
+//   * Browser-side: `OnStoppingSync()` and `OnStoppedSync()` are called by the
+//     content layer. We expect this to always be called.
+// `ServiceWorkerState` observes all these signals and immediately resets its
+// internal state when any stop signal arrives for the currently tracked worker,
+// marking the worker as not ready for new tasks.
 //
 // Task Processing Readiness:
 //
@@ -98,9 +104,9 @@ class Extension;
 //     ready. This signal means that the worker was *requested* to start and it
 //     verified that a worker registration exists at the //content layer. It is
 //     considered the “browser-side” signal that the worker is ready.
-//   * `RendererState`: `DidStartServiceWorkerContext()` signal sets the value
-//     to ready. This is start requests are sent to the worker. This signal
-//     means:
+//   * `RendererState`: `RendererDidStartServiceWorkerContext()` signal sets the
+//     value to ready. This is start requests are sent to the worker. This
+//     signal means:
 //       * that there is a worker renderer process thread running the service
 //         worker code
 //       * the worker has done one pass and executed it’s entire JS global scope
@@ -121,21 +127,26 @@ class Extension;
 // Note that while worker registration in //content `DidRegisterServiceWorker()`
 // will finish before requesting the worker to start, there is no guarantee on
 // how the signals for their completion will be received.
-//
-//  For example `DidRegisterServiceWorker()`, `DidStartWorkerForScope()` and
-//  `DidStartServiceWorkerContext()` signals are not guaranteed to finish in any
-//  order.
+// For example `DidRegisterServiceWorker()`, `DidStartWorkerForScope()` and
+// `RendererDidStartServiceWorkerContext()` signals are not guaranteed to
+// finish in any order.
 //
 // Activation Token:
 //
-// TODO(jlulejian): Explain how the activation token tracks
-// activation/deactivation and how the class uses it.
-//
-// TODO(lazyboy): Clean up queue when extension is unloaded/uninstalled.
-class ServiceWorkerTaskQueue : public KeyedService,
-                               public LazyContextTaskQueue,
-                               public content::ServiceWorkerContextObserver,
-                               public ServiceWorkerState::Observer {
+// When an extension is activated (e.g., loaded or updated), a unique
+// `activation_token` is generated. This token, combined with `extension_id` and
+// `browser_context_id`, forms the `SequencedContextId`. This ID is used
+// internally to track the state, pending tasks, and registration status
+// specific to that activation sequence. If the extension is deactivated and
+// reactivated, a new token is generated, allowing the system to discard stale
+// state and callbacks from the previous activation sequence. This ensures that
+// tasks from a previous instance of an extension don't get dispatched to a new
+// running instance.
+class ServiceWorkerTaskQueue
+    : public KeyedService,
+      public LazyContextTaskQueue,
+      public content::ServiceWorkerContextObserverSynchronous,
+      public ServiceWorkerState::Observer {
  public:
   explicit ServiceWorkerTaskQueue(content::BrowserContext* browser_context);
 
@@ -148,17 +159,17 @@ class ServiceWorkerTaskQueue : public KeyedService,
   // `context`.
   static ServiceWorkerTaskQueue* Get(content::BrowserContext* context);
 
-  // Always returns true since we currently request a worker to start for every
-  // task sent to it.
+  // Returns true if the task should be queued before being dispatched.
   bool ShouldEnqueueTask(content::BrowserContext* context,
                          const Extension* extension) const override;
 
-  // Returns true if the service worker seems ready to run pending tasks. It
-  // only informs metrics data, not task dispatching logic.
+  // Returns true if the service worker is running and ready to execute tasks.
   bool IsReadyToRunTasks(content::BrowserContext* context,
                          const Extension* extension) const override;
 
-  // TODO(crbug.com/40276609): rename to AddPendingTaskAndMaybeDispatch.
+  // Adds a task. If the worker is ready (and optimizations are enabled), the
+  // task may be dispatched immediately. Otherwise, the task is queued, and the
+  // worker is started if necessary.
   void AddPendingTask(const LazyContextId& context_id,
                       PendingTask task) override;
 
@@ -171,7 +182,7 @@ class ServiceWorkerTaskQueue : public KeyedService,
 
   // Called once an extension Service Worker context was initialized but not
   // necessarily started executing its JavaScript.
-  void DidInitializeServiceWorkerContext(
+  void RendererDidInitializeServiceWorkerContext(
       int render_process_id,
       const ExtensionId& extension_id,
       int64_t service_worker_version_id,
@@ -180,7 +191,7 @@ class ServiceWorkerTaskQueue : public KeyedService,
   // Called once an extension Service Worker started running.
   // This can be thought as "loadstop", i.e. the global JS script of the worker
   // has completed executing.
-  void DidStartServiceWorkerContext(
+  void RendererDidStartServiceWorkerContext(
       int render_process_id,
       const ExtensionId& extension_id,
       const base::UnguessableToken& activation_token,
@@ -188,7 +199,7 @@ class ServiceWorkerTaskQueue : public KeyedService,
       int64_t service_worker_version_id,
       int thread_id);
   // Called once an extension Service Worker was destroyed.
-  void DidStopServiceWorkerContext(
+  void RendererDidStopServiceWorkerContext(
       int render_process_id,
       const ExtensionId& extension_id,
       const base::UnguessableToken& activation_token,
@@ -222,21 +233,17 @@ class ServiceWorkerTaskQueue : public KeyedService,
   void OnWorkerStartFail(const SequencedContextId& context_id,
                          base::Time start_time,
                          content::StatusCodeResponse status) override;
-  void OnWorkerStop(
-      int64_t version_id,
-      const content::ServiceWorkerRunningInfo& worker_info) override;
+  void OnWorkerStop(int64_t version_id, const GURL& scope) override;
 
-  // TODO(crbug.com/334940006): Convert these completely to
-  // ServiceWorkerContextObserverSynchronous.
-  // content::ServiceWorkerContextObserver:
-  void OnRegistrationStored(int64_t registration_id,
-                            const GURL& scope,
-                            const content::ServiceWorkerRegistrationInformation&
-                                service_worker_info) override;
-  void OnReportConsoleMessage(int64_t version_id,
-                              const GURL& scope,
-                              const content::ConsoleMessage& message) override;
-  void OnDestruct(content::ServiceWorkerContext* context) override;
+  // content::ServiceWorkerContextObserverSynchronous:
+  void OnRegistrationStoredSync(int64_t registration_id,
+                                const GURL& scope) override;
+  void OnReportConsoleMessageSync(
+      int render_process_id,
+      int64_t version_id,
+      const GURL& scope,
+      const content::ConsoleMessage& message) override;
+  void OnDestructSync(content::ServiceWorkerContext* context) override;
 
   // Worker unregistrations can fail in expected and unexpected ways, this
   // determines if the unregistration can be accepted as successful from the
@@ -286,18 +293,20 @@ class ServiceWorkerTaskQueue : public KeyedService,
 
     // Called when a service worker is registered for the extension with the
     // associated `extension_id`.
-    virtual void DidInitializeServiceWorkerContext(
+    virtual void RendererDidInitializeServiceWorkerContext(
         const ExtensionId& extension_id) {}
 
-    // Called when a service worker is fully started (DidStartWorkerForScope()
-    // and DidStartServiceWorkerContext() were called) for the extension with
-    // the associated `extension_id`.
+    // Called when a service worker is fully started
+    // (`RendererDidStartWorkerForScope()` and
+    // `RendererDidStartServiceWorkerContext()` were called) for the extension
+    // with the associated `extension_id`.
     virtual void DidStartWorker(const ExtensionId& extension_id) {}
 
     // Called when a service worker registered for the extension with the
     // `extension_id` has notified the task queue that the render worker thread
     // is preparing to terminate.
-    virtual void DidStopServiceWorkerContext(const ExtensionId& extension_id) {}
+    virtual void RendererDidStopServiceWorkerContext(
+        const ExtensionId& extension_id) {}
 
     // Called when UntrackServiceWorkerState() is invoked for a worker
     // associated with `scope` (because it's stopping or has stopped).
@@ -329,8 +338,11 @@ class ServiceWorkerTaskQueue : public KeyedService,
   enum class RegistrationReason {
     REGISTER_ON_EXTENSION_LOAD,
     RE_REGISTER_ON_STATE_MISMATCH,
-    RE_REGISTER_ON_TIMEOUT,
+    RE_REGISTER_ON_TRANSIENT_FAILURE,
   };
+
+  // Manages registration/start retry attempts with exponential backoff.
+  struct RetryState;
 
   // KeyedService:
   void Shutdown() override;
@@ -350,11 +362,15 @@ class ServiceWorkerTaskQueue : public KeyedService,
   void DispatchTasksImmediately(const SequencedContextId& context_id,
                                 base::span<PendingTask> tasks);
 
-  // Checks if the `activation_token` has any more worker registration retries
-  // left. Retries are only performed on registration timeout and up to 3 times
-  // before silently failing. CHECK()s if called before a worker registration is
-  // attempted.
-  bool ShouldRetryRegistrationRequest(base::UnguessableToken activation_token);
+  // Returns true if a service worker registration is transient and should be
+  // retried, false otherwise.
+  bool IsRegistrationFailureRetryable(
+      blink::ServiceWorkerStatusCode status_code) const;
+
+  // Returns true if a service worker start failure is transient and should be
+  // retried, false otherwise.
+  bool IsStartFailureRetryable(
+      blink::ServiceWorkerStatusCode status_code) const;
 
   // Callbacks called when the worker is registered or unregistered,
   // respectively. `worker_previously_successfully_registered` true indicates
@@ -392,6 +408,12 @@ class ServiceWorkerTaskQueue : public KeyedService,
   bool IsCurrentActivation(
       const ExtensionId& extension_id,
       const base::UnguessableToken& activation_token) const;
+
+  // Gets the worker state and context ID for a given activation.
+  // If the activation is not current, returns a null worker state.
+  std::tuple<ServiceWorkerState*, SequencedContextId>
+  GetWorkerStateForActivation(const ExtensionId& extension_id,
+                              const base::UnguessableToken& activation_token);
 
   const ServiceWorkerState* GetWorkerState(
       const SequencedContextId& context_id) const;
@@ -435,9 +457,10 @@ class ServiceWorkerTaskQueue : public KeyedService,
   void AddPendingTaskForContext(PendingTask&& pending_task,
                                 const SequencedContextId& context_id);
 
-  // Stop tracking any pending tasks for this `context_id` for the activated
-  // extension.
-  void DeleteAllPendingTasks(const SequencedContextId& context_id);
+  // Runs any pending tasks associated with `context_id` with a null context
+  // (indicating failure) and clears them from the queue.
+  void RunAndClearPendingTasksWithNullContext(
+      const SequencedContextId& context_id);
 
   // Whether there are any pending tasks to run for the activated extension.
   bool HasPendingTasks(const SequencedContextId& context_id);
@@ -445,6 +468,28 @@ class ServiceWorkerTaskQueue : public KeyedService,
   // Starts service worker, unless it's already in the process of starting.
   void MaybeStartWorker(ServiceWorkerState* worker_state,
                         const SequencedContextId& context_id);
+
+  // Attempts to register the worker again after a previous failure.
+  void RetryRegisterServiceWorker(const SequencedContextId& context_id,
+                                  RegistrationReason reason);
+
+  // Attempts to start the worker again after a previous failure.
+  void RetryStartWorker(const SequencedContextId& context_id);
+
+  using RetryMap =
+      std::map<base::UnguessableToken, std::unique_ptr<RetryState>>;
+
+  // Schedules a retry attempt using the provided map. Returns true if a retry
+  // was scheduled, false if retries are exhausted.
+  bool ScheduleRetry(const base::UnguessableToken& token,
+                     RetryMap& retry_map,
+                     base::OnceClosure retry_callback);
+
+  // Clears retry state from the given map and logs metrics.
+  void ClearRetryState(const base::UnguessableToken& token,
+                       RetryMap& retry_map,
+                       const char* histogram_name,
+                       bool success);
 
   // Whether the task queue (as a keyed service) has been informed that the
   // browser context is shutting down. Used for metrics purposes.
@@ -480,16 +525,18 @@ class ServiceWorkerTaskQueue : public KeyedService,
   // Current activation tokens for each activated extensions.
   std::map<ExtensionId, base::UnguessableToken> activation_tokens_;
 
-  // The number of times that a worker registration request has been retried
-  // for an activation token.
-  std::map<base::UnguessableToken, int> worker_reregistration_attempts_;
+  // Manages worker start retries for an activation token.
+  RetryMap worker_start_retries_;
+
+  // Manages worker registration retries for an activation token.
+  RetryMap worker_registration_retries_;
 
   // A set of service worker registrations that are pending storage.
   // These are registrations that succeeded in the first step (triggering
   // `DidRegisterServiceWorker`), but have not yet been stored.
   // They are cleared out (and the registration state is stored) in response to
-  // `OnRegistrationStored`. The key is the extension's ID and the value is the
-  // activation token expected for that registration.
+  // `OnRegistrationStoredSync`. The key is the extension's ID and the value is
+  // the activation token expected for that registration.
   std::map<ExtensionId, base::UnguessableToken> pending_storage_registrations_;
 
   // TODO(crbug.com/40276609): Do we need to track this by `SequencedContextId`

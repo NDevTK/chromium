@@ -21,11 +21,11 @@ import java.io.File;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.net.IDN;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -136,9 +136,8 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
     // Private fields are simply storage of configuration for the resulting CronetEngine.
     // See setters below for verbose descriptions.
     private final Context mApplicationContext;
-    private final List<QuicHint> mQuicHints = new LinkedList<>();
-    private final List<Pkp> mPkps = new LinkedList<>();
-    private final CronetSource mSource;
+    private final List<QuicHint> mQuicHints = new ArrayList<>();
+    private final List<Pkp> mPkps = new ArrayList<>();
     private boolean mPublicKeyPinningBypassForLocalTrustAnchorsEnabled;
     private String mUserAgent;
     private String mStoragePath;
@@ -152,17 +151,19 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
     private boolean mNetworkQualityEstimatorEnabled;
     private @Nullable VersionSafeProxyOptions mProxyOptions;
 
+    private final CronetSource mCronetSource;
+
     /**
      * Default config enables SPDY and QUIC, disables SDCH and HTTP cache.
      *
      * @param context Android {@link Context} for engine to use.
      */
-    public CronetEngineBuilderImpl(Context context, CronetSource source) {
+    public CronetEngineBuilderImpl(Context context, CronetSource cronetSource) {
         var startUptimeMillis = SystemClock.uptimeMillis();
         boolean successful = false;
         mApplicationContext = context.getApplicationContext();
-        mSource = source;
-        mLogger = CronetLoggerFactory.createLogger(mApplicationContext, mSource);
+        mCronetSource = cronetSource;
+        mLogger = CronetLoggerFactory.createLogger(mApplicationContext, cronetSource);
         try {
             enableQuic(true);
             enableHttp2(true);
@@ -173,7 +174,7 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
 
             successful = true;
         } finally {
-            maybeLogCronetEngineBuilderInitializedInfo(startUptimeMillis, successful);
+            maybeLogCronetEngineBuilderInitializedInfo(startUptimeMillis, successful, cronetSource);
         }
     }
 
@@ -183,7 +184,7 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
     }
 
     private void maybeLogCronetEngineBuilderInitializedInfo(
-            long startUptimeMillis, boolean successful) {
+            long startUptimeMillis, boolean successful, CronetSource cronetSource) {
         // Normally, the API code is responsible for logging this. However this only happens if the
         // app is bundling an API jar that is recent enough to include the logging code. If it does
         // not, we are on the hook for doing the logging here in impl code.
@@ -198,7 +199,7 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
             logInfo.author = CronetLogger.CronetEngineBuilderInitializedInfo.Author.IMPL;
             logInfo.uid = Process.myUid();
             logInfo.implVersion = new CronetLogger.CronetVersion(ImplVersion.getCronetVersion());
-            logInfo.source = mSource;
+            logInfo.source = cronetSource;
             logInfo.apiVersion =
                     new CronetLogger.CronetVersion(
                             VersionSafeCallbacks.ApiVersion.getCronetVersion());
@@ -211,13 +212,9 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
         }
     }
 
-    CronetSource getCronetSource() {
-        return mSource;
-    }
-
     @Override
     public String getDefaultUserAgent() {
-        return UserAgent.from(mApplicationContext);
+        return UserAgent.from(mApplicationContext, mCronetSource, ImplVersion.getCronetVersion());
     }
 
     @Override
@@ -281,7 +278,10 @@ public abstract class CronetEngineBuilderImpl extends ICronetEngineBuilder {
      * @return QUIC User Agent ID string.
      */
     String getDefaultQuicUserAgentId() {
-        return mQuicEnabled ? UserAgent.getQuicUserAgentIdFrom(mApplicationContext) : "";
+        return mQuicEnabled
+                ? UserAgent.getQuicUserAgentIdFrom(
+                        mApplicationContext, ImplVersion.getCronetVersion())
+                : "";
     }
 
     @Override

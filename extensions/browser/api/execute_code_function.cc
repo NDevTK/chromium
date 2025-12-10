@@ -17,6 +17,7 @@
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/load_and_localize_file.h"
+#include "extensions/browser/safe_browsing_delegate.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_resource.h"
@@ -51,7 +52,7 @@ ExecuteCodeFunction::~ExecuteCodeFunction() {
 
 void ExecuteCodeFunction::DidLoadAndLocalizeFile(
     const std::string& file,
-    std::vector<std::unique_ptr<std::string>> data,
+    std::vector<std::string> data,
     std::optional<std::string> load_error) {
   if (load_error) {
     // TODO(viettrungluu): bug: there's no particular reason the path should be
@@ -62,14 +63,15 @@ void ExecuteCodeFunction::DidLoadAndLocalizeFile(
 
   DCHECK_EQ(1u, data.size());
   auto& file_data = data.front();
-  if (!base::IsStringUTF8(*file_data)) {
+  if (!base::IsStringUTF8(file_data)) {
     Respond(Error(ErrorUtils::FormatErrorMessage(kBadFileEncodingError, file)));
     return;
   }
 
   std::string error;
-  if (!Execute(*file_data, &error))
+  if (!Execute(file_data, &error)) {
     Respond(Error(std::move(error)));
+  }
 
   // If Execute() succeeds, the function will respond in
   // OnExecuteCodeFinished().
@@ -177,8 +179,10 @@ ExtensionFunction::ResponseAction ExecuteCodeFunction::Run() {
 
   if (details_->code) {
     if (!IsWebView() && extension()) {
-      ExtensionsBrowserClient::Get()->NotifyExtensionApiTabExecuteScript(
-          browser_context(), extension_id(), *details_->code);
+      ExtensionsBrowserClient::Get()
+          ->GetSafeBrowsingDelegate()
+          ->NotifyExtensionApiTabExecuteScript(browser_context(),
+                                               extension_id(), *details_->code);
     }
 
     if (!Execute(*details_->code, &error))

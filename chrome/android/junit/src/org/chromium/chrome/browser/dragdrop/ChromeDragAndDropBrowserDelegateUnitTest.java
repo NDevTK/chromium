@@ -40,6 +40,7 @@ import org.chromium.base.IntentUtils;
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -136,6 +137,7 @@ public class ChromeDragAndDropBrowserDelegateUnitTest {
 
     @Test
     @Config(sdk = 30)
+    @EnableFeatures(ChromeFeatureList.ROBUST_WINDOW_MANAGEMENT)
     public void testDragAndDropBrowserDelegate_createLinkIntent_PostR() {
         MultiWindowTestUtils.enableMultiInstance();
         Intent intent =
@@ -353,7 +355,7 @@ public class ChromeDragAndDropBrowserDelegateUnitTest {
                         ? new Item(
                                 DragAndDropLauncherActivity.buildTabOrGroupIntent(
                                         dropData,
-                                        mApplicationContext,
+                                        mActivity,
                                         sourceWindowId,
                                         /* destWindowId= */ TabWindowManager.INVALID_WINDOW_ID))
                         : null;
@@ -364,7 +366,6 @@ public class ChromeDragAndDropBrowserDelegateUnitTest {
     private TabGroupMetadata buildTabGroupMetadata() {
         Token tabGroupId = new Token(2L, 2L);
         String tabGroupTitle = "Regrouped tabs";
-        int rootId = 1;
         ArrayList<Entry<Integer, String>> tabIdsToUrls =
                 new ArrayList<>(
                         List.of(
@@ -373,8 +374,7 @@ public class ChromeDragAndDropBrowserDelegateUnitTest {
                                 Map.entry(3, "https://www.facebook.com/")));
 
         return new TabGroupMetadata(
-                rootId,
-                /* selectedTabId= */ rootId,
+                /* selectedTabId= */ 1,
                 /* sourceWindowId= */ TabWindowManager.INVALID_WINDOW_ID,
                 tabGroupId,
                 tabIdsToUrls,

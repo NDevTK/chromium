@@ -13,14 +13,10 @@ import org.jni_zero.NativeMethods;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.input.OffsetTag;
-import org.chromium.chrome.browser.layouts.EventFilter;
 import org.chromium.chrome.browser.layouts.SceneOverlay;
-import org.chromium.chrome.browser.layouts.components.VirtualView;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneOverlayLayer;
 import org.chromium.ui.resources.ResourceManager;
-
-import java.util.List;
 
 /**
  * The Java component for the CC layer showing the edge-to-edge bottom chin, a scrollable view that
@@ -126,22 +122,19 @@ public class EdgeToEdgeBottomChinSceneLayer extends SceneOverlayLayer implements
     @Override
     protected void initializeNative() {
         if (mNativePtr == 0) {
-            mNativePtr =
-                    EdgeToEdgeBottomChinSceneLayerJni.get()
-                            .init(EdgeToEdgeBottomChinSceneLayer.this);
+            mNativePtr = EdgeToEdgeBottomChinSceneLayerJni.get().init(this);
         }
         assert mNativePtr != 0;
     }
 
     @Override
     public void setContentTree(SceneLayer contentTree) {
-        EdgeToEdgeBottomChinSceneLayerJni.get()
-                .setContentTree(mNativePtr, EdgeToEdgeBottomChinSceneLayer.this, contentTree);
+        EdgeToEdgeBottomChinSceneLayerJni.get().setContentTree(mNativePtr, contentTree);
     }
 
     @Override
     public SceneOverlayLayer getUpdatedSceneOverlayTree(
-            RectF viewport, RectF visibleViewport, ResourceManager resourceManager, float yOffset) {
+            RectF viewport, RectF visibleViewport, ResourceManager resourceManager) {
         EdgeToEdgeBottomChinSceneLayerJni.get()
                 .updateEdgeToEdgeBottomChinLayer(
                         mNativePtr,
@@ -162,45 +155,14 @@ public class EdgeToEdgeBottomChinSceneLayer extends SceneOverlayLayer implements
     }
 
     @Override
-    public @Nullable EventFilter getEventFilter() {
-        return null;
-    }
-
-    @Override
-    public boolean shouldHideAndroidBrowserControls() {
-        return false;
-    }
-
-    @Override
-    public boolean updateOverlay(long time, long dt) {
-        return false;
-    }
-
-    @Override
-    public boolean onBackPressed() {
-        return false;
-    }
-
-    @Override
-    public boolean handlesTabCreating() {
-        return false;
-    }
-
-    @Override
     public void onSizeChanged(
             float width, float height, float visibleViewportOffsetY, int orientation) {}
 
-    @Override
-    public void getVirtualViews(List<VirtualView> views) {}
-
     @NativeMethods
     interface Natives {
-        long init(EdgeToEdgeBottomChinSceneLayer caller);
+        long init(EdgeToEdgeBottomChinSceneLayer self);
 
-        void setContentTree(
-                long nativeEdgeToEdgeBottomChinSceneLayer,
-                EdgeToEdgeBottomChinSceneLayer caller,
-                SceneLayer contentTree);
+        void setContentTree(long nativeEdgeToEdgeBottomChinSceneLayer, SceneLayer contentTree);
 
         void updateEdgeToEdgeBottomChinLayer(
                 long nativeEdgeToEdgeBottomChinSceneLayer,

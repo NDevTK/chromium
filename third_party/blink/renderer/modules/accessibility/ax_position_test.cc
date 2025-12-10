@@ -413,6 +413,37 @@ TEST_F(AccessibilityTest, PositionInTextWithWhiteSpace) {
   EXPECT_EQ(nullptr, ax_position_from_dom.ChildAfterTreePosition());
 }
 
+// https://crbug.com/425572545
+TEST_F(AccessibilityTest, PositionInTextWithPreserveLeadingWhiteSpace) {
+  SetBodyInnerHTML(R"HTML(
+      <style>
+        p {
+          white-space: pre-wrap;
+        }
+      </style>
+      <div contenteditable>
+        <p id="paragraph"> Hello World!</p>
+      </di>)HTML");
+  const Node* text = GetElementById("paragraph")->firstChild();
+  ASSERT_NE(nullptr, text);
+  ASSERT_TRUE(text->IsTextNode());
+  const AXObject* ax_static_text =
+      GetAXObjectByElementId("paragraph")->FirstChildIncludingIgnored();
+  ASSERT_NE(nullptr, ax_static_text);
+  ASSERT_EQ(ax::mojom::Role::kStaticText, ax_static_text->RoleValue());
+
+  const auto ax_position =
+      AXPosition::CreatePositionInTextObject(*ax_static_text, 2);
+  const auto position = ax_position.ToPositionWithAffinity();
+  EXPECT_EQ(text, position.AnchorNode());
+  EXPECT_EQ(2, position.GetPosition().OffsetInContainerNode());
+
+  const auto ax_position_from_dom =
+      AXPosition::FromPosition(position, GetAXObjectCache());
+  EXPECT_EQ(ax_position, ax_position_from_dom);
+  EXPECT_EQ(nullptr, ax_position_from_dom.ChildAfterTreePosition());
+}
+
 TEST_F(AccessibilityTest, PositionBeforeTextWithWhiteSpace) {
   SetBodyInnerHTML(R"HTML(<p id="paragraph">     Hello     </p>)HTML");
   const Node* text = GetElementById("paragraph")->firstChild();
@@ -1550,14 +1581,14 @@ TEST_F(AccessibilityTest, DISABLED_PositionInCSSContent) {
   ASSERT_TRUE(ax_quote->IsIgnored());
   const AXObject* ax_quote_parent = ax_quote->ParentObjectUnignored();
   ASSERT_NE(nullptr, ax_quote_parent);
-  ASSERT_EQ(4, ax_quote_parent->UnignoredChildCount());
-  const AXObject* ax_css_before = ax_quote_parent->UnignoredChildAt(0);
+  ASSERT_EQ(4, ax_quote_parent->UnignoredChildCountSlow());
+  const AXObject* ax_css_before = ax_quote_parent->UnignoredChildAtSlow(0);
   ASSERT_NE(nullptr, ax_css_before);
   ASSERT_EQ(ax::mojom::Role::kStaticText, ax_css_before->RoleValue());
-  const AXObject* ax_text = ax_quote_parent->UnignoredChildAt(1);
+  const AXObject* ax_text = ax_quote_parent->UnignoredChildAtSlow(1);
   ASSERT_NE(nullptr, ax_text);
   ASSERT_EQ(ax::mojom::Role::kStaticText, ax_text->RoleValue());
-  const AXObject* ax_css_after = ax_quote_parent->UnignoredChildAt(2);
+  const AXObject* ax_css_after = ax_quote_parent->UnignoredChildAtSlow(2);
   ASSERT_NE(nullptr, ax_css_after);
   ASSERT_EQ(ax::mojom::Role::kStaticText, ax_css_after->RoleValue());
 
@@ -1986,7 +2017,7 @@ TEST_F(AccessibilityTest, ToPositionWithAffinityWithMultipleInlineTextBoxes) {
   ASSERT_EQ(ax::mojom::Role::kStaticText, ax_static_text->RoleValue());
 
   ax_static_text->LoadInlineTextBoxes();
-  ASSERT_EQ(3, ax_static_text->UnignoredChildCount());
+  ASSERT_EQ(3, ax_static_text->UnignoredChildCountSlow());
 
   // The last inline text box should be:
   // "InlineTextBox" name="world"

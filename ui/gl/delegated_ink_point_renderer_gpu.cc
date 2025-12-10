@@ -9,7 +9,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/debug/dump_without_crashing.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
@@ -221,13 +220,10 @@ void DelegatedInkPointRendererGpu::SetDelegatedInkTrailStartPoint(
                           std::next(point_matching_metadata_it));
           // Ensure that points that are being removed from the trail are not
           // being reported as painted in `ReportPointsDrawn()`.
-          points_to_be_drawn_.erase(
-              std::remove_if(points_to_be_drawn_.begin(),
-                             points_to_be_drawn_.end(),
-                             [&](const gfx::DelegatedInkPoint& x) {
-                               return metadata->timestamp() > x.timestamp();
-                             }),
-              points_to_be_drawn_.end());
+          std::erase_if(points_to_be_drawn_,
+                        [&](const gfx::DelegatedInkPoint& x) {
+                          return metadata->timestamp() > x.timestamp();
+                        });
           metadata_ = std::move(metadata);
           return;
         }

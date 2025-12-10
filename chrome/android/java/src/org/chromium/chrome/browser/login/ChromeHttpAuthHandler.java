@@ -15,10 +15,14 @@ import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.autofill.AndroidAutofillAvailabilityStatus;
+import org.chromium.chrome.browser.autofill.AutofillClientProviderUtils;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabHidingType;
 import org.chromium.components.browser_ui.http_auth.LoginPrompt;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.base.WindowAndroid;
 
 /**
@@ -74,19 +78,13 @@ public class ChromeHttpAuthHandler extends EmptyTabObserver implements LoginProm
     @Override
     public void cancel() {
         if (mNativeChromeHttpAuthHandler == 0) return;
-        ChromeHttpAuthHandlerJni.get()
-                .cancelAuth(mNativeChromeHttpAuthHandler, ChromeHttpAuthHandler.this);
+        ChromeHttpAuthHandlerJni.get().cancelAuth(mNativeChromeHttpAuthHandler);
     }
 
     @Override
     public void proceed(String username, String password) {
         if (mNativeChromeHttpAuthHandler == 0) return;
-        ChromeHttpAuthHandlerJni.get()
-                .setAuth(
-                        mNativeChromeHttpAuthHandler,
-                        ChromeHttpAuthHandler.this,
-                        username,
-                        password);
+        ChromeHttpAuthHandlerJni.get().setAuth(mNativeChromeHttpAuthHandler, username, password);
     }
 
     /** Return whether the auth dialog is being shown. */
@@ -112,9 +110,13 @@ public class ChromeHttpAuthHandler extends EmptyTabObserver implements LoginProm
         mTab = tab;
         mTab.addObserver(this);
         String messageBody =
-                ChromeHttpAuthHandlerJni.get()
-                        .getMessageBody(mNativeChromeHttpAuthHandler, ChromeHttpAuthHandler.this);
-        mLoginPrompt = new LoginPrompt(activity, messageBody, null, this);
+                ChromeHttpAuthHandlerJni.get().getMessageBody(mNativeChromeHttpAuthHandler);
+        mLoginPrompt =
+                new LoginPrompt(
+                        activity,
+                        messageBody,
+                        shouldProvideAutofillUrl() ? mTab.getUrl() : null,
+                        this);
         // In case the autofill data arrives before the prompt is created.
 
         if (mAutofillUsername != null && mAutofillPassword != null) {
@@ -145,6 +147,10 @@ public class ChromeHttpAuthHandler extends EmptyTabObserver implements LoginProm
         cancel();
     }
 
+    public @Nullable LoginPrompt getLoginPromptForTesting() {
+        return mLoginPrompt;
+    }
+
     @CalledByNative
     private void onAutofillDataAvailable(
             @JniType("std::u16string") String username,
@@ -156,17 +162,24 @@ public class ChromeHttpAuthHandler extends EmptyTabObserver implements LoginProm
         }
     }
 
+    private boolean shouldProvideAutofillUrl() {
+        if (mTab == null) return false;
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_AUTOFILL_SUPPORT_FOR_HTTP_AUTH)
+                && (AutofillClientProviderUtils.getAndroidAutofillFrameworkAvailability(
+                                UserPrefs.get(mTab.getProfile()))
+                        == AndroidAutofillAvailabilityStatus.AVAILABLE);
+    }
+
     @NativeMethods
     interface Natives {
         void setAuth(
                 long nativeChromeHttpAuthHandler,
-                ChromeHttpAuthHandler caller,
                 @JniType("std::u16string") String username,
                 @JniType("std::u16string") String password);
 
-        void cancelAuth(long nativeChromeHttpAuthHandler, ChromeHttpAuthHandler caller);
+        void cancelAuth(long nativeChromeHttpAuthHandler);
 
         @JniType("std::u16string")
-        String getMessageBody(long nativeChromeHttpAuthHandler, ChromeHttpAuthHandler caller);
+        String getMessageBody(long nativeChromeHttpAuthHandler);
     }
 }

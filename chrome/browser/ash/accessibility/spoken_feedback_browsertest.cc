@@ -35,6 +35,7 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/metrics/statistics_recorder.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -75,6 +76,7 @@
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #include "components/live_caption/live_caption_controller.h"
 #include "components/live_caption/pref_names.h"
+#include "components/metrics/content/subprocess_metrics_provider.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -116,7 +118,7 @@ const base::TimeDelta kExpectedPhoneticSpeechAndHintDelay = base::Seconds(1);
 }  // namespace
 
 LoggedInSpokenFeedbackTest::LoggedInSpokenFeedbackTest()
-    : animation_mode_(ui::ScopedAnimationDurationScaleMode::ZERO_DURATION) {}
+    : animation_mode_(gfx::ScopedAnimationDurationScaleMode::ZERO_DURATION) {}
 
 LoggedInSpokenFeedbackTest::~LoggedInSpokenFeedbackTest() = default;
 
@@ -253,12 +255,15 @@ void LoggedInSpokenFeedbackTest::StablizeChromeVoxState() {
   sm()->ExpectSpeech("Click me");
 }
 
-// TODO(crbug.com/388867840): Add manifest v3 variant when migration is
-// complete.
 INSTANTIATE_TEST_SUITE_P(
     ManifestV2,
     LoggedInSpokenFeedbackTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3,
+    LoggedInSpokenFeedbackTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree)));
 
 // Flaky test, crbug.com/1081563
 IN_PROC_BROWSER_TEST_P(LoggedInSpokenFeedbackTest, DISABLED_AddBookmark) {
@@ -319,10 +324,19 @@ IN_PROC_BROWSER_TEST_P(LoggedInSpokenFeedbackTest, DISABLED_AddBookmark) {
 }
 
 IN_PROC_BROWSER_TEST_P(LoggedInSpokenFeedbackTest, ChromeVoxSpeaksIntro) {
+  base::HistogramTester histogram_tester;
   chromevox_test_utils()->EnableChromeVox(/*check_for_intro=*/false);
   sm()->ExpectSpeech("ChromeVox spoken feedback is ready");
   sm()->Replay();
-  HistogramWaiter("Accessibility.ChromeVox.StartUpSpeechDelay").Wait();
+
+  content::FetchHistogramsFromChildProcesses();
+  metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();
+  if (histogram_tester
+          .GetAllSamples("Accessibility.ChromeVox.StartUpSpeechDelay")
+          .size() == 0) {
+    base::StatisticsRecorder::HistogramWaiter(
+        "Accessibility.ChromeVox.StartUpSpeechDelay").Wait();
+  }
 }
 
 // Test Learn Mode by pressing a few keys in Learn Mode. Only available while
@@ -433,7 +447,7 @@ IN_PROC_BROWSER_TEST_P(LoggedInSpokenFeedbackTest, OpenLogPage) {
 
 IN_PROC_BROWSER_TEST_P(LoggedInSpokenFeedbackTest,
                        CheckChromeVoxPerformCommandMetric) {
-  chromevox_test_utils()->EnableChromeVox(/*check_for_intro=*/false);
+  chromevox_test_utils()->EnableChromeVox();
   base::HistogramTester histogram_tester;
 
   // Command.ANNOUNCE_BATTERY_DESCRIPTION
@@ -527,12 +541,15 @@ class CaptionSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// TODO(crbug.com/388867840): Add manifest v3 variant when migration is
-// complete.
 INSTANTIATE_TEST_SUITE_P(
     ManifestV2,
     CaptionSpokenFeedbackTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3,
+    CaptionSpokenFeedbackTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree)));
 
 IN_PROC_BROWSER_TEST_P(CaptionSpokenFeedbackTest, ToggleCaptions) {
   PrefChangeRegistrar change_observer;
@@ -633,12 +650,15 @@ class NotificationCenterSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
   std::unique_ptr<NotificationCenterTestApi> test_api_;
 };
 
-// TODO(crbug.com/388867840): Add manifest v3 variant when migration is
-// complete.
 INSTANTIATE_TEST_SUITE_P(
     ManifestV2,
     NotificationCenterSpokenFeedbackTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3,
+    NotificationCenterSpokenFeedbackTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree)));
 
 // Tests the spoken feedback text when using the notification center accelerator
 // to navigate to the notification center.
@@ -733,6 +753,28 @@ class SpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
           switches::kLoginUser, user_manager::GuestAccountId().GetUserEmail());
     }
   }
+
+  void NavigateToMathPage() {
+    sm()->Call([this]() {
+      NavigateToUrl(GURL(R"(data:text/html;charset=utf-8,
+          <button autofocus>start</button>
+          <math>
+            <mfrac>
+              <mrow>
+                <mi>d</mi>
+                <mi>y</mi>
+              </mrow>
+              <mrow>
+                <mi>d</mi>
+                <mi>x</mi>
+              </mrow>
+            </mfrac>
+            <mo>=</mo>
+          </math>
+          <p>end</p>)"));
+    });
+    sm()->ExpectSpeech("start");
+  }
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -745,6 +787,18 @@ INSTANTIATE_TEST_SUITE_P(
     ManifestV2GuestUser,
     SpokenFeedbackTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsGuestUser)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3NormalUser,
+    SpokenFeedbackTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree,
+                                               kTestAsNormalUser)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3GuestUser,
+    SpokenFeedbackTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree,
                                                kTestAsGuestUser)));
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, EnableSpokenFeedback) {
@@ -1220,6 +1274,9 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OpenStatusTray) {
   sm()->Replay();
 }
 
+// TODO(https://crbug.com/388867840): Re-enable this test on MSAN. Note that
+// MAYBE_ doesn't work well with parameterized tests.
+#if !defined(MEMORY_SANITIZER)
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OpenSettingsFromPanel) {
   chromevox_test_utils()->EnableChromeVox();
   base::RunLoop waiter;
@@ -1242,8 +1299,9 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OpenSettingsFromPanel) {
   // We should have tried to open the settings subpage.
   waiter.Run();
 }
+#endif  // !defined(MEMORY_SANITIZER)
 
-// Fails on ASAN. See http://crbug.com/776308 . (Note MAYBE_ doesn't work well
+// Fails on ASAN. See http://crbug.com/776308. (Note MAYBE_ doesn't work well
 // with parameterized tests).
 #if !defined(ADDRESS_SANITIZER)
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateSystemTray) {
@@ -1540,6 +1598,175 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, ChromeVoxStickyModeRawKeys) {
   sm()->Replay();
 }
 
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest,
+                       ChromeVoxStickyModeNavigatesAcrossMath) {
+  chromevox_test_utils()->EnableChromeVox();
+  NavigateToMathPage();
+
+  // Press the sticky-key sequence: Search Search.
+  sm()->Call([this]() { SendStickyKeyCommand(); });
+  sm()->ExpectSpeech("Sticky mode enabled");
+
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction equal");
+  sm()->ExpectSpeech("Press up, down, left, or right to explore math");
+
+  // Pressing right again does not enter the math exploration, since Sticky Mode
+  // is on.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("end");
+
+  sm()->Call([this]() { SendStickyKeyCommand(); });
+  sm()->ExpectSpeech("Sticky mode disabled");
+
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigatesAcrossMath) {
+  chromevox_test_utils()->EnableChromeVox();
+  NavigateToMathPage();
+
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction equal");
+  sm()->ExpectSpeech("Press up, down, left, or right to explore math");
+
+  // We can leave the math node by navigating as usual.
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("end");
+
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigatesWithinMath) {
+  chromevox_test_utils()->EnableChromeVox();
+  NavigateToMathPage();
+
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction equal");
+  sm()->ExpectSpeech("Press up, down, left, or right to explore math");
+
+  // Pressing down by itself leaves us within the Math exploration mode.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("d y");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("D");
+
+  // We can leave the math node by navigating as usual.
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("end");
+
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, TabNavigatesWhileInMath) {
+  chromevox_test_utils()->EnableChromeVox();
+
+  sm()->Call([this]() {
+    NavigateToUrl(GURL(R"(data:text/html;charset=utf-8,
+        <button autofocus>start</button>
+        <math>
+          <mfrac>
+            <mrow>
+              <mi>d</mi>
+              <mi>y</mi>
+            </mrow>
+            <mrow>
+              <mi>d</mi>
+              <mi>x</mi>
+            </mrow>
+          </mfrac>
+          <mo>=</mo>
+        </math>
+        <p>not me</p>
+        <button>sandwich</button>
+        <p>end</p>)"));
+  });
+  sm()->ExpectSpeech("start");
+
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction equal");
+  sm()->ExpectSpeech("Press up, down, left, or right to explore math");
+
+  // Pressing down by itself leaves us within the Math exploration mode.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction");
+
+  // Press tab. Focus should leave the math element and go to the next element
+  // with keyboard focus.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_TAB); });
+  sm()->ExpectSpeech("sandwich");
+
+  // Using the arrow keys does nothing as we are no longer focused on math.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectNextSpeechIsNot("d y");
+  sm()->ExpectSpeech("end");
+
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest,
+                       DisablesStickyModeAndNavigatesWithinMath) {
+  chromevox_test_utils()->EnableChromeVox();
+  NavigateToMathPage();
+
+  sm()->Call([this]() { SendStickyKeyCommand(); });
+  sm()->ExpectSpeech("Sticky mode enabled");
+
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction equal");
+  sm()->ExpectSpeech("Press up, down, left, or right to explore math");
+
+  sm()->Call([this]() { SendStickyKeyCommand(); });
+  sm()->ExpectSpeech("Sticky mode disabled");
+
+  // Pressing down by itself leaves us within the Math exploration mode.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("d y");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("D");
+
+  // We can leave the math node by navigating as usual.
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("end");
+
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest,
+                       EnablesStickyModeAndNavigatesOutOfMath) {
+  chromevox_test_utils()->EnableChromeVox();
+  NavigateToMathPage();
+
+  sm()->Call([this]() { SendKeyPressWithSearch(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction equal");
+  sm()->ExpectSpeech("Press up, down, left, or right to explore math");
+
+  // Pressing down by itself leaves us within the Math exploration mode.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("StartFraction d y Over d x EndFraction");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("d y");
+
+  // Turn on sticky mode.
+  sm()->Call([this]() { SendStickyKeyCommand(); });
+  sm()->ExpectSpeech("Sticky mode enabled");
+
+  // We can leave the math node by navigating with the down arrow, rather than
+  // diving down to the "D" term.
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("end");
+
+  sm()->Call([this]() { SendStickyKeyCommand(); });
+  sm()->ExpectSpeech("Sticky mode disabled");
+
+  sm()->Replay();
+}
+
 // TODO(crbug.com/41337748): Test is flaky.
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_TouchExploreStatusTray) {
   chromevox_test_utils()->EnableChromeVox();
@@ -1604,6 +1831,41 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, ShowLinksList) {
   sm()->ExpectSpeech("Google Docs");
   sm()->ExpectSpeech("2 of 3");
 
+  sm()->Replay();
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, ShowTablesList) {
+  chromevox_test_utils()->EnableChromeVox();
+
+  sm()->Call([this]() {
+    NavigateToUrl(GURL(R"(data:text/html;charset=utf-8,
+        <button autofocus>Start here</button>
+        <table>
+          <caption>Can Collection Drive Results</caption>
+          <tr><th>Name</th> <th>Date</th> <th>Cans collected</th></tr>
+          <tr><td>Joey</td> <td>12/1</td> <td>177</td></tr>
+          <tr><td>Moss</td> <td>12/2</td> <td>122</td></tr>
+        </table>
+        <table>
+          <caption>Types of Can Received</caption>
+          <tr><th>Food</th>   <th>Count</th></tr>
+          <tr><td>Soup</td>   <td>101</td></tr>
+          <tr><td>Beans</td>  <td>88</td></tr>
+          <tr><td>Pumpkin</td><td>87</td></tr>
+        </table>)"));
+  });
+
+  sm()->ExpectSpeech("Start here");
+  // Open the Tables menu.
+  sm()->Call([this]() { SendKeyPressWithSearchAndControl(ui::VKEY_T); });
+  sm()->ExpectSpeech("Table Menu");
+  sm()->ExpectSpeech("Can Collection Drive Results");
+  sm()->ExpectSpeech("Menu item 1 of 2");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_DOWN); });
+  sm()->ExpectSpeech("Types of Can Received");
+  sm()->ExpectSpeech("Menu item 2 of 2");
+  sm()->Call([this]() { SendKeyPress(ui::VKEY_UP); });
+  sm()->ExpectSpeech("Can Collection Drive Results");
   sm()->Replay();
 }
 
@@ -1734,7 +1996,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, TouchExploreSecondaryDisplay) {
   display::test::DisplayManagerTestApi display_manager_test_api(
       shell_test_api.display_manager());
 
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   int64_t display2 = display_manager_test_api.GetSecondaryDisplay().id();
   screen->SetDisplayForNewWindows(display2);
 
@@ -2537,103 +2799,6 @@ IN_PROC_BROWSER_TEST_F(SigninToUserProfileSwitchTest, DISABLED_LoginAsNewUser) {
   sm()->Replay();
 }
 
-class DeskTemplatesSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
- public:
-  DeskTemplatesSpokenFeedbackTest() = default;
-  DeskTemplatesSpokenFeedbackTest(const DeskTemplatesSpokenFeedbackTest&) =
-      delete;
-  DeskTemplatesSpokenFeedbackTest& operator=(
-      const DeskTemplatesSpokenFeedbackTest&) = delete;
-  ~DeskTemplatesSpokenFeedbackTest() override = default;
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    LoggedInSpokenFeedbackTest::SetUpCommandLine(command_line);
-
-    scoped_feature_list_.InitWithFeatures({features::kDesksTemplates}, {});
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-// TODO(crbug.com/388867840): Add manifest v3 variant when migration is
-// complete.
-INSTANTIATE_TEST_SUITE_P(
-    ManifestV2,
-    DeskTemplatesSpokenFeedbackTest,
-    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo)));
-
-IN_PROC_BROWSER_TEST_P(DeskTemplatesSpokenFeedbackTest, DeskTemplatesBasic) {
-  // TODO(http://b/350771229): This test tests clicking the "Save desk as
-  // template" button that will not be shown if the Forest feature is enabled.
-  // This test will be fixed before the button change is no longer hidden behind
-  // Forest.
-  if (ash::features::IsForestFeatureEnabled()) {
-    GTEST_SKIP() << "Skipping test body for Forest Feature.";
-  }
-
-  chromevox_test_utils()->EnableChromeVox();
-
-  // Enter overview first. This is how we reach the desk templates UI.
-  sm()->Call([this]() {
-    (PerformAcceleratorAction(AcceleratorAction::kToggleOverview));
-  });
-
-  sm()->ExpectSpeech(
-      "Entered window overview mode. Swipe to navigate, or press tab if using "
-      "a keyboard.");
-
-  // TODO(crbug.com/1360638): Remove the conditional here when the Save & Recall
-  // flag flip has landed since it will always be true.
-  if (saved_desk_util::ShouldShowSavedDesksOptions()) {
-    sm()->Call([this]() { SendKeyPressWithShift(ui::VKEY_TAB); });
-    sm()->ExpectSpeechPattern("Save desk for later");
-    sm()->ExpectSpeech("Button");
-  }
-
-  // Reverse tab to focus the save desk as template button.
-  sm()->Call([this]() { SendKeyPressWithShift(ui::VKEY_TAB); });
-  sm()->ExpectSpeechPattern("Save desk as a template");
-  sm()->ExpectSpeech("Button");
-
-  // Hit enter on the save desk as template button. It should take us to the
-  // templates grid, which triggers an accessibility alert. This should nudge
-  // the template name view but not say anything extra.
-  sm()->Call([this]() { SendKeyPress(ui::VKEY_RETURN); });
-  sm()->ExpectSpeech(
-      "Viewing saved desks and templates. Press tab to navigate.");
-
-  // The first item in the tab order is the template card, which is a button. It
-  // has the same name as the desk it was created from, in this case the default
-  // desk name is "Desk 1". The name view will be focused first, then we can go
-  // backwards to the template card, which is a button.
-  sm()->Call([this]() { SendKeyPressWithShift(ui::VKEY_TAB); });
-  sm()->ExpectSpeechPattern("Template, Desk 1");
-  sm()->ExpectSpeech("Button");
-  sm()->ExpectSpeech("Press Ctrl plus W to delete");
-  sm()->ExpectSpeech("Press Search plus Space to activate");
-
-  // The next item is the textfield inside the template card, which also has the
-  // same name as the desk it was created from.
-  sm()->Call([this]() { SendKeyPress(ui::VKEY_TAB); });
-  sm()->ExpectSpeechPattern("Desk 1");
-  sm()->ExpectSpeech("Edit text");
-
-  // Reverse tab to focus back on the template card.
-  sm()->Call([this]() { SendKeyPressWithShift(ui::VKEY_TAB); });
-
-  // Trigger a delete template dialog by pressing Ctrl+W.
-  sm()->Call([this]() { SendKeyPressWithControl(ui::VKEY_W); });
-  sm()->ExpectSpeech("Delete template?");
-  sm()->ExpectSpeech("Dialog");
-  sm()->ExpectSpeech("Delete");
-  sm()->ExpectSpeech("default");
-  sm()->ExpectSpeech("Button");
-  sm()->ExpectSpeech("Press Search plus Space to activate");
-
-  sm()->Replay();
-}
-
 class ShortcutsAppSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
  public:
   ShortcutsAppSpokenFeedbackTest() = default;
@@ -2644,12 +2809,15 @@ class ShortcutsAppSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
   ~ShortcutsAppSpokenFeedbackTest() override = default;
 };
 
-// TODO(crbug.com/388867840): Add manifest v3 variant when migration is
-// complete.
 INSTANTIATE_TEST_SUITE_P(
     ManifestV2,
     ShortcutsAppSpokenFeedbackTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3,
+    ShortcutsAppSpokenFeedbackTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree)));
 
 // TODO(b/288602247): The test is flaky.
 IN_PROC_BROWSER_TEST_P(ShortcutsAppSpokenFeedbackTest,
@@ -2709,12 +2877,15 @@ class SpokenFeedbackWithCandidateWindowTest
   raw_ptr<ui::ime::CandidateWindowView> candidate_window_view_;
 };
 
-// TODO(crbug.com/388867840): Add manifest v3 variant when migration is
-// complete.
 INSTANTIATE_TEST_SUITE_P(
     ManifestV2,
     SpokenFeedbackWithCandidateWindowTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3,
+    SpokenFeedbackWithCandidateWindowTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree)));
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackWithCandidateWindowTest,
                        SpeakSelectedItem) {
@@ -2862,6 +3033,18 @@ INSTANTIATE_TEST_SUITE_P(
     ManifestV2GuestUser,
     SpokenFeedbackWithMagnifierTest,
     ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kTwo,
+                                               kTestAsGuestUser)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3NormalUser,
+    SpokenFeedbackWithMagnifierTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree,
+                                               kTestAsNormalUser)));
+
+INSTANTIATE_TEST_SUITE_P(
+    ManifestV3GuestUser,
+    SpokenFeedbackWithMagnifierTest,
+    ::testing::Values(SpokenFeedbackTestConfig(ManifestVersion::kThree,
                                                kTestAsGuestUser)));
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackWithMagnifierTest,

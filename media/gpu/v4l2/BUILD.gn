@@ -2,7 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//media/gpu/args.gni")
 import("//media/media_options.gni")
@@ -129,6 +128,10 @@ source_set("v4l2") {
       "//media/gpu:video_frame_mapper_common",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 # The v4l2 status functionality is in its own source set so that it can be
@@ -198,12 +201,17 @@ executable("v4l2_stateless_decoder") {
 
   deps = [
     "//base",
+    "//crypto",
     "//media",
     "//media:test_support",
     "//media/gpu:common",
     "//third_party/libgav1:libgav1_parser",
     "//third_party/libyuv",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 test("v4l2_unittest") {
@@ -215,10 +223,14 @@ test("v4l2_unittest") {
     "//base/test:test_support",
     "//build/config/linux/libdrm",
     "//media:test_support",
-    "//media/gpu/chromeos:chromeos",
+    "//media/gpu/chromeos",
     "//testing/gtest",
     "//ui/gfx/linux:gbm",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 if (current_cpu == "arm" || current_cpu == "arm64") {
@@ -229,7 +241,7 @@ if (current_cpu == "arm" || current_cpu == "arm64") {
       "mt21/mt21_util_unittest.cc",
     ]
     deps = [
-      "//base:base",
+      "//base",
       "//base/test:test_support",
       "//testing/gtest",
     ]
@@ -244,7 +256,7 @@ if (current_cpu == "arm" || current_cpu == "arm64") {
       "mt21/mt21_util.h",
     ]
     deps = [
-      "//base:base",
+      "//base",
       "//base/test:test_support",
       "//testing/gtest",
       "//testing/perf",

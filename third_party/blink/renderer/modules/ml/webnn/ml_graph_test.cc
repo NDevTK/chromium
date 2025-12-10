@@ -2,13 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/notimplemented.h"
-#include "services/webnn/public/mojom/webnn_device.mojom-blink-forward.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_ml_transpose_options.h"
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
+#include "third_party/blink/renderer/modules/ml/webnn/ml_graph.h"
 
 #include <limits.h>
 
@@ -17,7 +11,9 @@
 #include <optional>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ref.h"
 #include "base/notimplemented.h"
 #include "base/notreached.h"
@@ -34,6 +30,7 @@
 #include "services/webnn/public/cpp/operand_descriptor.h"
 #include "services/webnn/public/mojom/features.mojom-blink.h"
 #include "services/webnn/public/mojom/webnn_context_provider.mojom-blink.h"
+#include "services/webnn/public/mojom/webnn_device.mojom-blink-forward.h"
 #include "services/webnn/public/mojom/webnn_graph.mojom-blink.h"
 #include "services/webnn/public/mojom/webnn_graph_builder.mojom-blink.h"
 #include "services/webnn/public/mojom/webnn_tensor.mojom-blink.h"
@@ -59,6 +56,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_ml_operator_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_ml_recurrent_network_activation.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_ml_tensor_descriptor.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_ml_transpose_options.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_ml_triangular_options.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/typed_arrays/array_buffer_view_helpers.h"
@@ -67,10 +65,11 @@
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/modules/ml/ml.h"
 #include "third_party/blink/renderer/modules/ml/ml_context.h"
-#include "third_party/blink/renderer/modules/ml/webnn/ml_graph.h"
 #include "third_party/blink/renderer/modules/ml/webnn/ml_graph_builder.h"
 #include "third_party/blink/renderer/modules/ml/webnn/ml_graph_builder_test_utils.h"
+#include "third_party/blink/renderer/modules/ml/webnn/ml_graph_transform/constant_folding_transformer.h"
 #include "third_party/blink/renderer/modules/ml/webnn/ml_graph_transform/ml_graph_transformer.h"
+#include "third_party/blink/renderer/modules/ml/webnn/ml_graph_transform/qdq_detection_transformer.h"
 #include "third_party/blink/renderer/modules/ml/webnn/ml_graph_transform/transpose_elimination_transformer.h"
 #include "third_party/blink/renderer/modules/ml/webnn/ml_graph_type_converter.h"
 #include "third_party/blink/renderer/modules/ml/webnn/ml_graph_utils.h"
@@ -111,7 +110,7 @@ struct BuildResult {
 
 // Helper struct to create faked mojom result of inference.
 struct ComputeResult {
-  WTF::HashMap<WTF::String, WTF::Vector<uint8_t>> output;
+  HashMap<String, Vector<uint8_t>> output;
 };
 
 template <typename T>
@@ -196,8 +195,8 @@ Vector<T> GetArrayBufferViewValues(
     MaybeShared<DOMArrayBufferView> array_buffer_view) {
   Vector<T> values(base::checked_cast<wtf_size_t>(
       array_buffer_view->byteLength() / array_buffer_view->TypeSize()));
-  memcpy(values.data(), array_buffer_view->BaseAddress(),
-         array_buffer_view->byteLength());
+  UNSAFE_TODO(memcpy(values.data(), array_buffer_view->BaseAddress(),
+                     array_buffer_view->byteLength()));
   return values;
 }
 
@@ -356,20 +355,14 @@ class MLGraphTest : public testing::Test {
 
 class WebNNContextHelper {
  public:
-  WebNNContextHelper() = default;
-  ~WebNNContextHelper() = default;
+  WebNNContextHelper();
+  ~WebNNContextHelper();
 
   void ConnectWebNNTensorImpl(const blink::WebNNTensorToken& handle,
-                              std::unique_ptr<FakeWebNNTensor> tensor) {
-    const auto it = tensor_impls_.find(handle);
-    ASSERT_TRUE(it == tensor_impls_.end());
-    tensor_impls_.try_emplace(handle, std::move(tensor));
-  }
+                              std::unique_ptr<FakeWebNNTensor> tensor);
 
   void DisconnectAndDestroyWebNNTensorImpl(
-      const blink::WebNNTensorToken& handle) {
-    tensor_impls_.erase(handle);
-  }
+      const blink::WebNNTensorToken& handle);
 
  private:
   std::map<blink::WebNNTensorToken, std::unique_ptr<FakeWebNNTensor>>
@@ -388,9 +381,8 @@ class FakeWebNNGraph : public blink_mojom::WebNNGraph {
  private:
   // Just return for testing the validation of inputs and outputs.
   void Dispatch(
-      const HashMap<WTF::String, blink::WebNNTensorToken>& named_inputs,
-      const HashMap<WTF::String, blink::WebNNTensorToken>& named_outputs)
-      override {}
+      const HashMap<String, blink::WebNNTensorToken>& named_inputs,
+      const HashMap<String, blink::WebNNTensorToken>& named_outputs) override {}
 
   // TODO(crbug.com/354741414): Fix this dangling pointer.
   const raw_ref<MLGraphTest, DanglingUntriaged> helper_;
@@ -407,8 +399,8 @@ class FakeWebNNTensor : public blink_mojom::WebNNTensor {
         receiver_(this, std::move(receiver)),
         handle_(tensor_handle) {
     buffer_ = mojo_base::BigBuffer(tensor_info->descriptor.PackedByteLength());
-    receiver_.set_disconnect_handler(WTF::BindOnce(
-        &FakeWebNNTensor::OnConnectionError, WTF::Unretained(this)));
+    receiver_.set_disconnect_handler(
+        BindOnce(&FakeWebNNTensor::OnConnectionError, Unretained(this)));
   }
 
   ~FakeWebNNTensor() override = default;
@@ -431,6 +423,14 @@ class FakeWebNNTensor : public blink_mojom::WebNNTensor {
     base::span(buffer_).copy_prefix_from(src_buffer);
   }
 
+  void ExportTensor(ExportTensorCallback callback) override {
+    NOTIMPLEMENTED();
+  }
+
+  void ImportTensor(const gpu::SyncToken& sync_token_fence) override {
+    NOTIMPLEMENTED();
+  }
+
   void OnConnectionError() {
     helper_->DisconnectAndDestroyWebNNTensorImpl(handle());
   }
@@ -444,6 +444,22 @@ class FakeWebNNTensor : public blink_mojom::WebNNTensor {
 
   mojo_base::BigBuffer buffer_;
 };
+
+WebNNContextHelper::WebNNContextHelper() = default;
+WebNNContextHelper::~WebNNContextHelper() = default;
+
+void WebNNContextHelper::ConnectWebNNTensorImpl(
+    const blink::WebNNTensorToken& handle,
+    std::unique_ptr<FakeWebNNTensor> tensor) {
+  const auto it = tensor_impls_.find(handle);
+  ASSERT_TRUE(it == tensor_impls_.end());
+  tensor_impls_.try_emplace(handle, std::move(tensor));
+}
+
+void WebNNContextHelper::DisconnectAndDestroyWebNNTensorImpl(
+    const blink::WebNNTensorToken& handle) {
+  tensor_impls_.erase(handle);
+}
 
 class FakeWebNNGraphBuilder : public blink_mojom::WebNNGraphBuilder {
  public:
@@ -465,7 +481,7 @@ class FakeWebNNGraphBuilder : public blink_mojom::WebNNGraphBuilder {
         blink_remote.InitWithNewEndpointAndPassReceiver());
 
     auto success = blink_mojom::CreateGraphSuccess::New(
-        std::move(blink_remote), WTF::Vector<blink_mojom::Device>());
+        std::move(blink_remote), Vector<blink_mojom::Device>());
     std::move(callback).Run(std::move(success));
   }
 
@@ -519,11 +535,10 @@ class FakeWebNNContext : public blink_mojom::WebNNContext {
         blink_mojom::CreateTensorResult::NewSuccess(std::move(success)));
   }
 
-  void GenVerifiedSyncToken(GenVerifiedSyncTokenCallback callback) override {
-    NOTIMPLEMENTED();
-  }
-
-  void WaitSyncToken(const gpu::SyncToken& sync_token_fence) override {
+  void CreateTensorFromMailbox(blink_mojom::TensorInfoPtr tensor_info,
+                               const ::gpu::Mailbox& mailbox,
+                               const gpu::SyncToken& fence,
+                               CreateTensorCallback callback) override {
     NOTIMPLEMENTED();
   }
 
@@ -545,8 +560,8 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
     DCHECK(!receiver_.is_bound());
     receiver_.Bind(mojo::PendingReceiver<blink_mojom::WebNNContextProvider>(
         std::move(handle)));
-    receiver_.set_disconnect_handler(WTF::BindOnce(
-        &FakeWebNNContextProvider::OnConnectionError, WTF::Unretained(this)));
+    receiver_.set_disconnect_handler(BindOnce(
+        &FakeWebNNContextProvider::OnConnectionError, Unretained(this)));
   }
 
   bool IsBound() const { return receiver_.is_bound(); }
@@ -567,12 +582,12 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
         webnn::InputOperandLayout::kNchw, webnn::Resample2DAxes::kAny,
         webnn::BatchNormalizationAxis::kAny,
         /*tensor_byte_length_limit=*/INT_MAX,
-        {/*input=*/webnn::SupportedDataTypes::All(),
-         /*constant=*/webnn::SupportedDataTypes::All(),
+        {/*input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
+         /*constant=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*arg_min_max_input=*/
          {webnn::SupportedDataTypes::All(), kMaxRank},
          /*arg_min_max_output=*/
-         webnn::SupportedDataTypes::All(),
+         {webnn::SupportedDataTypes::All(), kMaxRank},
          /*batch_normalization_input=*/
          {webnn::SupportedDataTypes::All(), kMaxRank},
          /*batch_normalization_mean=*/
@@ -614,6 +629,8 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
          /*logical_or_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*logical_xor_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*logical_not_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
+         /*is_nan_input*/ {webnn::SupportedDataTypes::All(), kMaxRank},
+         /*is_infinite_input*/ {webnn::SupportedDataTypes::All(), kMaxRank},
          /*logical_output=*/webnn::SupportedDataTypes::All(),
          /*abs_input=*/
          {webnn::SupportedDataTypes::All(), kMaxRank},
@@ -634,6 +651,8 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
          /*neg_input=*/
          {webnn::SupportedDataTypes::All(), kMaxRank},
          /*reciprocal_input=*/
+         {webnn::SupportedDataTypes::All(), kMaxRank},
+         /*round_even_input=*/
          {webnn::SupportedDataTypes::All(), kMaxRank},
          /*sign_input=*/
          {webnn::SupportedDataTypes::All(), kMaxRank},
@@ -659,6 +678,7 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
          /*gemm_c=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*gru_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*gru_bias=*/{webnn::SupportedDataTypes::All(), kMaxRank},
+         /*gru_output_sequence=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*gru_cell_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*gru_cell_bias=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*hard_sigmoid_input=*/
@@ -677,6 +697,7 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
          {webnn::SupportedDataTypes::All(), kMaxRank},
          /*lstm_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*lstm_bias=*/{webnn::SupportedDataTypes::All(), kMaxRank},
+         /*lstm_output_sequence=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*lstm_cell_input=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*lstm_cell_bias=*/{webnn::SupportedDataTypes::All(), kMaxRank},
          /*matmul_input=*/
@@ -751,7 +772,8 @@ class FakeWebNNContextProvider : public blink_mojom::WebNNContextProvider {
          /*where_value=*/{webnn::SupportedDataTypes::All(), kMaxRank}});
     auto success = blink_mojom::CreateContextSuccess::New(
         std::move(blink_remote), std::move(context_properties),
-        blink::WebNNContextToken());
+        blink::WebNNContextToken(), mojo::ScopedDataPipeProducerHandle(),
+        mojo::ScopedDataPipeConsumerHandle());
     std::move(callback).Run(
         blink_mojom::CreateContextResult::NewSuccess(std::move(success)));
   }
@@ -769,9 +791,8 @@ class ScopedWebNNServiceBinder {
             scope.GetExecutionContext()->GetBrowserInterfaceBroker()) {
     interface_broker_->SetBinderForTesting(
         blink_mojom::WebNNContextProvider::Name_,
-        WTF::BindRepeating(
-            &FakeWebNNContextProvider::BindRequest,
-            WTF::Unretained(fake_webnn_context_provider_.get())));
+        BindRepeating(&FakeWebNNContextProvider::BindRequest,
+                      Unretained(fake_webnn_context_provider_.get())));
   }
 
   ~ScopedWebNNServiceBinder() {
@@ -1261,74 +1282,6 @@ TEST_F(MLGraphTest, CreateWebNNGraphTest) {
   }
 }
 
-struct ClampOptions {
-  std::optional<float> min_value;
-  std::optional<float> max_value;
-};
-
-struct SoftmaxTester {
-  OperandInfo<float> input;
-  webnn::OperandDescriptor expected_descriptor;
-
-  void Test(MLGraphTest& helper, V8TestingScope& scope, MLContext* context) {
-    // Build the graph.
-    auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
-                                           scope.GetExceptionState());
-    ASSERT_THAT(builder, testing::NotNull());
-    auto* input_operand =
-        BuildInput(scope.GetScriptState(), builder, "input", input.dimensions,
-                   input.data_type, scope.GetExceptionState());
-    MLOperatorOptions* options = MLOperatorOptions::Create();
-    auto* output_operand =
-        builder->softmax(input_operand, options, scope.GetExceptionState());
-    MLNamedOperands named_outputs = {{"output", output_operand}};
-    auto [graph, error_name, error_message] =
-        helper.BuildGraph(scope, builder, named_outputs);
-    ASSERT_THAT(graph, testing::NotNull());
-
-    auto graph_info = helper.GetGraphInfo();
-    // Verify the graph information of mojo are as expected.
-    ASSERT_EQ(graph_info->operations.size(), 1u);
-    auto& operation = graph_info->operations[0];
-    EXPECT_TRUE(operation->is_softmax());
-    EXPECT_EQ(graph_info->output_operands.size(), 1u);
-    auto output_operand_id = graph_info->output_operands[0];
-    ASSERT_LT(output_operand_id.value(), graph_info->operands.size());
-    EXPECT_EQ(graph_info->operands[output_operand_id.value()]->descriptor,
-              expected_descriptor);
-  }
-};
-
-TEST_F(MLGraphTest, SoftmaxTest) {
-  V8TestingScope scope;
-  // Bind fake WebNN Context in the service for testing.
-  ScopedWebNNServiceBinder scoped_setup_binder(*this, scope);
-
-  auto* options = MLContextOptions::Create();
-  // Create WebNN Context with GPU device type.
-  options->setDeviceType(V8MLDeviceType::Enum::kGpu);
-  MLContext* context = CreateContext(scope, options);
-
-  {
-    // Test building softmax with float32 input.
-    SoftmaxTester{
-        .input = {.data_type = V8MLOperandDataType::Enum::kFloat32,
-                  .dimensions = {2, 4}},
-        .expected_descriptor = ToDescriptor(webnn::OperandDataType::kFloat32,
-                                            std::array<uint32_t, 2>{2, 4})}
-        .Test(*this, scope, context);
-  }
-  {
-    // Test building softmax with float16 input.
-    SoftmaxTester{
-        .input = {.data_type = V8MLOperandDataType::Enum::kFloat16,
-                  .dimensions = {1, 5}},
-        .expected_descriptor = ToDescriptor(webnn::OperandDataType::kFloat16,
-                                            std::array<uint32_t, 2>{1, 5})}
-        .Test(*this, scope, context);
-  }
-}
-
 struct CastTester {
   OperandInfo<float> input;
   V8MLOperandDataType::Enum output_data_type;
@@ -1670,7 +1623,7 @@ TEST_F(MLGraphTest, MLTransposeEliminationTransformerTest) {
     ASSERT_THAT(builder, testing::NotNull());
 
     // [a] -> transpose -> [b] -> transpose -> [c]
-    // This shouldn't be eliminated otherwise the graph will have no operation.
+    // This shouldn't be eliminated otherwise the graph will have no operations.
     auto* a = BuildInput(scope.GetScriptState(), builder, "a", {3, 4, 5},
                          V8MLOperandDataType::Enum::kFloat32, exception_state);
     auto* transpose_options = MLTransposeOptions::Create();
@@ -1800,6 +1753,51 @@ TEST_F(MLGraphTest, MLTransposeEliminationTransformerTest) {
     auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
                                            exception_state);
     ASSERT_THAT(builder, testing::NotNull());
+    // [a] -> transpose -> [b] -> transpose -> [c] -> relu -> [d]
+    //  b and d are graph outputs.
+
+    auto* a = BuildInput(scope.GetScriptState(), builder, "a", {3, 4, 5},
+                         V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* transpose_options = MLTransposeOptions::Create();
+    transpose_options->setPermutation({0, 2, 1});
+    auto* b = builder->transpose(a, transpose_options, exception_state);
+    ASSERT_THAT(b, testing::NotNull());
+    auto* transpose_options2 = MLTransposeOptions::Create();
+    transpose_options2->setPermutation({0, 2, 1});
+    auto* c = builder->transpose(b, transpose_options2, exception_state);
+    ASSERT_THAT(c, testing::NotNull());
+    auto* relu_options = MLOperatorOptions::Create();
+    auto* d = builder->relu(c, relu_options, exception_state);
+    ASSERT_THAT(d, testing::NotNull());
+    EXPECT_EQ(d->Shape(), std::vector<uint32_t>({3, 4, 5}));
+    MLNamedOperands named_outputs = {{"b", b}, {"d", d}};
+
+    auto* transpose_elimination_transformer =
+        MakeGarbageCollected<TransposeEliminationTransformer>(builder);
+    transpose_elimination_transformer->Transform(named_outputs);
+
+    // Expect no change in the graph.
+    EXPECT_EQ(b->Operator()->Inputs()[0], a);
+    EXPECT_EQ(c->Operator()->Inputs()[0], b);
+    EXPECT_EQ(d->Operator()->Inputs()[0], c);
+
+    auto [graph, error_name, error_message] =
+        BuildGraph(scope, builder, named_outputs);
+    ASSERT_THAT(graph, testing::NotNull());
+    const auto& inputs = graph->GetInputConstraints();
+    EXPECT_EQ(inputs.size(), static_cast<uint32_t>(1));
+    EXPECT_EQ(*inputs.at("a"), a->Descriptor());
+    const auto& outputs = graph->GetOutputConstraints();
+    EXPECT_EQ(outputs.size(), static_cast<uint32_t>(2));
+    EXPECT_EQ(*outputs.at("b"), b->Descriptor());
+    EXPECT_EQ(*outputs.at("d"), d->Descriptor());
+  }
+
+  {
+    DummyExceptionStateForTesting exception_state;
+    auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
+                                           exception_state);
+    ASSERT_THAT(builder, testing::NotNull());
 
     // [a] -> transpose -> [b] -> relu -> [c] -> transpose -> [d]
     auto* a = BuildInput(scope.GetScriptState(), builder, "a", {3, 4, 5},
@@ -1860,6 +1858,52 @@ TEST_F(MLGraphTest, MLTransposeEliminationTransformerTest) {
     auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
                                            exception_state);
     ASSERT_THAT(builder, testing::NotNull());
+
+    // [a] -> transpose -> [b] -> relu -> [c] -> transpose -> [d]
+    // c and d are graph outputs.
+    auto* a = BuildInput(scope.GetScriptState(), builder, "a", {3, 4, 5},
+                         V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* transpose_options = MLTransposeOptions::Create();
+    transpose_options->setPermutation({0, 2, 1});
+    auto* b = builder->transpose(a, transpose_options, exception_state);
+    ASSERT_THAT(b, testing::NotNull());
+    auto* relu_options = MLOperatorOptions::Create();
+    auto* c = builder->relu(b, relu_options, exception_state);
+    ASSERT_THAT(c, testing::NotNull());
+    auto* transpose_options2 = MLTransposeOptions::Create();
+    transpose_options2->setPermutation({0, 2, 1});
+    auto* d = builder->transpose(c, transpose_options2, exception_state);
+    ASSERT_THAT(d, testing::NotNull());
+
+    EXPECT_EQ(d->Shape(), std::vector<uint32_t>({3, 4, 5}));
+    MLNamedOperands named_outputs = {{"c", c}, {"d", d}};
+
+    auto* transpose_elimination_transformer =
+        MakeGarbageCollected<TransposeEliminationTransformer>(builder);
+    transpose_elimination_transformer->Transform(named_outputs);
+
+    // Expect no change in the graph.
+    EXPECT_EQ(b->Operator()->Inputs()[0], a);
+    EXPECT_EQ(c->Operator()->Inputs()[0], b);
+    EXPECT_EQ(d->Operator()->Inputs()[0], c);
+
+    auto [graph, error_name, error_message] =
+        BuildGraph(scope, builder, named_outputs);
+    ASSERT_THAT(graph, testing::NotNull());
+    const auto& inputs = graph->GetInputConstraints();
+    EXPECT_EQ(inputs.size(), static_cast<uint32_t>(1));
+    EXPECT_EQ(*inputs.at("a"), a->Descriptor());
+    const auto& outputs = graph->GetOutputConstraints();
+    EXPECT_EQ(outputs.size(), static_cast<uint32_t>(2));
+    EXPECT_EQ(*outputs.at("c"), c->Descriptor());
+    EXPECT_EQ(*outputs.at("d"), d->Descriptor());
+  }
+
+  {
+    DummyExceptionStateForTesting exception_state;
+    auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
+                                           exception_state);
+    ASSERT_THAT(builder, testing::NotNull());
     // [a] -> relu -> [b] -> transpose -> [c] -> transpose -> [d]
     // Note: the two transposes are not inversable.
 
@@ -1900,6 +1944,449 @@ TEST_F(MLGraphTest, MLTransposeEliminationTransformerTest) {
     EXPECT_EQ(outputs.size(), static_cast<uint32_t>(1));
     EXPECT_EQ(*outputs.at("d"), d->Descriptor());
   }
+
+  {
+    DummyExceptionStateForTesting exception_state;
+    auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
+                                           exception_state);
+    ASSERT_THAT(builder, testing::NotNull());
+
+    //      input0                 input1
+    //            \                 /
+    //             transpose0    transpose1
+    //      input2            \   /        \
+    //            \            \ /          \
+    //            transpose2  add0          gelu
+    //      input3          \  |  \              \
+    //            \          \ |   \              \
+    //            transpose3  add1  transpose4   transpose7
+    //                      \  |  \
+    //                       \ |   \
+    //                        add2  transpose5
+    //                         |
+    //                      transpose6
+    //                         |
+    //                       relu
+
+    auto* input0 =
+        BuildInput(scope.GetScriptState(), builder, "input0", {1, 3, 1, 1},
+                   V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* input1 =
+        BuildInput(scope.GetScriptState(), builder, "input1", {1, 3, 1, 1},
+                   V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* input2 =
+        BuildInput(scope.GetScriptState(), builder, "input2", {1, 3, 1, 1},
+                   V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* input3 =
+        BuildInput(scope.GetScriptState(), builder, "input3", {1, 3, 1, 1},
+                   V8MLOperandDataType::Enum::kFloat32, exception_state);
+
+    auto* transpose_options0 = MLTransposeOptions::Create();
+    transpose_options0->setPermutation({0, 3, 1, 2});
+    auto* transpose0 =
+        builder->transpose(input0, transpose_options0, exception_state);
+    ASSERT_THAT(transpose0, testing::NotNull());
+
+    auto* transpose_options1 = MLTransposeOptions::Create();
+    transpose_options1->setPermutation({0, 3, 1, 2});
+    auto* transpose1 =
+        builder->transpose(input1, transpose_options1, exception_state);
+    ASSERT_THAT(transpose1, testing::NotNull());
+
+    auto* transpose_options2 = MLTransposeOptions::Create();
+    transpose_options2->setPermutation({0, 3, 1, 2});
+    auto* transpose2 =
+        builder->transpose(input2, transpose_options2, exception_state);
+    ASSERT_THAT(transpose2, testing::NotNull());
+
+    auto* transpose_options3 = MLTransposeOptions::Create();
+    transpose_options3->setPermutation({0, 3, 1, 2});
+    auto* transpose3 =
+        builder->transpose(input3, transpose_options3, exception_state);
+    ASSERT_THAT(transpose3, testing::NotNull());
+
+    auto* add_options0 = MLOperatorOptions::Create();
+    auto* add0 =
+        builder->add(transpose0, transpose1, add_options0, exception_state);
+    ASSERT_THAT(add0, testing::NotNull());
+
+    auto* add_options1 = MLOperatorOptions::Create();
+    auto* add1 = builder->add(transpose2, add0, add_options1, exception_state);
+    ASSERT_THAT(add1, testing::NotNull());
+
+    auto* add_options2 = MLOperatorOptions::Create();
+    auto* add2 = builder->add(transpose3, add1, add_options2, exception_state);
+    ASSERT_THAT(add2, testing::NotNull());
+
+    auto* gelu_options = MLOperatorOptions::Create();
+    auto* gelu = builder->gelu(transpose1, gelu_options, exception_state);
+    ASSERT_THAT(gelu, testing::NotNull());
+
+    auto* transpose_options4 = MLTransposeOptions::Create();
+    transpose_options4->setPermutation({0, 2, 3, 1});
+    auto* transpose4 =
+        builder->transpose(add0, transpose_options4, exception_state);
+    ASSERT_THAT(transpose4, testing::NotNull());
+
+    auto* transpose_options5 = MLTransposeOptions::Create();
+    transpose_options5->setPermutation({0, 2, 3, 1});
+    auto* transpose5 =
+        builder->transpose(add1, transpose_options5, exception_state);
+    ASSERT_THAT(transpose5, testing::NotNull());
+
+    auto* transpose_options6 = MLTransposeOptions::Create();
+    transpose_options6->setPermutation({0, 2, 3, 1});
+    auto* transpose6 =
+        builder->transpose(add2, transpose_options6, exception_state);
+    ASSERT_THAT(transpose6, testing::NotNull());
+
+    auto* transpose_options7 = MLTransposeOptions::Create();
+    transpose_options7->setPermutation({0, 2, 3, 1});
+    auto* transpose7 =
+        builder->transpose(gelu, transpose_options7, exception_state);
+    ASSERT_THAT(transpose7, testing::NotNull());
+
+    auto* relu_options = MLOperatorOptions::Create();
+    auto* relu = builder->relu(transpose6, relu_options, exception_state);
+    ASSERT_THAT(relu, testing::NotNull());
+
+    MLNamedOperands named_outputs = {{"relu", relu},
+                                     {"transpose4", transpose4},
+                                     {"transpose5", transpose5},
+                                     {"transpose7", transpose7}};
+    auto* transpose_elimination_transformer =
+        MakeGarbageCollected<TransposeEliminationTransformer>(builder);
+    transpose_elimination_transformer->Transform(named_outputs);
+
+    // should be transformed to:
+    //
+    //    input0          input1
+    //          \         /    \
+    //  input2 add0(updated)    gelu(updated)
+    //       \  |
+    //        \ |
+    //  input3 add1(updated)
+    //       \  |
+    //        \ |
+    //         add2(updated)
+    //          |
+    //         relu
+
+    MLOperand* add2_updated = relu->Operator()->Inputs()[0];
+    MLOperand* add1_updated = add2_updated->Operator()->Inputs()[1];
+    MLOperand* add0_updated = add1_updated->Operator()->Inputs()[1];
+
+    MLOperand* gelu_updated = named_outputs[3].second;
+
+    CHECK_EQ(gelu_updated->Operator()->Kind(),
+             webnn::mojom::blink::Operation::Tag::kGelu);
+
+    EXPECT_NE(add0_updated, add0);
+    EXPECT_NE(add1_updated, add1);
+    EXPECT_NE(add2_updated, add2);
+    EXPECT_NE(gelu_updated, gelu);
+
+    EXPECT_EQ(named_outputs[0].first, "relu");
+    EXPECT_EQ(named_outputs[1].first, "transpose4");
+    EXPECT_EQ(named_outputs[2].first, "transpose5");
+    EXPECT_EQ(named_outputs[3].first, "transpose7");
+
+    EXPECT_EQ(named_outputs[0].second, relu);
+    EXPECT_EQ(named_outputs[1].second, add0_updated);
+    EXPECT_EQ(named_outputs[2].second, add1_updated);
+
+    EXPECT_EQ(relu->Operator()->Inputs()[0], add2_updated);
+    EXPECT_EQ(add2_updated->Operator()->Inputs()[0], input3);
+    EXPECT_EQ(add2_updated->Operator()->Inputs()[1], add1_updated);
+    EXPECT_EQ(add1_updated->Operator()->Inputs()[0], input2);
+    EXPECT_EQ(add1_updated->Operator()->Inputs()[1], add0_updated);
+    EXPECT_EQ(add0_updated->Operator()->Inputs()[0], input0);
+    EXPECT_EQ(add0_updated->Operator()->Inputs()[1], input1);
+    EXPECT_EQ(gelu_updated->Operator()->Inputs()[0], input1);
+
+    auto [graph, error_name, error_message] =
+        BuildGraph(scope, builder, named_outputs);
+    ASSERT_THAT(graph, testing::NotNull());
+    const auto& inputs = graph->GetInputConstraints();
+    EXPECT_EQ(inputs.size(), static_cast<uint32_t>(4));
+    EXPECT_EQ(*inputs.at("input0"), input0->Descriptor());
+    EXPECT_EQ(*inputs.at("input1"), input1->Descriptor());
+    EXPECT_EQ(*inputs.at("input2"), input2->Descriptor());
+    EXPECT_EQ(*inputs.at("input3"), input3->Descriptor());
+
+    const auto& outputs = graph->GetOutputConstraints();
+    EXPECT_EQ(outputs.size(), static_cast<uint32_t>(4));
+    EXPECT_EQ(*outputs.at("relu"), relu->Descriptor());
+    EXPECT_EQ(*outputs.at("transpose4"), add0_updated->Descriptor());
+    EXPECT_EQ(*outputs.at("transpose5"), add1_updated->Descriptor());
+    EXPECT_EQ(*outputs.at("transpose7"), gelu_updated->Descriptor());
+  }
+}
+
+TEST_F(MLGraphTest, MLQDQDetectionTest) {
+  V8TestingScope scope;
+  // Bind fake WebNN Context in the service for testing.
+  ScopedWebNNServiceBinder scoped_setup_binder(*this, scope);
+  MLContext* context = CreateContext(scope, MLContextOptions::Create());
+
+  {
+    DummyExceptionStateForTesting exception_state;
+    auto* builder = MLGraphBuilder::Create(scope.GetScriptState(), context,
+                                           exception_state);
+    ASSERT_THAT(builder, testing::NotNull());
+    //   input             filter
+    //      \               /
+    //       DQ(0)         DQ(1)
+    //        \           /
+    //    transpose(0)  transpose(1)
+    //          \      /
+    //           conv2d
+    //             \
+    //          transpose(2)
+    //               \
+    //                Q
+    //                 \
+    //                relu
+    auto* input =
+        BuildInput(scope.GetScriptState(), builder, "input", {1, 1, 1, 3},
+                   V8MLOperandDataType::Enum::kInt8, exception_state);
+    auto* filter =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 3},
+                      V8MLOperandDataType::Enum::kInt8, exception_state);
+
+    auto* input_scale =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 1},
+                      V8MLOperandDataType::Enum::kFloat32, exception_state);
+
+    auto* input_zero_point =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 1},
+                      V8MLOperandDataType::Enum::kInt8, exception_state);
+
+    auto* filter_scale =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 1},
+                      V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* filter_zero_point =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 1},
+                      V8MLOperandDataType::Enum::kInt8, exception_state);
+
+    auto* dq0_output_operand =
+        builder->dequantizeLinear(input, input_scale, input_zero_point,
+                                  MLOperatorOptions::Create(), exception_state);
+
+    ASSERT_THAT(dq0_output_operand, testing::NotNull());
+    auto* dq1_operand =
+        builder->dequantizeLinear(filter, filter_scale, filter_zero_point,
+                                  MLOperatorOptions::Create(), exception_state);
+    ASSERT_THAT(dq1_operand, testing::NotNull());
+
+    auto* transpose_options0 = MLTransposeOptions::Create();
+    transpose_options0->setPermutation({0, 2, 3, 1});
+    auto* transpose0_output_operand = builder->transpose(
+        dq0_output_operand, transpose_options0, exception_state);
+    ASSERT_THAT(transpose0_output_operand, testing::NotNull());
+    auto* transpose_options1 = MLTransposeOptions::Create();
+    transpose_options1->setPermutation({0, 2, 3, 1});
+    auto* transpose1_output_operand =
+        builder->transpose(dq1_operand, transpose_options1, exception_state);
+    ASSERT_THAT(transpose1_output_operand, testing::NotNull());
+
+    auto* conv2d_options = MLConv2dOptions::Create();
+    conv2d_options->setInputLayout(V8MLInputOperandLayout::Enum::kNhwc);
+    conv2d_options->setFilterLayout(V8MLConv2dFilterOperandLayout::Enum::kOhwi);
+
+    auto* conv2d_output_operand =
+        builder->conv2d(transpose0_output_operand, transpose1_output_operand,
+                        conv2d_options, exception_state);
+    ASSERT_THAT(conv2d_output_operand, testing::NotNull());
+
+    auto* transpose_options2 = MLTransposeOptions::Create();
+    transpose_options2->setPermutation({0, 3, 1, 2});
+    auto* transpose2_output_operand = builder->transpose(
+        conv2d_output_operand, transpose_options2, exception_state);
+    ASSERT_THAT(transpose2_output_operand, testing::NotNull());
+    auto* output_scale =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 1},
+                      V8MLOperandDataType::Enum::kFloat32, exception_state);
+    auto* output_zero_point =
+        BuildConstant(scope.GetScriptState(), builder, {1, 1, 1, 1},
+                      V8MLOperandDataType::Enum::kInt8, exception_state);
+
+    auto* q_output_operand = builder->quantizeLinear(
+        transpose2_output_operand, output_scale, output_zero_point,
+        MLOperatorOptions::Create(), exception_state);
+    ASSERT_THAT(q_output_operand, testing::NotNull());
+
+    auto* relu_options = MLOperatorOptions::Create();
+    auto* relu_output_operand =
+        builder->relu(q_output_operand, relu_options, exception_state);
+    ASSERT_THAT(relu_output_operand, testing::NotNull());
+
+    MLNamedOperands named_outputs = {{"q", q_output_operand},
+                                     {"relu", relu_output_operand}};
+
+    auto* qdq_detection_transformer =
+        MakeGarbageCollected<QDQDetectionTransformer>(builder);
+
+    qdq_detection_transformer->Transform(named_outputs);
+    // should be transformed to:
+    //    ...               ...
+    //      \               /
+    //   transpose(0)     transpose(1)
+    //        \           /
+    //        DQ(0)      DQ(1)
+    //          \      /
+    //           conv2d(cener operator)
+    //             \
+    //              Q
+    //               \
+    //            transpose(2)
+    //                 \
+    //                relu
+    //
+    // Except of conv2d and relu, all other operators' operands are replaced.
+
+    MLOperator* conv2d = conv2d_output_operand->Operator();
+    MLOperator* q = conv2d_output_operand->DependentOperators().begin()->Get();
+    MLOperator* transpose2 =
+        q->Outputs()[0]->DependentOperators().begin()->Get();
+    MLOperator* dq0 = conv2d->Inputs()[0]->Operator();
+    MLOperator* dq1 = conv2d->Inputs()[1]->Operator();
+    MLOperator* transpose0 = dq0->Inputs()[0]->Operator();
+    MLOperator* transpose1 = dq1->Inputs()[0]->Operator();
+
+    EXPECT_EQ(q->Kind(), webnn::mojom::blink::Operation::Tag::kQuantizeLinear);
+    EXPECT_EQ(transpose2->Kind(),
+              webnn::mojom::blink::Operation::Tag::kTranspose);
+    EXPECT_EQ(dq0->Kind(),
+              webnn::mojom::blink::Operation::Tag::kDequantizeLinear);
+    EXPECT_EQ(dq1->Kind(),
+              webnn::mojom::blink::Operation::Tag::kDequantizeLinear);
+    EXPECT_EQ(transpose0->Kind(),
+              webnn::mojom::blink::Operation::Tag::kTranspose);
+    EXPECT_EQ(transpose1->Kind(),
+              webnn::mojom::blink::Operation::Tag::kTranspose);
+
+    // Original operands still point to the operators.
+    EXPECT_EQ(q_output_operand->Operator(), q);
+    EXPECT_EQ(transpose2_output_operand->Operator(), transpose2);
+    EXPECT_EQ(dq0_output_operand->Operator(), dq0);
+    EXPECT_EQ(dq1_operand->Operator(), dq1);
+    EXPECT_EQ(transpose0_output_operand->Operator(), transpose0);
+    EXPECT_EQ(transpose1_output_operand->Operator(), transpose1);
+
+    // Those operands are replaced.
+    EXPECT_NE(q_output_operand, q->Outputs()[0]);
+    EXPECT_NE(transpose2_output_operand, transpose2->Outputs()[0]);
+    EXPECT_NE(dq0_output_operand, dq0->Outputs()[0]);
+    EXPECT_NE(dq1_operand, dq1->Outputs()[0]);
+    EXPECT_NE(transpose0_output_operand, transpose0->Outputs()[0]);
+    EXPECT_NE(transpose1_output_operand, transpose1->Outputs()[0]);
+
+    EXPECT_EQ(transpose2->Outputs()[0]->DataType(),
+              webnn::OperandDataType::kInt8);
+    EXPECT_EQ(transpose0->Outputs()[0]->DataType(),
+              webnn::OperandDataType::kInt8);
+    EXPECT_EQ(transpose1->Outputs()[0]->DataType(),
+              webnn::OperandDataType::kInt8);
+
+    EXPECT_EQ(q->Outputs()[0]->Shape(), conv2d_output_operand->Shape());
+    EXPECT_EQ(dq0->Outputs()[0]->Shape(), transpose0_output_operand->Shape());
+    EXPECT_EQ(dq1->Outputs()[0]->Shape(), transpose1_output_operand->Shape());
+
+    for (auto& [name, operand] : named_outputs) {
+      if (name == "q") {
+        EXPECT_EQ(operand, transpose2->Outputs()[0]);
+      } else if (name == "relu") {
+        EXPECT_EQ(operand, relu_output_operand);
+      } else {
+        FAIL() << "Unexpected named output: " << name;
+      }
+    }
+
+    auto [graph, error_name, error_message] =
+        BuildGraph(scope, builder, named_outputs);
+    // This case have complicate pattern, other optimizations may be performed
+    // duiring BuildGraph. So we just make sure the graph will build
+    // successfully here.
+    ASSERT_THAT(graph, testing::NotNull());
+  }
+}
+
+TEST_F(MLGraphTest, MLConstantFoldingTransformerNoOpTest) {
+  V8TestingScope scope;
+  // Bind fake WebNN Context in the service for testing.
+  ScopedWebNNServiceBinder scoped_setup_binder(*this, scope);
+  MLContext* context = CreateContext(scope, MLContextOptions::Create());
+
+  DummyExceptionStateForTesting exception_state;
+  auto* builder =
+      MLGraphBuilder::Create(scope.GetScriptState(), context, exception_state);
+  ASSERT_THAT(builder, testing::NotNull());
+
+  // [a] -> transpose -> [b]
+  // This shouldn't be eliminated otherwise the graph will have no operations.
+  auto* a = BuildConstant(scope.GetScriptState(), builder, {3, 4, 5},
+                          V8MLOperandDataType::Enum::kFloat32, exception_state);
+  auto* transpose_options = MLTransposeOptions::Create();
+  transpose_options->setPermutation({0, 2, 1});
+  auto* b = builder->transpose(a, transpose_options, exception_state);
+  ASSERT_THAT(b, testing::NotNull());
+
+  EXPECT_EQ(b->Shape(), std::vector<uint32_t>({3, 5, 4}));
+  MLNamedOperands named_outputs = {{"b", b}};
+
+  auto* constant_folding_transformer =
+      MakeGarbageCollected<ConstantFoldingTransformer>(builder);
+  constant_folding_transformer->Transform(named_outputs);
+
+  // Expect no change in the graph.
+  EXPECT_EQ(b->Operator()->Inputs()[0], a);
+
+  auto [graph, error_name, error_message] =
+      BuildGraph(scope, builder, named_outputs);
+  ASSERT_THAT(graph, testing::NotNull());
+}
+
+TEST_F(MLGraphTest, MLConstantFoldingTransformerTest) {
+  V8TestingScope scope;
+  // Bind fake WebNN Context in the service for testing.
+  ScopedWebNNServiceBinder scoped_setup_binder(*this, scope);
+  MLContext* context = CreateContext(scope, MLContextOptions::Create());
+  DummyExceptionStateForTesting exception_state;
+  auto* builder =
+      MLGraphBuilder::Create(scope.GetScriptState(), context, exception_state);
+  ASSERT_THAT(builder, testing::NotNull());
+
+  // [a] -> transpose -> reshape -> transpose -> relu -> [e]
+  auto* a = BuildConstant(scope.GetScriptState(), builder, {3, 4, 5},
+                          V8MLOperandDataType::Enum::kFloat32, exception_state);
+  auto* transpose_options = MLTransposeOptions::Create();
+  transpose_options->setPermutation({0, 2, 1});
+  auto* b = builder->transpose(a, transpose_options, exception_state);
+  ASSERT_THAT(b, testing::NotNull());
+  auto* c = builder->reshape(b, {3, 20}, MLOperatorOptions::Create(),
+                             exception_state);
+  ASSERT_THAT(c, testing::NotNull());
+  auto* d =
+      builder->transpose(c, MLTransposeOptions::Create(), exception_state);
+  ASSERT_THAT(d, testing::NotNull());
+  auto* e = builder->relu(d, MLOperatorOptions::Create(), exception_state);
+  ASSERT_THAT(e, testing::NotNull());
+
+  MLNamedOperands named_outputs = {{"e", e}};
+
+  auto* constant_folding_transformer =
+      MakeGarbageCollected<ConstantFoldingTransformer>(builder);
+  constant_folding_transformer->Transform(named_outputs);
+  auto& relu_input = e->Operator()->Inputs()[0];
+  EXPECT_EQ(relu_input->Kind(), webnn::mojom::blink::Operand::Kind::kConstant);
+  Vector<uint32_t> expected_shape{20, 3};
+  EXPECT_EQ(e->shape(), expected_shape);
+  EXPECT_EQ(e->shape(), relu_input->shape());
+
+  auto [graph, error_name, error_message] =
+      BuildGraph(scope, builder, named_outputs);
+  ASSERT_THAT(graph, testing::NotNull());
 }
 
 }  // namespace blink

@@ -4,27 +4,30 @@
 
 package org.chromium.chrome.browser.app.tab_activity_glue;
 
+import static android.view.Display.INVALID_DISPLAY;
+
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.ActivityManager.AppTask;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Rect;
 import android.media.AudioManager;
+import android.util.Pair;
 import android.view.KeyEvent;
 import android.view.View;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.collection.ArrayMap;
-
+import org.chromium.base.AconfigFlaggedApiDelegate;
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.blink.mojom.DisplayMode;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.SwipeRefreshHandler;
@@ -50,16 +53,22 @@ import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
+import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter.MergeNotificationType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.ui.ExclusiveAccessManager;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
+import org.chromium.chrome.browser.util.AndroidTaskUtils;
 import org.chromium.chrome.browser.util.WindowFeatures;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuUtils;
 import org.chromium.components.embedder_support.delegate.WebContentsDelegateAndroid;
+import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.ResourceRequestBody;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.display.DisplayAndroid;
+import org.chromium.ui.display.DisplayUtil;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -71,19 +80,19 @@ import org.chromium.url.GURL;
 
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * {@link WebContentsDelegateAndroid} that interacts with {@link Activity} and those of the lifetime
  * of the activity to process requests from underlying {@link WebContents} for a given {@link Tab}.
  */
+@NullMarked
 public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegateAndroid {
     private static final String TAG = "ActivityTabWCDA";
 
-    private final ArrayMap<WebContents, GURL> mWebContentsUrlMapping = new ArrayMap<>();
-
     private final Tab mTab;
 
-    @Nullable private Activity mActivity;
+    private @Nullable Activity mActivity;
     private final ChromeActivityNativeDelegate mChromeActivityNativeDelegate;
     private final boolean mIsCustomTab;
     private final BrowserControlsStateProvider mBrowserControlsStateProvider;
@@ -93,6 +102,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
     private final Supplier<CompositorViewHolder> mCompositorViewHolderSupplier;
     private final Supplier<ModalDialogManager> mModalDialogManagerSupplier;
     private final TabObserver mTabObserver;
+    private final @Nullable ExclusiveAccessManager mExclusiveAccessManager;
 
     public ActivityTabWebContentsDelegateAndroid(
             Tab tab,
@@ -102,9 +112,10 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
             BrowserControlsStateProvider browserControlsStateProvider,
             FullscreenManager fullscreenManager,
             TabCreatorManager tabCreatorManager,
-            @NonNull Supplier<TabModelSelector> tabModelSelectorSupplier,
-            @NonNull Supplier<CompositorViewHolder> compositorViewHolderSupplier,
-            @NonNull Supplier<ModalDialogManager> modalDialogManagerSupplier) {
+            Supplier<TabModelSelector> tabModelSelectorSupplier,
+            Supplier<CompositorViewHolder> compositorViewHolderSupplier,
+            Supplier<ModalDialogManager> modalDialogManagerSupplier,
+            @Nullable ExclusiveAccessManager exclusiveAccessManager) {
         mTab = tab;
         mActivity = activity;
         mChromeActivityNativeDelegate = chromeActivityNativeDelegate;
@@ -115,6 +126,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
         mTabModelSelectorSupplier = tabModelSelectorSupplier;
         mCompositorViewHolderSupplier = compositorViewHolderSupplier;
         mModalDialogManagerSupplier = modalDialogManagerSupplier;
+        mExclusiveAccessManager = exclusiveAccessManager;
         mTabObserver =
                 new EmptyTabObserver() {
                     @Override
@@ -160,23 +172,63 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
     }
 
     @Override
-    public void webContentsCreated(
-            WebContents sourceWebContents,
-            long openerRenderProcessId,
-            long openerRenderFrameId,
-            String frameName,
-            GURL targetUrl,
-            WebContents newWebContents) {
-        // The URL can't be taken from the WebContents if it's paused.  Save it for later.
-        assert !mWebContentsUrlMapping.containsKey(newWebContents);
-        mWebContentsUrlMapping.put(newWebContents, targetUrl);
+    public boolean isFullscreenForTabOrPending() {
+        if (ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            // It may happen that the tab does not have valid WebContents object. In Android
+            // the New Tab Page is not the actual web but the native views.
+            if (mTab.getWebContents() == null) {
+                return false;
+            }
+            return mExclusiveAccessManager != null
+                    && mExclusiveAccessManager.isFullscreenForTabOrPending(mTab.getWebContents());
+        } else {
+            return mFullscreenManager != null
+                    ? mFullscreenManager.getPersistentFullscreenMode()
+                    : false;
+        }
     }
 
     @Override
-    public boolean isFullscreenForTabOrPending() {
-        return mFullscreenManager != null
-                ? mFullscreenManager.getPersistentFullscreenMode()
-                : false;
+    public long getFullscreenTargetDisplay() {
+        if (ChromeFeatureList.isEnabled(
+                ChromeFeatureList.ENABLE_FULLSCREEN_TO_ANY_SCREEN_ANDROID)) {
+            if (mFullscreenManager != null) {
+                return mFullscreenManager.getFullscreenTargetDisplay();
+            }
+        }
+        return INVALID_DISPLAY;
+    }
+
+    @Override
+    public void requestKeyboardLock(boolean escKeyLocked) {
+        if (!ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            return;
+        }
+        // It may happen that the tab does not have valid WebContents object. In Android
+        // the New Tab Page is not the actual web but the native views.
+        if (mTab.getWebContents() == null) {
+            return;
+        }
+        if (mExclusiveAccessManager == null) {
+            return;
+        }
+        mExclusiveAccessManager.requestKeyboardLock(mTab.getWebContents(), escKeyLocked);
+    }
+
+    @Override
+    public void cancelKeyboardLockRequest() {
+        if (!ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            return;
+        }
+        // It may happen that the tab does not have valid WebContents object. In Android
+        // the New Tab Page is not the actual web but the native views.
+        if (mTab.getWebContents() == null) {
+            return;
+        }
+        if (mExclusiveAccessManager == null) {
+            return;
+        }
+        mExclusiveAccessManager.cancelKeyboardLockRequest(mTab.getWebContents());
     }
 
     @Override
@@ -188,23 +240,39 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
     protected boolean addNewContents(
             WebContents sourceWebContents,
             WebContents webContents,
+            GURL targetUrl,
             int disposition,
             WindowFeatures windowFeatures,
             boolean userGesture) {
-        assert mWebContentsUrlMapping.containsKey(webContents);
-
         TabCreator tabCreator = mTabCreatorManager.getTabCreator(mTab.isIncognito());
         assert tabCreator != null;
-
-        // Grab the URL, which might not be available via the Tab.
-        GURL url = mWebContentsUrlMapping.remove(webContents);
 
         // Skip opening a new Tab if it doesn't make sense.
         if (mTab.isClosing()) return false;
 
+        WindowAndroid window = mTab.getWindowAndroid();
         boolean openingPopup =
-                PopupCreator.arePopupsEnabled(mActivity)
+                window != null
+                        && PopupCreator.arePopupsEnabled(windowFeatures, window.getDisplay())
                         && (disposition == WindowOpenDisposition.NEW_POPUP);
+        boolean openingDocumentPip =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.DOCUMENT_PICTURE_IN_PICTURE_API)
+                        && disposition == WindowOpenDisposition.NEW_PICTURE_IN_PICTURE
+                        && window != null
+                        && PopupCreator.isTaskMoveAllowedOnDisplay(
+                                windowFeatures,
+                                window.getDisplay()); // Require task move enabled for docpip;
+        if (disposition == WindowOpenDisposition.NEW_POPUP) {
+            RecordHistogram.recordBooleanHistogram(
+                    "Android.MultiWindowMode.PopupOpensInNewWindow", openingPopup);
+        }
+
+        if (openingDocumentPip) {
+            // Document pip doesn't require a tab to be created, so we can return early.
+            PopupCreator.moveWebContentsToNewDocumentPictureInPictureWindow(
+                    webContents, windowFeatures);
+            return true;
+        }
 
         // Auxiliary navigations starting in a PWA will always cause a tab reparenting, we
         // want to prevent UI effects caused by adding the Tab to the TabModel.
@@ -219,20 +287,21 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
                 navigationTabHelper != null
                         && navigationTabHelper
                                 .getInterceptNavigationDelegate()
-                                .shouldReparentTab(webContents);
+                                .shouldReparentTab(targetUrl);
 
         Tab tab =
                 tabCreator.createTabWithWebContents(
                         mTab,
+                        /* shouldPin= */ false,
                         webContents,
                         TabLaunchType.FROM_LONGPRESS_FOREGROUND,
-                        url,
+                        targetUrl,
                         !openingPopup && !willReparentTab);
         if (tab == null) return false;
 
         if (openingPopup) {
-            PopupCreator.moveTabToNewPopup(
-                    tab, windowFeatures, mTab.getWindowAndroid().getDisplay());
+            assert window != null;
+            PopupCreator.moveTabToNewPopup(tab, windowFeatures);
         }
 
         if (disposition == WindowOpenDisposition.NEW_FOREGROUND_TAB) {
@@ -243,7 +312,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
                 auditor.notifyAuditEvent(
                         ContextUtils.getApplicationContext(),
                         AuditEvent.OPEN_POPUP_URL_SUCCESS,
-                        url.getSpec(),
+                        targetUrl.getSpec(),
                         "");
             }
         }
@@ -273,9 +342,10 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
                     && tabGroupModelFilter.isTabInTabGroup(sourceTab)
                     && tabGroupModelFilter.isTabModelRestored()) {
                 tabGroupModelFilter.mergeListOfTabsToGroup(
-                        Arrays.asList(newTab), sourceTab, /* notify= */ false);
+                        Arrays.asList(newTab),
+                        sourceTab,
+                        /* notify= */ MergeNotificationType.DONT_NOTIFY);
                 if (mChromeActivityNativeDelegate != null) {
-                    assert newTab.getRootId() == sourceTab.getRootId();
                     assert Objects.equals(newTab.getTabGroupId(), sourceTab.getTabGroupId());
                     assert tabGroupModelFilter
                             .getTabsInGroup(newTab.getTabGroupId())
@@ -292,7 +362,39 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
 
     @Override
     protected void setContentsBounds(WebContents source, Rect bounds) {
-        // Do nothing.
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_WINDOW_POPUP_LARGE_SCREEN)) {
+            return;
+        }
+
+        if (!isPopup()) {
+            return;
+        }
+
+        final AconfigFlaggedApiDelegate delegate = AconfigFlaggedApiDelegate.getInstance();
+        if (delegate == null) {
+            return;
+        }
+
+        if (mActivity == null) return;
+        final AppTask appTask = AndroidTaskUtils.getAppTaskFromId(mActivity, mActivity.getTaskId());
+        if (appTask == null) {
+            Log.e(TAG, "Got a null AppTask in setContentsBounds()");
+            return;
+        }
+
+        final Pair<DisplayAndroid, Rect> localCoordinates =
+                DisplayUtil.convertGlobalDipToLocalPxCoordinates(bounds);
+        if (localCoordinates == null) {
+            return;
+        }
+
+        final DisplayAndroid display = localCoordinates.first;
+        final Rect localBounds = localCoordinates.second;
+
+        delegate.moveTaskTo(
+                appTask,
+                display.getDisplayId(),
+                DisplayUtil.clampWindowToDisplay(localBounds, display));
     }
 
     @Override
@@ -323,6 +425,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
         TabModelUtils.setIndex(model, index);
 
         WindowAndroid hostWindow = mTab.getWindowAndroid();
+        if (hostWindow == null) return;
 
         // If the activity is the top resumed activity, then it is already focused so we can drop
         // the call.
@@ -345,6 +448,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
 
     /** Brings chrome's Activity to foreground, if it is not so. */
     protected void bringActivityToForeground() {
+        if (mActivity == null) return;
         if (ChromeFeatureList.isEnabled(
                 ChromeFeatureList.USE_ACTIVITY_MANAGER_FOR_TAB_ACTIVATION)) {
             ((ActivityManager) mActivity.getSystemService(Context.ACTIVITY_SERVICE))
@@ -391,6 +495,16 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
     }
 
     @Override
+    public boolean preHandleKeyboardEvent(long nativeKeyEvent) {
+        if (ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            return mExclusiveAccessManager != null
+                    && mExclusiveAccessManager.preHandleKeyboardEvent(nativeKeyEvent);
+        } else {
+            return false;
+        }
+    }
+
+    @Override
     public void handleKeyboardEvent(KeyEvent event) {
         if (event.getAction() == KeyEvent.ACTION_DOWN && mActivity != null) {
             if (mActivity.onKeyDown(event.getKeyCode(), event)) return;
@@ -407,8 +521,8 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
     }
 
     /**
-     * Redispatches unhandled media keys. This allows bluetooth headphones with play/pause or
-     * other buttons to function correctly.
+     * Redispatches unhandled media keys. This allows bluetooth headphones with play/pause or other
+     * buttons to function correctly.
      */
     private void handleMediaKey(KeyEvent e) {
         switch (e.getKeyCode()) {
@@ -439,8 +553,9 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
 
     @Override
     protected void setOverlayMode(boolean useOverlayMode) {
-        if (mCompositorViewHolderSupplier.hasValue()) {
-            mCompositorViewHolderSupplier.get().setOverlayMode(useOverlayMode);
+        var compositorViewHolder = mCompositorViewHolderSupplier.get();
+        if (compositorViewHolder != null) {
+            compositorViewHolder.setOverlayMode(useOverlayMode);
         }
     }
 
@@ -480,7 +595,7 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
 
     @Override
     public boolean controlsResizeView() {
-        return mCompositorViewHolderSupplier.hasValue()
+        return mCompositorViewHolderSupplier.get() != null
                 && mCompositorViewHolderSupplier.get().controlsResizeView();
     }
 
@@ -489,30 +604,70 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
         if (mActivity == null) return 0;
 
         View rootView = mActivity.getWindow().getDecorView().getRootView();
-        return mTab.getWindowAndroid().getKeyboardDelegate().calculateTotalKeyboardHeight(rootView);
+        WindowAndroid window = mTab.getWindowAndroid();
+        if (window == null) return 0;
+        return window.getKeyboardDelegate().calculateTotalKeyboardHeight(rootView);
     }
 
     @Override
-    public void enterFullscreenModeForTab(boolean prefersNavigationBar, boolean prefersStatusBar) {
-        if (mFullscreenManager != null) {
-            mFullscreenManager.onEnterFullscreen(
-                    mTab, new FullscreenOptions(prefersNavigationBar, prefersStatusBar));
+    public void enterFullscreenModeForTab(
+            RenderFrameHost renderFrameHost,
+            boolean prefersNavigationBar,
+            boolean prefersStatusBar,
+            long displayId) {
+        if (!ChromeFeatureList.isEnabled(
+                ChromeFeatureList.ENABLE_FULLSCREEN_TO_ANY_SCREEN_ANDROID)) {
+            displayId = INVALID_DISPLAY;
+        }
+        if (ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            if (mExclusiveAccessManager != null) {
+                mExclusiveAccessManager.enterFullscreenModeForTab(
+                        renderFrameHost,
+                        new FullscreenOptions(prefersNavigationBar, prefersStatusBar, displayId));
+            }
+        } else {
+            if (mFullscreenManager != null) {
+                mFullscreenManager.onEnterFullscreen(
+                        mTab,
+                        new FullscreenOptions(prefersNavigationBar, prefersStatusBar, displayId));
+            }
         }
     }
 
     @Override
     public void fullscreenStateChangedForTab(
-            boolean prefersNavigationBar, boolean prefersStatusBar) {
-        // State-only changes are useful for recursive fullscreen activation. Early out if
-        // fullscreen mode is not on.
-        if (mFullscreenManager == null || !mFullscreenManager.getPersistentFullscreenMode()) return;
-        mFullscreenManager.onEnterFullscreen(
-                mTab, new FullscreenOptions(prefersNavigationBar, prefersStatusBar));
+            RenderFrameHost renderFrameHost,
+            boolean prefersNavigationBar,
+            boolean prefersStatusBar,
+            long displayId) {
+        if (ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            if (mExclusiveAccessManager != null) {
+                mExclusiveAccessManager.enterFullscreenModeForTab(
+                        renderFrameHost,
+                        new FullscreenOptions(prefersNavigationBar, prefersStatusBar, displayId));
+            }
+        } else {
+            // State-only changes are useful for recursive fullscreen activation. Early out if
+            // fullscreen mode is not on.
+            if (mFullscreenManager == null || !mFullscreenManager.getPersistentFullscreenMode()) {
+                return;
+            }
+            mFullscreenManager.onEnterFullscreen(
+                    mTab, new FullscreenOptions(prefersNavigationBar, prefersStatusBar, displayId));
+        }
     }
 
     @Override
     public void exitFullscreenModeForTab() {
-        if (mFullscreenManager != null) mFullscreenManager.onExitFullscreen(mTab);
+        if (ChromeFeatureList.sEnableExclusiveAccessManager.isEnabled()) {
+            if (mExclusiveAccessManager != null) {
+                mExclusiveAccessManager.exitFullscreenModeForTab(mTab.getWebContents());
+            }
+        } else {
+            if (mFullscreenManager != null) {
+                mFullscreenManager.onExitFullscreen(mTab);
+            }
+        }
     }
 
     @Override
@@ -551,12 +706,20 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
         return mIsCustomTab;
     }
 
+    @Override
+    protected boolean isPopup() {
+        return false;
+    }
+
     private void showRepostFormWarningTabModalDialog() {
         // As a rule, showRepostFormWarningDialog should only be called on active tabs, as it's
         // called right after WebContents::Activate. But in various corner cases, that
         // activation may fail.
         if (mActivity == null || !mTab.isUserInteractable()) {
-            mTab.getWebContents().getNavigationController().cancelPendingReload();
+            WebContents webContents = mTab.getWebContents();
+            if (webContents != null) {
+                webContents.getNavigationController().cancelPendingReload();
+            }
             return;
         }
 
@@ -566,20 +729,18 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
                         modalDialogManager,
                         (Integer dismissalCause) -> {
                             if (!mTab.isInitialized()) return;
+                            WebContents webContents = mTab.getWebContents();
+                            if (webContents == null) return;
                             switch (dismissalCause) {
                                 case DialogDismissalCause.POSITIVE_BUTTON_CLICKED:
-                                    mTab.getWebContents()
-                                            .getNavigationController()
-                                            .continuePendingReload();
+                                    webContents.getNavigationController().continuePendingReload();
                                     break;
                                 case DialogDismissalCause.ACTIVITY_DESTROYED:
                                 case DialogDismissalCause.TAB_DESTROYED:
                                     // Intentionally ignored as the tab object is gone.
                                     break;
                                 default:
-                                    mTab.getWebContents()
-                                            .getNavigationController()
-                                            .cancelPendingReload();
+                                    webContents.getNavigationController().cancelPendingReload();
                                     break;
                             }
                         });
@@ -616,10 +777,24 @@ public class ActivityTabWebContentsDelegateAndroid extends TabWebContentsDelegat
 
     @Override
     protected boolean isDynamicSafeAreaInsetsEnabled() {
+        if (mActivity == null) return false;
         return EdgeToEdgeUtils.isEdgeToEdgeBottomChinEnabled(mActivity);
     }
 
-    protected TabGroupModelFilter getTabGroupModelFilter(Tab tab) {
+    @Override
+    public void requestPointerLock(
+            WebContents webContents, boolean userGesture, boolean lastUnlockedByTarget) {
+        assert mExclusiveAccessManager != null;
+        mExclusiveAccessManager.requestPointerLock(webContents, userGesture, lastUnlockedByTarget);
+    }
+
+    @Override
+    public void lostPointerLock() {
+        assert mExclusiveAccessManager != null;
+        mExclusiveAccessManager.lostPointerLock();
+    }
+
+    protected @Nullable TabGroupModelFilter getTabGroupModelFilter(Tab tab) {
         return TabModelUtils.getTabGroupModelFilterByTab(tab);
     }
 

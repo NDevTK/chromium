@@ -246,7 +246,7 @@ void OOPVideoDecoderService::OnVideoFrameDecoded(
   CHECK(frame->metadata().allow_overlay);
   CHECK(!frame->metadata().end_of_stream);
   CHECK(frame->metadata().power_efficient);
-  CHECK(!frame->HasMappableGpuBuffer());
+  CHECK(!frame->HasMappableSharedImage());
 
   video_decoder_client_remote_->OnVideoFrameDecoded(
       std::move(frame), can_read_without_stalling, *release_token);
@@ -258,7 +258,7 @@ void OOPVideoDecoderService::OnWaiting(WaitingReason reason) {
   video_decoder_client_remote_->OnWaiting(reason);
 }
 
-void OOPVideoDecoderService::RequestOverlayInfo(bool restart_for_transitions) {
+void OOPVideoDecoderService::RequestOverlayInfo() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   NOTREACHED();
 }

@@ -7,9 +7,12 @@
 #include "base/files/file_util.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "chrome/browser/ui/read_anything/read_anything_prefs.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "content/public/browser/browser_thread.h"
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+#include "base/no_destructor.h"
 #include "chrome/browser/accessibility/embedded_a11y_extension_loader.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "ui/accessibility/accessibility_features.h"
@@ -17,19 +20,15 @@
 
 namespace {
 
-const base::FilePath::CharType kManifestFileName[] =
-    FILE_PATH_LITERAL("wasm_tts_manifest.json");
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 const base::FilePath::CharType kBindingsMainWasmFileName[] =
     FILE_PATH_LITERAL("bindings_main.wasm");
 const base::FilePath::CharType kBindingsMainJsFileName[] =
     FILE_PATH_LITERAL("bindings_main.js");
-const base::FilePath::CharType kTTSEngineJsBinFileName[] =
-    FILE_PATH_LITERAL("googletts_engine_js_bin.js");
 const base::FilePath::CharType kWorkletProcessorJsFileName[] =
     FILE_PATH_LITERAL("streaming_worklet_processor.js");
 const base::FilePath::CharType kVoicesJsonFileName[] =
     FILE_PATH_LITERAL("voices.json");
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 const base::FilePath::CharType kManifestV3FileName[] =
     FILE_PATH_LITERAL("wasm_tts_manifest_v3.json");
 const base::FilePath::CharType kOffscreenHtmlFileName[] =
@@ -72,6 +71,11 @@ class WasmTTSEngineDirectory {
     FireCallbacks();
   }
 
+  bool IsSet() const {
+    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+    return !dir_.empty();
+  }
+
  private:
   void FireCallbacks() {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -93,6 +97,21 @@ class WasmTTSEngineDirectory {
 }  // namespace
 
 namespace component_updater {
+
+WasmTtsEngineComponentInstallerPolicy::WasmTtsEngineComponentInstallerPolicy(
+    PrefService* pref_service)
+    : pref_service_(pref_service) {}
+
+// static
+void WasmTtsEngineComponentInstallerPolicy::RegisterPrefs(
+    PrefRegistrySimple* registry) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  registry->RegisterTimePref(prefs::kAccessibilityReadAnythingDateLastOpened,
+                             base::Time());
+  registry->RegisterBooleanPref(
+      prefs::kAccessibilityReadAnythingTTSEngineReinstalled, false);
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+}
 
 bool WasmTtsEngineComponentInstallerPolicy::
     SupportsGroupPolicyEnabledComponentUpdates() const {
@@ -120,15 +139,81 @@ void WasmTtsEngineComponentInstallerPolicy::ComponentReady(
           << install_dir.value();
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  if (features::IsWasmTtsComponentUpdaterEnabled() &&
-      !features::IsWasmTtsEngineAutoInstallDisabled()) {
+  if (!features::IsWasmTtsEngineAutoInstallDisabled()) {
     // Instead of installing the component extension as soon as it is ready,
     // store the install directory, so that the install can be triggered
     // via ReadAnythingService once the side panel has been opened. This
     // prevents the extension from being installed unnecessarily for those
     // who aren't using reading mode.
+    // An exception is made for reinstalls at THRESHOLD_RECENT and
+    // THRESHOLD_LONGER amounts of time since reading mode was last opened. At
+    // these points, the WASM TTS Engine is reinstalled in order to clean up
+    // any removed voices.
     WasmTTSEngineDirectory* wasm_directory = WasmTTSEngineDirectory::Get();
     wasm_directory->Set(install_dir);
+
+    MaybeReinstallTtsEngine(install_dir);
+  }
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+}
+
+// In order to uninstall unused voices when reading mode has been unused for an
+// extended period of time, Chrome needs to reinstall the TTS engine. This will
+// be removed the next time Chrome is restarted.
+void WasmTtsEngineComponentInstallerPolicy::MaybeReinstallTtsEngine(
+    const base::FilePath& install_dir) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  const base::Time current_time = base::Time::Now();
+  const base::Time date_last_opened =
+      pref_service_->GetTime(prefs::kAccessibilityReadAnythingDateLastOpened);
+  const bool previously_reinstalled = pref_service_->GetBoolean(
+      prefs::kAccessibilityReadAnythingTTSEngineReinstalled);
+
+  // Reading mode hasn't been opened in the last 90 days, so don't reinstall
+  // the engine.
+  if (date_last_opened.is_null()) {
+    return;
+  }
+
+  // Reading mode was opened more than 14 days ago and less than 90 days ago
+  // but the engine was already installed after 14 days to remove unused voices.
+  // Reading mode doesn't need to re-install the engine to clean up voices
+  // until 90 days have passed.
+  if (previously_reinstalled &&
+      (current_time - date_last_opened) < kThresholdLonger) {
+    return;
+  }
+
+  // Reading mode was opened in the last 14 days, so don't reinstall the engine.
+  if ((current_time - date_last_opened) < kThresholdRecent) {
+    return;
+  }
+
+  const base::FilePath::CharType* manifest_file = kManifestV3FileName;
+
+  // If it's been more than 14 days since reading mode was last opened,
+  // re-install the engine so that unused voices can be removed.
+  EmbeddedA11yExtensionLoader::GetInstance()->Init();
+  EmbeddedA11yExtensionLoader::GetInstance()->InstallExtensionWithIdAndPath(
+      extension_misc::kComponentUpdaterTTSEngineExtensionId, install_dir,
+      manifest_file,
+      /*should_localize=*/false);
+
+  // If reading mode hasn't been opened in longer than 14 days but less than
+  // 90 days, update that the TTS engine has been reinstalled to prevent
+  // subsequent reinstalls from day 14 to day 90.
+  if (!previously_reinstalled) {
+    pref_service_->SetBoolean(
+        prefs::kAccessibilityReadAnythingTTSEngineReinstalled, true);
+  }
+
+  // If it's been more than 90 days, clear both preferences for reading mode
+  // last opened state. The engine will now not be reinstalled until reading
+  // mode is reopened.
+  if ((current_time - date_last_opened) >= kThresholdLonger) {
+    pref_service_->ClearPref(prefs::kAccessibilityReadAnythingDateLastOpened);
+    pref_service_->ClearPref(
+        prefs::kAccessibilityReadAnythingTTSEngineReinstalled);
   }
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 }
@@ -138,23 +223,19 @@ bool WasmTtsEngineComponentInstallerPolicy::VerifyInstallation(
     const base::Value::Dict& /* manifest */,
     const base::FilePath& install_dir) const {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  if (features::IsWasmTtsComponentUpdaterV3Enabled()) {
-    return base::PathExists(install_dir.Append(kManifestV3FileName)) &&
-           base::PathExists(install_dir.Append(kBindingsMainWasmFileName)) &&
-           base::PathExists(install_dir.Append(kBindingsMainJsFileName)) &&
-           base::PathExists(install_dir.Append(kOffscreenHtmlFileName)) &&
-           base::PathExists(install_dir.Append(kOffscreenCompiledFileName)) &&
-           base::PathExists(install_dir.Append(kBackgroundCompiledFileName)) &&
-           base::PathExists(install_dir.Append(kWorkletProcessorJsFileName)) &&
-           base::PathExists(install_dir.Append(kVoicesJsonFileName));
-  }
-#endif
-  return base::PathExists(install_dir.Append(kManifestFileName)) &&
+  return base::PathExists(install_dir.Append(kManifestV3FileName)) &&
          base::PathExists(install_dir.Append(kBindingsMainWasmFileName)) &&
          base::PathExists(install_dir.Append(kBindingsMainJsFileName)) &&
-         base::PathExists(install_dir.Append(kTTSEngineJsBinFileName)) &&
+         base::PathExists(install_dir.Append(kOffscreenHtmlFileName)) &&
+         base::PathExists(install_dir.Append(kOffscreenCompiledFileName)) &&
+         base::PathExists(install_dir.Append(kBackgroundCompiledFileName)) &&
          base::PathExists(install_dir.Append(kWorkletProcessorJsFileName)) &&
          base::PathExists(install_dir.Append(kVoicesJsonFileName));
+#else
+  // Attempting to install the TTS extension should never be done outside of
+  // Windows, Mac, and Linux. Return false as a fallback just in case.
+  return false;
+#endif
 }
 
 base::FilePath WasmTtsEngineComponentInstallerPolicy::GetRelativeInstallDir()
@@ -177,10 +258,11 @@ WasmTtsEngineComponentInstallerPolicy::GetInstallerAttributes() const {
   return update_client::InstallerAttributes();
 }
 
-void RegisterWasmTtsEngineComponent(ComponentUpdateService* cus) {
+void RegisterWasmTtsEngineComponent(ComponentUpdateService* cus,
+                                    PrefService* prefs) {
   VLOG(1) << "Registering WASM TTS Engine component.";
   auto installer = base::MakeRefCounted<ComponentInstaller>(
-      std::make_unique<WasmTtsEngineComponentInstallerPolicy>());
+      std::make_unique<WasmTtsEngineComponentInstallerPolicy>(prefs));
   installer->Register(cus, base::OnceClosure());
 }
 
@@ -189,6 +271,15 @@ void WasmTtsEngineComponentInstallerPolicy::GetWasmTTSEngineDirectory(
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   WasmTTSEngineDirectory* wasm_directory = WasmTTSEngineDirectory::Get();
   wasm_directory->Get(std::move(callback));
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+}
+
+// static
+bool WasmTtsEngineComponentInstallerPolicy::IsWasmTTSEngineDirectorySet() {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  return WasmTTSEngineDirectory::Get()->IsSet();
+#else
+  return false;
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 }
 

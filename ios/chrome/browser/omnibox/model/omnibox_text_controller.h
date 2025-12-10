@@ -10,14 +10,14 @@
 #import <string>
 
 #import "ios/chrome/browser/omnibox/model/omnibox_text_model.h"
+#import "ios/chrome/browser/omnibox/public/omnibox_presentation_context.h"
 
 @protocol AutocompleteSuggestion;
 @class OmniboxAutocompleteController;
 class OmniboxClient;
-class OmniboxControllerIOS;
-class OmniboxEditModelIOS;
 @protocol OmniboxFocusDelegate;
 @protocol OmniboxTextControllerDelegate;
+@protocol OmniboxTextInput;
 @class OmniboxTextFieldIOS;
 
 /// Controller of the omnibox text.
@@ -33,19 +33,16 @@ class OmniboxEditModelIOS;
 @property(nonatomic, weak)
     OmniboxAutocompleteController* omniboxAutocompleteController;
 
-/// Omnibox textfield.
-@property(nonatomic, weak) OmniboxTextFieldIOS* textField;
+/// Omnibox text input.
+@property(nonatomic, weak) id<OmniboxTextInput> textInput;
 
 /// Returns the current selection range.
 @property(nonatomic, assign, readonly) NSRange currentSelection;
 
-/// Temporary initializer, used during the refactoring. crbug.com/390409559
-- (instancetype)initWithOmniboxController:
-                    (OmniboxControllerIOS*)omniboxController
-                            omniboxClient:(OmniboxClient*)omniboxClient
-                         omniboxEditModel:(OmniboxEditModelIOS*)omniboxEditModel
-                         omniboxTextModel:(OmniboxTextModel*)omniboxTextModel
-                            inLensOverlay:(BOOL)inLensOverlay
+- (instancetype)initWithOmniboxClient:(OmniboxClient*)omniboxClient
+                     omniboxTextModel:(OmniboxTextModel*)omniboxTextModel
+                  presentationContext:
+                      (OmniboxPresentationContext)presentationContext
     NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -70,7 +67,7 @@ class OmniboxEditModelIOS;
 /// Notifies the client about input changes.
 - (void)notifyClientOnUserInputInProgressChange:(BOOL)changedToUserInProgress;
 
-/// Retrieves the current textfield selection bounds.
+/// Retrieves the current text input selection bounds.
 - (void)getSelectionBounds:(size_t*)start end:(size_t*)end;
 
 /// Reverts the edit and popup back to their unedited state (permanent text
@@ -124,6 +121,9 @@ class OmniboxEditModelIOS;
 /// change should be immediately user-visible, because either the user is not
 /// editing or the edit does not have focus.
 - (bool)resetDisplayTexts;
+
+/// Removes the pre-edit text.
+- (void)removePreEditText;
 
 #pragma mark - Autocomplete event
 

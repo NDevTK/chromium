@@ -7,15 +7,18 @@ import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min
 import type {SettingsClearBrowsingDataTimePicker} from 'chrome://settings/lazy_load.js';
 import {getTimePeriodString, TimePeriod} from 'chrome://settings/lazy_load.js';
 import type {SettingsPrefsElement} from 'chrome://settings/settings.js';
-import {CrSettingsPrefs} from 'chrome://settings/settings.js';
+import {CrSettingsPrefs, MetricsBrowserProxyImpl} from 'chrome://settings/settings.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks} from 'chrome://webui-test/polymer_test_util.js';
 import {isVisible} from 'chrome://webui-test/test_util.js';
+
+import {TestMetricsBrowserProxy} from './test_metrics_browser_proxy.js';
 
 // clang-format on
 
 suite('DeleteBrowsingDataTimePicker', function() {
   let timePicker: SettingsClearBrowsingDataTimePicker;
+  let testMetricsBrowserProxy: TestMetricsBrowserProxy;
   let settingsPrefs: SettingsPrefsElement;
 
   suiteSetup(function() {
@@ -30,6 +33,8 @@ suite('DeleteBrowsingDataTimePicker', function() {
     timePicker.prefs = settingsPrefs.prefs;
     timePicker.setPrefValue(
         'browser.clear_data.time_period', TimePeriod.LAST_HOUR);
+    testMetricsBrowserProxy = new TestMetricsBrowserProxy();
+    MetricsBrowserProxyImpl.setInstance(testMetricsBrowserProxy);
 
     document.body.appendChild(timePicker);
     return flushTasks();
@@ -41,7 +46,7 @@ suite('DeleteBrowsingDataTimePicker', function() {
     assertTrue(!!visibleOptions);
 
     for (const option of visibleOptions) {
-      if (option.textContent!.trim() === getTimePeriodString(timePeriod)) {
+      if (option.textContent.trim() === getTimePeriodString(timePeriod)) {
         return option;
       }
     }
@@ -59,7 +64,7 @@ suite('DeleteBrowsingDataTimePicker', function() {
     assertTrue(!!menuItems);
 
     for (const item of menuItems) {
-      if (item.textContent!.trim() === getTimePeriodString(timePeriod)) {
+      if (item.textContent.trim() === getTimePeriodString(timePeriod)) {
         return item;
       }
     }
@@ -148,7 +153,7 @@ suite('DeleteBrowsingDataTimePicker', function() {
     const selectedTimePeriodChip = getSelectedChip();
     assertTrue(!!selectedTimePeriodChip);
     assertEquals(
-        selectedTimePeriodChip.textContent!.trim(),
+        selectedTimePeriodChip.textContent.trim(),
         getTimePeriodString(TimePeriod.ALL_TIME));
 
     verifyChipsExistForTimePeriods([
@@ -174,7 +179,7 @@ suite('DeleteBrowsingDataTimePicker', function() {
     const selectedChip = getSelectedChip();
     assertTrue(!!selectedChip);
     assertEquals(
-        selectedChip.textContent!.trim(),
+        selectedChip.textContent.trim(),
         getTimePeriodString(TimePeriod.FOUR_WEEKS));
 
     verifyChipsExistForTimePeriods([
@@ -256,5 +261,15 @@ suite('DeleteBrowsingDataTimePicker', function() {
     assertEquals(
         TimePeriod.LAST_DAY,
         timePicker.getPref('browser.clear_data.time_period').value);
+  });
+
+  test('MetricsTimePickerMoreClick', async function() {
+    // Open the 'More' dropdown menu.
+    timePicker.$.moreButton.click();
+    flush();
+
+    assertEquals(
+        'Settings.DeleteBrowsingData.TimePickerMoreClick',
+        await testMetricsBrowserProxy.whenCalled('recordAction'));
   });
 });

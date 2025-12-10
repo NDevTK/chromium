@@ -27,7 +27,9 @@ _VALID_PERF_POOLS = {
     'android_arm64-builder-perf': {'chrome.tests'},
     'chromeos-kevin-perf-fyi': {'chrome.tests'},
     'fuchsia-perf-nsn': {'chrome.tests'},
+    'fuchsia-perf-nsn-pgo': {'chrome.tests'},
     'fuchsia-perf-shk': {'chrome.tests'},
+    'fuchsia-perf-shk-pgo': {'chrome.tests'},
     'linux-builder-perf': {'chrome.tests'},
     'mac-arm-builder-perf': {'chrome.tests'},
     'mac-arm-builder-perf-pgo': {'chrome.tests'},
@@ -37,7 +39,7 @@ _VALID_PERF_POOLS = {
 _VALID_WEBVIEW_BROWSERS = {
     'android-webview',
     'android-webview-google',
-    'android-webview-trichrome-google-bundle',
+    'android-webview-standalone-google',
 }
 
 _PERFORMANCE_TEST_SUITES = {
@@ -210,15 +212,9 @@ def main(args):
   fyi_waterfall_file = os.path.join(
       path_util.GetChromiumSrcDir(), 'testing', 'buildbot',
       'chromium.perf.fyi.json')
-  calibration_waterfall_file = os.path.join(path_util.GetChromiumSrcDir(),
-                                            'testing', 'buildbot',
-                                            'chromium.perf.calibration.json')
 
   with open(fyi_waterfall_file) as f:
     ValidatePerfConfigFile(f, False)
 
   with open(waterfall_file) as f:
     ValidatePerfConfigFile(f, True)
-
-  with open(calibration_waterfall_file) as f:
-    ValidatePerfConfigFile(f, False)

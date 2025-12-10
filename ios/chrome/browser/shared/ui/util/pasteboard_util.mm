@@ -8,7 +8,6 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #import "base/functional/bind.h"
-#import "base/functional/callback_forward.h"
 #import "base/functional/callback_helpers.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/open_from_clipboard/clipboard_async_wrapper_ios.h"
@@ -57,6 +56,7 @@ void StoreURLsInPasteboard(const std::vector<GURL>& urls,
   }
 
   if (!pasteboard_items.count) {
+    std::move(completion).Run();
     return;
   }
 
@@ -76,13 +76,21 @@ void StoreInPasteboard(NSString* text,
   DCHECK(text);
   DCHECK(url.is_valid());
   if (!text || !url.is_valid()) {
+    std::move(completion).Run();
     return;
   }
 
   NSData* plainText = [base::SysUTF8ToNSString(url.spec())
       dataUsingEncoding:NSUTF8StringEncoding];
+  // The conversion can sometimes return nil, so that must be checked for.
+  NSURL* nsurl = net::NSURLWithGURL(url);
+  if (!nsurl) {
+    std::move(completion).Run();
+    return;
+  }
+
   NSDictionary* copiedURL = @{
-    UTTypeURL.identifier : net::NSURLWithGURL(url),
+    UTTypeURL.identifier : nsurl,
     UTTypeUTF8PlainText.identifier : plainText,
   };
 

@@ -4,14 +4,18 @@
 
 package org.chromium.chrome.browser.ntp;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
 
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.RecentlyClosedEntriesManager;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.invalidation.SessionsInvalidationManager;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -25,8 +29,6 @@ import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.signin.services.SigninManager.SignInStateObserver;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel;
-import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper;
 import org.chromium.chrome.browser.ui.favicon.FaviconHelper.FaviconImageCallback;
 import org.chromium.chrome.browser.ui.signin.PersonalizedSigninPromoView;
@@ -45,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 
 /** Provides the domain logic and data for RecentTabsPage and RecentTabsRowAdapter. */
+@NullMarked
 public class RecentTabsManager
         implements SyncService.SyncStateChangedListener,
                 SignInStateObserver,
@@ -56,32 +59,24 @@ public class RecentTabsManager
         void onUpdated();
     }
 
-    private static final int RECENTLY_CLOSED_MAX_ENTRY_COUNT = 5;
-
-    private static RecentlyClosedTabManager sRecentlyClosedTabManagerForTests;
-
     private final Profile mProfile;
     private final Tab mActiveTab;
-    private final TabModelSelector mTabModelSelector;
     private final Runnable mShowHistoryManager;
-    private final SigninPromoCoordinator mSigninPromoCoordinator;
-
-    private TabModel mTabModel;
+    private final @Nullable SigninPromoCoordinator mSigninPromoCoordinator;
     private FaviconHelper mFaviconHelper;
     private ForeignSessionHelper mForeignSessionHelper;
     private List<ForeignSession> mForeignSessions;
-    private List<RecentlyClosedEntry> mRecentlyClosedEntries;
     private RecentTabsPagePrefs mPrefs;
-    private RecentlyClosedTabManager mRecentlyClosedTabManager;
     private SigninManager mSignInManager;
-    private UpdatedCallback mUpdatedCallback;
-    private View mSigninPromoView;
+    private @Nullable UpdatedCallback mUpdatedCallback;
+    private @Nullable View mSigninPromoView;
     private boolean mShouldShowPromo;
     private boolean mIsDestroyed;
 
     private final ProfileDataCache mProfileDataCache;
     private final SyncPromoController mSyncPromoController;
     private final SyncService mSyncService;
+    private final RecentlyClosedEntriesManager mRecentlyClosedEntriesManager;
 
     /**
      * Maps Session IDs to whether that entry was restored split by entry type. These are used to
@@ -97,34 +92,32 @@ public class RecentTabsManager
      * Create an RecentTabsManager to be used with RecentTabsPage and RecentTabsRowAdapter.
      *
      * @param tab The Tab that is showing this recent tabs page.
-     * @param tabModelSelector The TabModelSelector that contains or will contain {@code tab}.
      * @param profile Profile that is associated with the current session.
      * @param context the Android context this manager will work in.
      * @param showHistoryManager Runnable showing history manager UI.
      */
     public RecentTabsManager(
             Tab tab,
-            TabModelSelector tabModelSelector,
             Profile profile,
             Context context,
-            Runnable showHistoryManager) {
+            Runnable showHistoryManager,
+            RecentlyClosedEntriesManager recentlyClosedEntriesManager) {
         mProfile = profile;
         mActiveTab = tab;
-        mTabModelSelector = tabModelSelector;
         mShowHistoryManager = showHistoryManager;
         mForeignSessionHelper = new ForeignSessionHelper(profile);
         mPrefs = new RecentTabsPagePrefs(profile);
         mFaviconHelper = new FaviconHelper();
-        mRecentlyClosedTabManager =
-                sRecentlyClosedTabManagerForTests != null
-                        ? sRecentlyClosedTabManagerForTests
-                        : new RecentlyClosedBridge(profile, tabModelSelector);
-        mSignInManager = IdentityServicesProvider.get().getSigninManager(mProfile);
+        mRecentlyClosedEntriesManager = recentlyClosedEntriesManager;
+        mSignInManager = assumeNonNull(IdentityServicesProvider.get().getSigninManager(mProfile));
 
-        mProfileDataCache = ProfileDataCache.createWithDefaultImageSizeAndNoBadge(context);
+        mProfileDataCache =
+                ProfileDataCache.createWithDefaultImageSizeAndNoBadge(
+                        context, mSignInManager.getIdentityManager());
         AccountPickerBottomSheetStrings bottomSheetStrings =
                 new AccountPickerBottomSheetStrings.Builder(
-                                R.string.signin_account_picker_bottom_sheet_title)
+                                context.getString(
+                                        R.string.signin_account_picker_bottom_sheet_title))
                         .build();
         mSyncPromoController =
                 new SyncPromoController(
@@ -145,10 +138,11 @@ public class RecentTabsManager
         } else {
             mSigninPromoCoordinator = null;
         }
-        mSyncService = SyncServiceFactory.getForProfile(mProfile);
+        mSyncService = assumeNonNull(SyncServiceFactory.getForProfile(mProfile));
 
-        mRecentlyClosedTabManager.setEntriesUpdatedRunnable(this::updateRecentlyClosedEntries);
-        updateRecentlyClosedEntries();
+        mRecentlyClosedEntriesManager.setEntriesUpdatedCallback(
+                (recentlyClosedEntries) -> updateRecentlyClosedEntries(recentlyClosedEntries));
+        mRecentlyClosedEntriesManager.updateRecentlyClosedEntries();
 
         mForeignSessionHelper.setOnForeignSessionCallback(this::updateForeignSessions);
         updateForeignSessions();
@@ -195,6 +189,7 @@ public class RecentTabsManager
     /**
      * Should be called when this object is no longer needed. Performs necessary listener tear down.
      */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         mIsDestroyed = true;
 
@@ -216,9 +211,6 @@ public class RecentTabsManager
         mFaviconHelper.destroy();
         mFaviconHelper = null;
 
-        mRecentlyClosedTabManager.destroy();
-        mRecentlyClosedTabManager = null;
-
         mUpdatedCallback = null;
 
         mPrefs.destroy();
@@ -230,19 +222,18 @@ public class RecentTabsManager
         mForeignSessionHelper = null;
     }
 
-    private void updateRecentlyClosedEntries() {
-        mRecentlyClosedEntries =
-                mRecentlyClosedTabManager.getRecentlyClosedEntries(RECENTLY_CLOSED_MAX_ENTRY_COUNT);
-        for (RecentlyClosedEntry entry : mRecentlyClosedEntries) {
-            if (entry instanceof RecentlyClosedTab
-                    && !mTabSessionIdsRestored.containsKey(entry.getSessionId())) {
-                mTabSessionIdsRestored.put(entry.getSessionId(), false);
-            } else if (entry instanceof RecentlyClosedGroup
-                    && !mGroupSessionIdsRestored.containsKey(entry.getSessionId())) {
-                mGroupSessionIdsRestored.put(entry.getSessionId(), false);
-            } else if (entry instanceof RecentlyClosedBulkEvent
-                    && !mBulkSessionIdsRestored.containsKey(entry.getSessionId())) {
-                mBulkSessionIdsRestored.put(entry.getSessionId(), false);
+    private void updateRecentlyClosedEntries(List<RecentlyClosedEntry> entries) {
+        for (RecentlyClosedEntry entry : entries) {
+            assert entry instanceof SessionRecentlyClosedEntry;
+            if (entry instanceof RecentlyClosedTab closedTab
+                    && !mTabSessionIdsRestored.containsKey(closedTab.getSessionId())) {
+                mTabSessionIdsRestored.put(closedTab.getSessionId(), false);
+            } else if (entry instanceof RecentlyClosedGroup closedGroup
+                    && !mGroupSessionIdsRestored.containsKey(closedGroup.getSessionId())) {
+                mGroupSessionIdsRestored.put(closedGroup.getSessionId(), false);
+            } else if (entry instanceof RecentlyClosedBulkEvent closedBulkEvent
+                    && !mBulkSessionIdsRestored.containsKey(closedBulkEvent.getSessionId())) {
+                mBulkSessionIdsRestored.put(closedBulkEvent.getSessionId(), false);
             }
         }
         onUpdateDone();
@@ -264,7 +255,7 @@ public class RecentTabsManager
      * @return Most up-to-date list of recently closed tabs.
      */
     public List<RecentlyClosedEntry> getRecentlyClosedEntries() {
-        return mRecentlyClosedEntries;
+        return mRecentlyClosedEntriesManager.getRecentlyClosedEntries();
     }
 
     /**
@@ -294,7 +285,7 @@ public class RecentTabsManager
         mTabSessionIdsRestored.put(tab.getSessionId(), true);
         RecordUserAction.record("MobileRecentTabManagerRecentTabOpened");
         // Window disposition will select which tab to open.
-        mRecentlyClosedTabManager.openRecentlyClosedTab(getTabModel(), tab, windowDisposition);
+        mRecentlyClosedEntriesManager.openRecentlyClosedTab(tab, windowDisposition);
     }
 
     /**
@@ -307,15 +298,16 @@ public class RecentTabsManager
 
         assert !(entry instanceof RecentlyClosedTab)
                 : "Opening a RecentlyClosedTab should use openRecentlyClosedTab().";
+        assert entry instanceof SessionRecentlyClosedEntry;
 
-        if (entry instanceof RecentlyClosedGroup) {
-            mGroupSessionIdsRestored.put(entry.getSessionId(), true);
+        if (entry instanceof RecentlyClosedGroup closedGroup) {
+            mGroupSessionIdsRestored.put(closedGroup.getSessionId(), true);
             RecordUserAction.record("MobileRecentTabManagerRecentGroupOpened");
-        } else if (entry instanceof RecentlyClosedBulkEvent) {
-            mBulkSessionIdsRestored.put(entry.getSessionId(), true);
+        } else if (entry instanceof RecentlyClosedBulkEvent closedBulkEvent) {
+            mBulkSessionIdsRestored.put(closedBulkEvent.getSessionId(), true);
             RecordUserAction.record("MobileRecentTabManagerRecentBulkEventOpened");
         }
-        mRecentlyClosedTabManager.openRecentlyClosedEntry(getTabModel(), entry);
+        mRecentlyClosedEntriesManager.openRecentlyClosedEntry(entry);
     }
 
     /** Opens the history page. */
@@ -425,7 +417,7 @@ public class RecentTabsManager
     public void clearRecentlyClosedEntries() {
         if (mIsDestroyed) return;
         RecordUserAction.record("MobileRecentTabManagerRecentTabsCleared");
-        mRecentlyClosedTabManager.clearRecentlyClosedEntries();
+        mRecentlyClosedEntriesManager.clearRecentlyClosedEntries();
     }
 
     /**
@@ -454,6 +446,7 @@ public class RecentTabsManager
 
     private boolean calculateShouldShowPromo() {
         if (ChromeFeatureList.isEnabled(ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP)) {
+            assumeNonNull(mSigninPromoCoordinator);
             return mSigninPromoCoordinator.canShowPromo();
         } else {
             return mSyncPromoController.canShowSyncPromo();
@@ -481,6 +474,7 @@ public class RecentTabsManager
 
     View getSigninPromoView(ViewGroup parent) {
         if (mSigninPromoView == null) {
+            assumeNonNull(mSigninPromoCoordinator);
             mSigninPromoView = mSigninPromoCoordinator.buildPromoView(parent);
             mSigninPromoCoordinator.setView(mSigninPromoView);
         }
@@ -536,22 +530,5 @@ public class RecentTabsManager
 
         if (mIsDestroyed) return;
         onUpdateDone();
-    }
-
-    private TabModel getTabModel() {
-        // When RecentTabsManager is created for a new tab then {@link mActiveTab} is being
-        // created and will not be present in a {@link TabModel} of {@link mTabModelSelector}.
-        // Defer finding the {@link TabModel} until the first time it is needed after the
-        // constructor has finished.
-        if (mTabModel != null) return mTabModel;
-
-        mTabModel = mTabModelSelector.getModelForTabId(mActiveTab.getId());
-        assert mTabModel != null;
-        return mTabModel;
-    }
-
-    public static void setRecentlyClosedTabManagerForTests(RecentlyClosedTabManager manager) {
-        sRecentlyClosedTabManagerForTests = manager;
-        ResettersForTesting.register(() -> sRecentlyClosedTabManagerForTests = null);
     }
 }

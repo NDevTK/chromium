@@ -112,10 +112,10 @@ enum class SuggestionType {
   kSaveAndFillCreditCardEntry = 62,
 
   // Plus address suggestions.
-  kCreateNewPlusAddress = 39,
-  kCreateNewPlusAddressInline = 52,
+  // kCreateNewPlusAddress = 39, // DEPRECATED
+  // kCreateNewPlusAddressInline = 52, // DEPRECATED
   kFillExistingPlusAddress = 40,
-  kPlusAddressError = 57,
+  // kPlusAddressError = 57, // DEPRECATED
 
   // Promotion suggestions.
   kMerchantPromoCodeEntry = 41,
@@ -136,6 +136,9 @@ enum class SuggestionType {
   // Webauthn suggestions.
   kWebauthnCredential = 43,
   kWebauthnSignInWithAnotherDevice = 44,
+
+  // One time password suggestions.
+  kOneTimePasswordEntry = 74,
 
   // Other suggestions.
   kTitle = 45,
@@ -168,8 +171,8 @@ enum class SuggestionType {
   // state. On click the user will be directed to sign in.
   kPendingStateSignin = 65,
 
-  // Next ID: 74
-  kMaxValue = kAllLoyaltyCardsEntry
+  // Next ID: 75
+  kMaxValue = kOneTimePasswordEntry
 };
 // LINT.ThenChange(/tools/metrics/histograms/metadata/autofill/enums.xml:SuggestionType)
 

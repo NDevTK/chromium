@@ -19,7 +19,6 @@
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_observer_bridge.h"
 #import "ios/chrome/browser/saved_tab_groups/model/ios_tab_group_sync_util.h"
 #import "ios/chrome/browser/saved_tab_groups/ui/tab_group_utils.h"
-#import "ios/chrome/browser/share_kit/model/share_kit_face_pile_configuration.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_manage_configuration.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service.h"
 #import "ios/chrome/browser/share_kit/model/sharing_state.h"
@@ -32,7 +31,6 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_group_sync_service_observer_bridge.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_group_action_type.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/coordinator/tab_group_indicator_mediator_delegate.h"
-#import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/tab_group_indicator_features_utils.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/ui/tab_group_indicator_consumer.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
@@ -57,7 +55,7 @@ using tab_groups::SharingState;
   raw_ptr<ShareKitService> _shareKitService;
   raw_ptr<tab_groups::TabGroupSyncService> _tabGroupSyncService;
   raw_ptr<data_sharing::DataSharingService> _dataSharingService;
-  raw_ptr<feature_engagement::Tracker> _tracker;
+  raw_ptr<feature_engagement::Tracker, DanglingUntriaged> _tracker;
 
   // Bridges between C++ service observers and this Objective-C class.
   std::unique_ptr<TabGroupSyncServiceObserverBridge>
@@ -69,7 +67,7 @@ using tab_groups::SharingState;
       _scopedDataSharingServiceObservation;
 
   // URL loader to open tabs when needed.
-  raw_ptr<UrlLoadingBrowserAgent> _URLLoader;
+  raw_ptr<UrlLoadingBrowserAgent, DanglingUntriaged> _URLLoader;
   __weak id<TabGroupIndicatorConsumer> _consumer;
   base::WeakPtr<WebStateList> _webStateList;
   std::unique_ptr<WebStateListObserverBridge> _webStateListObserver;
@@ -165,8 +163,7 @@ using tab_groups::SharingState;
   web::WebState* webState = status.new_active_web_state;
   if ((status.active_web_state_change() || groupUpdate) && webState) {
     const TabGroup* tabGroup = [self currentTabGroup];
-    if (tabGroup && IsTabGroupIndicatorEnabled() &&
-        HasTabGroupIndicatorVisible()) {
+    if (tabGroup) {
       [_consumer setTabGroupTitle:tabGroup->GetTitle()
                        groupColor:tab_groups::ColorForTabGroupColorId(
                                       tabGroup->GetColor())];
@@ -253,7 +250,7 @@ using tab_groups::SharingState;
   if (!tabGroup) {
     return;
   }
-  if (IsTabGroupSyncEnabled() && confirmation) {
+  if (confirmation) {
     [_delegate
         showTabGroupIndicatorConfirmationForAction:TabGroupActionType::
                                                        kDeleteTabGroup
@@ -264,7 +261,6 @@ using tab_groups::SharingState;
 }
 
 - (void)deleteSharedGroupWithConfirmation:(BOOL)confirmation {
-  DCHECK(IsTabGroupSyncEnabled());
   const TabGroup* tabGroup = [self currentTabGroup];
   if (!tabGroup) {
     return;
@@ -370,7 +366,7 @@ using tab_groups::SharingState;
 
   // Group Ids doesn't match.
   if (savedGroup->collaboration_id().value() !=
-      tab_groups::CollaborationId(groupId.value())) {
+      syncer::CollaborationId(groupId.value())) {
     return;
   }
 
@@ -401,7 +397,7 @@ using tab_groups::SharingState;
 
   const TabGroup* tabGroup = [self currentTabGroup];
 
-  tab_groups::CollaborationId savedCollabID =
+  syncer::CollaborationId savedCollabID =
       tab_groups::utils::GetTabGroupCollabID(tabGroup, _tabGroupSyncService);
   BOOL isShared = !savedCollabID.value().empty();
   [self updateTabGroupSharingState:tabGroup];
@@ -420,7 +416,7 @@ using tab_groups::SharingState;
 // locally.
 - (void)closeTabGroup:(const TabGroup*)tabGroup
        andDeleteGroup:(BOOL)deleteGroup {
-  if (IsTabGroupSyncEnabled() && !deleteGroup) {
+  if (!deleteGroup) {
     [_delegate showTabGroupIndicatorSnackbarAfterClosingGroup];
     tab_groups::utils::CloseTabGroupLocally(tabGroup, _webStateList.get(),
                                             _tabGroupSyncService);
@@ -428,7 +424,7 @@ using tab_groups::SharingState;
     // Using `CloseAllWebStatesInGroup` will result in calling the web state
     // list observers which will take care of updating the consumer.
     CloseAllWebStatesInGroup(*_webStateList, tabGroup,
-                             WebStateList::CLOSE_USER_ACTION);
+                             WebStateList::ClosingReason::kUserAction);
   }
 }
 

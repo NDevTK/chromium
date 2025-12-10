@@ -103,6 +103,16 @@ enum class TopLayerElementType {
   kFullscreen,
 };
 
+enum class PopoverHideResult {
+  kHidden,
+  kForcedOpenByInspector,
+};
+
+enum class PopoverTriggerSupport {
+  kNone,
+  kSupported,
+};
+
 class CORE_EXPORT HTMLElement : public Element {
   DEFINE_WRAPPERTYPEINFO();
 
@@ -155,6 +165,8 @@ class CORE_EXPORT HTMLElement : public Element {
 
   void AccessKeyAction(SimulatedClickCreationScope creation_scope) override;
 
+  String accessKeyLabel();
+
   bool ShouldSerializeEndTag() const;
 
   virtual HTMLFormElement* formOwner() const;
@@ -190,7 +202,10 @@ class CORE_EXPORT HTMLElement : public Element {
   // origin trial is over.
   virtual bool IsHTMLFencedFrameElement() const { return false; }
   virtual bool IsHTMLFrameSetElement() const { return false; }
+  // TODO(crbug.com/443013457): Remove these 2 methods when the
+  // permission/usermedia trials are over.
   virtual bool IsHTMLPermissionElement() const { return false; }
+  virtual bool IsHTMLUserMediaElement() const { return false; }
   virtual bool IsHTMLUnknownElement() const { return false; }
   virtual bool IsPluginElement() const { return false; }
 
@@ -237,6 +252,9 @@ class CORE_EXPORT HTMLElement : public Element {
   virtual FormAssociated* ToFormAssociatedOrNull() { return nullptr; }
   bool IsFormAssociatedCustomElement() const;
 
+  // Returns true if the elementInternals.type is set to "button".
+  bool IsCustomButton() const;
+
   void UpdateDescendantDirectionality(TextDirection direction);
   void UpdateDirectionalityAfterInputTypeChange(const AtomicString& old_value,
                                                 const AtomicString& new_value);
@@ -279,10 +297,15 @@ class CORE_EXPORT HTMLElement : public Element {
   // response to clicking a button with popovershowtarget.
   virtual void ShowPopoverInternal(Element* invoker,
                                    ExceptionState* exception_state);
-  virtual void HidePopoverInternal(Element* invoker,
-                                   HidePopoverFocusBehavior focus_behavior,
-                                   HidePopoverTransitionBehavior event_firing,
-                                   ExceptionState* exception_state);
+  // Attempts to hide the popover, which may fail if a popover is forcefully
+  // kept open by the inspector. In that case,
+  // PopoverHideResult::kForceOpenedByInspector is returned. In most normal
+  // cases, this function returns PopoverHideResult::kHidden.
+  virtual PopoverHideResult HidePopoverInternal(
+      Element* invoker,
+      HidePopoverFocusBehavior focus_behavior,
+      HidePopoverTransitionBehavior event_firing,
+      ExceptionState* exception_state);
   void PopoverHideFinishIfNeeded(bool immediate);
   static const HTMLElement* FindTopmostPopoverAncestor(
       Element& new_popover_or_top_layer_element,
@@ -294,16 +317,35 @@ class CORE_EXPORT HTMLElement : public Element {
       Element& top_layer_element,
       TopLayerElementType top_layer_element_type);
 
+  // HandlePopoverLightDismiss is only called when the LightDismissFromClick
+  // flag is disabled, and HandlePopoverLightDismissForClick is only called when
+  // LightDismissFromClick is enabled.
+  // HandlePopoverLightDismiss is called twice for each click, once for
+  // pointerdown and once for pointerup.
+  // HandlePopoverLightDismissForClick is only called once for each click and
+  // contains the relevant information from the corresponding pointerdown and
+  // pointerup events.
   static void HandlePopoverLightDismiss(const PointerEvent& event,
                                         const Node& node);
+  static void HandlePopoverLightDismissForClick(const Node& pointer_down_target,
+                                                const Node& pointer_up_target);
   void InvokePopover(Element& invoker);
   void SetPopoverFocusOnShow();
   // This hides all visible popovers up to, but not including,
-  // |endpoint|. If |endpoint| is nullptr, all popovers are hidden.
-  static void HideAllPopoversUntil(const HTMLElement*,
-                                   Document&,
-                                   HidePopoverFocusBehavior,
-                                   HidePopoverTransitionBehavior);
+  // |endpoint|. If |endpoint| is nullptr, all popovers are hidden. Hiding
+  // (some) popovers may be prevented by the inspector. In that case, this
+  // function will return PopoverHideResult::kForcedOpenByInspector, and the
+  // `popovers_held_open_by_inspector` output param will contain the list of
+  // popovers held open above |endpoint| on its stack in top to bottom order.
+  static PopoverHideResult HideAllPopoversUntil(
+      const HTMLElement*,
+      Document&,
+      HidePopoverFocusBehavior,
+      HidePopoverTransitionBehavior,
+      HeapVector<Member<HTMLElement>>* popovers_held_open_by_inspector =
+          nullptr);
+
+  virtual PopoverTriggerSupport SupportsPopoverTriggering() const;
 
   void SetImplicitAnchor(Element* element);
   Element* implicitAnchor() const;
@@ -330,6 +372,18 @@ class CORE_EXPORT HTMLElement : public Element {
                                     CommandEventType command);
   bool HandleCommandInternal(HTMLElement& invoker,
                              CommandEventType command) override;
+  // This is true if this element *can* be a command invoker: it is an element
+  // type that supports command invokers (e.g. buttons and menuitems), and the
+  // element isn't in a state that disqualifies it (e.g. a disabled state). This
+  // function doesn't connect directly to the `command*` attributes themselves;
+  // i.e. this will not change state if the `commandfor` attribute is changed.
+  virtual bool CanBeCommandInvoker() const;
+  CommandEventType GetCommandEventType(const AtomicString& type,
+                                       ExecutionContext*) const;
+  virtual bool HandleCommandForActivation();
+  Element* commandForElement() const;
+  AtomicString command() const;
+  void setCommand(const AtomicString& type);
 
   // This allows developers to enable or disable browser-provided writing
   // suggestions. If the attribute is not explicitly set on an element, it
@@ -411,7 +465,10 @@ class CORE_EXPORT HTMLElement : public Element {
 
   void SetPopoverInvoker(Element* invoker);
 
-  static void CloseEntirePopoverStack(
+  // Attempts to hide a popover stack.  Hiding (some) popovers may be prevented
+  // by the inspector. In that case, PopoverHideResult::kForceOpenedByInspector
+  // is returned.
+  static PopoverHideResult CloseEntirePopoverStack(
       HeapVector<Member<HTMLElement>>& stack,
       HidePopoverFocusBehavior focus_behavior,
       HidePopoverTransitionBehavior transition_behavior);

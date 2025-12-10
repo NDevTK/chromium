@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/browser_process_impl.h"
 
 #include <stddef.h>
@@ -20,6 +15,7 @@
 
 #include "base/atomic_ref_count.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/debug/leak_annotations.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -64,6 +60,7 @@
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/lifetime/switch_utils.h"
+#include "chrome/browser/media/audio_process_ml_model_forwarder.h"
 #include "chrome/browser/media/chrome_media_session_client.h"
 #include "chrome/browser/media/router/providers/cast/dual_media_sink_service.h"
 #include "chrome/browser/media/webrtc/webrtc_event_log_manager.h"
@@ -75,6 +72,7 @@
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/notifications/notification_platform_bridge.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
+#include "chrome/browser/optimization_guide/model_execution/optimization_guide_global_state.h"
 #include "chrome/browser/permissions/chrome_permissions_client.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -110,10 +108,8 @@
 #include "components/component_updater/timer_update_scheduler.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/embedder_support/origin_trials/origin_trials_settings_storage.h"
-#include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_ruleset_publisher.h"
-#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_constants.h"
-#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_features.h"
 #include "components/gcm_driver/gcm_driver.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
@@ -147,18 +143,19 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "ui/base/idle/idle.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/base/unowned_user_data/unowned_user_data_host.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
@@ -172,6 +169,7 @@
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "components/soda/soda_installer_impl_chromeos.h"
 #else
 #include "ui/message_center/message_center.h"
@@ -184,6 +182,10 @@
 #include "chrome/browser/webapps/webapps_client_android.h"
 #include "chrome/browser/webauthn/android/chrome_webauthn_client_android.h"
 #include "components/webauthn/android/webauthn_client_android.h"
+
+namespace chrome_browser_prefs {
+void OnLocalStatePrefsLoaded();
+}  // namespace chrome_browser_prefs
 #else
 #include "chrome/browser/devtools/devtools_auto_opener.h"
 #include "chrome/browser/error_reporting/chrome_js_error_report_processor.h"
@@ -193,9 +195,8 @@
 #include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/usb/usb_system_tray_icon.h"
-#include "chrome/browser/web_applications/isolated_web_apps/iwa_identity_validator.h"
+#include "chrome/browser/web_applications/isolated_web_apps/runtime_init.h"
 #include "chrome/browser/webapps/webapps_client_desktop.h"
 #include "components/gcm_driver/gcm_client_factory.h"
 #include "components/gcm_driver/gcm_desktop_utils.h"
@@ -213,7 +214,6 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/apps/platform_apps/chrome_apps_browser_api_provider.h"
-#include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/ui/apps/chrome_app_window_client.h"
 #include "chrome/common/extensions/chrome_extensions_client.h"
 #include "components/storage_monitor/storage_monitor.h"
@@ -258,10 +258,17 @@
 
 #if BUILDFLAG(IS_LINUX)
 #include "chrome/browser/browser_features.h"
-#include "components/os_crypt/async/browser/fallback_linux_key_provider.h"
 #include "components/os_crypt/async/browser/freedesktop_secret_key_provider.h"
 #include "components/os_crypt/async/browser/secret_portal_key_provider.h"
 #include "components/password_manager/core/browser/password_manager_switches.h"
+#endif
+
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
+#include "components/os_crypt/async/browser/posix_key_provider.h"
+#endif
+
+#if BUILDFLAG(IS_MAC)
+#include "components/os_crypt/async/browser/keychain_key_provider.h"
 #endif
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
@@ -294,14 +301,30 @@ BrowserProcessImpl::BrowserProcessImpl(StartupData* startup_data)
       active_primary_accounts_metrics_recorder_(
           std::make_unique<signin::ActivePrimaryAccountsMetricsRecorder>(
               *local_state_)),
-      platform_part_(std::make_unique<BrowserProcessPlatformPart>()) {
+      platform_part_(std::make_unique<BrowserProcessPlatformPart>()),
+      network_time_tracker_(startup_data->chrome_feature_list_creator()
+                                ->TakeNetworkTimeTracker()) {
   CHECK(!g_browser_process);
   g_browser_process = this;
 
   DCHECK(browser_policy_connector_);
   DCHECK(local_state_);
   DCHECK(startup_data);
+
+  // The network time tracker is created (so that other early objects can
+  // subscribe to it) but it is not yet initialized.
+  CHECK(network_time_tracker_);
+
   // Most work should be done in Init().
+}
+
+ui::UnownedUserDataHost& BrowserProcessImpl::GetUnownedUserDataHost() {
+  return unowned_user_data_host_;
+}
+
+const ui::UnownedUserDataHost& BrowserProcessImpl::GetUnownedUserDataHost()
+    const {
+  return unowned_user_data_host_;
 }
 
 void BrowserProcessImpl::Init() {
@@ -399,7 +422,7 @@ void BrowserProcessImpl::Init() {
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
-  web_app::IwaIdentityValidator::CreateSingleton();
+  web_app::InitializeIsolatedWebAppRuntime();
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -409,6 +432,10 @@ void BrowserProcessImpl::Init() {
 
   MigrateObsoleteLocalStatePrefs(local_state());
   pref_change_registrar_.Init(local_state());
+
+#if BUILDFLAG(IS_ANDROID)
+  chrome_browser_prefs::OnLocalStatePrefsLoaded();
+#endif
 
   // Initialize the notification for the default browser setting policy.
   pref_change_registrar_.Add(
@@ -567,10 +594,13 @@ void BrowserProcessImpl::StartTearDown() {
         ->StopObservingPrefChanges();
   }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(IS_CHROMEOS)
   // The `media_file_system_registry_` cannot be reset until the
   // `profile_manager_` has been.
   media_file_system_registry_.reset();
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   // Remove the global instance of the Storage Monitor now. Otherwise the
   // FILE thread would be gone when we try to release it in the dtor and
   // Valgrind would report a leak on almost every single browser_test.
@@ -948,15 +978,16 @@ void BrowserProcessImpl::CreateDevToolsProtocolHandler() {
     case RemoteDebuggingServer::NotStartedReason::kNotRequested:
       break;
     case RemoteDebuggingServer::NotStartedReason::kDisabledByPolicy:
-      fputs("\nDevTools remote debugging is disallowed by the system admin.\n",
-            stderr);
+      UNSAFE_TODO(fputs(
+          "\nDevTools remote debugging is disallowed by the system admin.\n",
+          stderr));
       fflush(stderr);
       break;
     case RemoteDebuggingServer::NotStartedReason::kDisabledByDefaultUserDataDir:
-      fputs(
+      UNSAFE_TODO(fputs(
           "\nDevTools remote debugging requires a non-default data directory. "
           "Specify this using --user-data-dir.\n",
-          stderr);
+          stderr));
       fflush(stderr);
       break;
   }
@@ -1055,15 +1086,13 @@ DownloadStatusUpdater* BrowserProcessImpl::download_status_updater() {
   return download_status_updater_.get();
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
 MediaFileSystemRegistry* BrowserProcessImpl::media_file_system_registry() {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
   if (!media_file_system_registry_)
     media_file_system_registry_ = std::make_unique<MediaFileSystemRegistry>();
   return media_file_system_registry_.get();
-#else
-  return NULL;
-#endif
 }
+#endif
 
 WebRtcLogUploader* BrowserProcessImpl::webrtc_log_uploader() {
   if (!webrtc_log_uploader_)
@@ -1072,7 +1101,6 @@ WebRtcLogUploader* BrowserProcessImpl::webrtc_log_uploader() {
 }
 
 network_time::NetworkTimeTracker* BrowserProcessImpl::network_time_tracker() {
-  CreateNetworkTimeTracker();
   return network_time_tracker_.get();
 }
 
@@ -1167,6 +1195,7 @@ void BrowserProcessImpl::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(metrics::prefs::kMetricsReportingEnabled,
                                 GoogleUpdateSettings::GetCollectStatsConsent());
   registry->RegisterBooleanPref(prefs::kDevToolsRemoteDebuggingAllowed, true);
+  registry->RegisterBooleanPref(prefs::kDevToolsRemoteDebuggingEnabled, false);
 
 #if BUILDFLAG(IS_LINUX)
   os_crypt_async::SecretPortalKeyProvider::RegisterLocalPrefs(registry);
@@ -1226,17 +1255,6 @@ BrowserProcessImpl::subresource_filter_ruleset_service() {
   if (!created_subresource_filter_ruleset_service_)
     CreateSubresourceFilterRulesetService();
   return subresource_filter_ruleset_service_.get();
-}
-
-subresource_filter::RulesetService*
-BrowserProcessImpl::fingerprinting_protection_ruleset_service() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!created_fingerprinting_protection_ruleset_service_ &&
-      fingerprinting_protection_filter::features::
-          IsFingerprintingProtectionFeatureEnabled()) {
-    CreateFingerprintingProtectionRulesetService();
-  }
-  return fingerprinting_protection_ruleset_service_.get();
 }
 
 StartupData* BrowserProcessImpl::startup_data() {
@@ -1336,6 +1354,86 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
   // ensure the persistent storage of current max SessionId.
   sessions::SessionIdGenerator::GetInstance()->Init(local_state_.get());
 
+  // OSCryptAsync provider configuration. This must run before
+  // `browser_policy_connector_` initialization since implementations like
+  // BrowserPolicyConnectorAsh require an OSCryptAsync. If empty, this delegates
+  // all encryption operations to OSCrypt.
+  std::vector<std::pair<size_t, std::unique_ptr<os_crypt_async::KeyProvider>>>
+      providers;
+
+  if (additional_provider_for_test_) {
+    // Explicitly move the KeyProvider but leave the std::optional holding the
+    // pair, this ensures it can only be set once in testing.
+    providers.emplace_back(
+        std::get<0>(*additional_provider_for_test_),
+        std::move(std::get<1>(*additional_provider_for_test_)));
+  }
+
+#if BUILDFLAG(IS_WIN)
+  // The DPAPI key provider requires OSCrypt::Init to have already been called
+  // to initialize the key storage. This happens in
+  // ChromeBrowserMainPartsWin::PreCreateMainMessageLoop.
+  providers.emplace_back(std::make_pair(
+      /*precedence=*/10u,
+      std::make_unique<os_crypt_async::DPAPIKeyProvider>(local_state())));
+
+  providers.emplace_back(std::make_pair(
+      // Note: 15 is chosen to be higher than the 10 precedence above for
+      // DPAPI. This ensures that when the the provider is enabled for
+      // encryption, the App-Bound encryption key is used and not the DPAPI
+      // one.
+      /*precedence=*/15u,
+      std::make_unique<os_crypt_async::AppBoundEncryptionProviderWin>(
+          local_state())));
+#endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(IS_LINUX)
+  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+  const auto password_store =
+      cmd_line->GetSwitchValueASCII(password_manager::kPasswordStore);
+  if (password_store != "basic") {
+    if (base::FeatureList::IsEnabled(features::kDbusSecretPortal)) {
+      // Use a higher priority than the FreedesktopSecretKeyProvider.
+      providers.emplace_back(
+          /*precedence=*/15u,
+          std::make_unique<os_crypt_async::SecretPortalKeyProvider>(
+              local_state(),
+              base::FeatureList::IsEnabled(
+                  features::kSecretPortalKeyProviderUseForEncryption)));
+    }
+  }
+  providers.emplace_back(
+      /*precedence=*/10u,
+      std::make_unique<os_crypt_async::FreedesktopSecretKeyProvider>(
+          password_store, l10n_util::GetStringUTF8(IDS_PRODUCT_NAME), nullptr));
+#endif  // BUILDFLAG(IS_LINUX)
+
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
+  // On other POSIX systems, this is the only key provider. On Linux, it is used
+  // as a fallback.
+  providers.emplace_back(
+      /*precedence=*/5u, std::make_unique<os_crypt_async::PosixKeyProvider>());
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_LINUX)
+
+#if BUILDFLAG(IS_MAC)
+  if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {
+    providers.emplace_back(std::make_pair(
+        /*precedence=*/10u,
+        std::make_unique<os_crypt_async::KeychainKeyProvider>()));
+  }
+#endif  // BUILDFLAG(IS_MAC)
+
+  os_crypt_async_ =
+      std::make_unique<os_crypt_async::OSCryptAsync>(std::move(providers));
+
+  // Trigger async initialization of OSCrypt key providers.
+  os_crypt_async_->GetInstance(base::BindOnce(
+      [](base::TimeTicks start_time, os_crypt_async::Encryptor encryptor) {
+        base::UmaHistogramTimes("OSCrypt.AsyncInitialization.Time",
+                                base::TimeTicks::Now() - start_time);
+      },
+      base::TimeTicks::Now()));
+
   // browser_policy_connector() is created very early because local_state()
   // needs policy to be initialized with the managed preference values.
   // However, policy fetches from the network and loading of disk caches
@@ -1346,8 +1444,9 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
       local_state(),
       system_network_context_manager()->GetSharedURLLoaderFactory());
 
-  if (local_state_->IsManagedPreference(prefs::kDefaultBrowserSettingEnabled))
+  if (local_state_->IsManagedPreference(prefs::kDefaultBrowserSettingEnabled)) {
     ApplyDefaultBrowserPolicy();
+  }
 
   ApplyMetricsReportingPolicy();
 
@@ -1363,7 +1462,7 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
 
   platform_part_->PreMainMessageLoopRun();
 
-  CreateNetworkTimeTracker();
+  InitializeNetworkTimeTracker();
 
   CreateNetworkQualityObserver();
 
@@ -1405,80 +1504,12 @@ void BrowserProcessImpl::PreMainMessageLoopRun() {
     breadcrumbs::DeleteBreadcrumbFiles(user_data_dir);
   }
 
-  // OSCryptAsync provider configuration. If empty, this delegates all
-  // encryption operations to OSCrypt.
-  std::vector<std::pair<size_t, std::unique_ptr<os_crypt_async::KeyProvider>>>
-      providers;
-
-  if (additional_provider_for_test_) {
-    // Explicitly move the KeyProvider but leave the std::optional holding the
-    // pair, this ensures it can only be set once in testing.
-    providers.push_back(
-        std::make_pair(std::get<0>(*additional_provider_for_test_),
-                       std::move(std::get<1>(*additional_provider_for_test_))));
+  if (features_->audio_process_ml_model_forwarder()) {
+    // TODO(crbug.com/454930933): Once the model provider is available from
+    // PreCreateThreads, move this init to GlobalFeatures initialization.
+    features_->audio_process_ml_model_forwarder()->Initialize(
+        features_->optimization_guide_global_feature()->GetModelProvider());
   }
-
-#if BUILDFLAG(IS_WIN)
-  // The DPAPI key provider requires OSCrypt::Init to have already been called
-  // to initialize the key storage. This happens in
-  // ChromeBrowserMainPartsWin::PreCreateMainMessageLoop.
-  providers.emplace_back(std::make_pair(
-      /*precedence=*/10u,
-      std::make_unique<os_crypt_async::DPAPIKeyProvider>(local_state())));
-
-  providers.emplace_back(std::make_pair(
-      // Note: 15 is chosen to be higher than the 10 precedence above for
-      // DPAPI. This ensures that when the the provider is enabled for
-      // encryption, the App-Bound encryption key is used and not the DPAPI
-      // one.
-      /*precedence=*/15u,
-      std::make_unique<os_crypt_async::AppBoundEncryptionProviderWin>(
-          local_state())));
-#endif  // BUILDFLAG(IS_WIN)
-
-#if BUILDFLAG(IS_LINUX)
-  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (cmd_line->GetSwitchValueASCII(password_manager::kPasswordStore) !=
-      "basic") {
-    if (base::FeatureList::IsEnabled(features::kDbusSecretPortal)) {
-      providers.emplace_back(
-          /*precedence=*/10u,
-          std::make_unique<os_crypt_async::SecretPortalKeyProvider>(
-              local_state(),
-              base::FeatureList::IsEnabled(
-                  features::kSecretPortalKeyProviderUseForEncryption)));
-    }
-    if (base::FeatureList::IsEnabled(
-            features::kUseFreedesktopSecretKeyProvider)) {
-      const auto password_store =
-          cmd_line->GetSwitchValueASCII(password_manager::kPasswordStore);
-      // Use a higher priority than the SecretPortalKeyProvider.
-      providers.emplace_back(
-          /*precedence=*/15u,
-          std::make_unique<os_crypt_async::FreedesktopSecretKeyProvider>(
-              password_store,
-              base::FeatureList::IsEnabled(
-                  features::kUseFreedesktopSecretKeyProviderForEncryption),
-              l10n_util::GetStringUTF8(IDS_PRODUCT_NAME), nullptr));
-      providers.emplace_back(
-          /*precedence=*/5u,
-          std::make_unique<os_crypt_async::FallbackLinuxKeyProvider>(
-              base::FeatureList::IsEnabled(
-                  features::kUseFreedesktopSecretKeyProviderForEncryption)));
-    }
-  }
-#endif  // BUILDFLAG(IS_LINUX)
-
-  os_crypt_async_ =
-      std::make_unique<os_crypt_async::OSCryptAsync>(std::move(providers));
-
-  // Trigger async initialization of OSCrypt key providers.
-  os_crypt_async_->GetInstance(base::BindOnce(
-      [](base::TimeTicks start_time, os_crypt_async::Encryptor encryptor) {
-        base::UmaHistogramTimes("OSCrypt.AsyncInitialization.Time",
-                                base::TimeTicks::Now() - start_time);
-      },
-      base::TimeTicks::Now()));
 }
 
 void BrowserProcessImpl::CreateIconManager() {
@@ -1576,24 +1607,6 @@ void BrowserProcessImpl::CreateSubresourceFilterRulesetService() {
           subresource_filter::SafeBrowsingRulesetPublisher::Factory());
 }
 
-void BrowserProcessImpl::CreateFingerprintingProtectionRulesetService() {
-  CHECK(!fingerprinting_protection_ruleset_service_);
-  // Set this to true so that we don't retry indefinitely to
-  // create the service if there was an error.
-  created_fingerprinting_protection_ruleset_service_ = true;
-
-  base::FilePath user_data_dir;
-  base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
-
-  fingerprinting_protection_ruleset_service_ =
-      subresource_filter::RulesetService::Create(
-          fingerprinting_protection_filter::
-              kFingerprintingProtectionRulesetConfig,
-          local_state(), user_data_dir,
-          fingerprinting_protection_filter::
-              FingerprintingProtectionRulesetPublisher::Factory());
-}
-
 #if !BUILDFLAG(IS_ANDROID)
 // Android's GCMDriver currently makes the assumption that it's a singleton.
 // Until this gets fixed, instantiating multiple Java GCMDrivers will throw an
@@ -1616,19 +1629,15 @@ void BrowserProcessImpl::CreateGCMDriver() {
       content::GetNetworkConnectionTracker(), chrome::GetChannel(),
       gcm::GetProductCategoryForSubtypes(local_state()),
       content::GetUIThreadTaskRunner({}), content::GetIOThreadTaskRunner({}),
-      blocking_task_runner);
+      blocking_task_runner, os_crypt_async());
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-void BrowserProcessImpl::CreateNetworkTimeTracker() {
-  if (network_time_tracker_) {
-    return;
-  }
-  network_time_tracker_ = std::make_unique<network_time::NetworkTimeTracker>(
-      base::WrapUnique(new base::DefaultClock()),
-      base::WrapUnique(new base::DefaultTickClock()), local_state(),
-      system_network_context_manager()->GetSharedURLLoaderFactory(),
-      std::nullopt);
+void BrowserProcessImpl::InitializeNetworkTimeTracker() {
+  CHECK(!network_time_tracker_->is_initialized());
+  network_time_tracker_->Initialize(
+      local_state(),
+      system_network_context_manager()->GetSharedURLLoaderFactory());
 }
 
 void BrowserProcessImpl::ApplyDefaultBrowserPolicy() {
@@ -1709,9 +1718,6 @@ void BrowserProcessImpl::Unpin() {
   std::move(quit_closure_).Run();
 
   chrome::ShutdownIfNeeded();
-
-  // TODO(crbug.com/40629374): remove when root cause is found.
-  CHECK_EQ(BrowserList::GetInstance()->size(), 0u);
 #endif  // !BUILDFLAG(IS_ANDROID)
 }
 
@@ -1720,8 +1726,9 @@ void BrowserProcessImpl::Unpin() {
 
 bool BrowserProcessImpl::IsRunningInBackground() const {
   // Check if browser is in the background.
-  return chrome::GetTotalBrowserCount() == 0 &&
-         KeepAliveRegistry::GetInstance()->IsKeepingAlive();
+  const auto* const keep_alive_registry = KeepAliveRegistry::GetInstance();
+  return !keep_alive_registry->IsOriginRegistered(KeepAliveOrigin::BROWSER) &&
+         keep_alive_registry->IsKeepingAlive();
 }
 
 void BrowserProcessImpl::RestartBackgroundInstance() {

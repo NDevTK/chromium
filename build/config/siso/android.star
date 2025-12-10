@@ -43,13 +43,13 @@ def __step_config(ctx, step_config):
     remote_run = True  # Turn this to False when you do file access trace.
 
     # Run static analysis steps locally when build server is enabled.
+    # android_static_analysis = "build_server" by default.
     # https://chromium.googlesource.com/chromium/src/+/main/docs/android_build_instructions.md#asynchronous-static-analysis
     remote_run_static_analysis = False
     if "args.gn" in ctx.metadata:
         gn_args = gn.args(ctx)
 
-        # android_static_analysis = "build_server" by default.
-        if gn_args.get("android_static_analysis") == '"on"':
+        if gn_args.get("android_static_analysis") in ('"on"', '"off"'):
             remote_run_static_analysis = True
         if gn_args.get("enable_kythe_annotations") == "true":
             # Remote Kythe annotations isn't supported.
@@ -95,7 +95,7 @@ def __step_config(ctx, step_config):
                 "*.svg",
                 "*.xml",
             ],
-            "remote": remote_run,
+            "remote": remote_run and not config.get(ctx, "no-remote-javac"),
             "platform_ref": "large",
             "canonicalize_dir": True,
             "timeout": "2m",
@@ -137,7 +137,7 @@ def __step_config(ctx, step_config):
             # However, this is harmful for remote build cache hits.
             "ignore_extra_input_pattern": ".*srcjars.*\\.java",
             "ignore_extra_output_pattern": ".*srcjars.*\\.java",
-            "remote": remote_run,
+            "remote": remote_run and not config.get(ctx, "no-remote-javac"),
             "platform_ref": "large",
             "canonicalize_dir": True,
             "timeout": "2m",
@@ -156,7 +156,7 @@ def __step_config(ctx, step_config):
                 "*.pak",
                 "*.sql",
             ],
-            "remote": remote_run_static_analysis,
+            "remote": remote_run_static_analysis and not config.get(ctx, "no-remote-javac"),
             "platform_ref": "large",
             "canonicalize_dir": True,
             # obj/chrome/android/chrome_java__errorprone.stamp step takes too
@@ -347,14 +347,14 @@ def __android_compile_resources_handler(ctx, cmd):
     #   --webp-cache-dir=obj/android-webp-cache
     inputs = []
     for i, arg in enumerate(cmd.args):
-        for k in ["--dependencies-res-zips=", "--dependencies-res-zip-overlays=", "--extra-res-packages="]:
+        for k in ["--dependencies-res-zips=", "--dependencies-res-zip-overlays="]:
             if arg.startswith(k):
                 arg = arg.removeprefix(k)
                 _, v = __filearg(ctx, arg)
                 for f in v:
                     f = ctx.fs.canonpath(f)
                     inputs.append(f)
-                    if k == "--dependencies-res-zips=" and ctx.fs.exists(f + ".info"):
+                    if ctx.fs.exists(f + ".info"):
                         inputs.append(f + ".info")
 
     ctx.actions.fix(
@@ -390,7 +390,7 @@ def __android_compile_java_handler(ctx, cmd):
 
     inputs = []
     for i, arg in enumerate(cmd.args):
-        for k in ["--classpath=", "--bootclasspath=", "--processorpath="]:
+        for k in ["--classpath=", "--processorpath="]:
             if arg.startswith(k):
                 arg = arg.removeprefix(k)
                 fn, v = __filearg(ctx, arg)
@@ -470,7 +470,7 @@ def __android_trace_event_bytecode_rewriter(ctx, cmd):
         trace_event_adder_json = json.decode(
             str(ctx.fs.read(ctx.fs.canonpath("gen/build/android/bytecode/trace_event_adder.build_config.json"))),
         )
-        for path in trace_event_adder_json.get("host_classpath", []):
+        for path in trace_event_adder_json.get("processed_classpath", []):
             inputs.append(ctx.fs.canonpath(path))
 
     ctx.actions.fix(

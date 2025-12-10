@@ -21,37 +21,6 @@ namespace cc {
 
 namespace {
 
-// The HLG OOTF filter applies reference HLG opto-optical transfer function as
-// described in Table 5 of ITU-R BT.2100-3, using the value of gamma=1.2.
-// The working space of this shader has premultiplied alpha, and so the
-// computed value of Y must be un-multiplied.
-static constexpr char kHlgOotfSKSL[] =
-    "half4 main(half4 color) {\n"
-    "  half3 L = half3(0.2627, 0.6780, 0.0593);\n"
-    "  half Y = dot(L, color.rgb);\n"
-    "  if (Y > 0.0) {\n"
-    "    if (color.a > 0.0) {\n"
-    "      Y /= color.a;\n"
-    "    }\n"
-    "    color.rgb *= pow(Y, 0.2);\n"
-    "  }\n"
-    "  return color;\n"
-    "}\n";
-
-sk_sp<SkColorFilter> GetHlgOotfFilter() {
-  static const SkRuntimeEffect* effect =
-      SkRuntimeEffect::MakeForColorFilter(
-          SkString(kHlgOotfSKSL, sizeof(kHlgOotfSKSL) - 1),
-          /*options=*/{})
-          .effect.release();
-  CHECK(effect);
-
-  sk_sp<SkColorFilter> filter = effect->makeColorFilter(nullptr);
-  CHECK(filter);
-  return filter->makeWithWorkingColorSpace(SkColorSpace::MakeRGB(
-      SkNamedTransferFn::kLinear, SkNamedGamut::kRec2020));
-}
-
 // Scale the color values in linear space.
 sk_sp<SkColorFilter> GetLinearScaleFilter(float s) {
   if (s == 1.f) {
@@ -215,15 +184,6 @@ sk_sp<SkColorFilter> GetAgtmFilter(const gfx::HdrMetadataAgtmParsed& params,
 
 }  // namespace
 
-bool ToneMapUtil::UseGainmapShader(const PaintImage& image) {
-  if (image.gainmap_sk_image_) {
-    DCHECK(image.cached_sk_image_);
-    DCHECK(image.gainmap_info_.has_value());
-    return true;
-  }
-  return false;
-}
-
 bool ToneMapUtil::UseGlobalToneMapFilter(const SkImage* image,
                                          const SkColorSpace* dst_color_space) {
   if (!image) {
@@ -252,8 +212,8 @@ bool ToneMapUtil::UseGlobalToneMapFilter(const SkColorSpace* cs) {
 void ToneMapUtil::AddGlobalToneMapFilterToPaint(
     SkPaint& paint,
     const SkImage* image,
-    const std::optional<gfx::HDRMetadata>& metadata,
-    float target_linear_hdr_headroom) {
+    const gfx::HDRMetadata& metadata,
+    float target_hdr_headroom) {
   if (!image || !image->colorSpace()) {
     return;
   }
@@ -261,8 +221,8 @@ void ToneMapUtil::AddGlobalToneMapFilterToPaint(
   image->colorSpace()->transferFn(&trfn);
 
   gfx::HdrMetadataAgtmParsed agtm;
-  const bool agtm_parsed = metadata.has_value() && metadata->agtm.has_value() &&
-                           agtm.Parse(metadata->agtm.value());
+  const bool agtm_parsed =
+      metadata.agtm.has_value() && agtm.Parse(metadata.agtm.value());
 
   // The remainder of the function will construct `filter` to perform all
   // transformations (scaling, OOTF, and tone mapping).
@@ -276,9 +236,8 @@ void ToneMapUtil::AddGlobalToneMapFilterToPaint(
       return agtm.hdr_reference_white;
     }
     // Then NDWL.
-    if (metadata.has_value() && metadata->ndwl.has_value() &&
-        metadata->ndwl->nits > 0.f) {
-      return metadata->ndwl->nits;
+    if (metadata.ndwl.has_value() && metadata.ndwl->nits > 0.f) {
+      return metadata.ndwl->nits;
     }
     // Then defer to the source color space.
     if (skcms_TransferFunction_isPQ(&trfn) ||
@@ -290,48 +249,23 @@ void ToneMapUtil::AddGlobalToneMapFilterToPaint(
   };
   const float reference_white_luminance = compute_reference_white_luminance();
 
-  // The HLG or PQ SkColorSpace may have a white level baked into it. Re-scale
-  // to be relative to the white level from the metadata, and apply the
-  // reference HLG OOTF (if needed).
-  if (skcms_TransferFunction_isPQish(&trfn)) {
-    // Scale so that we are using the reference inverse OETF, which maps [0,1]
-    // to [0,1]. Then scale by the reference display luminance (10,000 nits),
-    // and divide by white luminance.
-    const float trfn_max = skcms_TransferFunction_eval(&trfn, 1.f);
-    filter =
-        GetLinearScaleFilter(10000.f / reference_white_luminance / trfn_max);
-  } else if (skcms_TransferFunction_isHLGish(&trfn)) {
-    // Scale so that we are using the reference inverse OETF, which maps [0,1]
-    // to [0,1] (instead of [0,1] to [0,12] or something else).
-    const float trfn_max = skcms_TransferFunction_eval(&trfn, 1.f);
-    auto pre_ootf_scale = GetLinearScaleFilter(1.f / trfn_max);
-    // Apply the reference OOTF on this.
-    auto ootf = GetHlgOotfFilter();
-    // Scale by the reference display luminance (1000 nits), and divide by the
-    // white luminance.
-    auto post_ootf_scale =
-        GetLinearScaleFilter(1000.f / reference_white_luminance);
-
-    // Set `filter` to the three operations in sequence.
-    filter = SkColorFilters::Compose(
-        post_ootf_scale, SkColorFilters::Compose(ootf, pre_ootf_scale));
-  } else if (skcms_TransferFunction_isPQ(&trfn) ||
-             skcms_TransferFunction_isHLG(&trfn)) {
-    // Override the white value specified in the color space.
+  if (skcms_TransferFunction_isPQ(&trfn) ||
+      skcms_TransferFunction_isHLG(&trfn)) {
+    // The HLG or PQ SkColorSpace may have a white level baked into it.
+    // Re-scale to be relative to the white level from the metadata.
     filter = GetLinearScaleFilter(trfn.a / reference_white_luminance);
   }
 
   // Apply tone mapping.
   if (agtm_parsed) {
-    auto tone_map_filter =
-        GetAgtmFilter(agtm, std::log2(target_linear_hdr_headroom));
+    auto tone_map_filter = GetAgtmFilter(agtm, target_hdr_headroom);
     filter = SkColorFilters::Compose(tone_map_filter, std::move(filter));
   } else {
     const float content_max_luminance =
         gfx::HDRMetadata::GetContentMaxLuminance(metadata);
     auto tone_map_filter = GetReinhardToneMapFilter(
         content_max_luminance / reference_white_luminance,
-        target_linear_hdr_headroom);
+        std::exp2(target_hdr_headroom));
     filter = SkColorFilters::Compose(tone_map_filter, std::move(filter));
   }
 

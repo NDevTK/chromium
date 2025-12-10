@@ -18,10 +18,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
+#include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "components/omnibox/browser/lens_suggest_inputs_utils.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
+#include "components/optimization_guide/proto/features/common_quality_data.pb.h"
+#include "content/public/browser/page.h"
 #include "content/public/browser/render_frame_host.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/blink/public/common/features.h"
@@ -110,7 +112,6 @@ void OmniboxTabHelper::OnInputInProgress(bool in_progress) {
 
 void OmniboxTabHelper::OnFocusChanged(OmniboxFocusState state,
                                       OmniboxFocusChangeReason reason) {
-  focus_state_ = state;
   for (auto& observer : observers_) {
     observer.OnOmniboxFocusChanged(state, reason);
   }
@@ -131,10 +132,6 @@ void OmniboxTabHelper::OnPopupVisibilityChanged(
 
 std::optional<bool> OmniboxTabHelper::IsPagePaywalled() {
   return page_has_apc_paywall_signal_;
-}
-
-OmniboxFocusState OmniboxTabHelper::focus_state() const {
-  return focus_state_;
 }
 
 void OmniboxTabHelper::OnPageContentExtracted(
@@ -173,7 +170,7 @@ void OmniboxTabHelper::AddMetadataObserver(content::Page& page) {
     return;
   }
 
-  frame_metadata_observer_receiver_.reset();
+  paid_content_metadata_observer_receiver_.reset();
 
   mojo::Remote<blink::mojom::FrameMetadataObserverRegistry>
       frame_metadata_observer_registry;
@@ -181,11 +178,12 @@ void OmniboxTabHelper::AddMetadataObserver(content::Page& page) {
   render_frame_host.GetRemoteInterfaces()->GetInterface(
       frame_metadata_observer_registry.BindNewPipeAndPassReceiver());
 
-  mojo::PendingRemote<blink::mojom::FrameMetadataObserver> remote;
-  frame_metadata_observer_receiver_.Bind(
+  mojo::PendingRemote<blink::mojom::PaidContentMetadataObserver> remote;
+  paid_content_metadata_observer_receiver_.Bind(
       remote.InitWithNewPipeAndPassReceiver());
 
-  frame_metadata_observer_registry->AddObserver(std::move(remote));
+  frame_metadata_observer_registry->AddPaidContentMetadataObserver(
+      std::move(remote));
 }
 
 void OmniboxTabHelper::PrimaryMainDocumentElementAvailable() {
@@ -236,7 +234,7 @@ void OmniboxTabHelper::MaybeLogPaywallSignal() {
   // If the page content service is not observing, then the paywall signal is
   // unavailable to be fetched.
   if (!page_content_service_observation_.IsObserving() &&
-      !frame_metadata_observer_receiver_.is_bound()) {
+      !paid_content_metadata_observer_receiver_.is_bound()) {
     return;
   }
 

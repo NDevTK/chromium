@@ -33,19 +33,17 @@ OAuthMultiloginTokenFetcher::OAuthMultiloginTokenFetcher(
     SigninClient* signin_client,
     ProfileOAuth2TokenService* token_service,
     std::vector<AccountParams> account_params,
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
     std::string ephemeral_public_key,
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
     SuccessCallback success_callback,
-    FailureCallback failure_callback)
+    FailureCallback failure_callback,
+    bool retry_waits_on_connectivity)
     : signin_client_(signin_client),
       token_service_(token_service),
       account_params_(std::move(account_params)),
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
       ephemeral_public_key_(std::move(ephemeral_public_key)),
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
       success_callback_(std::move(success_callback)),
-      failure_callback_(std::move(failure_callback)) {
+      failure_callback_(std::move(failure_callback)),
+      retry_waits_on_connectivity_(retry_waits_on_connectivity) {
   DCHECK(signin_client_);
   DCHECK(token_service_);
   DCHECK(!account_params_.empty());
@@ -80,13 +78,9 @@ void OAuthMultiloginTokenFetcher::StartFetchingToken(
       account.account_id,
       base::BindOnce(&OAuthMultiloginTokenFetcher::OnTokenRequestComplete,
                      base::Unretained(this))));
-  token_service_->StartRequestForMultilogin(*token_requests_.back()
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-                                                ,
+  token_service_->StartRequestForMultilogin(*token_requests_.back(),
                                             account.token_binding_challenge,
-                                            ephemeral_public_key_
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  );
+                                            ephemeral_public_key_);
 }
 
 void OAuthMultiloginTokenFetcher::OnTokenRequestComplete(
@@ -136,10 +130,16 @@ void OAuthMultiloginTokenFetcher::TokenRequestFailed(
     auto it = std::ranges::find(account_params_, account_id,
                                 &AccountParams::account_id);
     CHECK(it != account_params_.end());
-    // Fetching fresh access tokens requires network.
-    signin_client_->DelayNetworkCall(
+    auto callback =
         base::BindOnce(&OAuthMultiloginTokenFetcher::StartFetchingToken,
-                       weak_ptr_factory_.GetWeakPtr(), *it));
+                       weak_ptr_factory_.GetWeakPtr(), *it);
+    if (retry_waits_on_connectivity_) {
+      // Fetching fresh access tokens requires network.
+      signin_client_->DelayNetworkCall(std::move(callback));
+    } else {
+      // But chrome may not accurately know network connectivity.
+      std::move(callback).Run();
+    }
     return;
   }
   RecordGetAccessTokenFinished(error);

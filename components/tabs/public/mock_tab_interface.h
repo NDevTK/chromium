@@ -5,13 +5,31 @@
 #ifndef COMPONENTS_TABS_PUBLIC_MOCK_TAB_INTERFACE_H_
 #define COMPONENTS_TABS_PUBLIC_MOCK_TAB_INTERFACE_H_
 
+#include <memory>
+#include <optional>
+
+#include "base/callback_list.h"
+#include "base/memory/weak_ptr.h"
+#include "base/types/pass_key.h"
 #include "components/tabs/public/split_tab_id.h"
+#include "components/tabs/public/tab_collection.h"
 #include "components/tabs/public/tab_interface.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_delegate.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+class BrowserWindowInterface;
+#endif  // !BUILDFLAG(IS_ANDROID)
+
+namespace content {
+class WebContents;
+}
+
+namespace ui {
+class UnownedUserDataHost;
+}
 
 namespace tabs {
+class TabFeatures;
 
 class MockTabInterface : public testing::NiceMock<TabInterface> {
  public:
@@ -35,6 +53,7 @@ class MockTabInterface : public testing::NiceMock<TabInterface> {
               (WillDeactivateCallback),
               (override));
   MOCK_METHOD(bool, IsVisible, (), (const, override));
+  MOCK_METHOD(bool, IsSelected, (), (const, override));
   MOCK_METHOD(base::CallbackListSubscription,
               RegisterDidBecomeVisible,
               (DidBecomeVisibleCallback),
@@ -66,6 +85,7 @@ class MockTabInterface : public testing::NiceMock<TabInterface> {
               (TabInterfaceCallback),
               (override));
   MOCK_METHOD(bool, IsInNormalWindow, (), (const override));
+#if !BUILDFLAG(IS_ANDROID)
   MOCK_METHOD(BrowserWindowInterface*,
               GetBrowserWindowInterface,
               (),
@@ -74,9 +94,11 @@ class MockTabInterface : public testing::NiceMock<TabInterface> {
               GetBrowserWindowInterface,
               (),
               (const override));
+#endif  // !BUILDFLAG(IS_ANDROID)
   MOCK_METHOD(TabFeatures*, GetTabFeatures, (), (override));
   MOCK_METHOD(const TabFeatures*, GetTabFeatures, (), (const override));
   MOCK_METHOD(bool, IsPinned, (), (const override));
+  MOCK_METHOD(bool, IsBlocked, (), (const override));
   MOCK_METHOD(bool, IsSplit, (), (const override));
   MOCK_METHOD(std::optional<tab_groups::TabGroupId>,
               GetGroup,
@@ -100,6 +122,11 @@ class MockTabInterface : public testing::NiceMock<TabInterface> {
               (base::PassKey<TabCollection>),
               (override));
   MOCK_METHOD(uint32_t, GetTabHandle, (), (const override));
+  MOCK_METHOD(ui::UnownedUserDataHost&, GetUnownedUserDataHost, (), (override));
+  MOCK_METHOD(const ui::UnownedUserDataHost&,
+              GetUnownedUserDataHost,
+              (),
+              (const, override));
 };
 
 }  // namespace tabs

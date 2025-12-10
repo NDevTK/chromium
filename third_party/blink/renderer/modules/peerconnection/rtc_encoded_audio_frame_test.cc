@@ -5,9 +5,11 @@
 #include "third_party/blink/renderer/modules/peerconnection/rtc_encoded_audio_frame.h"
 
 #include <cstdint>
+#include <optional>
 
 #include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
@@ -17,7 +19,7 @@
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_util.h"
@@ -52,7 +54,7 @@ webrtc::Timestamp GetWebRTCTimeOrigin(LocalDOMWindow* window) {
 }
 
 DOMHighResTimeStamp GetTimeOriginNtp(V8TestingScope& v8_scope) {
-  return DOMWindowPerformance::performance(v8_scope.GetWindow())->timeOrigin() +
+  return GlobalPerformance::performance(v8_scope.GetWindow())->timeOrigin() +
          2208988800000.0;
 }
 
@@ -93,6 +95,8 @@ void MockReceiverMetadata(MockTransformableAudioFrame* frame,
   ON_CALL(*frame, SequenceNumber()).WillByDefault(Return(kSequenceNumber));
   ON_CALL(*frame, GetTimestamp()).WillByDefault(Return(kRtpTimestamp));
   ON_CALL(*frame, GetMimeType()).WillByDefault(Return("image"));
+  ON_CALL(*frame, CaptureTime())
+      .WillByDefault(Return(webrtc::Timestamp::Millis(kCaptureTimeMillis)));
   // Mark frame as a receiver frame and set a receive time.
   ON_CALL(*frame, GetDirection())
       .WillByDefault(Return(
@@ -129,6 +133,34 @@ RTCEncodedAudioFrameMetadata* CreateAudioMetadata(
   return new_metadata;
 }
 
+bool AreMetadataEqual(RTCEncodedAudioFrameMetadata* m1,
+                      RTCEncodedAudioFrameMetadata* m2) {
+  return m1->hasSequenceNumber() == m2->hasSequenceNumber() &&
+         (!m1->hasSequenceNumber() ||
+          m1->sequenceNumber() == m2->sequenceNumber()) &&
+         m1->hasRtpTimestamp() == m2->hasRtpTimestamp() &&
+         (!m1->hasRtpTimestamp() || m1->rtpTimestamp() == m2->rtpTimestamp()) &&
+         m1->hasCaptureTime() == m2->hasCaptureTime() &&
+         (!m1->hasCaptureTime() || m1->captureTime() == m2->captureTime()) &&
+         m1->hasSenderCaptureTimeOffset() == m2->hasSenderCaptureTimeOffset() &&
+         (!m1->hasSenderCaptureTimeOffset() ||
+          m1->senderCaptureTimeOffset() == m2->senderCaptureTimeOffset()) &&
+         m1->hasReceiveTime() == m2->hasReceiveTime() &&
+         (!m1->hasReceiveTime() || m1->receiveTime() == m2->receiveTime()) &&
+         m1->hasMimeType() == m2->hasMimeType() &&
+         (!m1->hasMimeType() || m1->mimeType() == m2->mimeType()) &&
+         m1->hasPayloadType() == m2->hasPayloadType() &&
+         (!m1->hasPayloadType() || m1->payloadType() == m2->payloadType()) &&
+         m1->hasContributingSources() == m2->hasContributingSources() &&
+         (!m1->hasContributingSources() ||
+          (m1->contributingSources() == m2->contributingSources())) &&
+         m1->hasSynchronizationSource() == m2->hasSynchronizationSource() &&
+         (!m1->hasSynchronizationSource() ||
+          (m1->synchronizationSource() == m2->synchronizationSource())) &&
+         m1->hasAudioLevel() == m2->hasAudioLevel() &&
+         (!m1->hasAudioLevel() || m1->audioLevel() == m2->audioLevel());
+}
+
 TEST_F(RTCEncodedAudioFrameTest, GetMetadataReturnsCorrectMetadata) {
   V8TestingScope v8_scope;
 
@@ -158,6 +190,68 @@ TEST_F(RTCEncodedAudioFrameTest, GetMetadataReturnsCorrectMetadata) {
             retrieved_metadata->audioLevel());
 }
 
+TEST_F(RTCEncodedAudioFrameTest, SetCaptureTimeOnReceiverFrame) {
+  V8TestingScope v8_scope;
+
+  std::unique_ptr<MockTransformableAudioFrame> frame =
+      std::make_unique<NiceMock<MockTransformableAudioFrame>>();
+  MockReceiverMetadata(frame.get(), v8_scope.GetWindow());
+  ASSERT_FALSE(frame->CanSetCaptureTime());
+
+  RTCEncodedAudioFrame* encoded_frame =
+      MakeGarbageCollected<RTCEncodedAudioFrame>(std::move(frame));
+  RTCEncodedAudioFrameMetadata* new_metadata =
+      encoded_frame->getMetadata(v8_scope.GetExecutionContext());
+  ASSERT_TRUE(new_metadata->hasCaptureTime());
+  double original_capture_time = new_metadata->captureTime();
+
+  // Small differences in captureTime are ignored.
+  new_metadata->setCaptureTime(original_capture_time + 0.01);
+  base::expected<void, String> result =
+      encoded_frame->SetMetadata(v8_scope.GetExecutionContext(), new_metadata);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(
+      encoded_frame->getMetadata(v8_scope.GetExecutionContext())->captureTime(),
+      original_capture_time);
+
+  new_metadata->setCaptureTime(original_capture_time - 0.01);
+  result =
+      encoded_frame->SetMetadata(v8_scope.GetExecutionContext(), new_metadata);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(
+      encoded_frame->getMetadata(v8_scope.GetExecutionContext())->captureTime(),
+      original_capture_time);
+
+  // Significantly different capture times cannot be set.
+  new_metadata->setCaptureTime(1234);
+  result =
+      encoded_frame->SetMetadata(v8_scope.GetExecutionContext(), new_metadata);
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(RTCEncodedAudioFrameTest,
+       SetCaptureTimeOnReceiverFrameWithoutCaptureTime) {
+  V8TestingScope v8_scope;
+
+  std::unique_ptr<MockTransformableAudioFrame> frame =
+      std::make_unique<NiceMock<MockTransformableAudioFrame>>();
+  MockReceiverMetadata(frame.get(), v8_scope.GetWindow());
+  ON_CALL(*frame, CaptureTime()).WillByDefault(Return(std::nullopt));
+  ASSERT_FALSE(frame->CanSetCaptureTime());
+
+  RTCEncodedAudioFrame* encoded_frame =
+      MakeGarbageCollected<RTCEncodedAudioFrame>(std::move(frame));
+  RTCEncodedAudioFrameMetadata* new_metadata =
+      encoded_frame->getMetadata(v8_scope.GetExecutionContext());
+  ASSERT_FALSE(new_metadata->hasCaptureTime());
+
+  base::expected<void, String> result =
+      encoded_frame->SetMetadata(v8_scope.GetExecutionContext(), new_metadata);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_FALSE(encoded_frame->getMetadata(v8_scope.GetExecutionContext())
+                   ->hasCaptureTime());
+}
+
 TEST_F(RTCEncodedAudioFrameTest, SetMetadataOnEmptyFrameFails) {
   V8TestingScope v8_scope;
 
@@ -178,10 +272,6 @@ TEST_F(RTCEncodedAudioFrameTest, SetMetadataOnEmptyFrameFails) {
   encoded_frame->setMetadata(v8_scope.GetExecutionContext(), new_metadata,
                              exception_state);
   EXPECT_TRUE(exception_state.HadException());
-  EXPECT_EQ(exception_state.Message(),
-            "Cannot setMetadata: Invalid modification of "
-            "RTCEncodedAudioFrameMetadata. Bad "
-            "synchronizationSource");
 }
 
 TEST_F(RTCEncodedAudioFrameTest, SetMetadataModifiesMetadata) {
@@ -637,6 +727,28 @@ TEST_F(RTCEncodedAudioFrameTest, FrameWithAudioLevel) {
       encoded_frame->getMetadata(v8_scope.GetExecutionContext());
   EXPECT_TRUE(metadata->hasAudioLevel());
   EXPECT_EQ(metadata->audioLevel(), ToLinearAudioLevel(kAudioLevel_dBov));
+}
+
+TEST_F(RTCEncodedAudioFrameTest,
+       ReadingMetadataOnEmptyFrameReturnsOriginalMetadata) {
+  V8TestingScope v8_scope;
+
+  std::unique_ptr<MockTransformableAudioFrame> frame =
+      std::make_unique<NiceMock<MockTransformableAudioFrame>>();
+  MockMetadata(frame.get());
+
+  RTCEncodedAudioFrame* encoded_frame =
+      MakeGarbageCollected<RTCEncodedAudioFrame>(std::move(frame));
+  RTCEncodedAudioFrameMetadata* original_metadata =
+      encoded_frame->getMetadata(v8_scope.GetExecutionContext());
+
+  encoded_frame->PassWebRtcFrame(v8_scope.GetIsolate(),
+                                 /*detach_frame_data=*/false);
+
+  RTCEncodedAudioFrameMetadata* post_neuter_metadata =
+      encoded_frame->getMetadata(v8_scope.GetExecutionContext());
+
+  EXPECT_TRUE(AreMetadataEqual(original_metadata, post_neuter_metadata));
 }
 
 }  // namespace

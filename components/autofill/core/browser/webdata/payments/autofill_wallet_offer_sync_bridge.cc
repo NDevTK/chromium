@@ -12,14 +12,13 @@
 #include "base/logging.h"
 #include "components/autofill/core/browser/data_model/payments/autofill_offer_data.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
-#include "components/autofill/core/browser/metrics/payments/offers_metrics.h"
 #include "components/autofill/core/browser/webdata/autofill_sync_metadata_table.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/browser/webdata/payments/payments_autofill_table.h"
 #include "components/autofill/core/browser/webdata/payments/payments_sync_bridge_util.h"
+#include "components/autofill/core/browser/webdata/payments/payments_sync_util.h"
 #include "components/sync/base/data_type.h"
-#include "components/sync/base/hash_util.h"
 #include "components/sync/model/client_tag_based_data_type_processor.h"
 #include "components/sync/model/mutable_data_batch.h"
 #include "components/sync/model/sync_metadata_store_change_list.h"
@@ -34,7 +33,7 @@ static int kAutofillWalletOfferSyncBridgeUserDataKey = 0;
 
 std::string GetClientTagFromSpecifics(
     const sync_pb::AutofillOfferSpecifics& specifics) {
-  return syncer::GetUnhashedClientTagFromAutofillOfferSpecifics(specifics);
+  return GetUnhashedClientTagFromAutofillOfferSpecifics(specifics);
 }
 
 std::string GetStorageKeyFromSpecifics(
@@ -49,7 +48,7 @@ std::string GetStorageKeyFromSpecifics(
 void AutofillWalletOfferSyncBridge::CreateForWebDataServiceAndBackend(
     AutofillWebDataBackend* web_data_backend,
     AutofillWebDataService* web_data_service) {
-  web_data_service->GetDBUserData()->SetUserData(
+  web_data_service->GetDBUserData().SetUserData(
       &kAutofillWalletOfferSyncBridgeUserDataKey,
       std::make_unique<AutofillWalletOfferSyncBridge>(
           std::make_unique<syncer::ClientTagBasedDataTypeProcessor>(
@@ -62,7 +61,7 @@ void AutofillWalletOfferSyncBridge::CreateForWebDataServiceAndBackend(
 syncer::DataTypeSyncBridge* AutofillWalletOfferSyncBridge::FromWebDataService(
     AutofillWebDataService* web_data_service) {
   return static_cast<AutofillWalletOfferSyncBridge*>(
-      web_data_service->GetDBUserData()->GetUserData(
+      web_data_service->GetDBUserData().GetUserData(
           &kAutofillWalletOfferSyncBridgeUserDataKey));
 }
 
@@ -161,7 +160,8 @@ AutofillWalletOfferSyncBridge::GetAllDataImpl() {
   std::vector<std::unique_ptr<AutofillOfferData>> offers;
   if (!GetAutofillTable()->GetAutofillOffers(&offers)) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to load offer data from table."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kAutofillWalletOfferFailedToLoadFromTable});
     return nullptr;
   }
 
@@ -189,11 +189,9 @@ void AutofillWalletOfferSyncBridge::MergeRemoteData(
     CHECK(IsEntityDataValid(change->data()));
     const sync_pb::AutofillOfferSpecifics specifics =
         change->data().specifics.autofill_offer();
-    bool offer_valid = IsOfferSpecificsValid(specifics);
-    if (offer_valid) {
+    if (IsOfferSpecificsValid(specifics)) {
       offer_data.push_back(AutofillOfferDataFromOfferSpecifics(specifics));
     }
-    autofill_metrics::LogSyncedOfferDataBeingValid(offer_valid);
   }
 
   auto transaction = web_data_backend_->GetDatabase()->AcquireTransaction();
@@ -245,7 +243,8 @@ void AutofillWalletOfferSyncBridge::LoadAutofillOfferMetadata() {
   if (!web_data_backend_->GetDatabase() || !GetAutofillTable() ||
       !GetSyncMetadataStore()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to load Autofill table."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kAutofillWalletOfferFailedToLoadTable});
     return;
   }
 
@@ -254,7 +253,7 @@ void AutofillWalletOfferSyncBridge::LoadAutofillOfferMetadata() {
                                                   batch.get())) {
     change_processor()->ReportError(
         {FROM_HERE,
-         "Failed reading autofill offer metadata from WebDatabase."});
+         syncer::ModelError::Type::kAutofillWalletOfferFailedToReadMetadata});
     return;
   }
   change_processor()->ModelReadyToSync(std::move(batch));

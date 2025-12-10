@@ -94,7 +94,8 @@ void LayoutSVGModelObject::AddOutlineRects(OutlineRectCollector& collector,
     *info = OutlineInfo::GetUnzoomedFromStyle(StyleRef());
 }
 
-gfx::RectF LayoutSVGModelObject::LocalBoundingBoxRectForAccessibility() const {
+gfx::RectF LayoutSVGModelObject::LocalBoundingBoxRectForAccessibility(
+    IncludeDescendants include_descendants) const {
   NOT_DESTROYED();
   return DecoratedBoundingBox();
 }
@@ -143,10 +144,12 @@ void LayoutSVGModelObject::ImageChanged(WrappedImagePtr image,
   }
 }
 
-void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
-                                          const ComputedStyle* old_style) {
+void LayoutSVGModelObject::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutObject::StyleDidChange(diff, old_style);
+  LayoutObject::StyleDidChange(diff, old_style, style_change_context);
 
   if (diff.NeedsFullLayout()) {
     if (diff.TransformChanged())
@@ -168,9 +171,13 @@ void LayoutSVGModelObject::StyleDidChange(StyleDifference diff,
           StyleRef().HasBlendMode() ? kDescendantIsolationRequired
                                     : kDescendantIsolationNeedsUpdate);
     }
-    if (StyleRef().HasCurrentTransformRelatedAnimation() &&
-        !old_style->HasCurrentTransformRelatedAnimation()) {
-      Parent()->SetSVGDescendantMayHaveTransformRelatedAnimation();
+    if ((StyleRef().HasCurrentTransformRelatedAnimation() &&
+         !old_style->HasCurrentTransformRelatedAnimation()) ||
+        (RuntimeEnabledFeatures::
+             SvgAvoidCullingElementsWithTransformOperationsEnabled() &&
+         StyleRef().HasNonIdentityTransformOperation() &&
+         !old_style->HasNonIdentityTransformOperation())) {
+      Parent()->SetSVGDescendantMayHaveTransformRelatedOperations();
     }
   }
 

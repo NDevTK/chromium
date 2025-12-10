@@ -16,7 +16,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/functional/callback_forward.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -35,7 +36,6 @@
 
 class GURL;
 
-@class CRWSessionStorage;
 @protocol CRWScrollableContent;
 @protocol CRWWebViewDownload;
 @protocol CRWFindInteraction;
@@ -71,6 +71,13 @@ void IgnoreOverRealizationCheck();
 // Core interface for interaction with the web.
 class WebState : public base::SupportsUserData {
  public:
+  // Policy for realization.
+  enum class RealizationPolicy {
+    kRelaxed,
+    kEnforceNoAttachedData,
+    kDefault = kRelaxed,
+  };
+
   // Callback used to load the full information for the WebState when
   // it will become realized.
   using WebStateStorageLoader =
@@ -187,17 +194,17 @@ class WebState : public base::SupportsUserData {
     std::map<std::string, Callback> callbacks_;
   };
 
+  class ScopedWebContentCoverer {
+   public:
+    explicit ScopedWebContentCoverer(WebState* web_state);
+    ~ScopedWebContentCoverer();
+
+   private:
+    base::WeakPtr<WebState> web_state_;
+  };
+
   // Creates a new WebState.
   static std::unique_ptr<WebState> Create(const CreateParams& params);
-
-  // Creates a new WebState from a serialized representation of the session.
-  // `session_storage` must not be nil.
-  // TODO(crbug.com/40245950): remove when the optimised serialisation feature
-  // has been fully launched.
-  static std::unique_ptr<WebState> CreateWithStorageSession(
-      const CreateParams& params,
-      CRWSessionStorage* session_storage,
-      NativeSessionFetcher session_fetcher);
 
   // Creates a new WebState from a serialized representation of the session.
   // The callbacks are used to load the complete serialized data from disk
@@ -236,10 +243,10 @@ class WebState : public base::SupportsUserData {
   // Returns whether the WebState is realized.
   //
   // What does "realized" mean? When creating a WebState from session storage
-  // with `CreateWithStorageSession()` or `CreateWithStorage()`, it may not
-  // yet have been fully created. Instead, it has all information to fully
-  // instantiate it and its history available, but the underlying objects
-  // (WKWebView, NavigationManager, ...) have not been created.
+  // `CreateWithStorage()`, it may not yet have been fully created. Instead,
+  // it has all information to fully instantiate it and its history available,
+  // but the underlying objects (WKWebView, NavigationManager, ...) have not
+  // been created.
   //
   // This is an optimisation to reduce the amount of memory consumed by tabs
   // that have been restored after the browser has been shutdown. If the user
@@ -260,11 +267,15 @@ class WebState : public base::SupportsUserData {
   // to call it as the WebState will lazily switch to "realized" state when
   // needed.
   //
+  // The parameter `policy` can be used to enforce that there are no objects
+  // attached to the WebState when it is realized. If the WebState is realized
+  // the `policy` is ignored.
+  //
   // Returns `this` so that the method can be chained such as:
   //
   //    WebState* web_state = ...;
-  //    web_state->ForceRealized()->SetDelegate(this);
-  virtual WebState* ForceRealized() = 0;
+  //    web_state->ForceRealizedWithPolicy(policy)->SetDelegate(this);
+  virtual WebState* ForceRealizedWithPolicy(RealizationPolicy policy) = 0;
 
   // Whether or not a web view is allowed to exist in this WebState. Defaults
   // to false; this should be enabled before attempting to access the view.
@@ -344,10 +355,6 @@ class WebState : public base::SupportsUserData {
   GetSessionCertificatePolicyCache() const = 0;
   virtual SessionCertificatePolicyCache* GetSessionCertificatePolicyCache() = 0;
 
-  // Creates a serializable representation of the session. The returned value
-  // is autoreleased.
-  virtual CRWSessionStorage* BuildSessionStorage() const = 0;
-
   // Loads `data` of type `mime_type` and replaces last committed URL with the
   // given `url`.
   virtual void LoadData(NSData* data, NSString* mime_type, const GURL& url) = 0;
@@ -355,16 +362,6 @@ class WebState : public base::SupportsUserData {
   // Asynchronously executes `javaScript` in the main frame's context,
   // registering user interaction.
   virtual void ExecuteUserJavaScript(NSString* javaScript) = 0;
-
-  // Returns a unique identifier for this WebState that is stable across
-  // restart of the application (and across "undo" after a tab is closed).
-  // It is local to the device and not synchronized. This can be used as a key
-  // to identify locally this WebState (e.g. can be used as part of the name
-  // of the file that is used to store a snapshot of the WebState, or it can
-  // be used as a key in an NSDictionary).
-  //
-  // DEPRECATED: use GetUniqueIdentifier() instead.
-  virtual NSString* GetStableIdentifier() const = 0;
 
   // Returns a unique identifier for this WebState that is stable across
   // restart of the application (and across "undo" after a tab is closed).
@@ -538,6 +535,9 @@ class WebState : public base::SupportsUserData {
 
   // Returns the under page background color.
   virtual UIColor* GetUnderPageBackgroundColor() = 0;
+
+  // Helper that calls ForceRealizedWithPolicy() with default policy.
+  WebState* ForceRealized();
 
  protected:
   friend class WebStatePolicyDecider;

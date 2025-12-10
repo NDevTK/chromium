@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "ash/webui/vc_background_ui/vc_background_ui.h"
 
@@ -24,14 +20,12 @@
 #include "ash/webui/system_apps/public/system_web_app_ui_config.h"
 #include "ash/webui/vc_background_ui/url_constants.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
-#include "components/manta/features.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/webui/color_change_listener/color_change_handler.h"
 #include "ui/webui/mojo_web_ui_controller.h"
 
 namespace ash::vc_background_ui {
@@ -73,8 +67,7 @@ VcBackgroundUIConfig::VcBackgroundUIConfig(
 bool VcBackgroundUIConfig::IsWebUIEnabled(
     content::BrowserContext* browser_context) {
   return SystemWebAppUIConfig::IsWebUIEnabled(browser_context) &&
-         ::ash::features::IsVcBackgroundReplaceEnabled() &&
-         manta::features::IsMantaServiceEnabled();
+         ::ash::features::IsVcBackgroundReplaceEnabled();
 }
 
 VcBackgroundUI::VcBackgroundUI(
@@ -108,17 +101,10 @@ void VcBackgroundUI::BindInterface(
   sea_pen_provider_->BindInterface(std::move(receiver));
 }
 
-void VcBackgroundUI::BindInterface(
-    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
-  color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
-      web_ui()->GetWebContents(), std::move(receiver));
-}
-
 void VcBackgroundUI::AddBooleans(content::WebUIDataSource* source) {
   const bool common_sea_pen_requirements =
       sea_pen_provider_->IsEligibleForSeaPen() &&
-      ::ash::features::IsVcBackgroundReplaceEnabled() &&
-      manta::features::IsMantaServiceEnabled();
+      ::ash::features::IsVcBackgroundReplaceEnabled();
   source->AddBoolean("isSeaPenEnabled",
                          common_sea_pen_requirements);
   source->AddBoolean("isSeaPenTextInputEnabled",

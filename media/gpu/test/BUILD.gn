@@ -6,9 +6,8 @@ import("//build/config/ui.gni")
 import("//media/gpu/args.gni")
 import("//media/media_options.gni")
 
-# TODO(crbug.com/1006266): consider using |use_chromeos_video_acceleration|.
 if (enable_av1_decoder &&
-    (use_v4l2_codec || use_vaapi || is_win || is_android)) {
+    (use_linux_video_acceleration || is_win || is_android)) {
   test("video_decode_accelerator_tests") {
     testonly = true
     sources = [
@@ -42,6 +41,10 @@ if (enable_av1_decoder &&
     if (use_v4l2_codec) {
       deps += [ "//media/gpu/v4l2" ]
     }
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 
   test("video_decode_accelerator_perf_tests") {
@@ -57,9 +60,13 @@ if (enable_av1_decoder &&
       "//testing/gtest",
     ]
 
-    if (use_v4l2_codec || use_vaapi) {
+    if (use_linux_video_acceleration) {
       deps += [ "//sandbox/linux:sandbox_services" ]
     }
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 
   test("video_encode_accelerator_tests") {
@@ -121,9 +128,10 @@ source_set("helpers") {
     "video_frame_helpers.h",
   ]
   deps = [
-    "//base:base",
+    "//base",
     "//base/test:test_config",
     "//base/test:test_support",
+    "//crypto",
     "//gpu:test_support",
     "//gpu/ipc/common",
     "//media:test_support",
@@ -132,6 +140,10 @@ source_set("helpers") {
     "//third_party/libyuv",
   ]
   public_deps = [ "//testing/gtest" ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("frame_validator") {
@@ -143,10 +155,15 @@ source_set("frame_validator") {
   deps = [
     ":helpers",
     ":test_helpers",
+    "//crypto",
     "//gpu:test_support",
     "//media/gpu",
     "//testing/gmock",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("frame_file_writer") {
@@ -158,7 +175,7 @@ source_set("frame_file_writer") {
   deps = [
     ":helpers",
     "//media/gpu",
-    "//ui/gfx/codec:codec",
+    "//ui/gfx/codec",
   ]
 }
 
@@ -199,10 +216,10 @@ static_library("video_player") {
     "//gpu:test_support",
     "//media/gpu",
     "//testing/gmock",
-    "//testing/gtest:gtest",
+    "//testing/gtest",
   ]
 
-  if (use_vaapi || use_v4l2_codec) {
+  if (use_linux_video_acceleration) {
     sources += [
       "video_player/mappable_video_frame_converter.cc",
       "video_player/mappable_video_frame_converter.h",
@@ -220,11 +237,11 @@ static_library("video_test_environment") {
 
   deps = [
     ":helpers",
-    "//base:base",
+    "//base",
     "//base/test:test_support",
     "//media:test_support",
     "//media/gpu",
-    "//mojo/core/embedder:embedder",
+    "//mojo/core/embedder",
   ]
 
   public_deps = [
@@ -271,7 +288,7 @@ static_library("video_encoder") {
     "//gpu:test_support",
     "//media/gpu",
     "//testing/gmock",
-    "//testing/gtest:gtest",
+    "//testing/gtest",
   ]
 }
 

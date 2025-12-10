@@ -12,7 +12,8 @@
 #include "base/files/file_path.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "ipc/ipc_message.h"
+#include "content/public/browser/child_process_id.h"
+#include "ipc/constants.mojom.h"
 
 class Profile;
 
@@ -178,7 +179,7 @@ struct WebRtcEventLogPeerConnectionKey {
             /*render_process_id=*/0,
             /*lid=*/0,
             reinterpret_cast<BrowserContextId>(nullptr),
-            /*render_frame_id=*/MSG_ROUTING_NONE) {}
+            /*render_frame_id=*/IPC::mojom::kRoutingIdNone) {}
 
   constexpr WebRtcEventLogPeerConnectionKey(int render_process_id,
                                             int lid,
@@ -534,7 +535,18 @@ WebRtcEventLogPeerConnectionKey::BrowserContextId GetBrowserContextId(
 // it would have no BrowserContext associated, so the ID associated with a
 // null BrowserContext will be returned.)
 WebRtcEventLogPeerConnectionKey::BrowserContextId GetBrowserContextId(
-    int render_process_id);
+    content::ChildProcessId render_process_id);
+
+// Fetches the BrowserContext associated with the render process ID, then
+// returns its BrowserContextId. (If the render process has already died,
+// it would have no BrowserContext associated, so the ID associated with a
+// null BrowserContext will be returned.)
+inline WebRtcEventLogPeerConnectionKey::BrowserContextId GetBrowserContextId(
+    int render_process_id) {
+  // TODO(crbug.com/379869738) Remove FromUnsafeValue.
+  return GetBrowserContextId(
+      content::ChildProcessId::FromUnsafeValue(render_process_id));
+}
 
 // Given a BrowserContext's directory, return the path to the directory where
 // we store the pending remote-bound logs associated with this BrowserContext.

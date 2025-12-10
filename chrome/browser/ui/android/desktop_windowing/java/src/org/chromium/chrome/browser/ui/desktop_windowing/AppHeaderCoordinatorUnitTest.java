@@ -21,7 +21,6 @@ import static org.mockito.Mockito.verify;
 import static org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderCoordinator.INSTANCE_STATE_KEY_IS_APP_IN_UNFOCUSED_DW;
 
 import android.app.Activity;
-import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Build;
@@ -43,26 +42,24 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
-import org.robolectric.annotation.Implementation;
-import org.robolectric.annotation.Implements;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.annotation.LooperMode.Mode;
 import org.robolectric.util.ReflectionHelpers;
 
-import org.chromium.base.FeatureOverrides;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
-import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderCoordinatorUnitTest.ShadowDisplayUtil;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.DesktopWindowHeuristicResult;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.WindowingMode;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeStateProvider;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.ui.display.DisplayUtil;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeStateProvider;
 import org.chromium.ui.insets.CaptionBarInsetsRectProvider;
 import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.insets.InsetsRectProvider;
@@ -71,23 +68,9 @@ import java.util.List;
 
 /** Unit test for {@link AppHeaderCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
-@Config(sdk = 30, shadows = ShadowDisplayUtil.class)
+@Config(sdk = 30)
 @LooperMode(Mode.PAUSED)
 public class AppHeaderCoordinatorUnitTest {
-    @Implements(DisplayUtil.class)
-    static class ShadowDisplayUtil {
-        private static boolean sIsOnDefaultDisplay;
-
-        private static void setOnDefaultDisplay(boolean isOnDefaultDisplay) {
-            sIsOnDefaultDisplay = isOnDefaultDisplay;
-        }
-
-        @Implementation
-        public static boolean isContextInDefaultDisplay(Context context) {
-            return sIsOnDefaultDisplay;
-        }
-    }
-
     private static final int WINDOW_WIDTH = 600;
     private static final int WINDOW_HEIGHT = 800;
     private static final Rect WINDOW_RECT = new Rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -124,7 +107,7 @@ public class AppHeaderCoordinatorUnitTest {
 
     @Before
     public void setup() {
-        ShadowDisplayUtil.setOnDefaultDisplay(true);
+        DisplayUtil.setIsOnDefaultDisplayForTesting(true);
         mActivityScenarioRule.getScenario().onActivity(activity -> mSpyActivity = spy(activity));
         mEdgeToEdgeStateProvider = new EdgeToEdgeStateProvider(mSpyActivity.getWindow());
         mSpyRootView = spy(mSpyActivity.getWindow().getDecorView());
@@ -225,32 +208,14 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
-    public void notEnabledOnExternalDisplayWhenDisallowed() {
-        var watcher =
-                HistogramWatcher.newSingleRecordWatcher(
-                        "Android.DesktopWindowHeuristicResult4",
-                        DesktopWindowHeuristicResult.DISALLOWED_ON_EXTERNAL_DISPLAY);
-        ShadowDisplayUtil.setOnDefaultDisplay(false);
-        updateFeatureParams(/* enableOnExternalDisplay= */ false, /* oemDenylist= */ "");
-        setupWithLeftAndRightBoundingRect();
-        notifyInsetsRectConsumer();
-
-        verifyDesktopWindowingDisabled(
-                /* error= */ "Desktop windowing should not be enabled on an external display when"
-                        + " it is disallowed.");
-        watcher.assertExpected();
-    }
-
-    @Test
-    public void notEnabledOnExternalDisplayForDenylistedOem() {
+    @Config(sdk = 35)
+    public void notEnabledOnExternalDisplayForSamsung_PreApi36() {
         ReflectionHelpers.setStaticField(Build.class, "MANUFACTURER", "samsung");
         var watcher =
                 HistogramWatcher.newSingleRecordWatcher(
                         "Android.DesktopWindowHeuristicResult4",
                         DesktopWindowHeuristicResult.DISALLOWED_ON_EXTERNAL_DISPLAY);
-        // Assume external display support is enabled but denylisted for "samsung".
-        ShadowDisplayUtil.setOnDefaultDisplay(false);
-        updateFeatureParams(/* enableOnExternalDisplay= */ true, /* oemDenylist= */ "samsung");
+        DisplayUtil.setIsOnDefaultDisplayForTesting(false);
         setupWithLeftAndRightBoundingRect();
         notifyInsetsRectConsumer();
 
@@ -261,11 +226,10 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
-    public void enabledOnExternalDisplayForNonDenylistedOem() {
-        ReflectionHelpers.setStaticField(Build.class, "MANUFACTURER", "lenovo");
-        // Assume external display support is enabled but denylisted for "samsung".
-        ShadowDisplayUtil.setOnDefaultDisplay(false);
-        updateFeatureParams(/* enableOnExternalDisplay= */ true, /* oemDenylist= */ "samsung");
+    @Config(sdk = 36)
+    public void enabledOnExternalDisplayForSamsung_PostApi36() {
+        ReflectionHelpers.setStaticField(Build.class, "MANUFACTURER", "samsung");
+        DisplayUtil.setIsOnDefaultDisplayForTesting(false);
         setupWithLeftAndRightBoundingRect();
         notifyInsetsRectConsumer();
 
@@ -274,8 +238,7 @@ public class AppHeaderCoordinatorUnitTest {
 
     @Test
     public void enabledOnExternalDisplayWhenAllowed() {
-        ShadowDisplayUtil.setOnDefaultDisplay(false);
-        updateFeatureParams(/* enableOnExternalDisplay= */ true, /* oemDenylist= */ "");
+        DisplayUtil.setIsOnDefaultDisplayForTesting(false);
         setupWithLeftAndRightBoundingRect();
         notifyInsetsRectConsumer();
 
@@ -362,6 +325,7 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
+    @SuppressWarnings("DirectInvocationOnMock")
     public void initializeWithDesktopWindowingThenExit() {
         setupWithLeftAndRightBoundingRect();
         doAnswer(
@@ -492,6 +456,7 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
+    @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET)
     public void overlappingKeyboard_SwitchToAndFromDesktopWindowingMode() {
         verifyDesktopWindowingDisabled(
                 /* error= */ "DesktopWindowing should exit when no insets is supplied.");
@@ -531,6 +496,47 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET + ":e2e_tablet_width_threshold/-1")
+    public void overlappingKeyboard_SwitchToAndFromDesktopWindowingMode_E2ETabletEnabled() {
+        verifyDesktopWindowingDisabled(
+                /* error= */ "DesktopWindowing should exit when no insets is supplied.");
+
+        // Simulate overlapping keyboard.
+        var insets = applyWindowInsets(KEYBOARD_INSET, UNSPECIFIED_INSET);
+        assertNotEquals(
+                "Ime insets should not be consumed when root view is not adjusted.",
+                Insets.NONE,
+                insets.getInsets(WindowInsetsCompat.Type.ime()));
+        assertEquals("Root view bottom should not be padded.", 0, mSpyRootView.getPaddingBottom());
+
+        // Simulate switching to desktop windowing mode.
+        setupWithLeftAndRightBoundingRect();
+        notifyInsetsRectConsumer();
+        insets = applyWindowInsets(KEYBOARD_INSET, UNSPECIFIED_INSET);
+        assertEquals(
+                "Ime insets should be not consumed when E2E is active.",
+                Insets.of(0, 0, 0, KEYBOARD_INSET),
+                insets.getInsets(WindowInsetsCompat.Type.ime()));
+        verifyDesktopWindowingEnabled();
+        assertEquals(
+                "Root view bottom padding should be not padded again when E2E is active.",
+                0,
+                mSpyRootView.getPaddingBottom());
+
+        // Simulate switching out of desktop windowing mode.
+        setupWithNoCaptionInsets();
+        notifyInsetsRectConsumer();
+        insets = applyWindowInsets(KEYBOARD_INSET, UNSPECIFIED_INSET);
+        assertNotEquals(
+                "Ime insets should not be consumed when root view is not adjusted.",
+                Insets.NONE,
+                insets.getInsets(WindowInsetsCompat.Type.ime()));
+        assertEquals(
+                "Root view bottom padding should be reset.", 0, mSpyRootView.getPaddingBottom());
+    }
+
+    @Test
+    @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET)
     public void overlappingKeyboard_MoveDesktopWindow() {
         // Simulate switching to desktop windowing mode.
         setupWithLeftAndRightBoundingRect();
@@ -560,6 +566,37 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET + ":e2e_tablet_width_threshold/-1")
+    public void overlappingKeyboard_MoveDesktopWindow_E2ETabletEnabled() {
+        // Simulate switching to desktop windowing mode.
+        setupWithLeftAndRightBoundingRect();
+        notifyInsetsRectConsumer();
+
+        // Simulate overlapping keyboard.
+        var insets = applyWindowInsets(KEYBOARD_INSET, UNSPECIFIED_INSET);
+        assertEquals(
+                "Ime insets should be not consumed when E2E is active.",
+                Insets.of(0, 0, 0, KEYBOARD_INSET),
+                insets.getInsets(WindowInsetsCompat.Type.ime()));
+        assertEquals(
+                "Root view bottom padding should be not updated when E2E is active.",
+                0,
+                mSpyRootView.getPaddingBottom());
+
+        // Simulate moving a desktop window that causes the keyboard inset to be updated.
+        insets = applyWindowInsets(KEYBOARD_INSET + 100, UNSPECIFIED_INSET);
+        assertEquals(
+                "Ime insets should be not consumed when E2E is active.",
+                Insets.of(0, 0, 0, KEYBOARD_INSET + 100),
+                insets.getInsets(WindowInsetsCompat.Type.ime()));
+        assertEquals(
+                "Root view bottom padding should be not padded again when E2E is active.",
+                0,
+                mSpyRootView.getPaddingBottom());
+    }
+
+    @Test
+    @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET)
     public void overlappingNavBar_SwitchToAndFromDesktopWindowingMode() {
         verifyDesktopWindowingDisabled(
                 /* error= */ "Desktop windowing mode should be disabled initially.");
@@ -599,6 +636,47 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET + ":e2e_tablet_width_threshold/-1")
+    public void overlappingNavBar_SwitchToAndFromDesktopWindowingMode_E2ETabletEnabled() {
+        verifyDesktopWindowingDisabled(
+                /* error= */ "Desktop windowing mode should be disabled initially.");
+
+        // Simulate overlapping nav bar bottom inset.
+        var insets = applyWindowInsets(UNSPECIFIED_INSET, NAV_BAR_INSET);
+        assertNotEquals(
+                "Nav bar insets should not be consumed when root view is not adjusted.",
+                Insets.NONE,
+                insets.getInsets(WindowInsetsCompat.Type.navigationBars()));
+        assertEquals("Root view bottom should not be padded.", 0, mSpyRootView.getPaddingBottom());
+
+        // Simulate switching to desktop windowing mode.
+        setupWithLeftAndRightBoundingRect();
+        notifyInsetsRectConsumer();
+        insets = applyWindowInsets(UNSPECIFIED_INSET, NAV_BAR_INSET);
+        assertEquals(
+                "Nav bar insets should be not consumed when E2E is active.",
+                Insets.NONE,
+                insets.getInsets(WindowInsetsCompat.Type.ime()));
+        verifyDesktopWindowingEnabled();
+        assertEquals(
+                "Root view should be not padded again when E2E is active.",
+                0,
+                mSpyRootView.getPaddingBottom());
+
+        // Simulate switching out of desktop windowing mode.
+        setupWithNoCaptionInsets();
+        notifyInsetsRectConsumer();
+        insets = applyWindowInsets(UNSPECIFIED_INSET, NAV_BAR_INSET);
+        assertNotEquals(
+                "Nav bar insets should not be consumed when root view is not adjusted.",
+                Insets.NONE,
+                insets.getInsets(WindowInsetsCompat.Type.navigationBars()));
+        assertEquals(
+                "Root view bottom padding should be reset.", 0, mSpyRootView.getPaddingBottom());
+    }
+
+    @Test
+    @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET)
     public void overlappingNavBar_MoveDesktopWindow() {
         // Simulate switching to desktop windowing mode.
         setupWithLeftAndRightBoundingRect();
@@ -624,6 +702,33 @@ public class AppHeaderCoordinatorUnitTest {
     }
 
     @Test
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET + ":e2e_tablet_width_threshold/-1")
+    public void overlappingNavBar_MoveDesktopWindow_E2ETabletEnabled() {
+        // Simulate switching to desktop windowing mode.
+        setupWithLeftAndRightBoundingRect();
+        notifyInsetsRectConsumer();
+
+        // Simulate overlapping nav bar bottom inset.
+        var insets = applyWindowInsets(UNSPECIFIED_INSET, NAV_BAR_INSET);
+        assertEquals(
+                "Nav bar insets should not be consumed when E2E is active.",
+                Insets.of(0, 0, 0, NAV_BAR_INSET),
+                insets.getInsets(WindowInsetsCompat.Type.navigationBars()));
+
+        // Simulate moving a desktop window that causes the nav bar inset to be updated.
+        insets = applyWindowInsets(UNSPECIFIED_INSET, NAV_BAR_INSET - 10);
+        assertEquals(
+                "Nav bar insets should not be consumed when E2E is active.",
+                Insets.of(0, 0, 0, NAV_BAR_INSET - 10),
+                insets.getInsets(WindowInsetsCompat.Type.navigationBars()));
+        assertEquals(
+                "Root view should be not padded again when E2E is active.",
+                0,
+                mSpyRootView.getPaddingBottom());
+    }
+
+    @Test
+    @DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET)
     public void overlappingKeyboardAndNavBar() {
         // Simulate switching to desktop windowing mode.
         setupWithLeftAndRightBoundingRect();
@@ -634,6 +739,21 @@ public class AppHeaderCoordinatorUnitTest {
         assertEquals(
                 "Root view bottom padding should be updated.",
                 KEYBOARD_INSET,
+                mSpyRootView.getPaddingBottom());
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TABLET + ":e2e_tablet_width_threshold/-1")
+    public void overlappingKeyboardAndNavBar_E2ETabletEnabled() {
+        // Simulate switching to desktop windowing mode.
+        setupWithLeftAndRightBoundingRect();
+        notifyInsetsRectConsumer();
+
+        // Simulate overlapping keyboard and nav bar bottom insets.
+        applyWindowInsets(KEYBOARD_INSET, NAV_BAR_INSET);
+        assertEquals(
+                "Root view bottom padding should not be padded again when E2E is active.",
+                0,
                 mSpyRootView.getPaddingBottom());
     }
 
@@ -792,6 +912,7 @@ public class AppHeaderCoordinatorUnitTest {
         doReturn(blockedRects).when(mInsetsRectProvider).getBoundingRects();
     }
 
+    @SuppressWarnings("DirectInvocationOnMock")
     private void notifyInsetsRectConsumer() {
         verify(mInsetsRectProvider, atLeastOnce()).setConsumer(mInsetRectConsumerCaptor.capture());
         mInsetsRectUpdateConsumed =
@@ -831,16 +952,5 @@ public class AppHeaderCoordinatorUnitTest {
                     WindowInsetsCompat.Type.navigationBars(), Insets.of(0, 0, 0, navBarInset));
         }
         return mAppHeaderCoordinator.onApplyWindowInsets(mSpyRootView, windowInsetsBuilder.build());
-    }
-
-    private void updateFeatureParams(boolean enableOnExternalDisplay, String oemDenylist) {
-        FeatureOverrides.Builder overrides =
-                FeatureOverrides.newBuilder()
-                        .enable(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
-                        .param(
-                                "enable_on_external_display",
-                                enableOnExternalDisplay ? "true" : "false")
-                        .param("external_display_oem_denylist", oemDenylist);
-        overrides.apply();
     }
 }

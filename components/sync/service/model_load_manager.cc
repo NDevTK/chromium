@@ -17,6 +17,7 @@
 #include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
 #include "components/sync/base/sync_stop_metadata_fate.h"
+#include "components/sync/model/model_error.h"
 #include "components/sync/service/data_type_controller.h"
 #include "components/sync/service/sync_error.h"
 
@@ -164,7 +165,7 @@ void ModelLoadManager::LoadDesiredTypes() {
   const DataTypeSet types = preferred_types_without_errors_;
 
   // Start timer to measure time for loading to complete.
-  load_models_elapsed_timer_ = std::make_unique<base::ElapsedTimer>();
+  load_models_elapsed_timer_.emplace();
 
   for (DataType type : types) {
     auto dtc_iter = controllers_->find(type);
@@ -221,9 +222,9 @@ void ModelLoadManager::ModelLoadCallback(
     DVLOG(1) << "ModelLoadManager: Type encountered an error.";
     preferred_types_without_errors_.Remove(type);
     DataTypeController* dtc = controllers_->find(type)->second.get();
-    StopDatatypeImpl(
-        SyncError(error->location(), SyncError::MODEL_ERROR, error->message()),
-        SyncStopMetadataFate::KEEP_METADATA, dtc, base::DoNothing());
+    StopDatatypeImpl(SyncError::CreateFromModelError(*error),
+                     SyncStopMetadataFate::KEEP_METADATA, dtc,
+                     base::DoNothing());
     NotifyDelegateIfReadyForConfigure();
     return;
   }
@@ -291,8 +292,10 @@ void ModelLoadManager::LoadModelsForType(DataTypeController* dtc) {
   // FAILED is possible if the type was STOPPING but then encountered an error
   // before the type actually stopped.
   if (dtc->state() == DataTypeController::FAILED) {
-    ModelLoadCallback(dtc->type(),
-                      ModelError(FROM_HERE, "Data type in FAILED state."));
+    ModelLoadCallback(
+        dtc->type(),
+        ModelError(FROM_HERE,
+                   ModelError::Type::kModelLoadManagerDataTypeInFailedState));
     return;
   }
 

@@ -66,18 +66,7 @@
 #endif  // IS_WIN
 
 using ResultOrError =
-    base::expected<blink::FontResource::DecodedResult, String>;
-
-namespace WTF {
-
-template <>
-struct CrossThreadCopier<ResultOrError> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = ResultOrError;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-}  // namespace WTF
+    base::expected<blink::FontResource::DecodedResult, blink::String>;
 
 namespace blink {
 
@@ -309,13 +298,13 @@ void FontResource::StartLoadLimitTimersIfNecessary(
 
   font_load_short_limit_ = PostDelayedCancellableTask(
       *task_runner, FROM_HERE,
-      WTF::BindOnce(&FontResource::FontLoadShortLimitCallback,
-                    WrapWeakPersistent(this)),
+      blink::BindOnce(&FontResource::FontLoadShortLimitCallback,
+                      WrapWeakPersistent(this)),
       kFontLoadWaitShort);
   font_load_long_limit_ = PostDelayedCancellableTask(
       *task_runner, FROM_HERE,
-      WTF::BindOnce(&FontResource::FontLoadLongLimitCallback,
-                    WrapWeakPersistent(this)),
+      blink::BindOnce(&FontResource::FontLoadLongLimitCallback,
+                      WrapWeakPersistent(this)),
       kFontLoadWaitLong);
 }
 

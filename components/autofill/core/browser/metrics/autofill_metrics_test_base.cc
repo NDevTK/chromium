@@ -25,18 +25,20 @@
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/credit_card_network_identifiers.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "testing/gmock/include/gmock/gmock.h"
 
 #if !BUILDFLAG(IS_IOS)
 #include "components/autofill/core/browser/payments/test_credit_card_fido_authenticator.h"
 #endif
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#endif
 
 namespace autofill::autofill_metrics {
 
 namespace {
+
+using ::testing::Invoke;
+using ::testing::NiceMock;
+
 void SetProfileTestData(AutofillProfile* profile) {
   test::SetProfileInfo(profile, "Elvis", "Aaron", "Presley",
                        "theking@gmail.com", "RCA", "3734 Elvis Presley Blvd.",
@@ -53,8 +55,7 @@ MockPaymentsAutofillClient::~MockPaymentsAutofillClient() = default;
 
 MockCreditCardAccessManager::MockCreditCardAccessManager(
     BrowserAutofillManager* bam)
-    : CreditCardAccessManager(bam,
-                              test_api(*bam).credit_card_form_event_logger()) {
+    : CreditCardAccessManager(bam) {
   ON_CALL(*this, FetchCreditCard)
       .WillByDefault(
           [this](const CreditCard* card, OnCreditCardFetchedCallback cb) {
@@ -64,18 +65,38 @@ MockCreditCardAccessManager::MockCreditCardAccessManager(
 
 MockCreditCardAccessManager::~MockCreditCardAccessManager() = default;
 
+MockAutofillDriver::MockAutofillDriver(TestAutofillClient* client)
+    : TestAutofillDriver(client) {
+  ON_CALL(*this, ApplyFormAction)
+      .WillByDefault(
+          [this](mojom::FormActionType action_type,
+                 mojom::ActionPersistence action_persistence,
+                 base::span<const FormFieldData> data, const FillId& fill_id,
+                 bool supports_refill, const url::Origin& triggered_origin,
+                 const base::flat_map<FieldGlobalId, FieldType>& field_type_map,
+                 const Section& section_for_clear_form_on_ios)
+              -> base::flat_set<FieldGlobalId> {
+            return TestAutofillDriver::ApplyFormAction(
+                action_type, action_persistence, data, fill_id, supports_refill,
+                triggered_origin, field_type_map,
+                section_for_clear_form_on_ios);
+          });
+}
+
+MockAutofillDriver::~MockAutofillDriver() = default;
+
 TestBrowserAutofillManager::TestBrowserAutofillManager(AutofillDriver* driver)
     : autofill::TestBrowserAutofillManager(driver) {
   test_api(*this).SetExternalDelegate(
-      std::make_unique<TestAutofillExternalDelegate>(&*this));
+      std::make_unique<TestAutofillExternalDelegate>(this));
   test_api(*this).set_credit_card_access_manager(
-      std::make_unique<MockCreditCardAccessManager>(this));
+      std::make_unique<NiceMock<MockCreditCardAccessManager>>(this));
 }
 
 void TestBrowserAutofillManager::Reset() {
   autofill::TestBrowserAutofillManager::Reset();
   test_api(*this).set_credit_card_access_manager(
-      std::make_unique<MockCreditCardAccessManager>(this));
+      std::make_unique<NiceMock<MockCreditCardAccessManager>>(this));
 }
 
 AutofillMetricsBaseTest::AutofillMetricsBaseTest() {
@@ -87,48 +108,44 @@ AutofillMetricsBaseTest::AutofillMetricsBaseTest() {
 
 AutofillMetricsBaseTest::~AutofillMetricsBaseTest() = default;
 
+void AutofillMetricsBaseTest::InitAutofillClient() {
+  WithTestAutofillClientDriverManager::InitAutofillClient();
+  autofill_client().set_payments_autofill_client(
+      std::make_unique<NiceMock<MockPaymentsAutofillClient>>(
+          &autofill_client()));
+}
+
 void AutofillMetricsBaseTest::SetUpHelper() {
   // Advance the mock clock to a fixed, arbitrary, somewhat recent date.
   base::Time year2020;
   ASSERT_TRUE(base::Time::FromString("01/01/20", &year2020));
   task_environment_.FastForwardBy(year2020 - base::Time::Now());
 
-  autofill_client_ = std::make_unique<TestAutofillClient>();
-  autofill_client_->SetPrefs(test::PrefServiceForTesting());
-  autofill_client_->set_payments_autofill_client(
-      std::make_unique<MockPaymentsAutofillClient>(autofill_client_.get()));
+  InitAutofillClient();
 
   test_api(personal_data().address_data_manager())
       .set_auto_accept_address_imports(true);
-  personal_data().SetPrefService(autofill_client_->GetPrefs());
   personal_data().SetSyncServiceForTest(&sync_service_);
 
-  autofill_driver_ =
-      std::make_unique<TestAutofillDriver>(autofill_client_.get());
-  autofill_driver_->SetLocalFrameToken(test::MakeLocalFrameToken());
-
-  payments::TestPaymentsNetworkInterface* payments_network_interface =
-      new payments::TestPaymentsNetworkInterface(
-          autofill_client_->GetURLLoaderFactory(),
-          autofill_client_->GetIdentityManager(), &personal_data());
+  auto payments_network_interface =
+      std::make_unique<payments::TestPaymentsNetworkInterface>(
+          autofill_client().GetURLLoaderFactory(),
+          autofill_client().GetIdentityManager(), &personal_data());
   payments_autofill_client().set_payments_network_interface(
-      std::unique_ptr<payments::TestPaymentsNetworkInterface>(
-          payments_network_interface));
-  test_api(*autofill_client_->GetFormDataImporter())
+      std::move(payments_network_interface));
+  test_api(*autofill_client().GetFormDataImporter())
       .set_credit_card_save_manager(
-          std::make_unique<TestCreditCardSaveManager>(autofill_client_.get()));
+          std::make_unique<TestCreditCardSaveManager>(&autofill_client()));
   payments_autofill_client().set_autofill_offer_manager(
-      std::make_unique<AutofillOfferManager>(
-          &personal_data().payments_data_manager()));
+      std::make_unique<AutofillOfferManager>(&paydm()));
 
-  auto browser_autofill_manager =
-      std::make_unique<TestBrowserAutofillManager>(autofill_driver_.get());
-  autofill_driver_->set_autofill_manager(std::move(browser_autofill_manager));
+  CreateAutofillDriver();
+  autofill_driver().SetLocalFrameToken(test::MakeLocalFrameToken());
 
 #if !BUILDFLAG(IS_IOS)
-  test_api(autofill_manager().GetCreditCardAccessManager())
+  test_api(*autofill_manager().GetCreditCardAccessManager())
       .set_fido_authenticator(std::make_unique<TestCreditCardFidoAuthenticator>(
-          autofill_driver_.get(), autofill_client_.get()));
+          &autofill_driver(), &autofill_client()));
 #endif
 
   // Initialize the TestPersonalDataManager with some default data.
@@ -144,15 +161,13 @@ void AutofillMetricsBaseTest::SetUpHelper() {
 
 void AutofillMetricsBaseTest::TearDownHelper() {
   test_ukm_recorder().Purge();
-  autofill_driver_.reset();
-  autofill_client_.reset();
+  DestroyAutofillClient();
 }
 
 void AutofillMetricsBaseTest::PurgeUKM() {
-  test_api(autofill_client().GetAutofillDriverFactory())
-      .Reset(autofill_driver());
+  autofill_client().GetAutofillDriverFactory().Reset(autofill_driver());
   test_ukm_recorder().Purge();
-  autofill_driver_->InitializeUKMSources();
+  autofill_driver().InitializeUKMSources();
 }
 
 void AutofillMetricsBaseTest::CreateAmbiguousProfiles() {
@@ -176,7 +191,7 @@ void AutofillMetricsBaseTest::RecreateProfile() {
 
 void AutofillMetricsBaseTest::SetFidoEligibility(bool is_verifiable) {
   CreditCardAccessManager& access_manager =
-      autofill_manager().GetCreditCardAccessManager();
+      *autofill_manager().GetCreditCardAccessManager();
 #if !BUILDFLAG(IS_IOS)
   static_cast<TestCreditCardFidoAuthenticator*>(
       access_manager.GetOrCreateFidoAuthenticator())
@@ -199,10 +214,10 @@ void AutofillMetricsBaseTest::OnDidGetRealPan(
   // challenge is required.
   if (autofill_manager()
           .GetCreditCardAccessManager()
-          .IsMaskedServerCardRiskBasedAuthAvailable()) {
+          ->IsMaskedServerCardRiskBasedAuthAvailable()) {
     autofill_manager()
         .GetCreditCardAccessManager()
-        .OnRiskBasedAuthenticationResponseReceived(
+        ->OnRiskBasedAuthenticationResponseReceived(
             CreditCardRiskBasedAuthenticator::RiskBasedAuthenticationResponse()
                 .with_result(CreditCardRiskBasedAuthenticator::
                                  RiskBasedAuthenticationResponse::Result::
@@ -286,7 +301,7 @@ void AutofillMetricsBaseTest::CreateCreditCards(
       local_credit_card.set_cvc(u"123");
 #endif
     }
-    personal_data().payments_data_manager().AddCreditCard(local_credit_card);
+    paydm().AddCreditCard(local_credit_card);
   }
   if (include_masked_server_credit_card) {
     CreditCard masked_server_credit_card(
@@ -315,7 +330,7 @@ void AutofillMetricsBaseTest::CreateLocalAndDuplicateServerCreditCard() {
   local_credit_card.SetNumber(u"5454545454545454" /* Mastercard */);
   std::string local_card_guid(kTestDuplicateLocalCardId);
   local_credit_card.set_guid(local_card_guid);
-  personal_data().payments_data_manager().AddCreditCard(local_credit_card);
+  paydm().AddCreditCard(local_credit_card);
 
   // Duplicate masked server card with same card information as local card.
   CreditCard masked_server_credit_card = test::GetCreditCard();

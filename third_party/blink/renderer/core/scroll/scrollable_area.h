@@ -34,8 +34,8 @@
 #include "cc/input/scroll_snap_data.h"
 #include "cc/input/snap_selection_strategy.h"
 #include "cc/paint/element_id.h"
+#include "cc/trees/scroll_source_type.h"
 #include "third_party/blink/public/common/input/web_gesture_device.h"
-#include "third_party/blink/public/mojom/frame/color_scheme.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_behavior.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/core/loader/history_item.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar.h"
-#include "third_party/blink/renderer/core/style/scroll_start_data.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
 #include "third_party/blink/renderer/platform/graphics/overlay_scrollbar_clip_behavior.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
@@ -121,6 +120,7 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
 
   virtual ScrollResult UserScroll(ui::ScrollGranularity,
                                   const ScrollOffset&,
+                                  cc::ScrollSourceType source_type,
                                   ScrollCallback on_finish);
 
   // See https://crbug.com/413002675: `on_finish` is not always executed at the
@@ -128,12 +128,14 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   // progress for animated programmatic scrolls).
   virtual bool SetScrollOffset(const ScrollOffset&,
                                mojom::blink::ScrollType,
+                               cc::ScrollSourceType,
                                mojom::blink::ScrollBehavior,
                                ScrollCallback on_finish,
                                bool targeted_scroll = false);
   virtual bool SetScrollOffset(
       const ScrollOffset&,
       mojom::blink::ScrollType,
+      cc::ScrollSourceType,
       mojom::blink::ScrollBehavior = mojom::blink::ScrollBehavior::kInstant);
   void ScrollBy(
       const ScrollOffset&,
@@ -180,7 +182,7 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   }
   virtual bool SnapContainerDataNeedsUpdate() const { return false; }
   virtual void SetSnapContainerDataNeedsUpdate(bool) {}
-  void SnapAfterScrollbarScrolling(ScrollbarOrientation);
+  void SnapAfterScrollbarScrolling(ScrollbarOrientation, cc::ScrollSourceType);
   virtual void UpdateFocusDataForSnapAreas() {}
 
   // SnapAtCurrentPosition(), SnapForEndPosition(), SnapForDirection(), and
@@ -196,11 +198,13 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   bool SnapAtCurrentPosition(
       bool scrolled_x,
       bool scrolled_y,
+      cc::ScrollSourceType source_type,
       base::ScopedClosureRunner on_finish = base::ScopedClosureRunner());
   bool SnapForEndPosition(
       const gfx::PointF& end_position,
       bool scrolled_x,
       bool scrolled_y,
+      cc::ScrollSourceType source_type,
       base::ScopedClosureRunner on_finish = base::ScopedClosureRunner());
   bool SnapForDirection(ScrollDirectionPhysical direction);
   bool SnapForPageScroll(ScrollDirectionPhysical direction);
@@ -253,6 +257,10 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   // This getter will create a MacScrollAnimator if it doesn't already exist,
   // only on MacOS.
   MacScrollbarAnimator* GetMacScrollbarAnimator() const;
+
+  void SetMacScrollbarAnimatorForTesting(MacScrollbarAnimator*);
+
+  bool FadeInScrollbarIfExists(bool horizontal, bool vertical);
 
   // This getter will create a ScrollAnimatorBase if it doesn't already exist.
   ScrollAnimatorBase& GetScrollAnimator() const;
@@ -543,7 +551,8 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
       const = 0;
 
   // Callback for compositor-side scrolling.
-  virtual void DidCompositorScroll(const gfx::PointF& position);
+  virtual void DidCompositorScroll(const gfx::PointF& position,
+                                   cc::ScrollSourceType source_type);
 
   virtual void ScrollbarFrameRectChanged() {}
 
@@ -576,11 +585,7 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   scoped_refptr<base::SingleThreadTaskRunner> GetCompositorTaskRunner();
   void EnqueueScrollSnapChangeEvent() const;
 
-  ScrollOffset ScrollOffsetFromScrollStartData(
-      const ScrollStartData& block_value,
-      const ScrollStartData& inline_value) const;
   void ApplyScrollStart();
-  bool ScrollStartIsDefault() const;
   virtual bool IsApplyingScrollStart() const { return false; }
 
   virtual void SetScrollsnapchangeTargetIds(
@@ -638,7 +643,9 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
 
   // Needed to let the animators call scrollOffsetChanged.
   friend class ScrollAnimatorCompositorCoordinator;
-  void ScrollOffsetChanged(const ScrollOffset&, mojom::blink::ScrollType);
+  void ScrollOffsetChanged(const ScrollOffset&,
+                           mojom::blink::ScrollType,
+                           cc::ScrollSourceType);
 
   void ClearNeedsPaintInvalidationForScrollControls() {
     horizontal_scrollbar_needs_paint_invalidation_ = false;
@@ -682,18 +689,19 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   bool ProgrammaticScrollHelper(const ScrollOffset&,
                                 mojom::blink::ScrollBehavior,
                                 gfx::Vector2d animation_adjustment,
-                                ScrollCallback on_finish);
-  void UserScrollHelper(const ScrollOffset&, mojom::blink::ScrollBehavior);
+                                ScrollCallback on_finish,
+                                cc::ScrollSourceType);
+  void UserScrollHelper(const ScrollOffset&,
+                        mojom::blink::ScrollBehavior,
+                        cc::ScrollSourceType);
 
   void FadeOverlayScrollbarsTimerFired(TimerBase*);
 
   // This function should be overridden by subclasses to perform the actual
   // scroll of the content.
   virtual void UpdateScrollOffset(const ScrollOffset&,
-                                  mojom::blink::ScrollType) = 0;
-
-  float ScrollStartValueToOffsetAlongAxis(const ScrollStartData&,
-                                          cc::SnapAxis) const;
+                                  mojom::blink::ScrollType,
+                                  cc::ScrollSourceType) = 0;
 
   virtual int LineStep(ScrollbarOrientation) const;
   virtual int PageStep(ScrollbarOrientation) const;
@@ -705,6 +713,7 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   // Returns true if a snap point was found.
   bool PerformSnapping(
       const cc::SnapSelectionStrategy& strategy,
+      cc::ScrollSourceType source_type,
       mojom::blink::ScrollBehavior behavior =
           mojom::blink::ScrollBehavior::kSmooth,
       base::ScopedClosureRunner on_finish = base::ScopedClosureRunner(),
@@ -778,6 +787,47 @@ class CORE_EXPORT ScrollableArea : public GarbageCollectedMixin {
   std::optional<mojom::blink::ScrollType> active_smooth_scroll_type_;
 
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner_;
+};
+
+// Traverse all enclosing scrollable layout boxes of the scroll target
+// node in nearest order.
+class CORE_EXPORT ScrollableAreaTraversal {
+  STACK_ALLOCATED();
+
+ public:
+  explicit ScrollableAreaTraversal(Node* target_node);
+
+  class Iterator {
+    STACK_ALLOCATED();
+
+   public:
+    explicit Iterator(ScrollableArea* current_scrollable_area)
+        : current_scrollable_area_(current_scrollable_area) {}
+
+    ScrollableArea& operator*() { return *GetScrollableArea(); }
+
+    ScrollableArea* operator->() { return GetScrollableArea(); }
+
+    bool operator==(const Iterator& other) const {
+      return current_scrollable_area_ == other.current_scrollable_area_;
+    }
+
+    Iterator& operator++();
+
+   private:
+    ScrollableArea* GetScrollableArea() {
+      CHECK(current_scrollable_area_);
+      return current_scrollable_area_;
+    }
+
+    ScrollableArea* current_scrollable_area_;
+  };
+
+  Iterator begin() const { return Iterator(start_scrollable_area_); }
+  Iterator end() const { return Iterator(/*current_scrollable_area=*/nullptr); }
+
+ private:
+  ScrollableArea* start_scrollable_area_ = nullptr;
 };
 
 }  // namespace blink

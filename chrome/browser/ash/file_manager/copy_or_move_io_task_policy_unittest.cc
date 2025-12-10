@@ -2,11 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -215,7 +211,7 @@ class CopyOrMoveIOTaskWithScansTest
                    enterprise_connectors::MockFileTransferAnalysisDelegate*,
                    const storage::FileSystemURL& source_url)>
                    mock_setup_callback,
-               safe_browsing::DeepScanAccessPoint access_point,
+               enterprise_connectors::DeepScanAccessPoint access_point,
                storage::FileSystemURL source_url,
                storage::FileSystemURL destination_url, Profile* profile,
                storage::FileSystemContext* file_system_context,
@@ -379,13 +375,13 @@ class CopyOrMoveIOTaskWithScansTest
   storage::FileSystemURL GetSourceFileSystemURLForDisabledVolume(
       const std::string& component) {
     return source_destination_testing_helper_->GetTestFileSystemURLForVolume(
-        std::data(kVolumeInfos)[1], component);
+        UNSAFE_TODO(std::data(kVolumeInfos)[1]), component);
   }
 
   storage::FileSystemURL GetDestinationFileSystemURL(
       const std::string& component) {
     return source_destination_testing_helper_->GetTestFileSystemURLForVolume(
-        std::data(kVolumeInfos)[2], component);
+        UNSAFE_TODO(std::data(kVolumeInfos)[2]), component);
   }
 
   // Creates one file.

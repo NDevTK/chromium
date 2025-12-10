@@ -26,6 +26,7 @@ export class TestLensOverlayPageHandler extends TestBrowserProxy implements
       'closeRequestedByOverlayCloseButton',
       'closeRequestedByOverlayBackgroundClick',
       'addBackgroundBlur',
+      'setLiveBlur',
       'closePreselectionBubble',
       'feedbackRequestedByOverlay',
       'getOverlayInvocationSource',
@@ -46,6 +47,7 @@ export class TestLensOverlayPageHandler extends TestBrowserProxy implements
       'maybeShowTranslateFeaturePromo',
       'maybeCloseTranslateFeaturePromo',
       'fetchSupportedLanguages',
+      'finishReshowOverlay',
     ]);
   }
 
@@ -63,6 +65,10 @@ export class TestLensOverlayPageHandler extends TestBrowserProxy implements
 
   addBackgroundBlur() {
     this.methodCalled('addBackgroundBlur');
+  }
+
+  setLiveBlur() {
+    this.methodCalled('setLiveBlur');
   }
 
   closePreselectionBubble() {
@@ -156,6 +162,10 @@ export class TestLensOverlayPageHandler extends TestBrowserProxy implements
       sourceLanguages: structuredClone(this.sourceLanguagesToFetch),
       targetLanguages: structuredClone(this.targetLanguagesToFetch),
     });
+  }
+
+  finishReshowOverlay() {
+    this.methodCalled('finishReshowOverlay');
   }
 
   setLanguagesToFetchForTesting(

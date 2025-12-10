@@ -572,7 +572,10 @@ class PooledSingleThreadTaskRunnerManager::PooledSingleThreadTaskRunner
     }
 
     if (task.delayed_run_time.is_null()) {
-      return GetDelegate()->PostTaskNow(sequence_, nullptr, std::move(task));
+      auto* delegate = GetDelegate();
+      // See https://crbug.com/437901065 for an instance of this occurring.
+      CHECK(delegate);
+      return delegate->PostTaskNow(sequence_, nullptr, std::move(task));
     }
 
     // Unretained(GetDelegate()) is safe because this TaskRunner and its
@@ -634,10 +637,10 @@ void PooledSingleThreadTaskRunnerManager::Start(
     WorkerThreadObserver* worker_thread_observer) {
   DCHECK(!worker_thread_observer_);
   worker_thread_observer_ = worker_thread_observer;
-#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   DCHECK(io_thread_task_runner);
   io_thread_task_runner_ = std::move(io_thread_task_runner);
-#endif  // (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
+#endif  // BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 
   g_use_utility_thread_group = CanUseUtilityThreadTypeForWorkerThread() &&
                                FeatureList::IsEnabled(kUseUtilityThreadGroup);

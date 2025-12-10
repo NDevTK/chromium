@@ -8,6 +8,8 @@
  */
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
+import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
+import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import 'chrome://resources/cr_elements/cr_spinner_style.css.js';
 import '../controls/settings_checkbox.js';
 import '../settings_shared.css.js';
@@ -21,16 +23,23 @@ import './other_google_data_dialog.js';
 import type {SyncBrowserProxy, SyncStatus} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {SyncBrowserProxyImpl} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+import {CrSettingsPrefs} from '/shared/settings/prefs/prefs_types.js';
 import type {CrButtonElement} from 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
 import type {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
 import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
+import {assert, assertNotReached, assertNotReachedCase} from 'chrome://resources/js/assert.js';
 import {FocusOutlineManager} from 'chrome://resources/js/focus_outline_manager.js';
+import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
 import {afterNextRender, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import type {SettingsCheckboxElement} from '../controls/settings_checkbox.js';
 import {loadTimeData} from '../i18n_setup.js';
+import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
+import {MetricsBrowserProxyImpl} from '../metrics_browser_proxy.js';
+import {routes} from '../route.js';
+import type {Route} from '../router.js';
+import {RouteObserverMixin} from '../router.js';
 
 import type {ClearBrowsingDataBrowserProxy, UpdateSyncStateEvent} from './clear_browsing_data_browser_proxy.js';
 import {BrowsingDataType, ClearBrowsingDataBrowserProxyImpl, TimePeriod} from './clear_browsing_data_browser_proxy.js';
@@ -111,6 +120,8 @@ function getDataTypeLabel(datatypes: BrowsingDataType) {
       return loadTimeData.getString('clearDownloadHistory');
     case BrowsingDataType.HOSTED_APPS_DATA:
       return loadTimeData.getString('clearHostedAppData');
+    default:
+      assertNotReachedCase(datatypes);
   }
 }
 
@@ -130,11 +141,13 @@ export function getDataTypePrefName(datatypes: BrowsingDataType) {
       return 'browser.clear_data.download_history';
     case BrowsingDataType.HOSTED_APPS_DATA:
       return 'browser.clear_data.hosted_apps_data';
+    default:
+      assertNotReachedCase(datatypes);
   }
 }
 
 const SettingsClearBrowsingDataDialogV2ElementBase =
-    WebUiListenerMixin(PrefsMixin(PolymerElement));
+    RouteObserverMixin(WebUiListenerMixin(PrefsMixin(PolymerElement)));
 
 export class SettingsClearBrowsingDataDialogV2Element extends
     SettingsClearBrowsingDataDialogV2ElementBase {
@@ -155,6 +168,7 @@ export class SettingsClearBrowsingDataDialogV2Element extends
 
       deleteButtonLabel_: {
         type: String,
+        value: loadTimeData.getString('deleteDataFromDevice'),
         computed: 'computeDeleteButtonLabel_(syncStatus_.signedInState)',
       },
 
@@ -229,6 +243,8 @@ export class SettingsClearBrowsingDataDialogV2Element extends
       ClearBrowsingDataBrowserProxyImpl.getInstance();
   private syncBrowserProxy_: SyncBrowserProxy =
       SyncBrowserProxyImpl.getInstance();
+  private metricsBrowserProxy_: MetricsBrowserProxy =
+      MetricsBrowserProxyImpl.getInstance();
 
   override ready() {
     super.ready();
@@ -242,8 +258,6 @@ export class SettingsClearBrowsingDataDialogV2Element extends
     this.syncBrowserProxy_.getSyncStatus().then(
         this.handleSyncStatus_.bind(this));
 
-    this.setUpDataTypeOptionLists_();
-
     this.addEventListener(
         'settings-boolean-control-change',
         this.updateDeleteButtonState_.bind(this));
@@ -256,9 +270,13 @@ export class SettingsClearBrowsingDataDialogV2Element extends
         (event: UpdateSyncStateEvent) =>
             this.updateDseStatus_(event.isNonGoogleDse));
 
-    // afterNextRender is needed to wait for checkbox lists to be populated via
-    // dom-repeat before checking if the delete button should be disabled.
-    afterNextRender(this, () => this.updateDeleteButtonState_());
+    CrSettingsPrefs.initialized.then(() => {
+      this.setUpDataTypeOptionLists_();
+      // afterNextRender() is needed to wait for checkbox lists to be populated
+      // via dom-repeat before checking if the delete button should be
+      // disabled.
+      afterNextRender(this, () => this.updateDeleteButtonState_());
+    });
   }
 
   private updateDseStatus_(isNonGoogleDse: boolean) {
@@ -280,6 +298,12 @@ export class SettingsClearBrowsingDataDialogV2Element extends
     this.clearBrowsingDataBrowserProxy_.initialize();
 
     this.setFocusOutlineToVisible_();
+  }
+
+  override currentRouteChanged(currentRoute: Route) {
+    if (currentRoute === routes.CLEAR_BROWSER_DATA) {
+      this.metricsBrowserProxy_.recordAction('ClearBrowsingData_DialogCreated');
+    }
   }
 
   private setUpDataTypeOptionLists_() {
@@ -354,10 +378,17 @@ export class SettingsClearBrowsingDataDialogV2Element extends
   }
 
   private computeOtherGoogleDataRowSubLabel_() {
-    if (!this.isSignedIn_() && this.isGoogleDse_) {
-      return loadTimeData.getString('managePasswordsSubLabel');
+    if (loadTimeData.getBoolean('showGlicSettings') &&
+        loadTimeData.getBoolean('enableBrowsingHistoryActorIntegrationM1') &&
+        this.isSignedIn_()) {
+      return loadTimeData.getString('manageSearchGeminiPasswordsSubLabel');
     }
-    return loadTimeData.getString('manageOtherDataSubLabel');
+
+    if (this.isSignedIn_() || !this.isGoogleDse_) {
+      return loadTimeData.getString('manageOtherDataSubLabel');
+    }
+
+    return loadTimeData.getString('managePasswordsSubLabel');
   }
 
   private onTimePeriodChanged_() {
@@ -379,12 +410,21 @@ export class SettingsClearBrowsingDataDialogV2Element extends
 
     const dataTypes = this.getSelectedDataTypes_();
     const timePeriod = this.$.timePicker.getSelectedTimePeriod();
+    this.clearBrowsingDataBrowserProxy_
+        .recordSettingsClearBrowsingDataAdvancedTimePeriodHistogram(timePeriod);
 
     // Update the DataType and TimePeriod prefs with the latest selection.
     this.$.deleteBrowsingDataDialog
         .querySelectorAll<SettingsCheckboxElement>(
             'settings-checkbox[no-set-pref]')
-        .forEach(checkbox => checkbox.sendPrefChange());
+        .forEach(
+            checkbox =>
+                // Manually update the checkboxes' pref value. This is a
+                // temporary fix as the `SettingsCheckbox.sendPrefChange` does
+                // not update prefs when they are passed dynamically.
+                // TODO(crbug.com/431174247): Figure out why
+                // `SettingsCheckbox.sendPrefChange` is not working.
+            this.setPrefValue(checkbox.pref!.key, checkbox.checked));
     this.$.timePicker.sendPrefChange();
 
     const {showHistoryNotice} =
@@ -436,6 +476,8 @@ export class SettingsClearBrowsingDataDialogV2Element extends
 
   private onShowMoreClick_() {
     this.dataTypesExpanded_ = true;
+    this.metricsBrowserProxy_.recordAction(
+        'Settings.DeleteBrowsingData.CheckboxesShowMoreClick');
 
     // Set the focus to the first checkbox in the 'more' options list.
     afterNextRender(this, () => {
@@ -460,6 +502,8 @@ export class SettingsClearBrowsingDataDialogV2Element extends
 
   private onManageOtherGoogleDataRowClick_() {
     this.showOtherGoogleDataDialog_ = true;
+    this.metricsBrowserProxy_.recordAction(
+        'Settings.DeleteBrowsingData.OtherDataEntryPointClick');
   }
 
   private setFocusOutlineToVisible_() {
@@ -478,16 +522,16 @@ export class SettingsClearBrowsingDataDialogV2Element extends
   private onOtherGoogleDataDialogClose_(e: Event) {
     e.stopPropagation();
     this.showOtherGoogleDataDialog_ = false;
-    afterNextRender(this, () => {
-      this.$.cancelButton.focus();
-      this.setFocusOutlineToVisible_();
-    });
+    afterNextRender(
+        this, () => focusWithoutInk(this.$.manageOtherGoogleDataRow));
   }
 
   private onCheckboxSubLabelLinkClick_(e: CustomEvent<{id: string}>) {
     // <if expr="not is_chromeos">
     if (e.detail.id === 'signOutLink') {
       this.syncBrowserProxy_.signOut(/*delete_profile=*/ false);
+      this.metricsBrowserProxy_.recordAction(
+          'Settings.DeleteBrowsingData.CookiesSignOutLinkClick');
       return;
     }
     // </if>

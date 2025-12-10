@@ -60,6 +60,18 @@ bool StructTraits<autofill::mojom::FieldRendererIdDataView,
 }
 
 // static
+bool StructTraits<autofill::mojom::FillIdDataView, autofill::FillId>::Read(
+    autofill::mojom::FillIdDataView data,
+    autofill::FillId* out) {
+  base::UnguessableToken id;
+  if (!data.ReadId(&id)) {
+    return false;
+  }
+  *out = autofill::FillId(id);
+  return true;
+}
+
+// static
 bool StructTraits<
     autofill::mojom::SelectOptionDataView,
     autofill::SelectOption>::Read(autofill::mojom::SelectOptionDataView data,
@@ -69,85 +81,6 @@ bool StructTraits<
   if (!data.ReadText(&out->text)) {
     return false;
   }
-  return true;
-}
-
-// static
-autofill::mojom::SectionValueDataView::Tag
-UnionTraits<autofill::mojom::SectionValueDataView,
-            autofill::Section::SectionValue>::
-    GetTag(const autofill::Section::SectionValue& r) {
-  if (std::holds_alternative<autofill::Section::Default>(r)) {
-    return autofill::mojom::SectionValueDataView::Tag::kDefaultSection;
-  }
-  if (std::holds_alternative<autofill::Section::Autocomplete>(r)) {
-    return autofill::mojom::SectionValueDataView::Tag::kAutocomplete;
-  }
-  if (std::holds_alternative<autofill::Section::FieldIdentifier>(r)) {
-    return autofill::mojom::SectionValueDataView::Tag::kFieldIdentifier;
-  }
-
-  NOTREACHED();
-}
-
-// static
-bool UnionTraits<autofill::mojom::SectionValueDataView,
-                 autofill::Section::SectionValue>::
-    Read(autofill::mojom::SectionValueDataView data,
-         autofill::Section::SectionValue* out) {
-  switch (data.tag()) {
-    case autofill::mojom::SectionValueDataView::Tag::kDefaultSection:
-      *out = autofill::Section::Default();
-      break;
-    case autofill::mojom::SectionValueDataView::Tag::kAutocomplete: {
-      autofill::Section::Autocomplete autocomplete;
-      if (!data.ReadAutocomplete(&autocomplete))
-        return false;
-      *out = std::move(autocomplete);
-      break;
-    }
-    case autofill::mojom::SectionValueDataView::Tag::kFieldIdentifier: {
-      autofill::Section::FieldIdentifier field_identifier;
-      if (!data.ReadFieldIdentifier(&field_identifier))
-        return false;
-      *out = std::move(field_identifier);
-      break;
-    }
-  }
-  return true;
-}
-
-// static
-bool StructTraits<autofill::mojom::SectionAutocompleteDataView,
-                  autofill::Section::Autocomplete>::
-    Read(autofill::mojom::SectionAutocompleteDataView data,
-         autofill::Section::Autocomplete* out) {
-  if (!data.ReadSection(&out->section))
-    return false;
-  if (!data.ReadHtmlFieldMode(&out->mode))
-    return false;
-  return true;
-}
-
-// static
-bool StructTraits<autofill::mojom::SectionFieldIdentifierDataView,
-                  autofill::Section::FieldIdentifier>::
-    Read(autofill::mojom::SectionFieldIdentifierDataView data,
-         autofill::Section::FieldIdentifier* out) {
-  if (!data.ReadFieldName(&out->field_name))
-    return false;
-  out->local_frame_id = data.local_frame_id();
-  if (!data.ReadFieldRendererId(&out->field_renderer_id))
-    return false;
-  return true;
-}
-
-// static
-bool StructTraits<autofill::mojom::SectionDataView, autofill::Section>::Read(
-    autofill::mojom::SectionDataView data,
-    autofill::Section* out) {
-  if (!data.ReadValue(&out->value_))
-    return false;
   return true;
 }
 
@@ -278,11 +211,11 @@ bool StructTraits<
   }
 
   {
-    autofill::Section section;
-    if (!data.ReadSection(&section)) {
+    std::u16string nonce;
+    if (!data.ReadNonce(&nonce)) {
       return false;
     }
-    out->set_section(std::move(section));
+    out->set_nonce(std::move(nonce));
   }
 
   out->set_properties_mask(data.properties_mask());
@@ -513,6 +446,9 @@ bool StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
   if (!data.ReadHeuristicType(&out->heuristic_type)) {
     return false;
   }
+  if (!data.ReadPwmMlType(&out->pwm_ml_type)) {
+    return false;
+  }
   if (!data.ReadServerType(&out->server_type)) {
     return false;
   }
@@ -522,7 +458,7 @@ bool StructTraits<autofill::mojom::FormFieldDataPredictionsDataView,
   if (!data.ReadOverallType(&out->overall_type)) {
     return false;
   }
-  if (!data.ReadAutofillAiType(&out->autofill_ai_type)) {
+  if (!data.ReadAttributeTypes(&out->attribute_types)) {
     return false;
   }
   if (!data.ReadFormatString(&out->format_string)) {
@@ -556,6 +492,9 @@ bool StructTraits<autofill::mojom::FormDataPredictionsDataView,
   if (!data.ReadSignature(&out->signature))
     return false;
   if (!data.ReadAlternativeSignature(&out->alternative_signature)) {
+    return false;
+  }
+  if (!data.ReadStructuralFormSignature(&out->structural_form_signature)) {
     return false;
   }
   if (!data.ReadFields(&out->fields))

@@ -9,7 +9,10 @@
 #import "base/ios/ns_error_util.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
+#import "base/metrics/user_metrics.h"
+#import "base/metrics/user_metrics_action.h"
 #import "base/strings/sys_string_conversions.h"
+#import "base/task/thread_pool.h"
 #import "base/timer/timer.h"
 #import "components/security_interstitials/core/insecure_form_util.h"
 #import "ios/components/security_interstitials/https_only_mode/feature.h"
@@ -251,21 +254,10 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
   auto decisionHandler = ^(WKNavigationActionPolicy policy) {
     preferences.preferredContentMode = contentMode;
     if (@available(iOS 16.0, *)) {
-      if ((policy == WKNavigationActionPolicyAllow) &&
-          isMainFrameNavigationAction) {
-        UMA_HISTOGRAM_BOOLEAN("IOS.MainFrameNavigationIsInLockdownMode",
-                              preferences.lockdownModeEnabled);
-      }
-
       if (!self.beingDestroyed) {
         bool browser_lockdown_mode_enabled =
             web::GetWebClient()->IsBrowserLockdownModeEnabled();
-        if ((policy == WKNavigationActionPolicyAllow) &&
-            isMainFrameNavigationAction) {
-          UMA_HISTOGRAM_BOOLEAN(
-              "IOS.MainFrameNavigationIsInBrowserLockdownMode",
-              browser_lockdown_mode_enabled);
-        }
+
         if (browser_lockdown_mode_enabled) {
           preferences.lockdownModeEnabled = true;
         }
@@ -687,6 +679,25 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
     error = [NSError errorWithDomain:error.domain
                                 code:error.code
                             userInfo:userInfo];
+  }
+
+  if (@available(iOS 26, *)) {
+    if ([error.domain isEqualToString:@(web::kWebKitErrorDomain)] &&
+        error.code == web::kWebKitErrorCannotShowUrl &&
+        !error.userInfo[NSURLErrorFailingURLStringErrorKey]) {
+      // URL is expected in these errors, but it broke on iOS 26. Apply
+      // workaround until WebKit fix is shipped.
+      // TODO(crbug.com/441372052): Remove workaround.
+      NSString* urlString =
+          base::SysUTF8ToNSString(navigationContext->GetUrl().spec());
+
+      NSMutableDictionary* userInfo = [error.userInfo mutableCopy];
+      userInfo[NSURLErrorFailingURLStringErrorKey] = urlString;
+      userInfo[web::kNSErrorFailingURLKey] = urlString;
+      error = [NSError errorWithDomain:error.domain
+                                  code:error.code
+                              userInfo:userInfo];
+    }
   }
 
   // Handle load cancellation for directly cancelled navigations without
@@ -1380,19 +1391,25 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
     return YES;
   }
 
-  if (ui::PageTransitionTypeIncludingQualifiersIs(pageTransition,
-                                                  ui::PAGE_TRANSITION_TYPED)) {
+  if (pageTransition & ui::PAGE_TRANSITION_RELOAD) {
+    // Allow reload navigations.
     return YES;
   }
 
-  if (ui::PageTransitionTypeIncludingQualifiersIs(
-          pageTransition, ui::PAGE_TRANSITION_GENERATED)) {
-    return YES;
-  }
+  // Allow navigating to chrome:// pages if the navigation happens due to
+  //  - user typing the url in the omnibox,
+  //  - user tapping on a suggestion in the omnibox,
+  //  - user tapping on a bookmark.
+  static constexpr ui::PageTransition kAllowedTypes[] = {
+      ui::PAGE_TRANSITION_TYPED,
+      ui::PAGE_TRANSITION_GENERATED,
+      ui::PAGE_TRANSITION_AUTO_BOOKMARK,
+  };
 
-  if (ui::PageTransitionTypeIncludingQualifiersIs(
-          pageTransition, ui::PAGE_TRANSITION_AUTO_BOOKMARK)) {
-    return YES;
+  for (const ui::PageTransition allowedType : kAllowedTypes) {
+    if (ui::PageTransitionCoreTypeIs(pageTransition, allowedType)) {
+      return YES;
+    }
   }
 
   // Allow navigation to WebUI pages from error pages.
@@ -1400,12 +1417,13 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
     return YES;
   }
 
-  GURL mainDocumentURL = net::GURLWithNSURL(action.request.mainDocumentURL);
-  if (web::GetWebClient()->IsAppSpecificURL(mainDocumentURL) &&
-      !action.sourceFrame.mainFrame) {
+  if (!action.sourceFrame.mainFrame) {
     // AppSpecific URLs are allowed inside iframe if the main frame is also
     // app specific page.
-    return YES;
+    GURL mainDocumentURL = net::GURLWithNSURL(action.request.mainDocumentURL);
+    if (web::GetWebClient()->IsAppSpecificURL(mainDocumentURL)) {
+      return YES;
+    }
   }
 
   return NO;
@@ -1682,37 +1700,63 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
     return;
   }
 
-  if (policy != web::CERT_ACCEPT_POLICY_ALLOW &&
-      SecTrustGetCertificateCount(trust)) {
-    // The cert is invalid and the user has not agreed to proceed. Cache the
-    // cert verification result in `_certVerificationErrors`, so that it can
-    // later be reused inside `didFailProvisionalNavigation:`.
-    // The leaf cert is used as the key, because the chain provided by
-    // `didFailProvisionalNavigation:` will differ (it is the server-supplied
-    // chain), thus if intermediates were considered, the keys would mismatch.
+  // SecTrustEvaluate performs trust evaluation synchronously, possibly making
+  // network requests. The UI thread should not be blocked by that operation.
+  __weak __typeof(self) weakSelf = self;
+  auto verify_certificate = ^{
+    if (policy != web::CERT_ACCEPT_POLICY_ALLOW &&
+        SecTrustGetCertificateCount(trust)) {
+      // The cert is invalid and the user has not agreed to proceed. Cache
+      // the cert verification result in `_certVerificationErrors`, so that
+      // it can later be reused inside `didFailProvisionalNavigation:`. The
+      // leaf cert is used as the key, because the chain provided by
+      // `didFailProvisionalNavigation:` will differ (it is the
+      // server-supplied chain), thus if intermediates were considered, the
+      // keys would mismatch.
 
-    scoped_refptr<net::X509Certificate> leafCert = nil;
-    base::apple::ScopedCFTypeRef<CFArrayRef> certificateChain(
-        SecTrustCopyCertificateChain(trust));
-    SecCertificateRef secCertificate =
-        base::apple::CFCastStrict<SecCertificateRef>(
-            CFArrayGetValueAtIndex(certificateChain.get(), 0));
-    leafCert = net::x509_util::CreateX509CertificateFromSecCertificate(
-        base::apple::ScopedCFTypeRef<SecCertificateRef>(
-            secCertificate, base::scoped_policy::RETAIN),
-        {});
+      scoped_refptr<net::X509Certificate> leafCert = nil;
+      base::apple::ScopedCFTypeRef<CFArrayRef> certificateChain(
+          SecTrustCopyCertificateChain(trust));
+      SecCertificateRef secCertificate =
+          base::apple::CFCastStrict<SecCertificateRef>(
+              CFArrayGetValueAtIndex(certificateChain.get(), 0));
+      leafCert = net::x509_util::CreateX509CertificateFromSecCertificate(
+          base::apple::ScopedCFTypeRef<SecCertificateRef>(
+              secCertificate, base::scoped_policy::RETAIN),
+          {});
 
-    if (leafCert) {
-      bool is_recoverable =
-          policy == web::CERT_ACCEPT_POLICY_RECOVERABLE_ERROR_UNDECIDED_BY_USER;
-      std::string host =
-          base::SysNSStringToUTF8(challenge.protectionSpace.host);
-      _certVerificationErrors->Put(
-          web::CertHostPair(leafCert, host),
-          web::CertVerificationError(is_recoverable, certStatus));
+      if (leafCert) {
+        bool is_recoverable =
+            policy ==
+            web::CERT_ACCEPT_POLICY_RECOVERABLE_ERROR_UNDECIDED_BY_USER;
+        std::string host =
+            base::SysNSStringToUTF8(challenge.protectionSpace.host);
+
+        // TODO(crbug.com/40588591): This should use PostTask to post to
+        // WebThread::UI with BLOCK_SHUTDOWN once shutdown behaviors are
+        // supported on the UI thread. BLOCK_SHUTDOWN is necessary because
+        // WKWebView throws an exception if the completion handler doesn't
+        // run.
+        dispatch_async(dispatch_get_main_queue(), ^{
+          __strong __typeof(self) strongSelf = weakSelf;
+          if (strongSelf) {
+            strongSelf->_certVerificationErrors->Put(
+                web::CertHostPair(leafCert, host),
+                web::CertVerificationError(is_recoverable, certStatus));
+          }
+          completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace,
+                            nil);
+        });
+        return;
+      }
     }
-  }
-  completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace, nil);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completionHandler(NSURLSessionAuthChallengeRejectProtectionSpace, nil);
+    });
+  };
+  base::ThreadPool::PostTask(FROM_HERE,
+                             {base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+                             base::BindOnce(verify_certificate));
 }
 
 // Used in webView:didReceiveAuthenticationChallenge:completionHandler: to reply
@@ -1780,8 +1824,19 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
         contextError, policyDecisionCancellationError);
   }
 
+  if (!navigation) {
+    base::RecordAction(base::UserMetricsAction("IOS.NilWKNavigationOnError"));
+    return;
+  }
+
   web::NavigationContextImpl* navigationContext =
       [self.navigationStates contextForNavigation:navigation];
+  if (!navigationContext) {
+    base::RecordAction(
+        base::UserMetricsAction("IOS.NilNavigationContextOnError"));
+    return;
+  }
+
   web::HttpsUpgradeType failed_upgrade_type = GetFailedHttpsUpgradeType(
       error, navigationContext, policyDecisionCancellationError);
   if (failed_upgrade_type != web::HttpsUpgradeType::kNone) {

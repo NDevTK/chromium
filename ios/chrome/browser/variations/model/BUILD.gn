@@ -16,6 +16,7 @@ source_set("model") {
     "//components/variations/service",
     "//components/version_info",
     "//ios/chrome/browser/metrics/model:accessor",
+    "//ios/chrome/browser/policy/model",
     "//ios/chrome/browser/shared/model/application_context",
     "//ios/chrome/browser/shared/model/paths",
     "//ios/chrome/common",
@@ -146,6 +147,10 @@ source_set("eg2_tests") {
     "//ios/testing/earl_grey:eg_test_support+eg2",
   ]
   frameworks = [ "UIKit.framework" ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("unit_tests") {

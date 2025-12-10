@@ -16,7 +16,6 @@
 #include "services/webnn/public/cpp/webnn_trace.h"
 #include "services/webnn/public/mojom/webnn_error.mojom-forward.h"
 #include "services/webnn/public/mojom/webnn_graph.mojom-forward.h"
-#include "services/webnn/queueable_resource_state.h"
 #include "services/webnn/webnn_context_impl.h"
 #include "services/webnn/webnn_graph_impl.h"
 
@@ -27,6 +26,7 @@ class WebNNConstantOperand;
 namespace ort {
 
 class ContextImplOrt;
+class Environment;
 class SessionOptions;
 
 // GraphImplOrt inherits from WebNNGraphImpl to represent an ORT graph
@@ -45,23 +45,24 @@ class GraphImplOrt final : public WebNNGraphImpl {
       ContextImplOrt* context,
       WebNNContextImpl::CreateGraphImplCallback callback);
 
-  GraphImplOrt(const GraphImplOrt&) = delete;
-  GraphImplOrt& operator=(const GraphImplOrt&) = delete;
-  ~GraphImplOrt() override;
-
- private:
   class ComputeResources;
-
   GraphImplOrt(mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
                ComputeResourceInfo compute_resource_info,
                std::unique_ptr<ComputeResources> compute_resources,
-               ContextImplOrt* context,
+               base::WeakPtr<WebNNContextImpl> context,
                std::vector<mojom::Device> devices);
+
+  GraphImplOrt(const GraphImplOrt&) = delete;
+  GraphImplOrt& operator=(const GraphImplOrt&) = delete;
+
+ private:
+  ~GraphImplOrt() override;
 
   static base::expected<std::unique_ptr<ComputeResources>, mojom::ErrorPtr>
   CreateAndBuildOnBackgroundThread(
       mojom::GraphInfoPtr graph_info,
       scoped_refptr<SessionOptions> session_options,
+      scoped_refptr<Environment> env,
       ContextProperties context_properties,
       base::flat_map<OperandId, std::unique_ptr<WebNNConstantOperand>>
           constant_operands,
@@ -77,13 +78,12 @@ class GraphImplOrt final : public WebNNGraphImpl {
 
   // Execute the compiled platform graph asynchronously. The inputs were
   // validated in base class so we can use them to compute directly.
-  void DispatchImpl(
-      base::flat_map<std::string, WebNNTensorImpl*> named_input_tensors,
-      base::flat_map<std::string, WebNNTensorImpl*> named_output_tensors)
-      override;
+  void DispatchImpl(base::flat_map<std::string, scoped_refptr<WebNNTensorImpl>>
+                        named_input_tensors,
+                    base::flat_map<std::string, scoped_refptr<WebNNTensorImpl>>
+                        named_output_tensors) override;
 
-  scoped_refptr<QueueableResourceState<ComputeResources>>
-      compute_resources_state_;
+  std::unique_ptr<ComputeResources> compute_resources_;
   base::WeakPtrFactory<GraphImplOrt> weak_factory_{this};
 };
 

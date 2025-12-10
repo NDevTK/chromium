@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/374320451): Fix and remove.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/utility/safe_browsing/mac/hfs.h"
 
@@ -434,6 +430,10 @@ bool HFSForkReadStream::Read(base::span<uint8_t> buf, size_t* bytes_read) {
     if (!read_current_extent_) {
       if (!hfs_->SeekToBlock(extent.startBlock)) {
         DLOG(ERROR) << "Failed to seek to block " << extent.startBlock;
+        return false;
+      }
+      if (extent_size.ValueOrDie() > current_extent_data_.max_size()) {
+        DLOG(ERROR) << "Extent size too large";
         return false;
       }
       current_extent_data_.resize(extent_size.ValueOrDie());

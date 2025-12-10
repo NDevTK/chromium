@@ -23,6 +23,7 @@
 #include "components/page_info/core/page_info_action.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/security_state/core/security_state.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/schemeful_site.h"
 
@@ -142,9 +143,9 @@ class PageInfo : private content_settings::CookieControlsObserver,
     // Site permission |type|.
     ContentSettingsType type = ContentSettingsType::DEFAULT;
     // The current value for the permission |type| (e.g. ALLOW or BLOCK).
-    ContentSetting setting = CONTENT_SETTING_DEFAULT;
+    std::optional<PermissionSetting> setting;
     // The global default settings for this permission |type|.
-    ContentSetting default_setting = CONTENT_SETTING_DEFAULT;
+    PermissionSetting default_setting;
     // The settings source e.g. user, extensions, policy, ... .
     content_settings::SettingSource source =
         content_settings::SettingSource::kNone;
@@ -177,10 +178,6 @@ class PageInfo : private content_settings::CookieControlsObserver,
   // clicked.
   void OnThirdPartyToggleClicked(bool block_third_party_cookies);
 
-  // Called when the protections button in the privacy and site data subpage
-  // gets clicked.
-  void OnTrackingProtectionButtonPressed();
-
   // Checks whether this permission is currently the factory default, as set by
   // Chrome. Specifically, that the following three conditions are true:
   //   - The current active setting comes from the default or pref provider.
@@ -208,7 +205,7 @@ class PageInfo : private content_settings::CookieControlsObserver,
 
   // This method is called when ever a permission setting is changed.
   void OnSitePermissionChanged(ContentSettingsType type,
-                               ContentSetting value,
+                               std::optional<PermissionSetting> value,
                                std::optional<url::Origin> requesting_origin,
                                bool is_one_time);
 
@@ -229,9 +226,6 @@ class PageInfo : private content_settings::CookieControlsObserver,
 
   // Handles opening the link to show cookies settings and records the event.
   void OpenCookiesSettingsView();
-
-  // Handles opening the link to show Incognito tracking protection settings.
-  void OpenIncognitoSettingsView();
 
   // Handles opening the link to show all sites settings with a filter for
   // current site's fps  and records the event.
@@ -339,7 +333,7 @@ class PageInfo : private content_settings::CookieControlsObserver,
   void PopulatePermissionInfo(PermissionInfo& permission_info,
                               HostContentSettingsMap* content_settings,
                               const content_settings::SettingInfo& info,
-                              ContentSetting setting) const;
+                              PermissionSetting setting) const;
 
   // Returns whether |info| should be displayed in the UI.
   bool ShouldShowPermission(const PageInfo::PermissionInfo& info) const;

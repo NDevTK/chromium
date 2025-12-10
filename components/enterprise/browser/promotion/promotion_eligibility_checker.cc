@@ -10,12 +10,9 @@
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
-#include "google_apis/gaia/gaia_constants.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace {
-
-constexpr char kOauthConsumerName[] = "promotion_eligibility_checker";
 
 constexpr char kPolicyPromotionBannerLocale[] = "en-US";
 
@@ -49,12 +46,13 @@ PromotionEligibilityChecker::PromotionEligibilityChecker(
 PromotionEligibilityChecker::~PromotionEligibilityChecker() = default;
 
 void PromotionEligibilityChecker::MaybeCheckPromotionEligibility(
-    const CoreAccountId account_id,
     PromotionEligibilityChecker::PromotionEligibilityCallback callback) {
   DCHECK(!access_token_fetcher_);
   // The caller must supply a username.
   DCHECK(callback);
   callback_ = std::move(callback);
+  auto account_id =
+      identity_manager_->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
 
   if (account_id.empty() ||
       !identity_manager_->HasAccountWithRefreshToken(account_id) ||
@@ -63,12 +61,8 @@ void PromotionEligibilityChecker::MaybeCheckPromotionEligibility(
         enterprise_management::GetUserEligiblePromotionsResponse());
     return;
   }
-  signin::ScopeSet scopes;
-  scopes.insert(GaiaConstants::kDeviceManagementServiceOAuth);
-  scopes.insert(GaiaConstants::kGoogleUserInfoEmail);
-
   access_token_fetcher_ = identity_manager_->CreateAccessTokenFetcherForAccount(
-      account_id, kOauthConsumerName, scopes,
+      account_id, signin::OAuthConsumerId::kPromotionEligibilityChecker,
       base::BindOnce(&PromotionEligibilityChecker::OnAuthTokenFetched,
                      weak_factory_.GetWeakPtr()),
       signin::AccessTokenFetcher::Mode::kWaitUntilRefreshTokenAvailable);

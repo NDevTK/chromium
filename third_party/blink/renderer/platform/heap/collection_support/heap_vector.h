@@ -132,67 +132,49 @@ class BasicHeapVector final
 
  private:
   struct TypeConstraints {
-    constexpr TypeConstraints();
+    constexpr TypeConstraints() {
+      static_assert(
+          std::is_trivially_destructible_v<BasicHeapVector> || inlineCapacity,
+          "BasicHeapVector must be trivially destructible.");
+      static_assert(!IsWeakV<T>,
+                    "Weak types are not allowed in BasicHeapVector.");
+      static_assert(!IsGarbageCollectedTypeV<T>,
+                    "GCed types should not be inlined in a BasicHeapVector.");
+      static_assert(!IsPointerToGarbageCollectedType<T>,
+                    "Don't use raw pointers or reference to garbage collected "
+                    "types in BasicHeapVector. Use Member<> instead.");
+      static_assert(!IsPointerToTraceableType<T>,
+                    "Don't use raw pointers or reference to traceable "
+                    "types in BasicHeapVector. Use Member<> instead.");
 
-   private:
-    template <typename U>
-    class IsHeapVector : public std::false_type {};
-    template <typename U>
-    class IsHeapVector<BasicHeapVector<CollectionType, U>>
-        : public std::true_type {};
-    template <typename U, wtf_size_t InlineCapacity>
-    class IsHeapVector<BasicHeapVector<CollectionType, U, InlineCapacity>>
-        : public std::true_type {};
+      // HeapVector may hold non-traceable types. This is useful for vectors
+      // held by garbage collected objects such that the vectors' backing stores
+      // are accounted as memory held by the GC. HeapVectors of non-traceable
+      // types should only be used as fields of traceable types.
+    }
   };
   static_assert(std::is_empty_v<TypeConstraints>);
   NO_UNIQUE_ADDRESS TypeConstraints type_constraints_;
 };
 
-template <internal::HeapCollectionType CollectionType,
-          typename T,
-          wtf_size_t inlineCapacity>
-constexpr BasicHeapVector<CollectionType, T, inlineCapacity>::TypeConstraints::
-    TypeConstraints() {
-  static_assert(
-      std::is_trivially_destructible_v<BasicHeapVector> || inlineCapacity,
-      "BasicHeapVector must be trivially destructible.");
-  static_assert(!WTF::IsWeak<T>::value,
-                "Weak types are not allowed in BasicHeapVector.");
-  static_assert(
-      !WTF::IsGarbageCollectedType<T>::value || IsHeapVector<T>::value,
-      "GCed types should not be inlined in a BasicHeapVector.");
-  static_assert(!WTF::IsPointerToGarbageCollectedType<T>,
-                "Don't use raw pointers or reference to garbage collected "
-                "types in BasicHeapVector. Use Member<> instead.");
-
-  // HeapVector may hold non-traceable types. This is useful for vectors held
-  // by garbage collected objects such that the vectors' backing stores are
-  // accounted as memory held by the GC. HeapVectors of non-traceable types
-  // should only be used as fields of traceable types.
-}
-
-// On-stack for in-field version of WTF::Vector for referring to
+// On-stack for in-field version of Vector for referring to
 // GarbageCollected objects.
 template <typename T, wtf_size_t inlineCapacity = 0>
 using HeapVector = BasicHeapVector<internal::HeapCollectionType::kDisallowNew,
                                    T,
                                    inlineCapacity>;
-static_assert(WTF::IsDisallowNew<HeapVector<int>>);
+static_assert(IsDisallowNew<HeapVector<int>>);
 ASSERT_SIZE(Vector<int>, HeapVector<int>);
 
-// GCed version of WTF::Vector for referring to GarbageCollected objects.
+// GCed version of Vector for referring to GarbageCollected objects.
 template <typename T, wtf_size_t inlineCapacity = 0>
 using GCedHeapVector =
     BasicHeapVector<internal::HeapCollectionType::kGCed, T, inlineCapacity>;
-static_assert(!WTF::IsDisallowNew<GCedHeapVector<int>>);
+static_assert(!IsDisallowNew<GCedHeapVector<int>>);
 ASSERT_SIZE(Vector<int>, GCedHeapVector<int>);
 
-}  // namespace blink
-
-namespace WTF {
-
 template <typename T>
-struct VectorTraits<blink::Member<T>> : VectorTraitsBase<blink::Member<T>> {
+struct VectorTraits<Member<T>> : VectorTraitsBase<Member<T>> {
   STATIC_ONLY(VectorTraits);
   static const bool kNeedsDestruction = false;
   static const bool kCanInitializeWithMemset = true;
@@ -207,8 +189,7 @@ struct VectorTraits<blink::Member<T>> : VectorTraitsBase<blink::Member<T>> {
 // HeapLinkedHashSet though HeapVector<WeakMember> usage is still banned.
 // (See the discussion in https://crrev.com/c/2246014)
 template <typename T>
-struct VectorTraits<blink::WeakMember<T>>
-    : VectorTraitsBase<blink::WeakMember<T>> {
+struct VectorTraits<WeakMember<T>> : VectorTraitsBase<WeakMember<T>> {
   STATIC_ONLY(VectorTraits);
   static const bool kNeedsDestruction = false;
   static const bool kCanInitializeWithMemset = true;
@@ -220,8 +201,7 @@ struct VectorTraits<blink::WeakMember<T>>
 };
 
 template <typename T>
-struct VectorTraits<blink::UntracedMember<T>>
-    : VectorTraitsBase<blink::UntracedMember<T>> {
+struct VectorTraits<UntracedMember<T>> : VectorTraitsBase<UntracedMember<T>> {
   STATIC_ONLY(VectorTraits);
   static const bool kNeedsDestruction = false;
   static const bool kCanInitializeWithMemset = true;
@@ -230,8 +210,7 @@ struct VectorTraits<blink::UntracedMember<T>>
 };
 
 template <typename T>
-struct VectorTraits<blink::HeapVector<T, 0>>
-    : VectorTraitsBase<blink::HeapVector<T, 0>> {
+struct VectorTraits<HeapVector<T, 0>> : VectorTraitsBase<HeapVector<T, 0>> {
   STATIC_ONLY(VectorTraits);
   static const bool kNeedsDestruction = false;
   static const bool kCanInitializeWithMemset = true;
@@ -240,8 +219,8 @@ struct VectorTraits<blink::HeapVector<T, 0>>
 };
 
 template <typename T, wtf_size_t inlineCapacity>
-struct VectorTraits<blink::HeapVector<T, inlineCapacity>>
-    : VectorTraitsBase<blink::HeapVector<T, inlineCapacity>> {
+struct VectorTraits<HeapVector<T, inlineCapacity>>
+    : VectorTraitsBase<HeapVector<T, inlineCapacity>> {
   STATIC_ONLY(VectorTraits);
   static const bool kNeedsDestruction = VectorTraits<T>::kNeedsDestruction;
   static const bool kCanInitializeWithMemset =
@@ -251,6 +230,6 @@ struct VectorTraits<blink::HeapVector<T, inlineCapacity>>
   static const bool kCanMoveWithMemcpy = VectorTraits<T>::kCanMoveWithMemcpy;
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_COLLECTION_SUPPORT_HEAP_VECTOR_H_

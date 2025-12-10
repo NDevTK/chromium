@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,7 +28,6 @@
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-blink-forward.h"
-#include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
 #include "third_party/blink/public/mojom/navigation/renderer_eviction_reason.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_common.h"
@@ -249,6 +247,10 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
   bool latency_critical_operation_deferred_ = false;
   bool used_code_cache_fetcher_ = false;
 
+  // Set to true when OnReceivedResponse of the client is called.
+  // This is used to prevent OnReceivedResponse from being called twice.
+  bool response_sent_to_client_ = false;
+
   scoped_refptr<base::SequencedTaskRunner> loading_task_runner_;
 
   // `pending_tasks_` are queued while waiting for the response from the
@@ -256,7 +258,7 @@ class BLINK_PLATFORM_EXPORT ResourceRequestSender {
   // such deferring logic. However, it is difficult because the current code for
   // ScriptCachedMetadataHandler is written with the assumption that metadata
   // comes first.
-  WTF::Vector<base::OnceClosure> pending_tasks_;
+  Vector<base::OnceClosure> pending_tasks_;
 
   scoped_refptr<CodeCacheFetcher> code_cache_fetcher_;
 

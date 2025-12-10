@@ -20,10 +20,10 @@
 #include "base/types/expected.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/commands/command_result.h"
-#include "chrome/browser/web_applications/isolated_web_apps/error/uma_logging.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
 #include "chrome/browser/web_applications/locks/all_apps_lock.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "components/webapps/isolated_web_apps/error/uma_logging.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 
 namespace web_app {
 
@@ -192,9 +192,12 @@ void CleanupOrphanedIsolatedWebAppsCommand::StartWithLock(
   lock_ = std::move(lock);
 
   const base::FilePath profile_dir = profile_->GetPath();
+  // Since this command is holding an AllAppsLock, it's undesirable to post
+  // low-prio background tasks with BEST_EFFORT; USER_VISIBLE feels like a
+  // better tradeoff.
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::TaskPriority::BEST_EFFORT, base::MayBlock(),
+      {base::TaskPriority::USER_VISIBLE, base::MayBlock(),
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&RetrieveAllIsolatedWebAppsDirectories, profile_dir),
       base::BindOnce(&CleanupOrphanedIsolatedWebAppsCommand::
@@ -215,6 +218,15 @@ void CleanupOrphanedIsolatedWebAppsCommand::
                               std::back_inserter(directories_to_delete));
 
   number_of_deleted_directories_ = directories_to_delete.size();
+  if (directories_to_delete.empty()) {
+    // Do not post a task if there's no job to do.
+    CommandComplete(/*success=*/true);
+    return;
+  }
+
+  // Since this command is holding an AllAppsLock, it's undesirable to post
+  // low-prio background tasks with BEST_EFFORT; USER_VISIBLE feels like a
+  // better tradeoff.
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::TaskPriority::USER_VISIBLE, base::MayBlock(),

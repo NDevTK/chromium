@@ -26,13 +26,11 @@ import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.ui.base.TestActivity;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 
 @RunWith(BaseRobolectricTestRunner.class)
 public class RecentTabsPageUnitTest {
@@ -61,16 +59,13 @@ public class RecentTabsPageUnitTest {
                 new RecentTabsPage(
                         mActivity,
                         mRecentTabsManager,
+                        /* navigationDelegate */ null,
                         mBrowserControlsStateProvider,
                         new ObservableSupplierImpl<>(0),
                         mEdgeToEdgeSupplier);
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-        ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE
-    })
     public void testEdgeToEdge() {
         assertTrue("Recent tabs do support E2E.", mRecentTabsPage.supportsEdgeToEdge());
 
@@ -90,14 +85,5 @@ public class RecentTabsPageUnitTest {
 
         mRecentTabsPage.destroy();
         verify(mEdgeToEdgeController).unregisterAdjuster(padAdjuster);
-    }
-
-    @Test
-    @EnableFeatures({
-        ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-        ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE + ":disable_recent_tabs_e2e/true"
-    })
-    public void testDisableEdgeToEdge() {
-        assertFalse("Recent tabs E2E should be turned off.", mRecentTabsPage.supportsEdgeToEdge());
     }
 }

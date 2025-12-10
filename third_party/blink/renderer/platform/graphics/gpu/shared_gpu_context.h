@@ -44,7 +44,7 @@ class PLATFORM_EXPORT SharedGpuContext {
   GetExistingContextProviderWrapper();
 
   static bool AllowSoftwareToAcceleratedCanvasUpgrade();
-  static bool IsValidWithoutRestoring();
+  static bool IsValidWithoutRestoringForTesting();
 
   static WebGraphicsSharedImageInterfaceProvider*
   SharedImageInterfaceProvider();
@@ -72,7 +72,7 @@ class PLATFORM_EXPORT SharedGpuContext {
   static void Reset();
 
  private:
-  friend class WTF::ThreadSpecific<SharedGpuContext>;
+  friend class ThreadSpecific<SharedGpuContext>;
 
   static SharedGpuContext* GetInstanceForCurrentThread();
 

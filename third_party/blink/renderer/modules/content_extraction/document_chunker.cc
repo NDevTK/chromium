@@ -126,10 +126,9 @@ DocumentChunker::AggregateNode DocumentChunker::ProcessNode(
   if (const Text* text = DynamicTo<Text>(node)) {
     String simplified_text = text->data().SimplifyWhiteSpace();
     if (!simplified_text.empty()) {
-      current_node.num_words =
-          WTF::VisitCharacters(simplified_text, [](auto chars) {
-            return std::count(chars.begin(), chars.end(), ' ') + 1;
-          });
+      current_node.num_words = VisitCharacters(simplified_text, [](auto chars) {
+        return std::count(chars.begin(), chars.end(), ' ') + 1;
+      });
       current_node.segments.push_back(simplified_text);
     }
     return current_node;
@@ -237,11 +236,7 @@ String DocumentChunker::AggregateNode::CreatePassage() const {
     return String();
   }
   StringBuilder builder;
-  builder.Append(segments[0]);
-  for (unsigned int i = 1; i < segments.size(); i++) {
-    builder.Append(' ');
-    builder.Append(segments[i]);
-  }
+  builder.AppendRange(segments, " ");
   return builder.ReleaseString();
 }
 

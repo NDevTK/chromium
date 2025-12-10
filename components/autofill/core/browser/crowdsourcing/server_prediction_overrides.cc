@@ -16,6 +16,7 @@
 #include "base/values.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/proto/api_v1.pb.h"
+#include "components/autofill/core/browser/proto/server.pb.h"
 #include "components/autofill/core/common/signatures.h"
 
 namespace autofill {
@@ -184,7 +185,8 @@ ParseServerPredictionOverrideJson(const base::Value& value) {
         //     "<field_signature>": [
         //       {
         //         "predictions": [ <raw_field_type> or "<type_name>", ... ],
-        //         "format_string": <format_string>
+        //         "format_string_type": "DATE",
+        //         "format_string": "<format_string>"
         //       },
         //       ...
         //     ]
@@ -252,7 +254,8 @@ ParseServerPredictionOverrides(std::string_view overrides_as_string,
         return base::unexpected("Base64Decode() failed");
       }
       base::expected<base::Value, base::JSONReader::Error> overrides =
-          base::JSONReader::ReadAndReturnValueWithError(json);
+          base::JSONReader::ReadAndReturnValueWithError(
+              json, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
       if (!overrides.has_value()) {
         return base::unexpected(overrides.error().ToString());
       }

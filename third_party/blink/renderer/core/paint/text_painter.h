@@ -25,6 +25,7 @@ class LayoutSVGInlineText;
 class TextDecorationInfo;
 enum class TextEmphasisPosition : unsigned;
 struct AutoDarkMode;
+struct DecorationGeometry;
 struct PaintInfo;
 struct SvgContextPaints;
 struct TextFragmentPaintInfo;
@@ -103,10 +104,12 @@ class CORE_EXPORT TextPainter {
                          DOMNodeId node_id,
                          const AutoDarkMode& auto_dark_mode);
 
+  virtual void ClipDecorationLine(const DecorationGeometry&,
+                                  float text_baseline,
+                                  const TextFragmentPaintInfo&);
   void PaintDecorationLine(const TextDecorationInfo& decoration_info,
                            const Color& line_color,
-                           const AutoDarkMode& auto_dark_mode,
-                           const TextFragmentPaintInfo* fragment_paint_info);
+                           const AutoDarkMode& auto_dark_mode);
 
   SvgTextPaintState& SetSvgState(const LayoutSVGInlineText&,
                                  const ComputedStyle&,
@@ -123,7 +126,9 @@ class CORE_EXPORT TextPainter {
                                           const ComputedStyle&,
                                           const PaintInfo&);
 
-  void SetEmphasisMark(const AtomicString&, LineLogicalSide);
+  void SetEmphasisMark(const AtomicString&,
+                       LineLogicalSide,
+                       const FragmentItem* text_item = nullptr);
 
  protected:
   const Font& font() const { return font_; }
@@ -136,11 +141,6 @@ class CORE_EXPORT TextPainter {
   void PaintSvgTextFragment(const TextFragmentPaintInfo&,
                             DOMNodeId node_id,
                             const AutoDarkMode& auto_dark_mode);
-
-  virtual void ClipDecorationsStripe(const TextFragmentPaintInfo&,
-                                     float upper,
-                                     float stripe_width,
-                                     float dilation);
 
   GraphicsContext& graphics_context_;
   const SvgContextPaints* svg_context_paints_;

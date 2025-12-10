@@ -29,7 +29,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
@@ -67,6 +66,8 @@ import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.ui.util.ColorUtils;
 
+import java.util.function.Supplier;
+
 /**
  * {@link StatusBarColorController} tests. There are additional status bar color tests in {@link
  * BrandColorTest}.
@@ -82,6 +83,10 @@ import org.chromium.ui.util.ColorUtils;
     ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE,
     ChromeFeatureList.ANDROID_THEME_MODULE
 })
+// TODO(crbug.com/428056054): Do not read color from system window bars on B+.
+@DisableIf.Build(
+        sdk_is_greater_than = Build.VERSION_CODES.VANILLA_ICE_CREAM,
+        message = "crbug.com/428056054")
 public class StatusBarColorControllerTest {
     @Rule
     public AutoResetCtaTransitTestRule mActivityTestRule =
@@ -310,6 +315,7 @@ public class StatusBarColorControllerTest {
     @LargeTest
     @Feature({"StatusBar"})
     @Restriction({DeviceFormFactor.PHONE}) // Status bar is always black on tablets
+    @DisabledTest(message = "crbug.com/458551111")
     public void testBrandColorIgnoredWhenOmniboxIsFocused_FeatureMatchToolbarColorEnabled()
             throws Exception {
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();

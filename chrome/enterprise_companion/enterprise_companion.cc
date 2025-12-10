@@ -14,6 +14,9 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/logging/logging_settings.h"
+#include "base/message_loop/message_pump_type.h"
+#include "base/process/memory.h"
 #include "base/process/process_handle.h"
 #include "base/system/sys_info.h"
 #include "base/task/single_thread_task_executor.h"
@@ -31,12 +34,12 @@
 #include "chrome/enterprise_companion/ipc_support.h"
 
 #if BUILDFLAG(IS_WIN)
-#include "base/i18n/icu_util.h"
-#include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/win/windows_version.h"
 #include "chrome/enterprise_companion/installer.h"
-#endif
+#include "chrome/updater/util/win_util.h"
+#include "partition_alloc/page_allocator.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace enterprise_companion {
 
@@ -86,34 +89,6 @@ void InitThreadPool() {
   base::ThreadPoolInstance::InitParams init_params(max_num_foreground_threads);
   base::ThreadPoolInstance::Get()->Start(init_params);
 }
-
-#if BUILDFLAG(IS_WIN)
-// Perform ICU initialization at best-effort. In official builds ICU data is
-// distributed as a file alongside the application, however this may not be
-// available due to external modification (e.g. antivirus, enterprise management
-// tools, adventurous users etc.)
-void TryInitializeICU() {
-#if ENTERPRISE_COMPANION_USE_ICU_DATA_FILE
-  base::FilePath exe_path;
-  if (!base::PathService::Get(base::FILE_EXE, &exe_path)) {
-    VLOG(1) << "Failed to retrieve the current executable's path.";
-    return;
-  }
-  if (!base::PathExists(exe_path.DirName().Append(kIcuDataFileName))) {
-    VLOG(1) << "ICU data file is not present; ICU libraries will not be "
-               "initialized which may cause resolution of proxies containing "
-               "non-ASCII Unicode code points to crash "
-               "(https://crbug.com/420737997).";
-    return;
-  }
-#endif  // ENTERPRISE_COMPANION_USE_ICU_DATA_FILE
-  // InitializeICU may CHECK, though the conditional returns above try to
-  // mitigate this. See https://crbug.com/445616.
-  if (!base::i18n::InitializeICU()) {
-    VLOG(1) << "Failed to initialize ICU";
-  }
-}
-#endif  // BUILDFLAG(IS_WIN)
 
 std::unique_ptr<App> CreateAppForCommandLine(base::CommandLine* command_line) {
   if (command_line->HasSwitch(kShutdownSwitch)) {
@@ -172,6 +147,19 @@ std::string OperatingSystemVersion() {
 }  // namespace
 
 int EnterpriseCompanionMain(int argc, const char* const* argv) {
+#if BUILDFLAG(IS_WIN)
+  CHECK(updater::EnableSecureDllLoading());
+#endif
+
+  // Make the process more resilient to memory allocation issues.
+#if BUILDFLAG(IS_WIN)
+  updater::EnableProcessHeapMetadataProtection();
+  partition_alloc::SetRetryOnCommitFailure(true);
+#endif
+  base::EnableTerminationOnHeapCorruption();
+  base::EnableTerminationOnOutOfMemory();
+  logging::RegisterAbslAbortHook();
+
   base::CommandLine::Init(argc, argv);
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   InitLogging();
@@ -185,16 +173,13 @@ int EnterpriseCompanionMain(int argc, const char* const* argv) {
   InitThreadPool();
   base::AtExitManager exit_manager;
 
-  base::SingleThreadTaskExecutor main_task_executor;
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePumpType::DEFAULT, true);
 
   if (command_line->HasSwitch(kCrashHandlerSwitch)) {
     return CrashReporterMain();
   }
   InitializeCrashReporting();
-
-#if BUILDFLAG(IS_WIN)
-  TryInitializeICU();
-#endif
 
   // Records a backtrace in the log, crashes the program, saves a crash dump,
   // and reports the crash.

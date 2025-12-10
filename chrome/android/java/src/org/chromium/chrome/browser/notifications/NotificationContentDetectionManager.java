@@ -13,11 +13,12 @@ import android.net.Uri;
 import android.os.Bundle;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxy;
 import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxy.StatusBarNotificationProxy;
@@ -33,9 +34,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.Optional;
 
 /** Helper utils for replacing suspicious notifications with warnings. */
+@NullMarked
 public class NotificationContentDetectionManager {
     @VisibleForTesting
     static final String SUSPICIOUS_NOTIFICATION_WARNING_INTERACTIONS_HISTOGRAM_NAME =
@@ -55,6 +56,16 @@ public class NotificationContentDetectionManager {
     // tapped. Used for reporting notifications to Google upon user consent.
     static final Map<String, String> sAlwaysAllowNotificationsMap = new HashMap<>();
 
+    // Maps origins of suspicious notifications to details that require persisting for possibly
+    // showing suspended suspicious notifications to the user at their request. This also keeps
+    // track of the warning notification id and the warning count for the origin, which should be
+    // displayed on the warning notification since there should only be 1 warning notification per
+    // origin. If this data is pruned from memory (e.g., Chrome is killed), the user will not be
+    // able to restore the original notifications by tapping "Show original notification" on the
+    // warning notification.
+    static final Map<String, SuspiciousNotificationWarningDetailsForOrigin>
+            sWarningNotificationAttributesByOrigin = new HashMap<>();
+
     private static @Nullable NotificationContentDetectionManager sInstance;
 
     private final BaseNotificationManagerProxy mNotificationManager;
@@ -70,10 +81,10 @@ public class NotificationContentDetectionManager {
         private final int[] mVibrationPattern;
         private final long mTimestamp;
         private final boolean mSilent;
-        private final String mChannelId;
+        private final @Nullable String mChannelId;
         private final Notification mOriginalNotification;
         private final String mScopeUrl;
-        private final String mProfileId;
+        private final @Nullable String mProfileId;
         private final boolean mIncognito;
         private final String mWebApkPackage;
 
@@ -84,10 +95,10 @@ public class NotificationContentDetectionManager {
                 int[] vibrationPattern,
                 long timestamp,
                 boolean silent,
-                String channelId,
+                @Nullable String channelId,
                 Notification originalNotification,
                 String scopeUrl,
-                String profileId,
+                @Nullable String profileId,
                 boolean incognito,
                 String webApkPackage) {
             this.mNotificationId = notificationId;
@@ -104,8 +115,9 @@ public class NotificationContentDetectionManager {
             this.mWebApkPackage = webApkPackage;
         }
 
-        void showWarning() {
-            NotificationWrapper notificationWrapper = createWarningNotificationWrapper();
+        void showWarning(int warningCount) {
+            NotificationWrapper notificationWrapper =
+                    createWarningNotificationWrapper(warningCount);
             mNotificationManager.notify(notificationWrapper);
         }
 
@@ -118,13 +130,17 @@ public class NotificationContentDetectionManager {
          * see them, they are stored as an extra on the warning notification so they can be obtained
          * later.
          */
-        private NotificationWrapper createWarningNotificationWrapper() {
+        private NotificationWrapper createWarningNotificationWrapper(int warningCount) {
             Context context = ContextUtils.getApplicationContext();
             Resources res = context.getResources();
 
             NotificationBuilderBase notificationBuilder =
                     new StandardNotificationBuilder(context)
-                            .setTitle(res.getString(R.string.notification_warning_title))
+                            .setTitle(
+                                    res.getQuantityString(
+                                            R.plurals.notification_warning_title,
+                                            warningCount,
+                                            warningCount))
                             .setBody(
                                     res.getString(
                                             R.string.notification_warning_body,
@@ -138,7 +154,10 @@ public class NotificationContentDetectionManager {
                                             : R.drawable.report_octagon)
                             .setTicker(
                                     NotificationPlatformBridge.createTickerText(
-                                            res.getString(R.string.notification_warning_title),
+                                            res.getQuantityString(
+                                                    R.plurals.notification_warning_title,
+                                                    warningCount,
+                                                    warningCount),
                                             res.getString(
                                                     R.string.notification_warning_body,
                                                     UrlFormatter.formatUrlForSecurityDisplay(
@@ -196,6 +215,8 @@ public class NotificationContentDetectionManager {
                     NotificationConstants.EXTRA_NOTIFICATION_INFO_WEBAPK_PACKAGE, mWebApkPackage);
             originalNotificationBackup.putString(
                     NotificationConstants.EXTRA_NOTIFICATION_INFO_CHANNEL_ID, mChannelId);
+            originalNotificationBackup.putInt(
+                    NotificationConstants.EXTRA_SUSPICIOUS_NOTIFICATION_COUNT, warningCount);
             notificationBuilder.setExtras(originalNotificationBackup);
 
             // Closing the notification should delete it.
@@ -239,7 +260,10 @@ public class NotificationContentDetectionManager {
                     /* defaultValue= */ false)) {
                 notificationBuilder.addSettingsAction(
                         /* iconId= */ 0,
-                        res.getString(R.string.notification_show_original_button),
+                        res.getQuantityString(
+                                R.plurals.notification_show_original_button,
+                                warningCount,
+                                warningCount),
                         showOriginalNotificationIntentProvider,
                         NotificationUmaTracker.ActionType.SHOW_ORIGINAL_NOTIFICATION);
                 notificationBuilder.addSettingsAction(
@@ -255,18 +279,12 @@ public class NotificationContentDetectionManager {
                         NotificationUmaTracker.ActionType.PRE_UNSUBSCRIBE);
                 notificationBuilder.addSettingsAction(
                         /* iconId= */ 0,
-                        res.getString(R.string.notification_show_original_button),
+                        res.getQuantityString(
+                                R.plurals.notification_show_original_button,
+                                warningCount,
+                                warningCount),
                         showOriginalNotificationIntentProvider,
                         NotificationUmaTracker.ActionType.SHOW_ORIGINAL_NOTIFICATION);
-            }
-
-            // Add entry to `sSuspiciousNotificationsMap` for UMA logging.
-            if (sSuspiciousNotificationsMap.containsKey(mNotificationOrigin)) {
-                sSuspiciousNotificationsMap.get(mNotificationOrigin).add(mNotificationId);
-            } else {
-                HashSet<String> suspiciousNotificationIds = new HashSet<>();
-                suspiciousNotificationIds.add(mNotificationId);
-                sSuspiciousNotificationsMap.put(mNotificationOrigin, suspiciousNotificationIds);
             }
 
             return notificationBuilder.build(
@@ -278,9 +296,73 @@ public class NotificationContentDetectionManager {
     }
 
     /**
+     * Stores pertinent information about a suspicious notification warning and the original
+     * notification backups for a specific origin.
+     */
+    private static class SuspiciousNotificationWarningDetailsForOrigin {
+        // Notification id of the warning shown to the user for this origin.
+        final String mWarningNotificationId;
+        // Contents of suspicious notifications from the same origin.
+        private final Map<String, WarningNotificationWrapperAttributes>
+                mOriginalNotificationBackups;
+
+        SuspiciousNotificationWarningDetailsForOrigin(
+                String warningNotificationId,
+                Map<String, WarningNotificationWrapperAttributes> mOriginalNotificationBackups) {
+            this.mWarningNotificationId = warningNotificationId;
+            this.mOriginalNotificationBackups = mOriginalNotificationBackups;
+        }
+
+        void updateBackupsAndShowWarning(
+                String notificationId,
+                WarningNotificationWrapperAttributes warningNotificationAttributes) {
+            mOriginalNotificationBackups.put(notificationId, warningNotificationAttributes);
+            if (mOriginalNotificationBackups.containsKey(mWarningNotificationId)) {
+                mOriginalNotificationBackups
+                        .get(mWarningNotificationId)
+                        .showWarning(mOriginalNotificationBackups.size());
+                // If the warning notification to be shown is `notificationId`, then a new warning
+                // is shown. Otherwise, the existing one is being updated.
+                if (notificationId.equals(mWarningNotificationId)) {
+                    recordSuspiciousNotificationWarningInteractions(
+                            SuspiciousNotificationWarningInteractions.WARNING_SHOWN);
+                } else {
+                    recordSuspiciousNotificationWarningInteractions(
+                            SuspiciousNotificationWarningInteractions.SUPPRESS_DUPLICATE_WARNING);
+                }
+            }
+        }
+
+        int displayOriginalNotificationsFromBackups() {
+            int actualNumSuspiciousBackupsDisplayed = 0;
+            for (String notificationId : mOriginalNotificationBackups.keySet()) {
+                // Skip the `mWarningNotificationId` because this will be displayed using the
+                // warning notification's extra Bundle.
+                if (notificationId.equals(mWarningNotificationId)) {
+                    continue;
+                }
+                WarningNotificationWrapperAttributes notificationAttributes =
+                        mOriginalNotificationBackups.get(notificationId);
+                displayOriginalNotification(
+                        notificationAttributes.mOriginalNotification,
+                        notificationId,
+                        notificationAttributes.mNotificationOrigin,
+                        notificationAttributes.mScopeUrl,
+                        notificationAttributes.mProfileId,
+                        notificationAttributes.mIncognito,
+                        notificationAttributes.mWebApkPackage,
+                        notificationAttributes.mChannelId);
+                actualNumSuspiciousBackupsDisplayed += 1;
+            }
+            return actualNumSuspiciousBackupsDisplayed;
+        }
+    }
+
+    /**
      * All user interactions that can happen when a warning is shown for a suspicious notification.
      * Must be kept in sync with SuspiciousNotificationWarningInteractions in
-     * safe_browsing/enums.xml.
+     * safe_browsing/enums.xml and
+     * safe_browsing/android/notification_content_detection_manager_android.h.
      */
     @IntDef({
         SuspiciousNotificationWarningInteractions.WARNING_SHOWN,
@@ -291,6 +373,7 @@ public class NotificationContentDetectionManager {
         SuspiciousNotificationWarningInteractions.REPORT_AS_SAFE,
         SuspiciousNotificationWarningInteractions.REPORT_WARNED_NOTIFICATION_AS_SPAM,
         SuspiciousNotificationWarningInteractions.REPORT_UNWARNED_NOTIFICATION_AS_SPAM,
+        SuspiciousNotificationWarningInteractions.SUPPRESS_DUPLICATE_WARNING,
         SuspiciousNotificationWarningInteractions.MAX_VALUE
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -303,7 +386,8 @@ public class NotificationContentDetectionManager {
         int REPORT_AS_SAFE = 5;
         int REPORT_WARNED_NOTIFICATION_AS_SPAM = 6;
         int REPORT_UNWARNED_NOTIFICATION_AS_SPAM = 7;
-        int MAX_VALUE = REPORT_UNWARNED_NOTIFICATION_AS_SPAM;
+        int SUPPRESS_DUPLICATE_WARNING = 8;
+        int MAX_VALUE = SUPPRESS_DUPLICATE_WARNING;
     }
 
     /** Returns the singleton WebappRegistry instance. Creates the instance on first call. */
@@ -323,10 +407,10 @@ public class NotificationContentDetectionManager {
             int[] vibrationPattern,
             long timestamp,
             boolean silent,
-            String channelId,
+            @Nullable String channelId,
             Notification originalNotification,
             String scopeUrl,
-            String profileId,
+            @Nullable String profileId,
             boolean incognito,
             String webApkPackage) {
         WarningNotificationWrapperAttributes warningNotificationAttributes =
@@ -343,9 +427,27 @@ public class NotificationContentDetectionManager {
                         profileId,
                         incognito,
                         webApkPackage);
-        warningNotificationAttributes.showWarning();
-        recordSuspiciousNotificationWarningInteractions(
-                SuspiciousNotificationWarningInteractions.WARNING_SHOWN);
+        // Add entry to `sSuspiciousNotificationsMap` for UMA logging.
+        if (sSuspiciousNotificationsMap.containsKey(notificationOrigin)) {
+            sSuspiciousNotificationsMap.get(notificationOrigin).add(notificationId);
+        } else {
+            HashSet<String> suspiciousNotificationIds = new HashSet<>();
+            suspiciousNotificationIds.add(notificationId);
+            sSuspiciousNotificationsMap.put(notificationOrigin, suspiciousNotificationIds);
+        }
+
+        // Update warning notification count and persisted suspicious notifications for possible
+        // displaying later.
+        if (!sWarningNotificationAttributesByOrigin.containsKey(notificationOrigin)) {
+            sWarningNotificationAttributesByOrigin.put(
+                    notificationOrigin,
+                    new SuspiciousNotificationWarningDetailsForOrigin(
+                            /* mWarningNotificationId */ notificationId,
+                            new HashMap<String, WarningNotificationWrapperAttributes>()));
+        }
+        sWarningNotificationAttributesByOrigin
+                .get(notificationOrigin)
+                .updateBackupsAndShowWarning(notificationId, warningNotificationAttributes);
     }
 
     /**
@@ -358,10 +460,10 @@ public class NotificationContentDetectionManager {
             String notificationId,
             String origin,
             String scopeUrl,
-            String profileId,
+            @Nullable String profileId,
             boolean incognito,
             String webApkPackage,
-            String channelId) {
+            @Nullable String channelId) {
         // Record "Always allow" action.
         recordInteractionForUMAIfSuspicious(
                 origin, notificationId, SuspiciousNotificationWarningInteractions.ALWAYS_ALLOW);
@@ -381,23 +483,23 @@ public class NotificationContentDetectionManager {
                 (activeNotifications) -> {
                     for (StatusBarNotificationProxy proxy : activeNotifications) {
                         if (proxy.getId() != NotificationPlatformBridge.PLATFORM_ID
-                                || !NotificationPlatformBridge.getOriginFromNotificationTag(
-                                                proxy.getTag())
-                                        .equals(origin)) {
+                                || !origin.equals(
+                                        NotificationPlatformBridge.getOriginFromNotificationTag(
+                                                proxy.getTag()))) {
                             continue;
                         }
 
-                        Optional<Notification> notificationBackupOptional =
+                        Notification notificationBackup =
                                 NotificationPlatformBridge.getNotificationBackupOrCancel(
                                         proxy.getNotification().extras,
                                         proxy.getTag(),
                                         NotificationConstants
                                                 .EXTRA_NOTIFICATION_BACKUP_FOR_SUSPICIOUS_VERDICT);
 
-                        if (notificationBackupOptional.isPresent()) {
+                        if (notificationBackup != null) {
                             Notification.Builder builder =
                                     Notification.Builder.recoverBuilder(
-                                            context, notificationBackupOptional.get());
+                                            context, notificationBackup);
                             appendUnsubscribeButton(
                                     builder,
                                     notificationId,
@@ -415,22 +517,31 @@ public class NotificationContentDetectionManager {
     }
 
     static void dismissNotification(String origin, String notificationId) {
-        // Remove the notification's entry from `sSuspiciousNotificationsMap`, but keep any
-        // remaining notifications from `origin` in the map.
+        // Remove the notification's entry from `sSuspiciousNotificationsMap`. Since warnings from
+        // the same origin are collapsed into one notification, then the entire entry in
+        // `sSuspiciousNotificationsMap` can be removed.
         if (recordInteractionForUMAIfSuspicious(
                 origin, notificationId, SuspiciousNotificationWarningInteractions.DISMISS)) {
-            sSuspiciousNotificationsMap.get(origin).remove(notificationId);
-            if (sSuspiciousNotificationsMap.get(origin).isEmpty()) {
-                sSuspiciousNotificationsMap.remove(origin);
-            }
+            sSuspiciousNotificationsMap.remove(origin);
+        }
+        if (sWarningNotificationAttributesByOrigin.containsKey(origin)
+                && sWarningNotificationAttributesByOrigin
+                        .get(origin)
+                        .mWarningNotificationId
+                        .equals(notificationId)) {
+            sWarningNotificationAttributesByOrigin.remove(origin);
         }
     }
 
-    static void onUnsubscribeMaybeCommittedAfterWarning(String notificationId, String origin) {
+    static void onPreUnsubscribeMaybeCommittedAfterWarning(String notificationId, String origin) {
         // Record when the unsubscribe is completed.
         recordInteractionForUMAIfSuspicious(
                 origin, notificationId, SuspiciousNotificationWarningInteractions.UNSUBSCRIBE);
+    }
+
+    static void removeOriginFromSuspiciousMap(String origin) {
         sSuspiciousNotificationsMap.remove(origin);
+        sWarningNotificationAttributesByOrigin.remove(origin);
     }
 
     static boolean shouldAllowReportingSpam(Bundle extras) {
@@ -453,8 +564,8 @@ public class NotificationContentDetectionManager {
      * dismisses the suspicious warning notification, and then shows the original notification with
      * the `ACTION_ALWAYS_ALLOW` button.
      */
-    static void showOriginalNotification(String warningNotificationId) {
-        Context context = ContextUtils.getApplicationContext();
+    static void showOriginalNotifications(
+            String warningNotificationId, String warningNotificationOrigin) {
         var notificationManager = BaseNotificationManagerProxyFactory.create();
         notificationManager.getActiveNotifications(
                 (activeNotifications) -> {
@@ -464,7 +575,7 @@ public class NotificationContentDetectionManager {
                                     activeNotifications, warningNotificationId);
 
                     // Obtain the backup notification from the extras found above.
-                    Optional<Notification> notificationBackupOptional =
+                    Notification notificationBackup =
                             NotificationPlatformBridge.getNotificationBackupOrCancel(
                                     warningNotificationExtras,
                                     warningNotificationId,
@@ -473,37 +584,8 @@ public class NotificationContentDetectionManager {
 
                     // If a backup is found, use it to display the notification silently using the
                     // other fields stored in the extras.
-                    if (notificationBackupOptional.isPresent()) {
-                        Notification notificationBackup = notificationBackupOptional.get();
-                        Notification.Builder builder =
-                                Notification.Builder.recoverBuilder(context, notificationBackup);
-
-                        // Store original notification contents as an extra in order to restore the
-                        // original notification without "Always allow" button and also any other
-                        // notifications that has "Always allow" button.
-                        Bundle extras = new Bundle();
-                        extras.putParcelable(
-                                NotificationConstants
-                                        .EXTRA_NOTIFICATION_BACKUP_FOR_SUSPICIOUS_VERDICT,
-                                notificationBackup.clone());
-                        // Store extra signaling that the user has seen the original notification.
-                        // This will help determine whether to allow the reporting feature from the
-                        // unsubscribe confirmation notification or not.
-                        extras.putBoolean(
-                                NotificationConstants
-                                        .EXTRA_ALLOW_REPORTING_AS_SPAM_IS_NOTIFICATION_WARNED,
-                                true);
-                        builder.addExtras(extras);
-
+                    if (notificationBackup != null) {
                         // Get notification attributes from Bundle.
-                        String notificationId =
-                                getStringFromBackupBundle(
-                                        warningNotificationExtras,
-                                        NotificationConstants.EXTRA_NOTIFICATION_ID);
-                        String notificationOrigin =
-                                getStringFromBackupBundle(
-                                        warningNotificationExtras,
-                                        NotificationConstants.EXTRA_NOTIFICATION_INFO_ORIGIN);
                         String scopeUrl =
                                 getStringFromBackupBundle(
                                         warningNotificationExtras,
@@ -528,53 +610,57 @@ public class NotificationContentDetectionManager {
                                         warningNotificationExtras,
                                         NotificationConstants.EXTRA_NOTIFICATION_INFO_CHANNEL_ID);
 
-                        // Add the unsubscribe and always allow notification buttons. If the feature
-                        // parameter specifies to swap buttons, then "Unsubscribe" should be the
-                        // secondary button. Otherwise, it should be the primary button.
-                        if (ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
-                                ChromeFeatureList.SHOW_WARNINGS_FOR_SUSPICIOUS_NOTIFICATIONS,
-                                SHOW_WARNINGS_FOR_SUSPICIOUS_NOTIFICATIONS_SHOULD_SWAP_BUTTONS_PARAM_NAME,
-                                /* defaultValue= */ false)) {
-                            appendAlwaysAllowButton(
-                                    builder,
-                                    notificationId,
-                                    notificationOrigin,
-                                    scopeUrl,
-                                    profileId,
-                                    incognito,
-                                    webApkPackage,
-                                    channelId);
-                            appendUnsubscribeButton(
-                                    builder,
-                                    notificationId,
-                                    notificationOrigin,
-                                    scopeUrl,
-                                    profileId,
-                                    incognito,
-                                    webApkPackage,
-                                    channelId);
-                        } else {
-                            appendUnsubscribeButton(
-                                    builder,
-                                    notificationId,
-                                    notificationOrigin,
-                                    scopeUrl,
-                                    profileId,
-                                    incognito,
-                                    webApkPackage,
-                                    channelId);
-                            appendAlwaysAllowButton(
-                                    builder,
-                                    notificationId,
-                                    notificationOrigin,
-                                    scopeUrl,
-                                    profileId,
-                                    incognito,
-                                    webApkPackage,
-                                    channelId);
+                        int expectedNumSuspiciousNotificationsLeft = 1;
+                        if (warningNotificationExtras != null
+                                && warningNotificationExtras.containsKey(
+                                        NotificationConstants
+                                                .EXTRA_SUSPICIOUS_NOTIFICATION_COUNT)) {
+                            expectedNumSuspiciousNotificationsLeft =
+                                    warningNotificationExtras.getInt(
+                                            NotificationConstants
+                                                    .EXTRA_SUSPICIOUS_NOTIFICATION_COUNT);
                         }
-                        NotificationPlatformBridge.displayNotificationSilently(
-                                builder, notificationId);
+
+                        // Display the original notification, whose backup is stored in the warning
+                        // notification's backup `Bundle`.
+                        displayOriginalNotification(
+                                notificationBackup,
+                                warningNotificationId,
+                                warningNotificationOrigin,
+                                scopeUrl,
+                                profileId,
+                                incognito,
+                                webApkPackage,
+                                channelId);
+
+                        // Record the number of suppressed suspicious notifications that the warning
+                        // displays to the user, then subtract 1 from
+                        // `expectedNumSuspiciousNotificationsLeft` because the first suspicious
+                        // notification is displayed using the backup stored in the `Bundle`.
+                        NotificationUmaTracker.recordSuspiciousNotificationCountOnShowOriginals(
+                                expectedNumSuspiciousNotificationsLeft);
+                        expectedNumSuspiciousNotificationsLeft -= 1;
+
+                        // Display the rest of the original notifications and record the number of
+                        // suspicious notifications that the user expected to be delivered but were
+                        // not.
+                        if (sWarningNotificationAttributesByOrigin.containsKey(
+                                warningNotificationOrigin)) {
+                            int actualNumSuspiciousBackupsDisplayed =
+                                    sWarningNotificationAttributesByOrigin
+                                            .get(warningNotificationOrigin)
+                                            .displayOriginalNotificationsFromBackups();
+                            NotificationUmaTracker
+                                    .recordSuspiciousNotificationsDroppedCountOnShowOriginals(
+                                            expectedNumSuspiciousNotificationsLeft
+                                                    - actualNumSuspiciousBackupsDisplayed);
+                            sWarningNotificationAttributesByOrigin.remove(
+                                    warningNotificationOrigin);
+                        } else {
+                            NotificationUmaTracker
+                                    .recordSuspiciousNotificationsDroppedCountOnShowOriginals(
+                                            expectedNumSuspiciousNotificationsLeft);
+                        }
                     }
                 });
 
@@ -597,7 +683,7 @@ public class NotificationContentDetectionManager {
         mNotificationManager = notificationManager;
     }
 
-    private static boolean isNotificationSuspicious(String notificationId, String origin) {
+    static boolean isNotificationSuspicious(String notificationId, String origin) {
         if (sSuspiciousNotificationsMap.containsKey(origin)) {
             return sSuspiciousNotificationsMap.get(origin).contains(notificationId);
         }
@@ -629,7 +715,8 @@ public class NotificationContentDetectionManager {
         return false;
     }
 
-    private static String getStringFromBackupBundle(Bundle notificationExtras, String extraType) {
+    private static @Nullable String getStringFromBackupBundle(
+            @Nullable Bundle notificationExtras, String extraType) {
         if (notificationExtras == null || !notificationExtras.containsKey(extraType)) {
             return "";
         }
@@ -638,7 +725,7 @@ public class NotificationContentDetectionManager {
     }
 
     private static boolean getBooleanFromBackupBundle(
-            Bundle notificationExtras, String extraType, boolean defaultValue) {
+            @Nullable Bundle notificationExtras, String extraType, boolean defaultValue) {
         if (notificationExtras == null || !notificationExtras.containsKey(extraType)) {
             return defaultValue;
         }
@@ -650,11 +737,11 @@ public class NotificationContentDetectionManager {
             Notification.Builder notificationBuilder,
             String id,
             String origin,
-            String scopeUrl,
-            String profileId,
+            @Nullable String scopeUrl,
+            @Nullable String profileId,
             boolean incognito,
-            String webApkPackage,
-            String channelId) {
+            @Nullable String webApkPackage,
+            @Nullable String channelId) {
         PendingIntentProvider unsubscribePendingIntentProvider =
                 makePendingIntentForButton(
                         id,
@@ -681,11 +768,11 @@ public class NotificationContentDetectionManager {
             Notification.Builder notificationBuilder,
             String id,
             String origin,
-            String scopeUrl,
-            String profileId,
+            @Nullable String scopeUrl,
+            @Nullable String profileId,
             boolean incognito,
-            String webApkPackage,
-            String channelId) {
+            @Nullable String webApkPackage,
+            @Nullable String channelId) {
         PendingIntentProvider alwaysAllowPendingIntentProvider =
                 makePendingIntentForButton(
                         id,
@@ -713,11 +800,11 @@ public class NotificationContentDetectionManager {
     private static PendingIntentProvider makePendingIntentForButton(
             String id,
             String origin,
-            String scopeUrl,
-            String profileId,
+            @Nullable String scopeUrl,
+            @Nullable String profileId,
             boolean incognito,
-            String webApkPackage,
-            String channelId,
+            @Nullable String webApkPackage,
+            @Nullable String channelId,
             String action) {
         Context context = ContextUtils.getApplicationContext();
         Uri intentData =
@@ -728,16 +815,10 @@ public class NotificationContentDetectionManager {
         // ever get called with ACTION_PRE_UNSUBSCRIBE when displaying a web notification, which
         // implies native is running, making this a non-issue. Neverthelerss, removing support for
         // startService-type intents would be the cleanest solution here.
-        boolean useServiceIntent =
-                NotificationConstants.ACTION_PRE_UNSUBSCRIBE.equals(action)
-                        && NotificationIntentInterceptor
-                                .shouldUseServiceIntentForPreUnsubscribeAction();
         Intent intent = new Intent(action, intentData);
         intent.setClass(
                 context,
-                useServiceIntent
-                        ? NotificationService.class
-                        : NotificationServiceImpl.Receiver.class);
+                NotificationServiceImpl.Receiver.class);
 
         // Make sure to update NotificationJobService.getJobExtrasFromIntent() when changing any
         // of the extras included with the |intent|.
@@ -758,21 +839,89 @@ public class NotificationContentDetectionManager {
         // receiver gets a shorter timeout interval before it may be killed, but this is ok because
         // we schedule a job to handle the intent in NotificationService.Receiver.
         intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-
-        if (useServiceIntent) {
-            return PendingIntentProvider.getService(
-                    context,
-                    NotificationPlatformBridge.PENDING_INTENT_REQUEST_CODE,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT,
-                    /* mutable= */ false);
-        }
-
         return PendingIntentProvider.getBroadcast(
                 context,
-                NotificationPlatformBridge.PENDING_INTENT_REQUEST_CODE,
+                NotificationConstants.PENDING_INTENT_REQUEST_CODE,
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT,
                 /* mutable= */ false);
+    }
+
+    // Helper method for displaying a notification that was suppressed, due to a suspicious verdict.
+    // This includes storing the notification contents in a `Bundle` on the notification in case of
+    // "Always allow", logic for possible future unsubscribe reporting as spam, and adding buttons.
+    private static void displayOriginalNotification(
+            Notification originalNotification,
+            String notificationId,
+            String notificationOrigin,
+            @Nullable String scopeUrl,
+            @Nullable String profileId,
+            boolean incognito,
+            @Nullable String webApkPackage,
+            @Nullable String channelId) {
+        Context context = ContextUtils.getApplicationContext();
+        Notification.Builder builder =
+                Notification.Builder.recoverBuilder(context, originalNotification);
+
+        // Store original notification contents as an extra in order to restore the
+        // original notification without "Always allow" button and also any other
+        // notifications that has "Always allow" button.
+        Bundle extras = new Bundle();
+        extras.putParcelable(
+                NotificationConstants.EXTRA_NOTIFICATION_BACKUP_FOR_SUSPICIOUS_VERDICT,
+                originalNotification.clone());
+        // Store extra signaling that the user has seen the original notification.
+        // This will help determine whether to allow the reporting feature from the
+        // unsubscribe confirmation notification or not.
+        extras.putBoolean(
+                NotificationConstants.EXTRA_ALLOW_REPORTING_AS_SPAM_IS_NOTIFICATION_WARNED, true);
+        builder.addExtras(extras);
+
+        // Add the unsubscribe and always allow notification buttons. If the feature
+        // parameter specifies to swap buttons, then "Unsubscribe" should be the
+        // secondary button. Otherwise, it should be the primary button.
+        if (ChromeFeatureList.getFieldTrialParamByFeatureAsBoolean(
+                ChromeFeatureList.SHOW_WARNINGS_FOR_SUSPICIOUS_NOTIFICATIONS,
+                SHOW_WARNINGS_FOR_SUSPICIOUS_NOTIFICATIONS_SHOULD_SWAP_BUTTONS_PARAM_NAME,
+                /* defaultValue= */ false)) {
+            appendAlwaysAllowButton(
+                    builder,
+                    notificationId,
+                    notificationOrigin,
+                    scopeUrl,
+                    profileId,
+                    incognito,
+                    webApkPackage,
+                    channelId);
+            appendUnsubscribeButton(
+                    builder,
+                    notificationId,
+                    notificationOrigin,
+                    scopeUrl,
+                    profileId,
+                    incognito,
+                    webApkPackage,
+                    channelId);
+        } else {
+            appendUnsubscribeButton(
+                    builder,
+                    notificationId,
+                    notificationOrigin,
+                    scopeUrl,
+                    profileId,
+                    incognito,
+                    webApkPackage,
+                    channelId);
+            appendAlwaysAllowButton(
+                    builder,
+                    notificationId,
+                    notificationOrigin,
+                    scopeUrl,
+                    profileId,
+                    incognito,
+                    webApkPackage,
+                    channelId);
+        }
+        NotificationPlatformBridge.displayNotificationSilently(builder, notificationId);
     }
 }

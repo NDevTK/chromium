@@ -20,6 +20,7 @@
 <translation id="2226276347425096477">Skratite ovaj tekst na <ph name="MAX_CHARACTERS" /> znak(ov)a ili manje (trenutno koristite <ph name="CURRENT_LENGTH" /> znak(ov)a).</translation>
 <translation id="2247351761944213033"><ph name="WEEKNUMBER" />. nedelja, <ph name="YEAR" />.</translation>
 <translation id="2277199496770840904"><ph name="NUMBER" />. pesma</translation>
+<translation id="2500270406326775625">URL podataka</translation>
 <translation id="2507943997699731163">Popunite ovo polje.</translation>
 <translation id="2613802280814924224">Unesite važeću vrednost. Najbliža važeća vrednost je <ph name="VALID_VALUE" />.</translation>
 <translation id="2653659639078652383">Pošalji</translation>
@@ -98,7 +99,6 @@
 <translation id="8668988909814782445">Prelom reda</translation>
 <translation id="8750798805984357768">Izaberite neku od ovih opcija.</translation>
 <translation id="8845239796550121995">Trenutno se prebacuje na TV</translation>
-<translation id="8853540031347711208">Pritisnite <ph name="HOT_KEY" /> da biste aktivirali</translation>
 <translation id="8875657656876809964">Greška pri puštanju video snimka</translation>
 <translation id="8901569739625249689"><ph name="QUANTITY" /> KB</translation>
 <translation id="9132465097189459683">Drugo...</translation>

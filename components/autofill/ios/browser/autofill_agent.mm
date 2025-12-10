@@ -46,6 +46,7 @@
 #import "components/autofill/core/browser/suggestions/suggestion.h"
 #import "components/autofill/core/browser/suggestions/suggestion_type.h"
 #import "components/autofill/core/common/autofill_constants.h"
+#import "components/autofill/core/common/autofill_debug_features.h"
 #import "components/autofill/core/common/autofill_features.h"
 #import "components/autofill/core/common/autofill_payments_features.h"
 #import "components/autofill/core/common/autofill_prefs.h"
@@ -72,8 +73,8 @@
 #import "components/autofill/ios/form_util/form_util_java_script_feature.h"
 #import "components/feature_engagement/public/feature_constants.h"
 #import "components/grit/components_resources.h"
-#import "components/plus_addresses/features.h"
-#import "components/plus_addresses/grit/plus_addresses_strings.h"
+#import "components/plus_addresses/core/browser/grit/plus_addresses_strings.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "components/prefs/ios/pref_observer_bridge.h"
 #import "components/prefs/pref_change_registrar.h"
 #import "components/prefs/pref_service.h"
@@ -104,6 +105,7 @@ using autofill::FormFieldData;
 using autofill::FormGlobalId;
 using autofill::FormHandlersJavaScriptFeature;
 using autofill::FormRendererId;
+using autofill::Section;
 using autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger;
 using base::NumberToString;
 using base::SysNSStringToUTF16;
@@ -370,16 +372,14 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
 
   if (suggestion.type == autofill::SuggestionType::kAddressEntry ||
       suggestion.type == autofill::SuggestionType::kCreditCardEntry ||
-      suggestion.type == autofill::SuggestionType::kCreateNewPlusAddress ||
       suggestion.type == autofill::SuggestionType::kVirtualCreditCardEntry ||
       suggestion.type ==
           autofill::SuggestionType::kAddressFieldByFieldFilling) {
     _pendingAutocompleteFieldID = fieldRendererID;
     if (_suggestionDelegate) {
-      autofill::Suggestion autofill_suggestion;
+      autofill::Suggestion autofill_suggestion(suggestion.type);
       autofill_suggestion.main_text.value =
           SysNSStringToUTF16(suggestion.value);
-      autofill_suggestion.type = suggestion.type;
       autofill_suggestion.field_by_field_filling_type_used =
           suggestion.fieldByFieldFillingTypeUsed;
       const std::string guid =
@@ -466,12 +466,13 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
 
 #pragma mark - AutofillDriverIOSBridge
 
-- (void)fillData:(const std::vector<autofill::FormFieldData::FillData>&)data
+- (void)fillData:(const std::vector<autofill::FormFieldData::FillData>&)fields
+         section:(const Section&)section
          inFrame:(web::WebFrame*)frame {
   base::Value::Dict fieldsData;
   FieldToFormLookupMap fieldToFormLookupMap;
 
-  for (const auto& field : data) {
+  for (const auto& field : fields) {
     // Skip empty fields and those that are not autofilled.
     if (field.value.empty() || !field.is_autofilled) {
       continue;
@@ -479,7 +480,7 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
 
     base::Value::Dict fieldData;
     fieldData.Set("value", field.value);
-    fieldData.Set("section", field.section.ToString());
+    fieldData.Set("section", section.ToString());
     fieldData.Set("hostFormId", static_cast<int>(*field.host_form_id));
     fieldsData.Set(NumberToString(*field.renderer_id), std::move(fieldData));
 
@@ -545,7 +546,7 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
             (const std::vector<autofill::FormDataPredictions>&)forms
                         inFrame:(web::WebFrame*)frame {
   CHECK(base::FeatureList::IsEnabled(
-      autofill::features::test::kAutofillShowTypePredictions));
+      autofill::features::debug::kAutofillShowTypePredictions));
 
   base::Value::Dict predictionData;
   for (const auto& form : forms) {
@@ -631,14 +632,11 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
       // changes
       value = SysUTF16ToNSString(popup_suggestion.main_text.value);
     } else if (popup_suggestion.type ==
-                   autofill::SuggestionType::kFillExistingPlusAddress ||
-               popup_suggestion.type ==
-                   autofill::SuggestionType::kCreateNewPlusAddress) {
+               autofill::SuggestionType::kFillExistingPlusAddress) {
       // Show any plus_address suggestions.
       value = SysUTF16ToNSString(popup_suggestion.main_text.value);
       if (!popup_suggestion.labels.empty() &&
-          !popup_suggestion.labels.front().empty() &&
-          _delegate.isKeyboardAccessoryUpgradeEnabled) {
+          !popup_suggestion.labels.front().empty()) {
         displayDescription =
             SysUTF16ToNSString(popup_suggestion.labels[0][0].value);
       }
@@ -693,7 +691,12 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
                &feature_engagement::
                    kIPHAutofillHomeWorkProfileSuggestionFeature) {
       suggestion.featureForIPH =
-          SuggestionFeatureForIPH::kHomeWorkAddressSuggestion;
+          SuggestionFeatureForIPH::kHomeAndWorkAddressSuggestion;
+    } else if (popup_suggestion.iph_metadata.feature ==
+               &feature_engagement::
+                   kIPHAutofillAccountNameEmailSuggestionFeature) {
+      suggestion.featureForIPH =
+          SuggestionFeatureForIPH::kAccountNameEmailSuggestion;
     }
 
     // Put "clear form" entry at the front of the suggestions.
@@ -873,7 +876,8 @@ bool ContainsFocusableField(const FormData& form, FieldRendererId field_id) {
 - (void)webState:(web::WebState*)webState
     didSubmitDocumentWithFormData:(const FormData&)formData
                    hasUserGesture:(BOOL)hasUserGesture
-                          inFrame:(web::WebFrame*)frame {
+                          inFrame:(web::WebFrame*)frame
+                   perfectFilling:(BOOL)perfectFilling {
   if (![self isAutofillEnabled] || !frame) {
     return;
   }

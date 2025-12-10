@@ -7,7 +7,6 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
@@ -36,15 +35,17 @@ AtomicString FromPaintTypeToString(PerformancePaintTiming::PaintType type) {
 PerformancePaintTiming::PerformancePaintTiming(
     PaintType type,
     const DOMPaintTimingInfo& paint_timing_info,
-    DOMWindow* source)
+    DOMWindow* source,
+    uint32_t navigation_id)
     : PerformanceEntry(
+          /*duration=*/0.0,
           FromPaintTypeToString(type),
           // https://w3c.github.io/paint-timing/#report-paint-timing
           // Set newEntry’s startTime attribute to the default paint timestamp
           // given paintTimingInfo.
           paint_timing_info.presentation_time,
-          paint_timing_info.presentation_time,
-          source) {
+          source,
+          navigation_id) {
   SetPaintTimingInfo(paint_timing_info);
 }
 

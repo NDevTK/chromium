@@ -19,9 +19,12 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/uninstall_reason.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace ui {
 class NativeWindowTracker;
@@ -61,7 +64,7 @@ class ExtensionUninstallDialog : public ChromeAppIconDelegate,
     virtual ~Delegate() = default;
   };
 
-  // Creates the Views implementation of ExtensionUninstallDialog. The dialog
+  // Creates the implementation of `ExtensionUninstallDialog`. The dialog
   // will be modal to `parent`, or a non-modal dialog if `parent` is NULL.
   static std::unique_ptr<ExtensionUninstallDialog>
   Create(Profile* profile, gfx::NativeWindow parent, Delegate* delegate);

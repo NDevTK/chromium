@@ -16,6 +16,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/icu_test_util.h"
+#include "base/test/run_until.h"
 #include "build/build_config.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/test_accelerator_target.h"
@@ -27,10 +28,11 @@
 #include "ui/views/accessible_pane_view.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/buildflags.h"
+#include "ui/views/controls/button/radio_button.h"
 #include "ui/views/controls/focus_ring.h"
 #include "ui/views/focus/focus_manager_delegate.h"
 #include "ui/views/focus/focus_manager_factory.h"
-#include "ui/views/focus/widget_focus_manager.h"
+#include "ui/views/focus/native_view_focus_manager.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/test/focus_manager_test.h"
 #include "ui/views/test/native_widget_factory.h"
@@ -114,7 +116,7 @@ TEST_F(FocusManagerTest, ViewFocusCallbacks) {
   GetContentsView()->AddChildViewRaw(view2);
 
   view1->RequestFocus();
-  ASSERT_EQ(1, static_cast<int>(event_list->vec.size()));
+  ASSERT_EQ(1u, event_list->vec.size());
   EXPECT_EQ(ON_FOCUS, event_list->vec[0].type);
   EXPECT_EQ(kView1ID, event_list->vec[0].view_id);
   EXPECT_EQ(FocusChangeReason::kDirectFocusChange,
@@ -122,7 +124,7 @@ TEST_F(FocusManagerTest, ViewFocusCallbacks) {
 
   event_list->vec.clear();
   view2->RequestFocus();
-  ASSERT_EQ(2, static_cast<int>(event_list->vec.size()));
+  ASSERT_EQ(2u, event_list->vec.size());
   EXPECT_EQ(ON_BLUR, event_list->vec[0].type);
   EXPECT_EQ(kView1ID, event_list->vec[0].view_id);
   EXPECT_EQ(ON_FOCUS, event_list->vec[1].type);
@@ -134,7 +136,7 @@ TEST_F(FocusManagerTest, ViewFocusCallbacks) {
 
   event_list->vec.clear();
   GetFocusManager()->ClearFocus();
-  ASSERT_EQ(1, static_cast<int>(event_list->vec.size()));
+  ASSERT_EQ(1u, event_list->vec.size());
   EXPECT_EQ(ON_BLUR, event_list->vec[0].type);
   EXPECT_EQ(kView2ID, event_list->vec[0].view_id);
   EXPECT_EQ(FocusChangeReason::kDirectFocusChange,
@@ -157,29 +159,29 @@ TEST_F(FocusManagerTest, FocusChangeListener) {
   views::View* null_view = nullptr;
 
   view1->RequestFocus();
-  ASSERT_EQ(1, static_cast<int>(listener.focus_changes().size()));
+  ASSERT_EQ(1u, listener.focus_changes().size());
   EXPECT_TRUE(listener.focus_changes()[0] == ViewPair(null_view, view1));
   listener.ClearFocusChanges();
 
   view2->RequestFocus();
-  ASSERT_EQ(1, static_cast<int>(listener.focus_changes().size()));
+  ASSERT_EQ(1u, listener.focus_changes().size());
   EXPECT_TRUE(listener.focus_changes()[0] == ViewPair(view1, view2));
   listener.ClearFocusChanges();
 
   GetFocusManager()->ClearFocus();
-  ASSERT_EQ(1, static_cast<int>(listener.focus_changes().size()));
+  ASSERT_EQ(1u, listener.focus_changes().size());
   EXPECT_TRUE(listener.focus_changes()[0] == ViewPair(view2, null_view));
 
   RemoveFocusChangeListener(&listener);
 }
 
-TEST_F(FocusManagerTest, WidgetFocusChangeListener) {
+TEST_F(FocusManagerTest, NativeViewFocusChangeListener) {
   // First, ensure the simulator is aware of the Widget created in SetUp() being
   // currently active.
   test::WidgetTest::SimulateNativeActivate(GetWidget());
 
-  TestWidgetFocusChangeListener widget_listener;
-  AddWidgetFocusChangeListener(&widget_listener);
+  TestNativeViewFocusChangeListener widget_listener;
+  AddNativeViewFocusChangeListener(&widget_listener);
 
   Widget::InitParams params1 = CreateParams(
       Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
@@ -211,7 +213,7 @@ TEST_F(FocusManagerTest, WidgetFocusChangeListener) {
   EXPECT_EQ(gfx::NativeView(), widget_listener.focus_changes()[0]);
   EXPECT_EQ(native_view2, widget_listener.focus_changes()[1]);
 
-  RemoveWidgetFocusChangeListener(&widget_listener);
+  RemoveNativeViewFocusChangeListener(&widget_listener);
 }
 
 TEST_F(FocusManagerTest, CallsNormalAcceleratorTarget) {
@@ -569,6 +571,109 @@ TEST_F(FocusManagerTest, RotateFocus) {
   EXPECT_EQ(v3, focus_manager->GetFocusedView());
 }
 
+// Verifies that focus traversal wraps to the first view in a radio button group
+// when the last view is focused. It skips the view that is not part of the
+// radio button group.
+TEST_F(FocusManagerTest, RadioButtonGroupTraversalWrapsToFirstView) {
+  FocusManager* focus_manager = GetFocusManager();
+
+  // Create a radio button group ID.
+  const int kRadioGroupID = 1;
+
+  // Create 2 nested views.
+  views::View* grandparent_view = new View;
+  views::View* parent_view = new View;
+  grandparent_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  parent_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  GetContentsView()->AddChildViewRaw(grandparent_view);
+  grandparent_view->AddChildViewRaw(parent_view);
+  grandparent_view->SetOwnedGroup(kRadioGroupID);
+
+  // Create 3 radio buttons in a radio button group.
+  auto* radio1 = parent_view->AddChildView(
+      std::make_unique<RadioButton>(u"Option 1", kRadioGroupID));
+  radio1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  auto* radio2 = parent_view->AddChildView(
+      std::make_unique<RadioButton>(u"Option 2", kRadioGroupID));
+  radio2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  auto* radio3 = parent_view->AddChildView(
+      std::make_unique<RadioButton>(u"Option 3", kRadioGroupID));
+  radio3->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  // This view is not in the radio button group.
+  auto* other_view = GetContentsView()->AddChildView(std::make_unique<View>());
+  other_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  // Focus the first radio button.
+  radio1->RequestFocus();
+  EXPECT_EQ(radio1, focus_manager->GetFocusedView());
+
+  const ui::KeyEvent down_key(ui::EventType::kKeyPressed, ui::VKEY_DOWN,
+                              ui::EF_NONE);
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(radio2, focus_manager->GetFocusedView());
+
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(radio3, focus_manager->GetFocusedView());
+
+  // Focus should wrap within the group and not go to other_view.
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(radio1, focus_manager->GetFocusedView());
+
+  const ui::KeyEvent up_key(ui::EventType::kKeyPressed, ui::VKEY_UP,
+                            ui::EF_NONE);
+  focus_manager->OnKeyEvent(up_key);
+
+  EXPECT_EQ(radio3, focus_manager->GetFocusedView());
+}
+
+// Verifies that group traversal algorithm assumes that the direct parent of the
+// currently focused view is the group owner when the owner is not explicitly
+// set. In this case the group traversal won't visit the third radio button
+// because it's not the direct sibling of the other buttons of the same group.
+TEST_F(FocusManagerTest, RadioButtonGroupOwnerUndefined) {
+  FocusManager* focus_manager = GetFocusManager();
+
+  // Create a radio button group ID.
+  const int kRadioGroupID = 1;
+
+  // Create 2 nested views.
+  views::View* grandparent_view = new View;
+  views::View* parent_view = new View;
+  grandparent_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  parent_view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  GetContentsView()->AddChildViewRaw(grandparent_view);
+  grandparent_view->AddChildViewRaw(parent_view);
+
+  // Create 3 radio buttons in a radio button group.
+  auto* radio1 = parent_view->AddChildView(
+      std::make_unique<RadioButton>(u"Option 1", kRadioGroupID));
+  radio1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  auto* radio2 = parent_view->AddChildView(
+      std::make_unique<RadioButton>(u"Option 2", kRadioGroupID));
+  radio2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  auto* radio3 = grandparent_view->AddChildView(
+      std::make_unique<RadioButton>(u"Option 3", kRadioGroupID));
+  radio3->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+
+  // Focus the first radio button.
+  radio1->RequestFocus();
+  EXPECT_EQ(radio1, focus_manager->GetFocusedView());
+
+  const ui::KeyEvent down_key(ui::EventType::kKeyPressed, ui::VKEY_DOWN,
+                              ui::EF_NONE);
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(radio2, focus_manager->GetFocusedView());
+
+  // Focus should wrap within the group and not go to radio3.
+  focus_manager->OnKeyEvent(down_key);
+  EXPECT_EQ(radio1, focus_manager->GetFocusedView());
+}
+
 // Verifies the stored focus view tracks the focused view.
 TEST_F(FocusManagerTest, ImplicitlyStoresFocus) {
   views::View* v1 = new View;
@@ -744,7 +849,7 @@ TEST_F(FocusManagerTest, StoreFocusedView) {
   EXPECT_EQ(nullptr, GetFocusManager()->GetFocusedView());
   EXPECT_TRUE(GetFocusManager()->RestoreFocusedView());
   EXPECT_EQ(view, GetFocusManager()->GetStoredFocusView());
-  ASSERT_EQ(3, static_cast<int>(event_list->vec.size()));
+  ASSERT_EQ(3u, event_list->vec.size());
   EXPECT_EQ(ON_FOCUS, event_list->vec[0].type);
   EXPECT_EQ(kView1ID, event_list->vec[0].view_id);
   EXPECT_EQ(FocusChangeReason::kDirectFocusChange,
@@ -765,7 +870,7 @@ TEST_F(FocusManagerTest, StoreFocusedView) {
   EXPECT_EQ(nullptr, GetFocusManager()->GetFocusedView());
   EXPECT_TRUE(GetFocusManager()->RestoreFocusedView());
   EXPECT_EQ(view, GetFocusManager()->GetStoredFocusView());
-  ASSERT_EQ(2, static_cast<int>(event_list->vec.size()));
+  ASSERT_EQ(2u, event_list->vec.size());
   EXPECT_EQ(ON_BLUR, event_list->vec[0].type);
   EXPECT_EQ(kView1ID, event_list->vec[0].view_id);
   EXPECT_EQ(FocusChangeReason::kDirectFocusChange,
@@ -1147,13 +1252,13 @@ TEST_F(FocusManagerTest, FocusRing) {
 // DesktopNativeWidgetAura and the bubble is a NativeWidgetAura. When focus
 // moves back from the bubble to the parent widget, ensure that the DNWA's aura
 // window is focused.
-class DesktopWidgetFocusManagerTest : public FocusManagerTest {
+class DesktopNativeViewFocusManagerTest : public FocusManagerTest {
  public:
-  DesktopWidgetFocusManagerTest() = default;
-  DesktopWidgetFocusManagerTest(const DesktopWidgetFocusManagerTest&) = delete;
-  DesktopWidgetFocusManagerTest& operator=(
-      const DesktopWidgetFocusManagerTest&) = delete;
-  ~DesktopWidgetFocusManagerTest() override = default;
+  DesktopNativeViewFocusManagerTest() = default;
+  DesktopNativeViewFocusManagerTest(const DesktopNativeViewFocusManagerTest&) = delete;
+  DesktopNativeViewFocusManagerTest& operator=(
+      const DesktopNativeViewFocusManagerTest&) = delete;
+  ~DesktopNativeViewFocusManagerTest() override = default;
 
   // FocusManagerTest:
   void SetUp() override {
@@ -1162,7 +1267,7 @@ class DesktopWidgetFocusManagerTest : public FocusManagerTest {
   }
 };
 
-TEST_F(DesktopWidgetFocusManagerTest, AnchoredDialogInDesktopNativeWidgetAura) {
+TEST_F(DesktopNativeViewFocusManagerTest, AnchoredDialogInDesktopNativeWidgetAura) {
   auto widget = std::make_unique<Widget>();
   Widget::InitParams params = CreateParams(
       Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
@@ -1206,17 +1311,17 @@ TEST_F(DesktopWidgetFocusManagerTest, AnchoredDialogInDesktopNativeWidgetAura) {
 
   widget->Activate();
   parent1->RequestFocus();
-  base::RunLoop().RunUntilIdle();
 
   // Initially the outer widget's window is focused.
   aura::client::FocusClient* focus_client =
       aura::client::GetFocusClient(widget->GetNativeView());
-  ASSERT_EQ(widget->GetNativeView(), focus_client->GetFocusedWindow());
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return widget->GetNativeView() == focus_client->GetFocusedWindow();
+  }));
 
   // Navigate forwards
   widget->GetFocusManager()->AdvanceFocus(false);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(parent2->HasFocus());
+  ASSERT_TRUE(base::test::RunUntil([&]() { return parent2->HasFocus(); }));
   widget->GetFocusManager()->AdvanceFocus(false);
   EXPECT_TRUE(child->HasFocus());
 

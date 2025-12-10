@@ -33,6 +33,7 @@ inline constexpr std::string_view kNatwestCardIssuerId = "natwest";
 inline constexpr std::string_view kBnplAffirmIssuerId = "affirm";
 inline constexpr std::string_view kBnplZipIssuerId = "zip";
 inline constexpr std::string_view kBnplAfterpayIssuerId = "afterpay";
+inline constexpr std::string_view kBnplKlarnaIssuerId = "klarna";
 
 // Credit card benefit sources. These are server-generated values that must be
 // consistent between server and client.
@@ -48,7 +49,7 @@ inline constexpr std::string_view kCapitalOneLargeCardArtUrl =
 
 // The conversion multiplier to go from standard currency units to
 // micro-currency units.
-inline constexpr uint64_t kMicrosPerDollar = 1e6;
+inline constexpr int64_t kMicrosPerDollar = 1'000'000;
 
 // Field types that specified as the CVC field.
 inline constexpr FieldTypeSet kCvcFieldTypes = {

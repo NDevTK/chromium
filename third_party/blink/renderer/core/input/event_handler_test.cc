@@ -36,6 +36,7 @@
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
+#include "third_party/blink/renderer/core/html/html_plugin_element.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -226,7 +227,8 @@ void EventHandlerTest::SetUp() {
 }
 
 void EventHandlerTest::SetHtmlInnerHTML(const char* html_content) {
-  GetDocument().documentElement()->setInnerHTML(String::FromUTF8(html_content));
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
+      String::FromUTF8(html_content));
   UpdateAllLifecyclePhasesForTest();
 }
 
@@ -255,7 +257,8 @@ TEST_F(EventHandlerTest, dragSelectionAfterScroll) {
 
   LocalFrameView* frame_view = GetDocument().View();
   frame_view->LayoutViewport()->SetScrollOffset(
-      ScrollOffset(0, 400), mojom::blink::ScrollType::kProgrammatic);
+      ScrollOffset(0, 400), mojom::blink::ScrollType::kProgrammatic,
+      cc::ScrollSourceType::kAbsoluteScroll);
 
   WebMouseEvent mouse_down_event(WebInputEvent::Type::kMouseDown,
                                  gfx::PointF(0, 0), gfx::PointF(100, 200),
@@ -839,7 +842,7 @@ TEST_F(EventHandlerTest, sendContextMenuEventWithHover) {
       "<div>foo</div>");
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       "document.addEventListener('contextmenu', event => "
       "event.preventDefault());");
   GetDocument().body()->AppendChild(script);
@@ -966,7 +969,7 @@ TEST_F(EventHandlerTest, SelectionOnDoublePressPreventDefaultMousePress) {
         </div>
       )HTML");
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       R"HTML(
         let targetDiv = document.getElementById('targetdiv');
         targetDiv.addEventListener('mousedown', (e) => {
@@ -1296,7 +1299,7 @@ TEST_F(EventHandlerTooltipTest, mouseLeaveClearsTooltip) {
       "<style>.box { width: 100%; height: 100%; }</style>"
       "<img src='image.png' class='box' title='tooltip'>link</img>");
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
 
   WebMouseEvent mouse_move_event(
       WebInputEvent::Type::kMouseMove, gfx::PointF(51, 50), gfx::PointF(51, 50),
@@ -1314,7 +1317,7 @@ TEST_F(EventHandlerTooltipTest, mouseLeaveClearsTooltip) {
   GetDocument().GetFrame()->GetEventHandler().HandleMouseLeaveEvent(
       mouse_leave_event);
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
 }
 
 // macOS doesn't have keyboard-triggered tooltips.
@@ -1332,7 +1335,7 @@ TEST_F(EventHandlerTooltipTest, MAYBE_FocusSetFromTabUpdatesTooltip) {
         <button id='b2'>button 2</button>
       )HTML");
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
   EXPECT_EQ(gfx::Rect(), LastToolTipBounds());
 
   WebKeyboardEvent e{WebInputEvent::Type::kRawKeyDown,
@@ -1371,7 +1374,7 @@ TEST_F(EventHandlerTooltipTest, MAYBE_FocusSetFromAccessKeyUpdatesTooltip) {
         <button id='b' title='my tooltip' accessKey='a'>button</button>
       )HTML");
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
   EXPECT_EQ(gfx::Rect(), LastToolTipBounds());
 
   WebKeyboardEvent e{WebInputEvent::Type::kRawKeyDown, WebInputEvent::kAltKey,
@@ -1400,7 +1403,7 @@ TEST_F(EventHandlerTooltipTest, MAYBE_FocusSetFromMouseDoesntUpdateTooltip) {
         <button id='b' title='my tooltip'>button</button>
       )HTML");
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
   EXPECT_EQ(gfx::Rect(), LastToolTipBounds());
 
   Element* element = GetDocument().getElementById(AtomicString("b"));
@@ -1433,7 +1436,7 @@ TEST_F(EventHandlerTooltipTest, MAYBE_FocusSetFromScriptDoesntUpdateTooltip) {
         <button id='b' title='my tooltip'>button</button>
       )HTML");
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
   EXPECT_EQ(gfx::Rect(), LastToolTipBounds());
 
   Element* element = GetDocument().getElementById(AtomicString("b"));
@@ -1462,7 +1465,7 @@ TEST_F(EventHandlerTooltipTest,
         <button id='b2'>button 2</button>
       )HTML");
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(
+  script->SetInnerHTMLWithoutTrustedTypes(
       R"HTML(
         document.addEventListener('keydown', (e) => {
           if (e.keyCode == 37) {
@@ -1475,7 +1478,7 @@ TEST_F(EventHandlerTooltipTest,
   GetDocument().body()->AppendChild(script);
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
-  EXPECT_EQ(WTF::String(), LastToolTipText());
+  EXPECT_EQ(String(), LastToolTipText());
   EXPECT_EQ(gfx::Rect(), LastToolTipBounds());
 
   WebKeyboardEvent e{WebInputEvent::Type::kRawKeyDown,
@@ -1629,7 +1632,7 @@ class EventHandlerLatencyTest : public PageTestBase {
   }
 
   void SetHtmlInnerHTML(const char* html_content) {
-    GetDocument().documentElement()->setInnerHTML(
+    GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(
         String::FromUTF8(html_content));
     UpdateAllLifecyclePhasesForTest();
   }
@@ -2181,7 +2184,8 @@ TEST_F(EventHandlerSimTest, TestUpdateHoverAfterCompositorScrollAtBeginFrame) {
   // Do a compositor scroll and set |hover_needs_update_at_scroll_end| to be
   // true in WebViewImpl.
   LocalFrameView* frame_view = GetDocument().View();
-  frame_view->LayoutViewport()->DidCompositorScroll(gfx::PointF(0, 500));
+  frame_view->LayoutViewport()->DidCompositorScroll(
+      gfx::PointF(0, 500), cc::ScrollSourceType::kAbsoluteScroll);
   WebView().MainFrameWidget()->ApplyViewportChangesForTesting(
       {gfx::Vector2dF(), gfx::Vector2dF(), 1.0f, false, 0, 0,
        cc::BrowserControlsState::kBoth, true});
@@ -2233,12 +2237,13 @@ TEST_F(EventHandlerSimTest, TestUpdateHoverAfterJSScrollAtBeginFrame) {
   bool finished = false;
   scrollable_area->SetScrollOffset(
       ScrollOffset(0, 1000), mojom::blink::ScrollType::kProgrammatic,
+      cc::ScrollSourceType::kAbsoluteScroll,
       mojom::blink::ScrollBehavior::kSmooth,
-      ScrollableArea::ScrollCallback(WTF::BindOnce(
+      ScrollableArea::ScrollCallback(BindOnce(
           [](bool* finished, ScrollableArea::ScrollCompletionMode) {
             *finished = true;
           },
-          WTF::Unretained(&finished))));
+          Unretained(&finished))));
   Compositor().BeginFrame();
   LocalFrameView* frame_view = GetDocument().View();
   ASSERT_EQ(0, frame_view->LayoutViewport()->GetScrollOffset().y());
@@ -3083,48 +3088,93 @@ TEST_F(EventHandlerSimTest, TestWheelEventsWithDifferentPhases) {
   wheel_event.delta_y = 0;
   wheel_event.phase = WebMouseWheelEvent::kPhaseMayBegin;
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
-  EXPECT_EQ("no wheel event", element->innerHTML().Utf8());
+  EXPECT_EQ("no wheel event", element->GetInnerHTMLString().Utf8());
 
   wheel_event.delta_y = -1;
   wheel_event.phase = WebMouseWheelEvent::kPhaseBegan;
-  element->setInnerHTML("no wheel event");
+  element->SetInnerHTMLWithoutTrustedTypes("no wheel event");
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
   EXPECT_EQ("received wheel event, deltaX: 0 deltaY: 1",
-            element->innerHTML().Utf8());
+            element->GetInnerHTMLString().Utf8());
 
   wheel_event.delta_y = -2;
   wheel_event.phase = WebMouseWheelEvent::kPhaseChanged;
-  element->setInnerHTML("no wheel event");
+  element->SetInnerHTMLWithoutTrustedTypes("no wheel event");
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
   EXPECT_EQ("received wheel event, deltaX: 0 deltaY: 2",
-            element->innerHTML().Utf8());
+            element->GetInnerHTMLString().Utf8());
 
   wheel_event.delta_y = -3;
   wheel_event.phase = WebMouseWheelEvent::kPhaseChanged;
-  element->setInnerHTML("no wheel event");
+  element->SetInnerHTMLWithoutTrustedTypes("no wheel event");
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
   EXPECT_EQ("received wheel event, deltaX: 0 deltaY: 3",
-            element->innerHTML().Utf8());
+            element->GetInnerHTMLString().Utf8());
 
   wheel_event.delta_y = -4;
   wheel_event.phase = WebMouseWheelEvent::kPhaseStationary;
-  element->setInnerHTML("no wheel event");
+  element->SetInnerHTMLWithoutTrustedTypes("no wheel event");
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
   EXPECT_EQ("received wheel event, deltaX: 0 deltaY: 4",
-            element->innerHTML().Utf8());
+            element->GetInnerHTMLString().Utf8());
 
   wheel_event.delta_y = -5;
   wheel_event.phase = WebMouseWheelEvent::kPhaseChanged;
-  element->setInnerHTML("no wheel event");
+  element->SetInnerHTMLWithoutTrustedTypes("no wheel event");
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
   EXPECT_EQ("received wheel event, deltaX: 0 deltaY: 5",
-            element->innerHTML().Utf8());
+            element->GetInnerHTMLString().Utf8());
 
   wheel_event.delta_y = 0;
   wheel_event.phase = WebMouseWheelEvent::kPhaseEnded;
-  element->setInnerHTML("no wheel event");
+  element->SetInnerHTMLWithoutTrustedTypes("no wheel event");
   GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
-  EXPECT_EQ("no wheel event", element->innerHTML().Utf8());
+  EXPECT_EQ("no wheel event", element->GetInnerHTMLString().Utf8());
+}
+
+TEST_F(EventHandlerSimTest, TestNoCrashWithPhaseMayBeginOnSlottedText) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      blink::features::kFadeInScrollbarWhenMouseWheelMayBegin);
+
+  WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style> body { font-size: 100px; } </style>
+    <test-element id="test-element">test</test-element>
+    <template id="template"><slot id="test-slot"></slot></template>
+    <script>
+      class TestElement extends HTMLElement {
+        constructor() {
+          super();
+          const shadow = this.attachShadow({ mode: 'open' });
+          const tpl = document.getElementById('template');
+          shadow.appendChild(tpl.content.cloneNode(true));
+        }
+      }
+      customElements.define('test-element', TestElement);
+    </script>
+  )HTML");
+  Compositor().BeginFrame();
+
+  auto* test_slot = DynamicTo<HTMLSlotElement>(
+      GetDocument()
+          .getElementById(AtomicString("test-element"))
+          ->GetShadowRoot()
+          ->getElementById(AtomicString("test-slot")));
+
+  WebMouseWheelEvent wheel_event(
+      blink::WebInputEvent::Type::kMouseWheel,
+      blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::GetStaticTimeStampForTests());
+  wheel_event.SetPositionInWidget(50, 50);
+  wheel_event.delta_x = 0;
+  wheel_event.delta_y = 0;
+  wheel_event.phase = WebMouseWheelEvent::kPhaseMayBegin;
+  GetDocument().GetFrame()->GetEventHandler().HandleWheelEvent(wheel_event);
+  EXPECT_EQ("#text \"test\"", test_slot->FirstAssignedNode()->ToString());
 }
 
 TEST_F(EventHandlerSimTest, TestScrollendFiresOnKeyUpAfterScroll) {
@@ -3185,18 +3235,22 @@ TEST_F(EventHandlerSimTest, TestScrollendFiresOnKeyUpAfterScroll) {
   Compositor().BeginFrame(0.15 * num_keydowns);
 
   // Verify that we have not yet fired scrollend.
-  EXPECT_EQ(
-      GetDocument().getElementById(AtomicString("log"))->innerHTML().Utf8(),
-      "");
+  EXPECT_EQ(GetDocument()
+                .getElementById(AtomicString("log"))
+                ->GetInnerHTMLString()
+                .Utf8(),
+            "");
 
   // Fire keyUp, which should tigger a scrollend event.
   e.SetType(WebInputEvent::Type::kKeyUp);
   GetDocument().GetFrame()->GetEventHandler().KeyEvent(e);
 
   Compositor().BeginFrame();
-  EXPECT_EQ(
-      GetDocument().getElementById(AtomicString("log"))->innerHTML().Utf8(),
-      "scrollend");
+  EXPECT_EQ(GetDocument()
+                .getElementById(AtomicString("log"))
+                ->GetInnerHTMLString()
+                .Utf8(),
+            "scrollend");
 }
 
 TEST_F(EventHandlerSimTest, TestScrollendFiresAfterScrollWithEarlyKeyUp) {
@@ -3253,9 +3307,11 @@ TEST_F(EventHandlerSimTest, TestScrollendFiresAfterScrollWithEarlyKeyUp) {
   Compositor().BeginFrame();
 
   // Verify that we have not yet fired scrollend.
-  EXPECT_EQ(
-      GetDocument().getElementById(AtomicString("log"))->innerHTML().Utf8(),
-      "");
+  EXPECT_EQ(GetDocument()
+                .getElementById(AtomicString("log"))
+                ->GetInnerHTMLString()
+                .Utf8(),
+            "");
 
   // Fire keyUp, which should not tigger a scrollend event since another scroll
   // is in progress.
@@ -3265,9 +3321,11 @@ TEST_F(EventHandlerSimTest, TestScrollendFiresAfterScrollWithEarlyKeyUp) {
   // Tick second scroll to completion which should fire scrollend.
   Compositor().BeginFrame(0.30);
 
-  EXPECT_EQ(
-      GetDocument().getElementById(AtomicString("log"))->innerHTML().Utf8(),
-      "scrollend");
+  EXPECT_EQ(GetDocument()
+                .getElementById(AtomicString("log"))
+                ->GetInnerHTMLString()
+                .Utf8(),
+            "scrollend");
 }
 
 TEST_F(EventHandlerSimTest, TestScrollendFiresOnKeyUpAfterScrollInstant) {
@@ -3324,18 +3382,22 @@ TEST_F(EventHandlerSimTest, TestScrollendFiresOnKeyUpAfterScrollInstant) {
   }
 
   // Verify that we have not yet fired scrollend.
-  EXPECT_EQ(
-      GetDocument().getElementById(AtomicString("log"))->innerHTML().Utf8(),
-      "");
+  EXPECT_EQ(GetDocument()
+                .getElementById(AtomicString("log"))
+                ->GetInnerHTMLString()
+                .Utf8(),
+            "");
 
   // Fire keyUp, which should trigger a scrollend event.
   e.SetType(WebInputEvent::Type::kKeyUp);
   GetDocument().GetFrame()->GetEventHandler().KeyEvent(e);
 
   Compositor().BeginFrame();
-  EXPECT_EQ(
-      GetDocument().getElementById(AtomicString("log"))->innerHTML().Utf8(),
-      "scrollend");
+  EXPECT_EQ(GetDocument()
+                .getElementById(AtomicString("log"))
+                ->GetInnerHTMLString()
+                .Utf8(),
+            "scrollend");
 }
 
 TEST_F(EventHandlerSimTest, DiscardEventsToRecentlyMovedIframe) {
@@ -3345,6 +3407,9 @@ TEST_F(EventHandlerSimTest, DiscardEventsToRecentlyMovedIframe) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeatureWithParameters(
       features::kDiscardInputEventsToRecentlyMovedFrames, field_trial_params);
+  // To make the new `time_ms` and `distance_factor` affect the test,
+  // reset the cached values inside FrameVisualProperties.
+  FrameVisualProperties::ResetForTesting();
 
   WebView().MainFrameViewWidget()->Resize(gfx::Size(800, 600));
   SimRequest main_resource("https://example.com/test.html", "text/html");
@@ -3539,6 +3604,54 @@ TEST_F(EventHandlerSimTest, GestureTapHoverState) {
   // #a is still hovered after scrolling away (crbug.com/366020097).
   EXPECT_EQ(rgb_red, ColorOf(a));
   EXPECT_EQ(rgb_white, ColorOf(b));
+}
+
+// Tests LocalFrameFromTargetNode for HTMLPlugInElement (object tag).
+// Verifies that when DragAndDropPluginElementSupport is enabled, the function
+// returns a non-null LocalFrame from an object element.
+TEST_F(EventHandlerSimTest, LocalFrameFromPluginElementForTesting) {
+  ScopedDragAndDropPluginElementSupportForTest feature_scope(true);
+
+  WebView().MainFrameViewWidget()->Resize(gfx::Size(400, 400));
+  SimRequest main_resource("https://example.com/test.html", "text/html");
+  SimRequest object_resource("https://example.com/object.html", "text/html");
+  LoadURL("https://example.com/test.html");
+
+  main_resource.Complete(R"HTML(
+    <!DOCTYPE html>
+    <object id="plugin-element" type="text/html" data="object.html"
+            style="width:200px;height:200px;"></object>
+  )HTML");
+
+  object_resource.Complete(R"HTML(
+    <!DOCTYPE html>
+    <div>Content</div>
+  )HTML");
+
+  Compositor().BeginFrame();
+
+  Node* target = GetDocument().getElementById(AtomicString("plugin-element"));
+  ASSERT_NE(target, nullptr);
+
+  // Call the actual LocalFrameFromTargetNode function (via testing wrapper)
+  LocalFrame* result = GetDocument()
+                           .GetFrame()
+                           ->GetEventHandler()
+                           .LocalFrameFromTargetNodeForTesting(target);
+
+  // With DragAndDropPluginElementSupport enabled, LocalFrameFromTargetNode
+  // should return a non-null LocalFrame for object elements
+  ASSERT_NE(result, nullptr)
+      << "LocalFrameFromTargetNode should return a LocalFrame for "
+      << "object elements";
+
+  // Verify that the returned LocalFrame actually contains the object.html
+  // document
+  ASSERT_NE(result->GetDocument(), nullptr);
+  EXPECT_EQ(result->GetDocument()->Url().GetString(),
+            "https://example.com/object.html")
+      << "The LocalFrame should contain the document loaded in the object "
+         "element";
 }
 
 }  // namespace blink

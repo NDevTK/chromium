@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/test/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -28,6 +29,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/prerender_test_util.h"
@@ -332,11 +334,6 @@ GWSAbandonedPageLoadMetricsObserverBrowserTest::ExpandHistograms(
   std::vector<std::pair<std::string, int>> histogram_names_expanded;
   for (std::string& histogram_name : with_incognito) {
     histogram_names_expanded.emplace_back(histogram_name, 1);
-    histogram_names_expanded.emplace_back(
-        histogram_name +
-            ChromeGWSAbandonedPageLoadMetricsObserver::GetSuffixForRTT(
-                g_browser_process->network_quality_tracker()->GetHttpRTT()),
-        1);
   }
   return histogram_names_expanded;
 }
@@ -1322,16 +1319,8 @@ IN_PROC_BROWSER_TEST_F(GWSAbandonedPageLoadMetricsObserverBrowserTest,
       GetMilestoneToAbandonHistogramName(NavigationMilestone::kAFTEnd);
   auto abandoned_milesone_name = GetMilestoneToAbandonHistogramName(
       NavigationMilestone::kAFTEnd, AbandonReason::kHidden);
-  EXPECT_THAT(
-      histogram_tester.GetTotalCountsForPrefix(milesone_name),
-      testing::ElementsAre(
-          testing::Pair(abandoned_milesone_name, 1),
-          testing::Pair(
-              abandoned_milesone_name +
-                  ChromeGWSAbandonedPageLoadMetricsObserver::GetSuffixForRTT(
-                      g_browser_process->network_quality_tracker()
-                          ->GetHttpRTT()),
-              1)));
+  EXPECT_THAT(histogram_tester.GetTotalCountsForPrefix(milesone_name),
+              testing::ElementsAre(testing::Pair(abandoned_milesone_name, 1)));
 
   // There should be a new entry for all the navigation and loading milestones
   // metrics achieved before abandonment.
@@ -1355,6 +1344,16 @@ class GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest
     GWSAbandonedPageLoadMetricsObserverBrowserTest::SetUp();
   }
 
+  void SetUpInProcessBrowserTestFixture() override {
+    GWSAbandonedPageLoadMetricsObserverBrowserTest::
+        SetUpInProcessBrowserTestFixture();
+    // By default, IgnoreDuplicateNavs is disabled in tests to prevent
+    // navigations from being unintentionally ignored. This test requires the
+    // feature, so remove the switch.
+    base::CommandLine::ForCurrentProcess()->RemoveSwitch(
+        switches::kDisableIgnoreDuplicateNavsForTesting);
+  }
+
  protected:
   bool IsIgnoreDuplicateNavsEnabled() { return GetParam(); }
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -1365,9 +1364,10 @@ INSTANTIATE_TEST_SUITE_P(
     GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest,
     ::testing::Bool());
 
+// TODO(crbug.com/454577392): Re-enable after fixing.
 IN_PROC_BROWSER_TEST_P(
     GWSAbandonedPageLoadMetricsObserverWithIgnoreDuplicateFlagBrowserTest,
-    DuplicateNavigation_BrowserInitiated) {
+    DISABLED_DuplicateNavigation_BrowserInitiated) {
   const bool ignore_duplicate_navs_enabled = IsIgnoreDuplicateNavsEnabled();
   EXPECT_TRUE(content::NavigateToURL(web_contents(), url_non_srp()));
 

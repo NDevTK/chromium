@@ -16,7 +16,6 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace {
@@ -25,24 +24,18 @@ const char kInvalidContext[] = "Invalid context";
 
 namespace blink {
 
-const char WebViewAndroid::kSupplementName[] = "WebView";
-
 WebViewAndroid& WebViewAndroid::From(ExecutionContext& execution_context) {
-  CHECK(!execution_context.IsContextDestroyed());
-
-  auto* supplement =
-      Supplement<ExecutionContext>::From<WebViewAndroid>(execution_context);
+  WebViewAndroid* supplement = execution_context.GetWebViewAndroid();
 
   if (!supplement) {
     supplement = MakeGarbageCollected<WebViewAndroid>(execution_context);
-    ProvideTo(execution_context, supplement);
+    execution_context.SetWebViewAndroid(supplement);
   }
   return *supplement;
 }
 
 WebViewAndroid::WebViewAndroid(ExecutionContext& execution_context)
-    : Supplement<ExecutionContext>(execution_context),
-      ExecutionContextClient(&execution_context),
+    : ExecutionContextClient(&execution_context),
       media_integrity_service_remote_(&execution_context) {}
 
 void WebViewAndroid::EnsureServiceConnection(
@@ -54,7 +47,7 @@ void WebViewAndroid::EnsureServiceConnection(
       execution_context->GetTaskRunner(TaskType::kInternalDefault);
   execution_context->GetBrowserInterfaceBroker().GetInterface(
       media_integrity_service_remote_.BindNewPipeAndPassReceiver(task_runner));
-  media_integrity_service_remote_.set_disconnect_handler(WTF::BindOnce(
+  media_integrity_service_remote_.set_disconnect_handler(blink::BindOnce(
       &WebViewAndroid::OnServiceConnectionError, WrapWeakPersistent(this)));
 }
 
@@ -134,10 +127,10 @@ WebViewAndroid::getExperimentalMediaIntegrityTokenProvider(
   provider_resolvers_.insert(resolver);
   media_integrity_service_remote_->GetIntegrityProvider(
       std::move(provider_pending_receiver), cloud_project_number,
-      WTF::BindOnce(&WebViewAndroid::OnGetIntegrityProviderResponse,
-                    WrapPersistent(this), WrapPersistent(script_state),
-                    std::move(provider_pending_remote), cloud_project_number,
-                    WrapPersistent(resolver)));
+      blink::BindOnce(&WebViewAndroid::OnGetIntegrityProviderResponse,
+                      WrapPersistent(this), WrapPersistent(script_state),
+                      std::move(provider_pending_remote), cloud_project_number,
+                      WrapPersistent(resolver)));
 
   return promise;
 }
@@ -175,7 +168,6 @@ void WebViewAndroid::OnGetIntegrityProviderResponse(
 void WebViewAndroid::Trace(Visitor* visitor) const {
   visitor->Trace(provider_resolvers_);
   visitor->Trace(media_integrity_service_remote_);
-  Supplement<ExecutionContext>::Trace(visitor);
   ExecutionContextClient::Trace(visitor);
   ScriptWrappable::Trace(visitor);
 }

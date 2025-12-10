@@ -4,9 +4,11 @@
 
 package org.chromium.chrome.browser.notifications;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.notifications.NotificationConstants.ACTION_REPORT_AS_SAFE;
 import static org.chromium.chrome.browser.notifications.NotificationConstants.ACTION_REPORT_UNWARNED_NOTIFICATION_AS_SPAM;
 import static org.chromium.chrome.browser.notifications.NotificationConstants.ACTION_REPORT_WARNED_NOTIFICATION_AS_SPAM;
+import static org.chromium.chrome.browser.notifications.NotificationConstants.PENDING_INTENT_REQUEST_CODE;
 import static org.chromium.components.content_settings.PrefNames.NOTIFICATIONS_VIBRATE_ENABLED;
 
 import android.app.Notification;
@@ -24,7 +26,6 @@ import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
 import android.text.style.StyleSpan;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.PreferenceFragmentCompat;
 
@@ -38,6 +39,8 @@ import org.chromium.base.Promise;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browserservices.TrustedWebActivityClient;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -76,8 +79,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 /**
  * Provides the ability for the NotificationPlatformBridgeAndroid to talk to the Android platform
@@ -85,6 +88,7 @@ import java.util.concurrent.CompletableFuture;
  *
  * <p>This class should only be used on the UI thread.
  */
+@NullMarked
 public class NotificationPlatformBridge {
     private static final String TAG = NotificationPlatformBridge.class.getSimpleName();
 
@@ -92,10 +96,6 @@ public class NotificationPlatformBridge {
     // tag is always set, which is a safe and sufficient way of identifying a notification, so the
     // integer id is not needed anymore except it must not vary in an uncontrolled way.
     public static final int PLATFORM_ID = -1;
-
-    // We always use the same request code for pending intents. We use other ways to force
-    // uniqueness of pending intents when necessary.
-    static final int PENDING_INTENT_REQUEST_CODE = 0;
 
     static final int[] EMPTY_VIBRATION_PATTERN = new int[0];
 
@@ -109,7 +109,7 @@ public class NotificationPlatformBridge {
     // opportunity to consider reporting their notification to Chrome.
     private static final long NEW_PROVISIONAL_UNSUBSCRIBE_DURATION_MS = 20 * 1000;
 
-    private static NotificationPlatformBridge sInstance;
+    private static @Nullable NotificationPlatformBridge sInstance;
 
     private final long mNativeNotificationPlatformBridge;
 
@@ -151,20 +151,20 @@ public class NotificationPlatformBridge {
         public final @NotificationType int notificationType;
         public final String origin;
         public final String scopeUrl;
-        public final String profileId;
+        public final @Nullable String profileId;
         public final boolean incognito;
         public final String webApkPackage;
-        public final String channelId;
+        public final @Nullable String channelId;
 
-        public NotificationIdentifyingAttributes(
+        NotificationIdentifyingAttributes(
                 String notificationId,
                 @NotificationType int notificationType,
                 String origin,
                 String scopeUrl,
-                String profileId,
+                @Nullable String profileId,
                 boolean incognito,
                 String webApkPackage,
-                String channelId) {
+                @Nullable String channelId) {
             this.notificationId = notificationId;
             this.notificationType = notificationType;
             this.origin = origin;
@@ -178,13 +178,14 @@ public class NotificationPlatformBridge {
         /** Extracts a notification's identifying attributes from `intent` extras. */
         public static NotificationIdentifyingAttributes extractFromIntent(Intent intent) {
             return new NotificationIdentifyingAttributes(
-                    /* notificationId= */ intent.getStringExtra(
-                            NotificationConstants.EXTRA_NOTIFICATION_ID),
+                    /* notificationId= */ assumeNonNull(
+                            intent.getStringExtra(NotificationConstants.EXTRA_NOTIFICATION_ID)),
                     /* notificationType= */ intent.getIntExtra(
                             NotificationConstants.EXTRA_NOTIFICATION_TYPE,
                             NotificationType.WEB_PERSISTENT),
-                    /* origin= */ intent.getStringExtra(
-                            NotificationConstants.EXTRA_NOTIFICATION_INFO_ORIGIN),
+                    /* origin= */ assumeNonNull(
+                            intent.getStringExtra(
+                                    NotificationConstants.EXTRA_NOTIFICATION_INFO_ORIGIN)),
                     /* scopeUrl= */ Objects.requireNonNullElse(
                             intent.getStringExtra(
                                     NotificationConstants.EXTRA_NOTIFICATION_INFO_SCOPE),
@@ -224,8 +225,7 @@ public class NotificationPlatformBridge {
      *
      * @return The instance of the NotificationPlatformBridge, if any.
      */
-    @Nullable
-    static NotificationPlatformBridge getInstanceForTests() {
+    static @Nullable NotificationPlatformBridge getInstanceForTests() {
         return sInstance;
     }
 
@@ -261,7 +261,7 @@ public class NotificationPlatformBridge {
                 NotificationIdentifyingAttributes.extractFromIntent(intent);
         BaseNotificationManagerProxy notificationManager =
                 BaseNotificationManagerProxyFactory.create();
-        switch (intent.getAction()) {
+        switch (assumeNonNull(intent.getAction())) {
             case NotificationConstants.ACTION_CLOSE_NOTIFICATION:
                 NotificationContentDetectionManager.dismissNotification(
                         attributes.origin, attributes.notificationId);
@@ -281,13 +281,13 @@ public class NotificationPlatformBridge {
                 notificationManager.cancel(attributes.notificationId, PLATFORM_ID);
                 // Check if the committed unsubscribe action is facilitated by a notification
                 // warning. If it is, then log metrics and cleanup static maps.
-                NotificationContentDetectionManager.onUnsubscribeMaybeCommittedAfterWarning(
+                NotificationContentDetectionManager.onPreUnsubscribeMaybeCommittedAfterWarning(
                         attributes.notificationId, attributes.origin);
                 return true;
             case NotificationConstants.ACTION_SHOW_ORIGINAL_NOTIFICATION:
-                NotificationContentDetectionManager.showOriginalNotification(
-                        attributes.notificationId);
-                return false;
+                NotificationContentDetectionManager.showOriginalNotifications(
+                        attributes.notificationId, attributes.origin);
+                return true;
             case NotificationConstants.ACTION_ALWAYS_ALLOW:
                 NotificationContentDetectionManager.onNotificationPreAlwaysAllow(
                         attributes.notificationId,
@@ -309,8 +309,8 @@ public class NotificationPlatformBridge {
                         SuspiciousNotificationWarningInteractions
                                 .REPORT_WARNED_NOTIFICATION_AS_SPAM);
                 // Reporting a warned notification also commits the unsubscribe action that is
-                // facilitated by the warning, so call this to log metrics and cleanup static maps.
-                NotificationContentDetectionManager.onUnsubscribeMaybeCommittedAfterWarning(
+                // facilitated by the warning, so call this to log metrics.
+                NotificationContentDetectionManager.onPreUnsubscribeMaybeCommittedAfterWarning(
                         attributes.notificationId, attributes.origin);
                 return true;
             case NotificationConstants.ACTION_REPORT_UNWARNED_NOTIFICATION_AS_SPAM:
@@ -370,6 +370,10 @@ public class NotificationPlatformBridge {
             // No activity needs to be launched when unsubscribing a notification, report the job
             // as completed.
             reportTrampolineTrackerJobCompleted(intent);
+            return true;
+        } else if (NotificationConstants.ACTION_SHOW_ORIGINAL_NOTIFICATION.equals(
+                intent.getAction())) {
+            sInstance.onNotificationShowOriginalNotification(attributes);
             return true;
         } else if (NotificationConstants.ACTION_ALWAYS_ALLOW.equals(intent.getAction())) {
             sInstance.onNotificationCommitAlwaysAllow(attributes);
@@ -448,8 +452,8 @@ public class NotificationPlatformBridge {
     }
 
     /**
-     * Launches the notifications preferences screen. If the received intent indicates it came
-     * from the gear button on a flipped notification, this launches the site specific preferences
+     * Launches the notifications preferences screen. If the received intent indicates it came from
+     * the gear button on a flipped notification, this launches the site specific preferences
      * screen.
      *
      * @param incomingIntent The received intent.
@@ -477,7 +481,8 @@ public class NotificationPlatformBridge {
             RecordUserAction.record("Notifications.ShowSiteSettings");
 
             // All preferences for a specific origin.
-            fragmentArguments = SingleWebsiteSettings.createFragmentArgsForSite(origin);
+            fragmentArguments =
+                    SingleWebsiteSettings.createFragmentArgsForSite(assumeNonNull(origin));
         } else {
             // Notification preferences for all origins.
             fragmentArguments = new Bundle();
@@ -537,16 +542,10 @@ public class NotificationPlatformBridge {
         // ever get called with ACTION_PRE_UNSUBSCRIBE when displaying a web notification, which
         // implies native is running, making this a non-issue. Neverthelerss, removing support for
         // startService-type intents would be the cleanest solution here.
-        boolean useServiceIntent =
-                NotificationConstants.ACTION_PRE_UNSUBSCRIBE.equals(action)
-                        && NotificationIntentInterceptor
-                                .shouldUseServiceIntentForPreUnsubscribeAction();
         Intent intent = new Intent(action, intentData);
         intent.setClass(
                 context,
-                useServiceIntent
-                        ? NotificationService.class
-                        : NotificationServiceImpl.Receiver.class);
+                NotificationServiceImpl.Receiver.class);
 
         // Make sure to update NotificationJobService.getJobExtrasFromIntent() when changing any
         // of the extras included with the |intent|.
@@ -570,16 +569,6 @@ public class NotificationPlatformBridge {
         // receiver gets a shorter timeout interval before it may be killed, but this is ok because
         // we schedule a job to handle the intent in NotificationService.Receiver.
         intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-
-        if (useServiceIntent) {
-            return PendingIntentProvider.getService(
-                    context,
-                    PENDING_INTENT_REQUEST_CODE,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT,
-                    mutable);
-        }
-
         return PendingIntentProvider.getBroadcast(
                 context,
                 PENDING_INTENT_REQUEST_CODE,
@@ -645,9 +634,8 @@ public class NotificationPlatformBridge {
         return null;
     }
 
-    @Nullable
     @VisibleForTesting
-    static String getOriginFromChannelId(@Nullable String channelId) {
+    static @Nullable String getOriginFromChannelId(@Nullable String channelId) {
         if (channelId == null || !SiteChannelsManager.isValidSiteChannelId(channelId)) {
             return null;
         }
@@ -790,10 +778,14 @@ public class NotificationPlatformBridge {
                             }
                         })
                 .exceptionally(
-                        error -> {
-                            Log.e(TAG, "Error occured when displaying notification.", error);
-                            return null;
-                        });
+                        (Function<Throwable, @Nullable Void>)
+                                error -> {
+                                    Log.e(
+                                            TAG,
+                                            "Error occured when displaying notification.",
+                                            error);
+                                    return null;
+                                });
     }
 
     private CompletableFuture<String> getWebApkPackage(String scopeUrl) {
@@ -854,7 +846,6 @@ public class NotificationPlatformBridge {
         NotificationPlatformBridgeJni.get()
                 .storeCachedWebApkPackageForNotificationId(
                         mNativeNotificationPlatformBridge,
-                        NotificationPlatformBridge.this,
                         identifyingAttributes.notificationId,
                         identifyingAttributes.webApkPackage);
         // Record whether it's known whether notifications can be shown to the user at all.
@@ -924,8 +915,7 @@ public class NotificationPlatformBridge {
                 isSuspicious
                         && ChromeFeatureList.isEnabled(
                                 ChromeFeatureList.SHOW_WARNINGS_FOR_SUSPICIOUS_NOTIFICATIONS);
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.NOTIFICATION_ONE_TAP_UNSUBSCRIBE)
-                && identifyingAttributes.notificationType == NotificationType.WEB_PERSISTENT
+        if (identifyingAttributes.notificationType == NotificationType.WEB_PERSISTENT
                 && !skipUAButtons
                 && !shouldTreatNotificationAsSuspicious) {
             appendUnsubscribeButton(notificationBuilder, identifyingAttributes);
@@ -1049,10 +1039,10 @@ public class NotificationPlatformBridge {
             boolean vibrateEnabled,
             String title,
             String body,
-            Bitmap image,
-            Bitmap icon,
-            Bitmap badge,
-            int[] vibrationPattern,
+            @Nullable Bitmap image,
+            @Nullable Bitmap icon,
+            @Nullable Bitmap badge,
+            int @Nullable [] vibrationPattern,
             long timestamp,
             boolean renotify,
             boolean silent,
@@ -1107,7 +1097,7 @@ public class NotificationPlatformBridge {
         // The Android framework applies a fallback vibration pattern for the sound when the device
         // is in vibrate mode, there is no custom pattern, and the vibration default has been
         // disabled. To truly prevent vibration, provide a custom empty pattern.
-        if (!vibrateEnabled) {
+        if (!vibrateEnabled || vibrationPattern == null) {
             vibrationPattern = EMPTY_VIBRATION_PATTERN;
         }
         notificationBuilder.setDefaults(
@@ -1415,7 +1405,8 @@ public class NotificationPlatformBridge {
                         new WebApkIdentityServiceClient.CheckBrowserBacksWebApkCallback() {
                             @Override
                             public void onChecked(
-                                    boolean doesBrowserBackWebApk, String backingBrowser) {
+                                    boolean doesBrowserBackWebApk,
+                                    @Nullable String backingBrowser) {
                                 closeNotificationInternal(
                                         notificationId,
                                         doesBrowserBackWebApk ? webApkPackageFound : null,
@@ -1431,7 +1422,7 @@ public class NotificationPlatformBridge {
 
     /** Called after querying whether the browser backs the given WebAPK. */
     private void closeNotificationInternal(
-            String notificationId, String webApkPackage, String scopeUrl) {
+            String notificationId, @Nullable String webApkPackage, String scopeUrl) {
         if (!TextUtils.isEmpty(webApkPackage)) {
             WebApkServiceClient.getInstance()
                     .cancelNotification(webApkPackage, notificationId, PLATFORM_ID);
@@ -1492,7 +1483,6 @@ public class NotificationPlatformBridge {
         NotificationPlatformBridgeJni.get()
                 .onNotificationClicked(
                         mNativeNotificationPlatformBridge,
-                        NotificationPlatformBridge.this,
                         identifyingAttributes.notificationId,
                         identifyingAttributes.notificationType,
                         identifyingAttributes.origin,
@@ -1516,7 +1506,6 @@ public class NotificationPlatformBridge {
         NotificationPlatformBridgeJni.get()
                 .onNotificationClosed(
                         mNativeNotificationPlatformBridge,
-                        NotificationPlatformBridge.this,
                         identifyingAttributes.notificationId,
                         identifyingAttributes.notificationType,
                         identifyingAttributes.origin,
@@ -1579,9 +1568,8 @@ public class NotificationPlatformBridge {
                     Notification tappedNotification = null;
                     for (NotificationWrapper nw : activeNotificationsForOrigin) {
                         if (nw.getMetadata().id == PLATFORM_ID
-                                && nw.getMetadata()
-                                        .tag
-                                        .equals(identifyingAttributes.notificationId)) {
+                                && identifyingAttributes.notificationId.equals(
+                                        nw.getMetadata().tag)) {
                             tappedNotification = nw.getNotification();
                         } else {
                             otherNotificationsBackups.put(
@@ -1648,16 +1636,15 @@ public class NotificationPlatformBridge {
                             findNotificationExtras(
                                     activeNotifications, identifyingAttributes.notificationId);
 
-                    Optional<Notification> notificationBackupOptional =
+                    Notification notificationBackup =
                             getNotificationBackupOrCancel(
                                     tappedNotificationExtras,
                                     identifyingAttributes.notificationId,
                                     NotificationConstants.EXTRA_NOTIFICATION_BACKUP_OF_ORIGINAL);
 
-                    if (notificationBackupOptional.isPresent()) {
+                    if (notificationBackup != null) {
                         Notification.Builder builder =
-                                Notification.Builder.recoverBuilder(
-                                        context, notificationBackupOptional.get());
+                                Notification.Builder.recoverBuilder(context, notificationBackup);
                         builder.setTimeoutAfter(/* ms= */ 1000 * 3600 * 24 * 7);
 
                         displayNotificationSilently(builder, identifyingAttributes.notificationId);
@@ -1690,12 +1677,16 @@ public class NotificationPlatformBridge {
         NotificationPlatformBridgeJni.get()
                 .onNotificationDisablePermission(
                         mNativeNotificationPlatformBridge,
-                        NotificationPlatformBridge.this,
                         identifyingAttributes.notificationId,
                         identifyingAttributes.notificationType,
                         identifyingAttributes.origin,
                         identifyingAttributes.profileId,
-                        identifyingAttributes.incognito);
+                        identifyingAttributes.incognito,
+                        NotificationContentDetectionManager.isNotificationSuspicious(
+                                identifyingAttributes.notificationId,
+                                identifyingAttributes.origin));
+        NotificationContentDetectionManager.removeOriginFromSuspiciousMap(
+                identifyingAttributes.origin);
         var backups =
                 sOriginsWithProvisionallyRevokedPermissions.remove(identifyingAttributes.origin);
         NotificationUmaTracker.getInstance()
@@ -1723,7 +1714,6 @@ public class NotificationPlatformBridge {
                 NotificationPlatformBridgeJni.get()
                         .onReportNotificationAsSafe(
                                 mNativeNotificationPlatformBridge,
-                                NotificationPlatformBridge.this,
                                 originNotificationId,
                                 identifyingAttributes.origin,
                                 identifyingAttributes.profileId,
@@ -1733,7 +1723,6 @@ public class NotificationPlatformBridge {
                 NotificationPlatformBridgeJni.get()
                         .onReportWarnedNotificationAsSpam(
                                 mNativeNotificationPlatformBridge,
-                                NotificationPlatformBridge.this,
                                 originNotificationId,
                                 identifyingAttributes.origin,
                                 identifyingAttributes.profileId,
@@ -1743,13 +1732,23 @@ public class NotificationPlatformBridge {
                 NotificationPlatformBridgeJni.get()
                         .onReportUnwarnedNotificationAsSpam(
                                 mNativeNotificationPlatformBridge,
-                                NotificationPlatformBridge.this,
                                 originNotificationId,
                                 identifyingAttributes.origin,
                                 identifyingAttributes.profileId,
                                 identifyingAttributes.incognito);
                 return;
         }
+    }
+
+    private void onNotificationShowOriginalNotification(
+            NotificationIdentifyingAttributes identifyingAttributes) {
+        NotificationPlatformBridgeJni.get()
+                .onNotificationShowOriginalNotification(
+                        mNativeNotificationPlatformBridge,
+                        NotificationPlatformBridge.this,
+                        identifyingAttributes.origin,
+                        identifyingAttributes.profileId,
+                        identifyingAttributes.incognito);
     }
 
     /**
@@ -1765,7 +1764,7 @@ public class NotificationPlatformBridge {
         NotificationPlatformBridgeJni.get()
                 .onNotificationAlwaysAllowFromOrigin(
                         mNativeNotificationPlatformBridge,
-                        NotificationPlatformBridge.this,
+                        identifyingAttributes.notificationId,
                         identifyingAttributes.origin,
                         identifyingAttributes.profileId,
                         identifyingAttributes.incognito);
@@ -1776,7 +1775,7 @@ public class NotificationPlatformBridge {
      * extras Bundle. Otherwise, returns null if the notification is not found or does not have
      * extras.
      */
-    static Bundle findNotificationExtras(
+    static @Nullable Bundle findNotificationExtras(
             List<? extends StatusBarNotificationProxy> notifications, String notificationId) {
         for (StatusBarNotificationProxy proxy : notifications) {
             if (proxy.getId() == PLATFORM_ID && proxy.getTag().equals(notificationId)) {
@@ -1791,16 +1790,16 @@ public class NotificationPlatformBridge {
      * `extraNotificationBackupType` if present. If there is a backup key without a backup
      * notification, cancel the tapped notification.
      */
-    static Optional<Notification> getNotificationBackupOrCancel(
-            Bundle notificationExtras, String notificationId, String extraNotificationBackupType) {
-        var notificationManager = BaseNotificationManagerProxyFactory.create();
-
+    static @Nullable Notification getNotificationBackupOrCancel(
+            @Nullable Bundle notificationExtras,
+            String notificationId,
+            String extraNotificationBackupType) {
         // If the tapped notification does not have a backup key in the metadata, it is
         // not a provisionally unsubscribed notification. Likely, the user clicked
         // "Undo" twice in quick succession, and we are already done. Bail out.
         if (notificationExtras == null
                 || !notificationExtras.containsKey(extraNotificationBackupType)) {
-            return Optional.empty();
+            return null;
         }
 
         var originalNotificationBackup =
@@ -1810,11 +1809,11 @@ public class NotificationPlatformBridge {
         // user clicked "Unsubscribe". In this case we still want to cancel the
         // provisionally unsubscribed notification.
         if (originalNotificationBackup == null) {
+            var notificationManager = BaseNotificationManagerProxyFactory.create();
             notificationManager.cancel(notificationId, PLATFORM_ID);
-            return Optional.empty();
         }
 
-        return Optional.of(originalNotificationBackup);
+        return originalNotificationBackup;
     }
 
     /** Displays a notification with group alert behavior set to `GROUP_ALERT_SUMMARY`. */
@@ -1846,9 +1845,7 @@ public class NotificationPlatformBridge {
     public void setIsSuspiciousParameterForTesting(boolean isSuspicious) {
         NotificationPlatformBridgeJni.get()
                 .setIsSuspiciousParameterForTesting(
-                        mNativeNotificationPlatformBridge,
-                        NotificationPlatformBridge.this,
-                        isSuspicious);
+                        mNativeNotificationPlatformBridge, isSuspicious);
     }
 
     private TrustedWebActivityClient getTwaClient() {
@@ -1856,7 +1853,8 @@ public class NotificationPlatformBridge {
     }
 
     private static void reportTrampolineTrackerJobCompleted(Intent intent) {
-        String notificationid = intent.getStringExtra(NotificationConstants.EXTRA_NOTIFICATION_ID);
+        String notificationid =
+                assumeNonNull(intent.getStringExtra(NotificationConstants.EXTRA_NOTIFICATION_ID));
         TrampolineActivityTracker.getInstance().onIntentCompleted(notificationid);
     }
 
@@ -1871,76 +1869,75 @@ public class NotificationPlatformBridge {
 
         void onNotificationClicked(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @NotificationType int notificationType,
                 @JniType("std::string") String origin,
                 @JniType("std::string") String scopeUrl,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito,
                 @JniType("std::string") String webApkPackage,
                 int actionIndex,
-                String reply);
+                @Nullable String reply);
 
         void onNotificationClosed(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @NotificationType int notificationType,
                 @JniType("std::string") String origin,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito,
                 boolean byUser);
 
         void onNotificationDisablePermission(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @NotificationType int notificationType,
                 @JniType("std::string") String origin,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
+                boolean incognito,
+                boolean isSuspicious);
+
+        void onNotificationShowOriginalNotification(
+                long nativeNotificationPlatformBridgeAndroid,
+                NotificationPlatformBridge caller,
+                @JniType("std::string") String origin,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito);
 
         void onNotificationAlwaysAllowFromOrigin(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
+                @JniType("std::string") String notificationId,
                 @JniType("std::string") String origin,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito);
 
         void onReportNotificationAsSafe(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @JniType("std::string") String origin,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito);
 
         void onReportWarnedNotificationAsSpam(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @JniType("std::string") String origin,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito);
 
         void onReportUnwarnedNotificationAsSpam(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @JniType("std::string") String origin,
-                @JniType("std::string") String profileId,
+                @JniType("std::string") @Nullable String profileId,
                 boolean incognito);
 
         void storeCachedWebApkPackageForNotificationId(
                 long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
                 @JniType("std::string") String notificationId,
                 @JniType("std::string") String webApkPackage);
 
         void setIsSuspiciousParameterForTesting(
-                long nativeNotificationPlatformBridgeAndroid,
-                NotificationPlatformBridge caller,
-                boolean incognito);
+                long nativeNotificationPlatformBridgeAndroid, boolean incognito);
     }
 }

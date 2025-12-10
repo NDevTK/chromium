@@ -22,6 +22,7 @@
 #include "base/values.h"
 #include "chrome/browser/consent_auditor/consent_auditor_factory.h"
 #include "chrome/browser/consent_auditor/consent_auditor_test_utils.h"
+#include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
@@ -116,6 +117,7 @@ class SyncConfirmationHandlerTest : public BrowserWithTestWindowTest,
         std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
     account_info_ = identity_test_env()->MakePrimaryAccountAvailable(
         "foo@example.com", signin::ConsentLevel::kSync);
+    enterprise_util::SetUserAcceptedAccountManagement(profile(), true);
     login_ui_service_observation_.Observe(
         LoginUIServiceFactory::GetForProfile(profile()));
   }
@@ -187,11 +189,10 @@ class SyncConfirmationHandlerTest : public BrowserWithTestWindowTest,
         identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSync));
     EXPECT_FALSE(primary_account.IsEmpty());
 
-    std::string gaia_picture_url = primary_account.picture_url;
     std::string expected_picture_url =
-        signin::GetAvatarImageURLWithOptions(GURL(gaia_picture_url),
-                                             kExpectedProfileImageSize,
-                                             false /* no_silhouette */)
+        signin::GetAvatarImageURLWithOptions(
+            GURL(primary_account.GetAvatarUrl().value_or("")),
+            kExpectedProfileImageSize, false /* no_silhouette */)
             .spec();
     std::string passed_picture_url;
     const base::Value::Dict& dict = call_data.arg2()->GetDict();

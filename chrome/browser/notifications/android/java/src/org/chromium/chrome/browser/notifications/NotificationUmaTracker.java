@@ -5,10 +5,10 @@
 package org.chromium.chrome.browser.notifications;
 
 import android.app.Notification;
+import android.app.NotificationManager;
 import android.text.format.DateUtils;
 
 import androidx.annotation.IntDef;
-import androidx.core.app.NotificationManagerCompat;
 
 import org.chromium.base.Callback;
 import org.chromium.base.MathUtils;
@@ -18,6 +18,7 @@ import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.notifications.channels.ChromeChannelDefinitions;
+import org.chromium.chrome.browser.notifications.channels.ChromeChannelDefinitions.ChannelId;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxy;
@@ -585,6 +586,22 @@ public class NotificationUmaTracker {
                 "Mobile.SystemNotification.Permission.Change", isPermissionGranted);
     }
 
+    /**
+     * Called when the channel notifications are blocked or allowed through Android settings.
+     *
+     * @param channelId The channel id for which the notifications enabled status is changed.
+     * @param blockedState If true all notifications are blocked.
+     */
+    public void onNotificationChannelPermissionSettingChange(
+            String channelId, boolean blockedState) {
+        boolean isPermissionGranted = !blockedState;
+
+        RecordHistogram.recordBooleanHistogram(
+                "Mobile.SystemNotification.Permission.Change."
+                        + notificationChannelIdToSuffix(channelId),
+                isPermissionGranted);
+    }
+
     /** Records the result of showing the notification permission rationale dialog. */
     public void onNotificationPermissionRationaleResult(@NotificationRationaleResult int result) {
         RecordHistogram.recordEnumeratedHistogram(
@@ -684,6 +701,34 @@ public class NotificationUmaTracker {
                 count);
     }
 
+    /**
+     * Records the number of suspicious notifications from an origin, when the user taps to show the
+     * original contents of the suspicious notifications. This number is displayed on the suspicious
+     * notification warning.
+     *
+     * @param count The suspicious notification count.
+     */
+    public static void recordSuspiciousNotificationCountOnShowOriginals(int count) {
+        RecordHistogram.recordCount100Histogram(
+                "SafeBrowsing.SuspiciousNotificationWarning."
+                        + "ShowOriginalNotifications.SuspiciousNotificationCount",
+                count);
+    }
+
+    /**
+     * Records the number of suspicious notifications that were unexpectedly not delivered to the
+     * user, when they tap to show the originals. Note: if all suspicious notifications are
+     * delivered as expected, then 0 will be logged.
+     *
+     * @param count The actual number of notifications that were not properly delivered.
+     */
+    public static void recordSuspiciousNotificationsDroppedCountOnShowOriginals(int count) {
+        RecordHistogram.recordCount100Histogram(
+                "SafeBrowsing.SuspiciousNotificationWarning."
+                        + "ShowOriginalNotifications.SuspiciousNotificationsDroppedCount",
+                count);
+    }
+
     private void logNotificationShown(
             @SystemNotificationType int type,
             @ChromeChannelDefinitions.ChannelId String channelId) {
@@ -718,7 +763,7 @@ public class NotificationUmaTracker {
                     callback.onResult(
                             channel != null
                                     && channel.getImportance()
-                                            == NotificationManagerCompat.IMPORTANCE_NONE);
+                                            == NotificationManager.IMPORTANCE_NONE);
                 });
     }
 
@@ -770,5 +815,67 @@ public class NotificationUmaTracker {
                 1,
                 (int) (DateUtils.WEEK_IN_MILLIS / DateUtils.MINUTE_IN_MILLIS),
                 50);
+    }
+
+    private static String notificationChannelIdToSuffix(String channelId) {
+        // LINT.IfChange(NotificationChannelId)
+        switch (channelId) {
+            case ChannelId.BROWSER:
+                return "Browser";
+            case ChannelId.COLLABORATION:
+                return "Collaboration";
+            case ChannelId.DOWNLOADS:
+                return "Downloads";
+            case ChannelId.INCOGNITO:
+                return "Incognito";
+            case ChannelId.MEDIA_PLAYBACK:
+                return "Media";
+            case ChannelId.SCREEN_CAPTURE:
+                return "ScreenCapture";
+            case ChannelId.CONTENT_SUGGESTIONS:
+                return "ContentSuggestions";
+            case ChannelId.WEBAPP_ACTIONS:
+                return "WebappActions";
+            case ChannelId.SITES:
+                return "Sites";
+            case ChannelId.VR:
+                return "Vr";
+            case ChannelId.SHARING:
+                return "Sharing";
+            case ChannelId.UPDATES:
+                return "Updates";
+            case ChannelId.COMPLETED_DOWNLOADS:
+                return "CompletedDownloads";
+            case ChannelId.PERMISSION_REQUESTS:
+                return "PermissionRequests";
+            case ChannelId.PERMISSION_REQUESTS_HIGH:
+                return "PermissionRequestsHigh";
+            case ChannelId.ANNOUNCEMENT:
+                return "Announcement";
+            case ChannelId.WEBAPPS:
+                return "TwaDisclosureInitial";
+            case ChannelId.WEBAPPS_QUIET:
+                return "TwaDisclosureSubsequent";
+            case ChannelId.WEBRTC_CAM_AND_MIC:
+                return "WebrtcCamAndMic";
+            case ChannelId.PRICE_DROP:
+                return "ShoppingPriceDropAlerts";
+            case ChannelId.PRICE_DROP_DEFAULT:
+                return "ShoppingPriceDropAlertsDefault";
+            case ChannelId.SECURITY_KEY:
+                return "SecurityKey";
+            case ChannelId.BLUETOOTH:
+                return "Bluetooth";
+            case ChannelId.USB:
+                return "Usb";
+            case ChannelId.SERIAL:
+                return "Serial";
+            case ChannelId.TIPS:
+                return "Tips";
+            default:
+                assert false : "Invalid channel id: " + channelId;
+                return "";
+        }
+        // LINT.ThenChange(//chrome/browser/notifications/android/java/src/org/chromium/chrome/browser/notifications/channels/ChromeChannelDefinitions.java:ChannelId)
     }
 }

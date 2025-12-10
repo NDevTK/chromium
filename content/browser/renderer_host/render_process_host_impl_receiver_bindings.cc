@@ -18,6 +18,7 @@
 #include "content/browser/file_system/file_system_manager_impl.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/media/media_internals.h"
+#include "content/browser/memory_coordinator/browser_memory_consumer_registry.h"
 #include "content/browser/mime_registry_impl.h"
 #include "content/browser/push_messaging/push_messaging_manager.h"
 #include "content/browser/renderer_host/embedded_frame_sink_provider_impl.h"
@@ -66,12 +67,15 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
-#include "components/services/font_data/font_data_service_impl.h"
 #include "content/browser/renderer_host/dwrite_font_proxy_impl_win.h"
 #include "content/browser/sandbox_support_impl.h"
 #include "content/common/sandbox_support.mojom.h"
 #include "content/public/common/font_cache_dispatcher_win.h"
 #include "content/public/common/font_cache_win.mojom.h"
+#endif
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
+#include "components/services/font_data/font_data_service_impl.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -126,6 +130,17 @@ void RenderProcessHostImpl::RegisterMojoInterfaces() {
             std::move(receiver));
       },
       GetDeprecatedID(), widget_helper_));
+
+  AddUIThreadInterface(
+      registry.get(),
+      base::BindRepeating(
+          [](ChildProcessId rph_id,
+             mojo::PendingReceiver<mojom::BrowserMemoryConsumerRegistry>
+                 receiver) {
+            BindBrowserMemoryConsumerRegistry(PROCESS_TYPE_RENDERER, rph_id,
+                                              std::move(receiver));
+          },
+          GetID()));
 
   AddUIThreadInterface(
       registry.get(),
@@ -325,8 +340,8 @@ void RenderProcessHostImpl::IOThreadHostImpl::BindHostReceiver(
     }
   }
 
-#if BUILDFLAG(IS_WIN)
-  if (base::FeatureList::IsEnabled(features::kFontDataServiceAllWebContents)) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
+  if (features::IsFontDataServiceEnabled()) {
     if (auto font_data_receiver =
             receiver.As<font_data_service::mojom::FontDataService>()) {
       font_data_service::FontDataServiceImpl::ConnectToFontService(

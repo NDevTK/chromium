@@ -36,7 +36,9 @@ enum class CannotDiscardReason {
   kDevToolsOpen,
   kBackgroundActivity,
   kFormInteractions,
-  kUserEdits
+  kUserEdits,
+  kGlicShared,
+  kWebApp
 };
 
 const char* CannotDiscardReasonToString(CannotDiscardReason reason);

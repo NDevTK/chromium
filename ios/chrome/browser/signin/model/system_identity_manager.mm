@@ -7,6 +7,7 @@
 #import "base/functional/bind.h"
 #import "base/functional/callback.h"
 #import "components/signin/internal/identity_manager/account_capabilities_constants.h"
+#import "google_apis/gaia/gaia_id.h"
 
 namespace {
 
@@ -130,19 +131,15 @@ void SystemIdentityManager::FireIdentityRefreshTokenUpdated(
 
 void SystemIdentityManager::FireIdentityAccessTokenRefreshFailed(
     id<SystemIdentity> identity,
-    id<RefreshAccessTokenError> error) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (auto& observer : observers_) {
-    observer.OnIdentityAccessTokenRefreshFailed(identity, error);
-  }
-}
-
-void SystemIdentityManager::FireIdentityAccessTokenRefreshFailed(
-    id<SystemIdentity> identity,
     id<RefreshAccessTokenError> error,
     const std::set<std::string>& scopes) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (auto& observer : observers_) {
-    observer.OnIdentityAccessTokenRefreshFailed(identity, error);
+    observer.OnIdentityAccessTokenRefreshFailed(identity, error, scopes);
   }
+}
+
+bool SystemIdentityManager::IsScopeLimitedError(
+    id<RefreshAccessTokenError> error) {
+  return false;
 }

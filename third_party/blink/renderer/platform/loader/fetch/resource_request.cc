@@ -29,6 +29,7 @@
 #include <memory>
 
 #include "base/unguessable_token.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/request_priority.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy.h"
 #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
@@ -41,6 +42,7 @@
 #include "third_party/blink/renderer/platform/network/http_names.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
+#include "third_party/blink/renderer/platform/wtf/text/base64.h"
 #include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
@@ -474,7 +476,7 @@ void ResourceRequestHead::SetFetchIntegrity(
 void ResourceRequestHead::SetExpectedPublicKeys(
     const IntegrityMetadataSet& metadata) {
   for (const auto& public_key : metadata.public_keys) {
-    expected_public_keys_.push_back(public_key.digest);
+    expected_public_keys_.push_back(public_key.value);
   }
 }
 

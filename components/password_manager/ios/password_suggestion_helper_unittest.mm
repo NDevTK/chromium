@@ -54,6 +54,7 @@ namespace {
 constexpr char kTestUrl[] = "http://foo.com";
 constexpr char kFillDataUsername[] = "john.doe@gmail.com";
 constexpr char kFillDataPassword[] = "super!secret";
+constexpr char16_t kFillDataBackupPassword[] = u"backup_password";
 NSString* const kTestFrameID = @"mainframe";
 NSString* const kTextFieldType = @"text";
 NSString* const kQueryFocusType = @"focus";
@@ -830,10 +831,7 @@ TEST_F(PasswordSuggestionHelperTest, RetrieveSuggestions_Empty) {
 }
 
 // Tests getting password fill data when in stateless mode.
-TEST_F(PasswordSuggestionHelperTest, GetPasswordFillData_WhenStateless) {
-  base::test::ScopedFeatureList scoped_feature_list{
-      password_manager::features::kIOSStatelessFillDataFlow};
-
+TEST_F(PasswordSuggestionHelperTest, GetPasswordFillData_Stateless) {
   FormSuggestionProviderQuery* query =
       BuildQuery(@"username1", kTextFieldType, NSFrameId(main_frame_));
   FormRendererId form1_renderer_id = query.formRendererID;
@@ -855,6 +853,7 @@ TEST_F(PasswordSuggestionHelperTest, GetPasswordFillData_WhenStateless) {
   // suggestions before calling this method when in stateless mode.
   password_manager::FillDataRetrievalResult result =
       [helper_ passwordFillDataForUsername:SysUTF8ToNSString(kFillDataUsername)
+                        isBackupCredential:NO
                    likelyRealPasswordField:true
                             formIdentifier:form1_renderer_id
                            fieldIdentifier:password1_renderer_id
@@ -866,10 +865,10 @@ TEST_F(PasswordSuggestionHelperTest, GetPasswordFillData_WhenStateless) {
   EXPECT_EQ(GURL(kTestUrl), (*fill_data).origin);
   EXPECT_EQ(form1_renderer_id, (*fill_data).form_id);
   EXPECT_EQ(username1_renderer_id, (*fill_data).username_element_id);
-  EXPECT_EQ(UTF8ToUTF16(std::string("john.doe@gmail.com")),
+  EXPECT_EQ(UTF8ToUTF16(std::string(kFillDataUsername)),
             (*fill_data).username_value);
   EXPECT_EQ(password1_renderer_id, (*fill_data).password_element_id);
-  EXPECT_EQ(UTF8ToUTF16(std::string("super!secret")),
+  EXPECT_EQ(UTF8ToUTF16(std::string(kFillDataPassword)),
             (*fill_data).password_value);
 
   EXPECT_OCMOCK_VERIFY(delegate_);
@@ -878,14 +877,12 @@ TEST_F(PasswordSuggestionHelperTest, GetPasswordFillData_WhenStateless) {
 // Tests getting password fill data when in stateless mode and there is no
 // FillData yet available for the frame.
 TEST_F(PasswordSuggestionHelperTest,
-       GetPasswordFillData_WhenStateless_NoFillDataForFrame) {
-  base::test::ScopedFeatureList scoped_feature_list{
-      password_manager::features::kIOSStatelessFillDataFlow};
-
-  // Retrieves password form fill data while the there isn't any fill data yet
+       GetPasswordFillData_Stateless_NoFillDataForFrame) {
+  // Retrieves password form fill data while there isn't any fill data yet
   // available for the frame.
   password_manager::FillDataRetrievalResult result =
       [helper_ passwordFillDataForUsername:SysUTF8ToNSString(kFillDataUsername)
+                        isBackupCredential:NO
                    likelyRealPasswordField:true
                             formIdentifier:autofill::test::MakeFormRendererId()
                            fieldIdentifier:autofill::test::MakeFieldRendererId()
@@ -900,21 +897,107 @@ TEST_F(PasswordSuggestionHelperTest,
 // Tests getting password fill data when in stateful mode and there is no
 // FillData yet available for the frame.
 TEST_F(PasswordSuggestionHelperTest,
-       GetPasswordFillData_WhenStateful_NoFillDataForFrame) {
+       GetPasswordFillData_Stateful_NoFillDataForFrame) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndDisableFeature(
       password_manager::features::kIOSStatelessFillDataFlow);
 
-  // Retrieves password form fill data while the there isn't any fill data yet
+  // Retrieves password form fill data while there isn't any fill data yet
   // available for the frame.
   password_manager::FillDataRetrievalResult result =
       [helper_ passwordFillDataForUsername:SysUTF8ToNSString(kFillDataUsername)
+                        isBackupCredential:NO
                                 forFrameId:main_frame_->GetFrameId()];
   EXPECT_FALSE(result.has_value());
   EXPECT_EQ(password_manager::FillDataRetrievalStatus::kNoFrame,
             result.error());
 
   EXPECT_OCMOCK_VERIFY(delegate_);
+}
+
+// Tests getting fill data for a backup credential when in stateless mode.
+TEST_F(PasswordSuggestionHelperTest, GetBackupPasswordFillData_Stateless) {
+  FormSuggestionProviderQuery* query =
+      BuildQuery(@"username", kTextFieldType, NSFrameId(main_frame_));
+  FormRendererId form_renderer_id = query.formRendererID;
+  FieldRendererId username_renderer_id = query.fieldRendererID;
+  FieldRendererId password_renderer_id = autofill::test::MakeFieldRendererId();
+
+  // Create and process password form fill data with a backup password.
+  PasswordFormFillData form_fill_data = CreatePasswordFillData(
+      form_renderer_id, username_renderer_id, password_renderer_id);
+  form_fill_data.preferred_login.backup_password_value =
+      kFillDataBackupPassword;
+  [helper_ processWithPasswordFormFillData:form_fill_data
+                                forFrameId:main_frame_->GetFrameId()
+                               isMainFrame:main_frame_->IsMainFrame()
+                         forSecurityOrigin:main_frame_->GetSecurityOrigin()];
+
+  // Retrieve the password form fill data for the backup credential.
+  password_manager::FillDataRetrievalResult result =
+      [helper_ passwordFillDataForUsername:SysUTF8ToNSString(kFillDataUsername)
+                        isBackupCredential:YES
+                   likelyRealPasswordField:true
+                            formIdentifier:form_renderer_id
+                           fieldIdentifier:password_renderer_id
+                                   frameId:main_frame_->GetFrameId()];
+
+  ASSERT_TRUE(result.has_value());
+
+  const password_manager::FillData* fill_data = result.value().get();
+  ASSERT_TRUE(fill_data);
+  EXPECT_THAT(
+      *fill_data,
+      ::testing::FieldsAre(
+          /*origin=*/GURL(kTestUrl),
+          /*form_id=*/form_renderer_id,
+          /*username_element_id=*/username_renderer_id,
+          /*username_value=*/UTF8ToUTF16(std::string(kFillDataUsername)),
+          /*password_element_id=*/password_renderer_id,
+          /*password_value=*/kFillDataBackupPassword));
+}
+
+// Tests getting fill data for a backup credential when in stateful mode.
+TEST_F(PasswordSuggestionHelperTest, GetBackupPasswordFillData_Stateful) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      password_manager::features::kIOSStatelessFillDataFlow);
+
+  FormSuggestionProviderQuery* query =
+      BuildQuery(@"username1", kTextFieldType, NSFrameId(main_frame_));
+  FormRendererId form_renderer_id = query.formRendererID;
+  FieldRendererId username_renderer_id = query.fieldRendererID;
+  FieldRendererId password_renderer_id = autofill::test::MakeFieldRendererId();
+
+  // Create and process password form fill data with a backup password.
+  PasswordFormFillData form_fill_data = CreatePasswordFillData(
+      form_renderer_id, username_renderer_id, password_renderer_id);
+  form_fill_data.preferred_login.backup_password_value =
+      kFillDataBackupPassword;
+  [helper_ processWithPasswordFormFillData:form_fill_data
+                                forFrameId:main_frame_->GetFrameId()
+                               isMainFrame:main_frame_->IsMainFrame()
+                         forSecurityOrigin:main_frame_->GetSecurityOrigin()];
+
+  // Retrieve the password form fill data for the backup credential.
+  [helper_ retrieveSuggestionsWithForm:query];
+  password_manager::FillDataRetrievalResult result =
+      [helper_ passwordFillDataForUsername:SysUTF8ToNSString(kFillDataUsername)
+                        isBackupCredential:YES
+                                forFrameId:main_frame_->GetFrameId()];
+  ASSERT_TRUE(result.has_value());
+
+  const password_manager::FillData* fill_data = result.value().get();
+  ASSERT_TRUE(fill_data);
+  EXPECT_THAT(
+      *fill_data,
+      ::testing::FieldsAre(
+          /*origin=*/GURL(kTestUrl),
+          /*form_id=*/form_renderer_id,
+          /*username_element_id=*/username_renderer_id,
+          /*username_value=*/UTF8ToUTF16(std::string(kFillDataUsername)),
+          /*password_element_id=*/password_renderer_id,
+          /*password_value=*/kFillDataBackupPassword));
 }
 
 // Tests that the helper is correctly reset.
@@ -956,6 +1039,7 @@ TEST_F(PasswordSuggestionHelperTest, ResetForNewPage) {
         [helper_ retrieveSuggestionsWithForm:main_frame_query];
     password_manager::FillDataRetrievalResult fill_data_result = [helper_
         passwordFillDataForUsername:SysUTF8ToNSString(kFillDataUsername)
+                 isBackupCredential:NO
                          forFrameId:main_frame_->GetFrameId()];
 
     // Check that there are suggestions for the main frame before the reset.

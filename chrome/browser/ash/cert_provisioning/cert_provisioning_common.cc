@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/ash/cert_provisioning/cert_provisioning_common.h"
 
 #include <stdint.h>
 
 #include <optional>
 
+#include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
@@ -26,14 +22,13 @@
 #include "chrome/browser/ash/platform_keys/platform_keys_service.h"
 #include "chrome/browser/ash/platform_keys/platform_keys_service_factory.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/attestation/attestation_client.h"
 #include "chromeos/ash/components/dbus/attestation/interface.pb.h"
+#include "chromeos/ash/components/platform_keys/platform_keys.h"
 #include "components/account_id/account_id.h"
-#include "components/invalidation/invalidation_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/user_manager/user.h"
@@ -42,22 +37,9 @@ namespace ash {
 namespace cert_provisioning {
 
 BASE_FEATURE(kCertProvisioningUseOnlyInvalidationsForTesting,
-             "CertProvisioningUseOnlyInvalidationsForTesting",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kDeviceCertProvisioningInvalidationWithDirectMessagesEnabled,
-             "DeviceCertProvisioningInvalidationWithDirectMessagesEnabled",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kUserCertProvisioningInvalidationWithDirectMessagesEnabled,
-             "UserCertProvisioningInvalidationWithDirectMessagesEnabled",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 namespace {
-
-// GCP number to be used for certificates invalidations. Certificates are
-// considered critical to receive invalidation.
-constexpr int64_t kCertProvisioningInvalidationProjectNumber =
-    invalidation::kCriticalInvalidationsProjectNumber;
 
 std::optional<AccountId> GetAccountId(CertScope scope, Profile* profile) {
   switch (scope) {
@@ -108,17 +90,6 @@ void DeleteVaKeysWithMatchBehavior(
 
 bool IsValidKeyType(const std::string& key_type) {
   return key_type == "rsa" || key_type == "ec";
-}
-
-bool IsDirectInvalidationEnabledForScope(CertScope scope) {
-  switch (scope) {
-    case CertScope::kUser:
-      return base::FeatureList::IsEnabled(
-          kUserCertProvisioningInvalidationWithDirectMessagesEnabled);
-    case CertScope::kDevice:
-      return base::FeatureList::IsEnabled(
-          kDeviceCertProvisioningInvalidationWithDirectMessagesEnabled);
-  }
 }
 
 }  // namespace
@@ -351,7 +322,7 @@ scoped_refptr<net::X509Certificate> CreateSingleCertificateFromBytes(
     size_t length) {
   net::CertificateList cert_list =
       net::X509Certificate::CreateCertificateListFromBytes(
-          base::as_bytes(base::span(data, length)),
+          base::as_bytes(UNSAFE_TODO(base::span(data, length))),
           net::X509Certificate::FORMAT_AUTO);
 
   if (cert_list.size() != 1) {
@@ -401,13 +372,6 @@ std::string MakeInvalidationListenerType(const std::string& cert_prov_id) {
 bool ShouldOnlyUseInvalidations() {
   return base::FeatureList::IsEnabled(
       kCertProvisioningUseOnlyInvalidationsForTesting);
-}
-
-int64_t GetCertProvisioningInvalidationProjectNumber(CertScope scope) {
-  if (IsDirectInvalidationEnabledForScope(scope)) {
-    return kCertProvisioningInvalidationProjectNumber;
-  }
-  return policy::kPolicyFCMInvalidationSenderID;
 }
 
 }  // namespace cert_provisioning

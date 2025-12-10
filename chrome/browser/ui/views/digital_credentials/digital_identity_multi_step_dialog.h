@@ -14,10 +14,12 @@
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "ui/base/models/dialog_model.h"
 #include "ui/color/color_variant.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout_view.h"
+#include "ui/views/metadata/view_factory.h"
 #include "ui/views/style/typography_provider.h"
 
 class DigitalIdentityMultiStepDialogDelegate;
@@ -89,11 +91,14 @@ class DigitalIdentityMultiStepDialog {
     // Add title if not empty
     if (!title.empty()) {
       auto title_label = views::Builder<views::Label>()
-                             .SetText(std::move(title))
+                             .SetText(title)
                              .SetTextContext(views::style::CONTEXT_DIALOG_TITLE)
                              .SetHorizontalAlignment(gfx::ALIGN_LEFT)
                              .Build();
       header_view->AddChildView(std::move(title_label));
+      header_view->GetViewAccessibility().SetRole(
+          ax::mojom::Role::kAlertDialog);
+      header_view->GetViewAccessibility().SetName(std::move(title));
     }
 
     // Add body text if not empty

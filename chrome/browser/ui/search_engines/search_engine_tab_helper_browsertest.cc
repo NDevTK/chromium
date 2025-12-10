@@ -10,11 +10,13 @@
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/search_engines/template_url.h"
@@ -39,7 +41,7 @@ namespace {
 std::unique_ptr<HttpResponse> HandleRequest(const std::string& match_path,
                                             const std::string& osdd_xml_url,
                                             const HttpRequest& request) {
-  if (!match_path.empty() && request.GetURL().path() != match_path) {
+  if (!match_path.empty() && request.GetURL().GetPath() != match_path) {
     return nullptr;
   }
 
@@ -114,7 +116,7 @@ class SearchEngineTabHelperBrowserTest : public InProcessBrowserTest {
   // Starts a test server that serves a page pointing to a opensearch descriptor
   // from a file:// url.
   bool StartTestServer() {
-    GURL file_url = ui_test_utils::GetTestUrl(
+    GURL file_url = chrome_test_utils::GetTestUrl(
         base::FilePath(),
         base::FilePath().AppendASCII("simple_open_search.xml"));
     embedded_test_server()->RegisterRequestHandler(
@@ -265,7 +267,8 @@ IN_PROC_BROWSER_TEST_P(SearchEngineTabHelperPrerenderingBrowserTest,
   content::RenderFrameHost* render_frame_host =
       content::test::PrerenderTestHelper::GetPrerenderedMainFrameHost(
           *prerender_web_contents, host_id);
-  EXPECT_EQ(nullptr, content::EvalJs(render_frame_host, "submit_form();"));
+  EXPECT_EQ(base::Value(),
+            content::EvalJs(render_frame_host, "submit_form();"));
   // Since navigation from a prerendering page is disallowed, prerendering is
   // canceled.
   host_observer.WaitForDestroyed();
@@ -278,8 +281,9 @@ IN_PROC_BROWSER_TEST_P(SearchEngineTabHelperPrerenderingBrowserTest,
   EXPECT_FALSE(host_observer.was_activated());
   // Submits a search query.
   content::TestNavigationObserver observer(GetWebContents());
-  EXPECT_EQ(nullptr, content::EvalJs(GetWebContents()->GetPrimaryMainFrame(),
-                                     "submit_form();"));
+  EXPECT_EQ(base::Value(),
+            content::EvalJs(GetWebContents()->GetPrimaryMainFrame(),
+                            "submit_form();"));
   observer.Wait();
 
   // A new template url is added on the primary page.

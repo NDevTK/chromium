@@ -18,7 +18,6 @@
 #include "third_party/blink/renderer/core/paint/timing/first_meaningful_paint_detector.h"
 #include "third_party/blink/renderer/core/timing/animation_frame_timing_info.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace base {
@@ -37,8 +36,7 @@ using OptionalPaintTimingCallback = std::optional<PaintTimingCallback>;
 
 // PaintTiming is responsible for tracking paint-related timings for a given
 // document.
-class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
-                                      public Supplement<Document> {
+class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming> {
   friend class FirstMeaningfulPaintDetector;
   using ReportTimeCallback =
       base::OnceCallback<void(const viz::FrameTimingDetails&)>;
@@ -48,8 +46,6 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
           kRequestAnimationFramesToRecordAfterBackForwardCacheRestore>;
 
  public:
-  static const char kSupplementName[];
-
   struct PaintTimingInfo {
     // https://w3c.github.io/paint-timing/#paint-timing-info-rendering-update-end-time
     base::TimeTicks rendering_update_end_time;
@@ -110,11 +106,11 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
   // Times when the first paint happens after the page is restored from the
   // back-forward cache. If the element value is zero time tick, the first paint
   // event did not happen for that navigation.
-  WTF::Vector<base::TimeTicks> FirstPaintsAfterBackForwardCacheRestore() const {
+  Vector<base::TimeTicks> FirstPaintsAfterBackForwardCacheRestore() const {
     return first_paints_after_back_forward_cache_restore_presentation_;
   }
 
-  WTF::Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
+  Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
   RequestAnimationFramesAfterBackForwardCacheRestore() const {
     return request_animation_frames_after_back_forward_cache_restore_;
   }
@@ -134,6 +130,11 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
   // FirstImagePaint returns the first time that image content was painted.
   base::TimeTicks FirstImagePaint() const {
     return paint_details_.first_image_paint_presentation_;
+  }
+
+  base::TimeTicks FirstImagePaintRenderedButNotPresentedAsMonotonicTime()
+      const {
+    return paint_details_.first_image_paint_;
   }
 
   // FirstEligibleToPaint returns the first time that the frame is not
@@ -180,7 +181,7 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
 
   void MarkPaintTiming();
 
-  void Trace(Visitor*) const override;
+  void Trace(Visitor*) const;
 
  private:
   friend class RecodingTimeAfterBackForwardCacheRestoreFrameCallback;
@@ -228,9 +229,11 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
     return paint_details_.first_paint_;
   }
 
-  WTF::Vector<base::TimeTicks>
+  Member<Document> document_;
+
+  Vector<base::TimeTicks>
       first_paints_after_back_forward_cache_restore_presentation_;
-  WTF::Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
+  Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
       request_animation_frames_after_back_forward_cache_restore_;
   struct PaintDetails {
     // TODO(crbug/738235): Non first_*_presentation_ variables are only being

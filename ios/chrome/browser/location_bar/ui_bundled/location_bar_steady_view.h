@@ -7,7 +7,11 @@
 
 #import <UIKit/UIKit.h>
 
+#include "ios/chrome/browser/location_bar/ui_bundled/location_bar_placeholder_type.h"
+
 @protocol BadgeViewVisibilityDelegate;
+@protocol IncognitoBadgeViewVisibilityDelegate;
+@protocol PageActionMenuCommands;
 @protocol ReaderModeChipVisibilityDelegate;
 @protocol ContextualPanelEntrypointVisibilityDelegate;
 @class LocationBarBadgesContainerView;
@@ -60,7 +64,10 @@
 // display a label, momentarily using significant portion of the location bar.
 - (void)setLocationBarLabelCenteredBetweenContent:(BOOL)centered;
 
-// Sets the view displaying badges in the leading corner of the view.
+// Sets the view displaying incognito badge in the leading corner of the view.
+- (void)setIncognitoBadgeView:(UIView*)incognitoBadgeView;
+
+// Sets the view displaying badges.
 - (void)setBadgeView:(UIView*)badgeView;
 
 // Sets the view displaying the Contextual Panel's entrypoint.
@@ -79,8 +86,13 @@
 // Returns the badge view visibility delegate.
 - (id<BadgeViewVisibilityDelegate>)badgeViewVisibilityDelegate;
 
+// Returns the incognito badge view visibility delegate.
+- (id<IncognitoBadgeViewVisibilityDelegate>)
+    incognitoBadgeViewVisibilityDelegate;
+
 // Set the placeholder view when there is no badge to display.
-- (void)setPlaceholderView:(UIView*)placeholderView;
+- (void)setPlaceholderView:(UIView*)placeholderView
+                      type:(LocationBarPlaceholderType)placeholderType;
 
 // The tappable button representing the location bar.
 @property(nonatomic, strong) UIButton* locationButton;
@@ -95,6 +107,10 @@
 // The view containing the infobar badge and contextual panel entrypoint.
 @property(nonatomic, strong)
     LocationBarBadgesContainerView* badgesContainerView;
+// The page action menu handler.
+@property(nonatomic, weak) id<PageActionMenuCommands> pageActionMenuHandler;
+// Whether the browser is in incognito mode.
+@property(nonatomic, assign, getter=isIncognito) BOOL incognito;
 
 @end
 

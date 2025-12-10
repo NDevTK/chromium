@@ -37,6 +37,7 @@ class DiceWebSigninInterceptionBubbleView
                   views::BubbleDialogDelegateView)
 
  public:
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kDiceWebSigninInterceptionBubble);
   DiceWebSigninInterceptionBubbleView(
       const DiceWebSigninInterceptionBubbleView& other) = delete;
   DiceWebSigninInterceptionBubbleView& operator=(
@@ -93,7 +94,11 @@ class DiceWebSigninInterceptionBubbleView
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            ChromeSigninSignedOutDismiss);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           ChromeSigninSignedOutBeforeBubbleShown);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
                            ChromeSigninSigninDismiss);
+  FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleBrowserTest,
+                           EmptyPrimaryAccount);
   FRIEND_TEST_ALL_PREFIXES(DiceWebSigninInterceptionBubbleWithParamBrowserTest,
                            AvatarEffectWithInterceptType);
   FRIEND_TEST_ALL_PREFIXES(ProfileBubbleInteractiveUiTest,

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "remoting/host/it2me/it2me_native_messaging_host.h"
 
 #include <memory>
@@ -107,7 +102,6 @@ CreateNativeSignalingDeferredConnectContext(
     base::WeakPtr<OAuthTokenGetter> signaling_token_getter,
     base::WeakPtr<OAuthTokenGetter> api_token_getter,
     const std::string& ftl_device_id,
-    bool use_corp_session_authz,
     bool is_corp_user,
     ChromotingHostContext* host_context) {
   std::string device_id =
@@ -116,7 +110,6 @@ CreateNativeSignalingDeferredConnectContext(
   auto connection_context =
       std::make_unique<It2MeHost::DeferredConnectContext>();
   connection_context->is_corp_user = is_corp_user;
-  connection_context->use_corp_session_authz = use_corp_session_authz;
   connection_context->signal_strategy = std::make_unique<FtlSignalStrategy>(
       std::make_unique<OAuthTokenGetterProxy>(signaling_token_getter,
                                               oauth_token_getter_task_runner),
@@ -223,9 +216,7 @@ void It2MeNativeMessagingHost::Start(Client* client) {
 void It2MeNativeMessagingHost::SendMessageToClient(
     base::Value::Dict message) const {
   DCHECK(task_runner()->BelongsToCurrentThread());
-  std::string message_json;
-  base::JSONWriter::Write(message, &message_json);
-  client_->PostMessageFromNativeHost(message_json);
+  client_->PostMessageFromNativeHost(base::WriteJson(message).value_or(""));
 }
 
 void It2MeNativeMessagingHost::ProcessHello(base::Value::Dict message,
@@ -350,13 +341,11 @@ void It2MeNativeMessagingHost::ProcessConnect(base::Value::Dict message,
     if (reconnect_params.has_value()) {
       ftl_device_id = reconnect_params->ftl_device_id;
     }
-    bool use_corp_session_authz =
-        message.FindBool(kUseCorpSessionAuthz).value_or(false);
     bool is_corp_user = message.FindBool(kIsCorpUser).value_or(false);
     create_connection_context = base::BindOnce(
         &CreateNativeSignalingDeferredConnectContext, task_runner(),
         signaling_token_getter_.GetWeakPtr(), api_token_getter_.GetWeakPtr(),
-        ftl_device_id, use_corp_session_authz, is_corp_user);
+        ftl_device_id, is_corp_user);
   } else {
     LOG(ERROR) << kUserName << " not found in request.";
   }

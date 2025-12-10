@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import type {HistoryAppElement, HistoryEntry, HistoryItemElement, HistoryListElement, HistoryToolbarElement} from 'chrome://history/history.js';
-import {BrowserServiceImpl, CrRouter, ensureLazyLoaded} from 'chrome://history/history.js';
+import {BrowserServiceImpl, CrRouter} from 'chrome://history/history.js';
 import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {isMac} from 'chrome://resources/js/platform.js';
@@ -67,12 +67,11 @@ suite('HistoryListTest', function() {
 
     element = app.$.history;
     toolbar = app.$.toolbar;
-    const queryManager = app.shadowRoot!.querySelector('history-query-manager');
+    const queryManager = app.shadowRoot.querySelector('history-query-manager');
     assertTrue(!!queryManager);
     queryManager.queryState = {...queryManager.queryState, incremental: true};
     return Promise.all([
       testService.handler.whenCalled('queryHistory'),
-      ensureLazyLoaded(),
       microtasksFinished(),
       eventToPromise('viewport-filled', element.$.infiniteList),
     ]);
@@ -211,8 +210,7 @@ suite('HistoryListTest', function() {
   // See http://crbug.com/845802.
   test('DisablingCtrlAOnSyncedTabsPage', async function() {
     await finishSetup(TEST_HISTORY_RESULTS);
-    app.shadowRoot!.querySelector('history-router')!.selectedPage =
-        'syncedTabs';
+    app.shadowRoot.querySelector('history-router')!.selectedPage = 'syncedTabs';
     await microtasksFinished();
     const field = toolbar.$.mainToolbar.getSearchField();
     field.blur();
@@ -291,7 +289,7 @@ suite('HistoryListTest', function() {
     assertTrue(item.isCardStart);
     const heading =
         item.shadowRoot.querySelector<HTMLElement>(
-                           '#date-accessed')!.textContent!;
+                           '#date-accessed')!.textContent;
     const title = item.$.link;
 
     // Check that the card title displays the search term somewhere.
@@ -307,7 +305,7 @@ suite('HistoryListTest', function() {
     await finishSetup([]);
     await microtasksFinished();
     assertFalse(element.$.noResults.hidden);
-    assertNotEquals('', element.$.noResults.textContent!.trim());
+    assertNotEquals('', element.$.noResults.textContent.trim());
     assertTrue(element.$.infiniteList.hidden);
 
     testService.handler.setResultFor('queryHistory', Promise.resolve({
@@ -365,8 +363,8 @@ suite('HistoryListTest', function() {
     await microtasksFinished();
 
     assertEquals(1, toolbar.count);
-    app.shadowRoot!.querySelector(
-                       'history-query-manager')!.queryState.incremental = false;
+    app.shadowRoot.querySelector(
+                      'history-query-manager')!.queryState.incremental = false;
 
     testService.handler.resetResolver('queryHistory');
     testService.handler.setResultFor('queryHistory', Promise.resolve({
@@ -653,7 +651,8 @@ suite('HistoryListTest', function() {
 
   test('SetsScrollTarget', async () => {
     await finishSetup(TEST_HISTORY_RESULTS);
-    assertEquals(app.scrollTarget, element.$.infiniteList.scrollTarget);
+    assertEquals(
+        app.getScrollTargetForTesting(), element.$.infiniteList.scrollTarget);
   });
 
   test('SetsScrollOffset', async () => {
@@ -699,11 +698,12 @@ suite('HistoryListTest', function() {
     document.body.style.maxHeight = '300px';
     document.body.style.height = '300px';
     await finishSetup([], /*finished=*/ false);
-    assertTrue(!!app.scrollTarget);
+    assertTrue(!!app.getScrollTargetForTesting());
 
     // Add enough items to allow at least 600px of scrolling under the view.
     const itemSize = 36;
-    const heightNeededToScroll = app.scrollTarget.offsetHeight + 600;
+    const heightNeededToScroll =
+        app.getScrollTargetForTesting().offsetHeight + 600;
     const itemsNeeded = Math.ceil(heightNeededToScroll / itemSize);
 
     const results = [];
@@ -717,11 +717,13 @@ suite('HistoryListTest', function() {
 
     // This check ensures the line below actually scrolls.
     assertGT(
-        app.scrollTarget.scrollHeight, app.scrollTarget.offsetHeight + 500);
+        app.getScrollTargetForTesting().scrollHeight,
+        app.getScrollTargetForTesting().offsetHeight + 500);
 
     // Scroll to just under the threshold to make sure more results don't load.
-    app.scrollTarget.scrollTop =
-        app.scrollTarget.scrollHeight - app.scrollTarget.offsetHeight - 500;
+    app.getScrollTargetForTesting().scrollTop =
+        app.getScrollTargetForTesting().scrollHeight -
+        app.getScrollTargetForTesting().offsetHeight - 500;
     // Wait for the scroll observer to trigger.
     await eventToPromise('scroll-timeout-for-test', element);
     assertEquals(
@@ -744,8 +746,9 @@ suite('HistoryListTest', function() {
 
     // Scroll to within 500px of the scroll height. More results should be
     // requested.
-    app.scrollTarget.scrollTop =
-        app.scrollTarget.scrollHeight - app.scrollTarget.offsetHeight - 400;
+    app.getScrollTargetForTesting().scrollTop =
+        app.getScrollTargetForTesting().scrollHeight -
+        app.getScrollTargetForTesting().offsetHeight - 400;
     await testService.handler.whenCalled('queryHistoryContinuation');
     await microtasksFinished();
     assertEquals(
@@ -756,9 +759,11 @@ suite('HistoryListTest', function() {
     element.isActive = false;
     // This check ensures the line below actually scrolls.
     assertGT(
-        app.scrollTarget.scrollHeight, app.scrollTarget.offsetHeight + 500);
-    app.scrollTarget.scrollTop =
-        app.scrollTarget.scrollHeight - app.scrollTarget.offsetHeight - 400;
+        app.getScrollTargetForTesting().scrollHeight,
+        app.getScrollTargetForTesting().offsetHeight + 500);
+    app.getScrollTargetForTesting().scrollTop =
+        app.getScrollTargetForTesting().scrollHeight -
+        app.getScrollTargetForTesting().offsetHeight - 400;
     // Wait longer than scroll debounce.
     await new Promise(resolve => setTimeout(resolve, 10));
     assertEquals(

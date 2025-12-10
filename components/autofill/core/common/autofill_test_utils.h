@@ -149,11 +149,17 @@ inline constexpr char kIbanValue_2[] = "CH93 0076 2011 6238 5295 7";
                                                 std::string_view value,
                                                 FormControlType type);
 
+[[nodiscard]] FormFieldData CreateTestFormField(std::u16string_view label,
+                                                std::u16string_view name,
+                                                std::u16string_view value,
+                                                FormControlType type);
+
 [[nodiscard]] FormFieldData CreateTestFormField(std::string_view label,
                                                 std::string_view name,
                                                 std::string_view value,
                                                 FormControlType type,
                                                 std::string_view autocomplete);
+
 [[nodiscard]] FormFieldData CreateTestFormField(std::string_view label,
                                                 std::string_view name,
                                                 std::string_view value,
@@ -216,6 +222,10 @@ inline constexpr char kIbanValue_2[] = "CH93 0076 2011 6238 5295 7";
 // with a single loyalty card field).
 [[nodiscard]] FormData CreateTestLoyaltyCardFormData();
 
+// Populates `form_data` with data corresponding to an email or loyalty card
+// field (a form with a single field).
+[[nodiscard]] FormData CreateTestEmailOrLoyaltyCardFormData();
+
 // Populates `form_data` with data corresponding to a merchant promo code form
 // (a form with a single merchant promo code field).
 [[nodiscard]] FormData CreateTestMerchantPromoCodeFormData();
@@ -229,12 +239,6 @@ inline constexpr char kIbanValue_2[] = "CH93 0076 2011 6238 5295 7";
 
 // Creates a `FormData` with a single unclassified field.
 [[nodiscard]] FormData CreateTestUnclassifiedFormData();
-
-MATCHER_P(DeepEqualsFormData,
-          form_data,
-          negation ? "does not equal" : "equals") {
-  return FormData::DeepEqual(arg, form_data);
-}
 
 }  // namespace test
 

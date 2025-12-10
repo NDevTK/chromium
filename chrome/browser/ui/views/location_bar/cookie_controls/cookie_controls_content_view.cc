@@ -64,12 +64,22 @@ std::unique_ptr<views::View> CreateFullWidthSeparator() {
 std::unique_ptr<views::View> CreatePaddedSeparator() {
   return CreateSeparator(/*padded=*/true);
 }
+
+gfx::Insets UserBypassBubbleInsets() {
+  auto* provider = ChromeLayoutProvider::Get();
+  const int vertical_margin =
+      provider->GetDistanceMetric(DISTANCE_CONTENT_LIST_VERTICAL_MULTI);
+  const int side_margin =
+      provider->GetInsetsMetric(views::INSETS_DIALOG).left();
+  return gfx::Insets::VH(vertical_margin, side_margin);
+}
+
 }  // namespace
 
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CookieControlsContentView, kTitle);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CookieControlsContentView, kDescription);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CookieControlsContentView,
-                                      kTrackingProtectionsButton);
+                                      kThirdPartyCookiesSummary);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CookieControlsContentView, kToggleButton);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CookieControlsContentView, kToggleLabel);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(CookieControlsContentView,
@@ -82,23 +92,15 @@ CookieControlsContentView::CookieControlsContentView() {
       views::BoxLayout::Orientation::kVertical));
   AddChildView(CreateFullWidthSeparator());
   AddContentLabels();
-  AddTrackingProtectionsButton();
   AddToggleRow();
   AddFeedbackSection();
 }
 
 void CookieControlsContentView::AddContentLabels() {
-  auto* provider = ChromeLayoutProvider::Get();
-  const int vertical_margin =
-      provider->GetDistanceMetric(DISTANCE_CONTENT_LIST_VERTICAL_MULTI);
-  const int side_margin =
-      provider->GetInsetsMetric(views::INSETS_DIALOG).left();
-
   label_wrapper_ = AddChildView(std::make_unique<views::View>());
   label_wrapper_->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical));
-  label_wrapper_->SetProperty(views::kMarginsKey,
-                              gfx::Insets::VH(vertical_margin, side_margin));
+  label_wrapper_->SetProperty(views::kMarginsKey, UserBypassBubbleInsets());
   title_ = label_wrapper_->AddChildView(std::make_unique<views::Label>());
   title_->SetTextContext(views::style::CONTEXT_DIALOG_BODY_TEXT);
   title_->SetTextStyle(views::style::STYLE_BODY_3_EMPHASIS);
@@ -170,47 +172,9 @@ void CookieControlsContentView::SetCookiesRowVisible(bool visible) {
   cookies_row_->SetVisible(visible);
 }
 
-void CookieControlsContentView::SetTrackingProtectionsButtonVisible(
-    bool visible) {
-  tracking_protections_button_->SetVisible(visible);
-}
-
 void CookieControlsContentView::UpdateFeedbackButtonSubtitle(
     const std::u16string& subtitle) {
   feedback_button_->SetSubtitleText(subtitle);
-}
-
-void CookieControlsContentView::SetTrackingProtectionsButtonLabel(
-    const std::u16string& label) {
-  tracking_protections_button_->SetText(label);
-  tracking_protections_button_->GetViewAccessibility().SetName(label);
-}
-
-void CookieControlsContentView::AddTrackingProtectionsButton() {
-  auto* button_container =
-      AddChildView(std::make_unique<views::BoxLayoutView>());
-  button_container->SetCrossAxisAlignment(
-      views::BoxLayout::CrossAxisAlignment::kStart);
-  tracking_protections_button_ = button_container->AddChildView(
-      std::make_unique<views::MdTextButtonWithSpinner>(base::BindRepeating(
-          &CookieControlsContentView::
-              NotifyTrackingProtectionsButtonPressedCallback,
-          base::Unretained(this))));
-
-  tracking_protections_button_->SetProperty(views::kCrossAxisAlignmentKey,
-                                            views::LayoutAlignment::kStart);
-  const int controls_spacing = ChromeLayoutProvider::Get()->GetDistanceMetric(
-      views::DISTANCE_RELATED_CONTROL_VERTICAL);
-  ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
-  const int side_offset =
-      layout_provider
-          ->GetInsetsMetric(ChromeInsetsMetric::INSETS_PAGE_INFO_HOVER_BUTTON)
-          .left();
-  tracking_protections_button_->SetProperty(
-      views::kMarginsKey, gfx::Insets::TLBR(controls_spacing, side_offset,
-                                            controls_spacing, side_offset));
-  tracking_protections_button_->SetProperty(views::kElementIdentifierKey,
-                                            kTrackingProtectionsButton);
 }
 
 void CookieControlsContentView::AddToggleRow() {
@@ -265,16 +229,6 @@ void CookieControlsContentView::AddFeedbackSection() {
       IDS_COOKIE_CONTROLS_BUBBLE_SEND_FEEDBACK_BUTTON_TITLE));
 }
 
-void CookieControlsContentView::SetTrackingProtectionsButtonReloadingState() {
-  tracking_protections_button_->SetText(l10n_util::GetStringUTF16(
-      IDS_TRACKING_PROTECTIONS_BUBBLE_RELOADING_SITE_LABEL));
-  tracking_protections_button_->SetEnabled(false);
-}
-
-void CookieControlsContentView::SetSpinnerVisible(bool visible) {
-  tracking_protections_button_->SetSpinnerVisible(visible);
-}
-
 void CookieControlsContentView::UpdateContentLabels(
     const std::u16string& title,
     const std::u16string& description) {
@@ -324,17 +278,6 @@ base::CallbackListSubscription
 CookieControlsContentView::RegisterFeedbackButtonPressedCallback(
     base::RepeatingClosureList::CallbackType callback) {
   return feedback_button_callback_list_.Add(std::move(callback));
-}
-
-base::CallbackListSubscription
-CookieControlsContentView::RegisterTrackingProtectionsButtonPressedCallback(
-    base::RepeatingCallback<void()> callback) {
-  return tracking_protections_button_callback_list_.Add(std::move(callback));
-}
-
-void CookieControlsContentView::
-    NotifyTrackingProtectionsButtonPressedCallback() {
-  tracking_protections_button_callback_list_.Notify();
 }
 
 void CookieControlsContentView::NotifyToggleButtonPressedCallback() {

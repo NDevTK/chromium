@@ -70,7 +70,6 @@
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/timing/back_forward_cache_restoration.h"
 #include "third_party/blink/renderer/core/timing/background_tracing_helper.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
 #include "third_party/blink/renderer/core/timing/interaction_contentful_paint.h"
 #include "third_party/blink/renderer/core/timing/largest_contentful_paint.h"
 #include "third_party/blink/renderer/core/timing/layout_shift.h"
@@ -82,6 +81,7 @@
 #include "third_party/blink/renderer/core/timing/performance_long_task_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_mark.h"
 #include "third_party/blink/renderer/core/timing/performance_measure.h"
+#include "third_party/blink/renderer/core/timing/performance_navigation_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_observer.h"
 #include "third_party/blink/renderer/core/timing/performance_paint_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_resource_timing.h"
@@ -100,7 +100,6 @@
 #include "third_party/blink/renderer/platform/network/http_parsers.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
-#include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "v8/include/v8-metrics.h"
 
 namespace blink {
@@ -113,6 +112,9 @@ constexpr size_t kLongTaskUkmSampleInterval = 100;
 
 const char kSwapsPerInsertionHistogram[] =
     "Renderer.Core.Timing.Performance.SwapsPerPerformanceEntryInsertion";
+
+const char kParserPausingCalledAfterResumimg[] =
+    "Blink.HTMLParsing.IsParserPausingCalledAfterResuming";
 
 const char kParserResumeByUserTiming[] =
     "Blink.HTMLParsing.ResumedByUserTiming";
@@ -181,6 +183,12 @@ inline bool CheckName(const PerformanceEntry* entry,
     return true;
   }
   return entry->name() == maybe_name;
+}
+
+void NotifyParserResume(Document* document, bool is_resumed_by_user_timing) {
+  document->NotifyParserResumeByUserTiming();
+  base::UmaHistogramBoolean(kParserResumeByUserTiming,
+                            is_resumed_by_user_timing);
 }
 
 }  // namespace
@@ -413,12 +421,10 @@ PerformanceEntryVector Performance::GetEntriesForCurrentFrame(
 }
 
 PerformanceEntryVector Performance::getBufferedEntriesByType(
-    const AtomicString& entry_type,
-    bool include_soft_navigation_observations) {
+    const AtomicString& entry_type) {
   PerformanceEntry::EntryType type =
       PerformanceEntry::ToEntryTypeEnum(entry_type);
-  return getEntriesByTypeInternal(type, /*maybe_name=*/g_null_atom,
-                                  include_soft_navigation_observations);
+  return getEntriesByTypeInternal(type, /*maybe_name=*/g_null_atom);
 }
 
 PerformanceEntryVector Performance::getEntriesByType(
@@ -446,8 +452,7 @@ PerformanceEntryVector Performance::GetEntriesByTypeForCurrentFrame(
 
 PerformanceEntryVector Performance::getEntriesByTypeInternal(
     PerformanceEntry::EntryType type,
-    const AtomicString& maybe_name,
-    bool include_soft_navigation_observations) {
+    const AtomicString& maybe_name) {
   // This vector may be used by any cases below which require local storage.
   // Cases which refer to pre-existing vectors may simply set `entries` instead.
   PerformanceEntryVector entries_storage;
@@ -536,11 +541,7 @@ PerformanceEntryVector Performance::getEntriesByTypeInternal(
       break;
 
     case PerformanceEntry::kInteractionContentfulPaint:
-      // TODO(crbug.com/424433918): Change to expose this without
-      // soft-navigation requirement.
-      if (include_soft_navigation_observations) {
-        entries = &interaction_contentful_paint_buffer_;
-      }
+      entries = &interaction_contentful_paint_buffer_;
       break;
 
     case PerformanceEntry::kVisibilityState:
@@ -622,7 +623,7 @@ void Performance::AddResourceTiming(mojom::blink::ResourceTimingInfoPtr info,
   ExecutionContext* context = GetExecutionContext();
   auto* entry = MakeGarbageCollected<PerformanceResourceTiming>(
       std::move(info), initiator_type, time_origin_,
-      cross_origin_isolated_capability_, context);
+      cross_origin_isolated_capability_, context, NavigationId());
   NotifyObserversOfEntry(*entry);
   // https://w3c.github.io/resource-timing/#dfn-add-a-performanceresourcetiming-entry
   if (CanAddResourceTimingEntry() &&
@@ -792,7 +793,7 @@ void Performance::AddLongTaskTiming(base::TimeTicks start_time,
       static_cast<int>(MonotonicTimeToDOMHighResTimeStamp(end_time) -
                        dom_high_res_start_time),
       name, container_type, container_src, container_id, container_name,
-      DynamicTo<LocalDOMWindow>(execution_context));
+      DynamicTo<LocalDOMWindow>(execution_context), NavigationId());
   if (longtask_buffer_.size() < kDefaultLongTaskBufferSize) {
     InsertEntryIntoSortedBuffer(longtask_buffer_, *entry, kRecordSwaps);
   } else {
@@ -815,7 +816,7 @@ void Performance::AddBackForwardCacheRestoration(
       MonotonicTimeToDOMHighResTimeStamp(start_time),
       MonotonicTimeToDOMHighResTimeStamp(pageshow_start_time),
       MonotonicTimeToDOMHighResTimeStamp(pageshow_end_time),
-      DynamicTo<LocalDOMWindow>(GetExecutionContext()));
+      DynamicTo<LocalDOMWindow>(GetExecutionContext()), NavigationId());
   if (back_forward_cache_restoration_buffer_.size() <
       back_forward_cache_restoration_buffer_size_limit_) {
     InsertEntryIntoSortedBuffer(back_forward_cache_restoration_buffer_, *entry,
@@ -918,38 +919,35 @@ PerformanceMark* Performance::mark(ScriptState* script_state,
           window->GetFrame()->IsOutermostMainFrame()) {
         Document* document = window->GetFrame()->GetDocument();
         if (mark_name == mark_parser_blocking) {
-          document->NotifyParserPauseByUserTiming();
-          is_parser_yielded_ = true;
-          // Schedule a timeout based resume event here since pausing the parser
-          // can be a potential footgun. It's not guaranteed that the parser
-          // resume mark is called after the parser pause mark.
-          //
-          // If the resuming task is already scheduled, cancels and reschedule
-          // it.
-          parser_yield_task_handle_.Cancel();
-          parser_yield_task_handle_ = PostDelayedCancellableTask(
-              *document->GetTaskRunner(TaskType::kInternalLoading), FROM_HERE,
-              WTF::BindOnce(
-                  [](Document* document) {
-                    document->NotifyParserResumeByUserTiming();
-                    base::UmaHistogramBoolean(kParserResumeByUserTiming, false);
-                  },
-                  WrapPersistent(document)),
-              base::Milliseconds(timeout));
+          base::UmaHistogramBoolean(
+              kParserPausingCalledAfterResumimg,
+              parser_yield_state_ == ParserYieldState::kResumed);
+          if (parser_yield_state_ == ParserYieldState::kInitial) {
+            parser_yield_state_ = ParserYieldState::kPaused;
+            document->NotifyParserPauseByUserTiming();
+            // Schedule a timeout based resume event here since pausing the
+            // parser can be a potential footgun. It's not guaranteed that the
+            // parser resume mark is called after the parser pause mark.
+            //
+            // If the resuming task is already scheduled, cancels and reschedule
+            // it.
+            CHECK(!parser_yield_task_handle_.IsActive());
+            parser_yield_task_handle_ = PostDelayedCancellableTask(
+                *document->GetTaskRunner(TaskType::kInternalLoading), FROM_HERE,
+                BindOnce(&NotifyParserResume, WrapPersistent(document), false),
+                base::Milliseconds(timeout));
+          }
         } else if (mark_name == mark_parser_restart) {
-          base::UmaHistogramBoolean(kParserResumingCalledBeforePausing,
-                                    !is_parser_yielded_);
-          // If the parser is pausing, resume it. This has to be called as a new
-          // task to ensure that the script is not running to resume the parser.
+          base::UmaHistogramBoolean(
+              kParserResumingCalledBeforePausing,
+              parser_yield_state_ != ParserYieldState::kPaused);
+          parser_yield_state_ = ParserYieldState::kResumed;
+          // If the parser is paused, resume it. This has to be called as a
+          // new task to ensure that the script is not running to resume the
+          // parser.
           document->GetTaskRunner(TaskType::kInternalLoading)
-              ->PostTask(FROM_HERE,
-                         WTF::BindOnce(
-                             [](Document* document) {
-                               document->NotifyParserResumeByUserTiming();
-                               base::UmaHistogramBoolean(
-                                   kParserResumeByUserTiming, true);
-                             },
-                             WrapPersistent(document)));
+              ->PostTask(FROM_HERE, BindOnce(&NotifyParserResume,
+                                             WrapPersistent(document), true));
           parser_yield_task_handle_.Cancel();
         }
       }
@@ -1130,7 +1128,7 @@ PerformanceMeasure* Performance::MeasureWithDetail(
     ExceptionState& exception_state) {
   PerformanceMeasure* performance_measure = GetUserTiming().Measure(
       script_state, measure_name, start, duration, end, detail, exception_state,
-      LocalDOMWindow::From(script_state));
+      LocalDOMWindow::From(script_state), NavigationId());
   if (performance_measure)
     NotifyObserversOfEntry(*performance_measure);
   return performance_measure;
@@ -1162,8 +1160,6 @@ void Performance::NotifyObserversOfEntry(PerformanceEntry& entry) const {
   bool observer_found = false;
   for (auto& observer : observers_) {
     if (observer->FilterOptions() & entry.EntryTypeEnum() &&
-        (!entry.IsTriggeredBySoftNavigation() ||
-         observer->IncludeSoftNavigationObservations()) &&
         observer->CanObserve(entry)) {
       observer->EnqueuePerformanceEntry(entry);
       observer_found = true;
@@ -1175,12 +1171,18 @@ void Performance::NotifyObserversOfEntry(PerformanceEntry& entry) const {
 
 void Performance::NotifyObserversOfContainerEntry(
     PerformanceEntry& entry) const {
+  bool observer_found = false;
   CHECK(entry.EntryTypeEnum() == PerformanceEntry::kContainer);
   for (auto& observer : observers_) {
     if (observer->FilterOptions() & entry.EntryTypeEnum() &&
         observer->CanObserve(entry)) {
       observer->EnqueuePerformanceEntry(entry);
+      observer_found = true;
     }
+  }
+  if (observer_found) {
+    UseCounter::Count(GetExecutionContext(),
+                      WebFeature::kContainerTimingObserverReportedEntries);
   }
 }
 
@@ -1241,7 +1243,7 @@ int Performance::GetDroppedEntriesForTypes(PerformanceEntryTypeMask types) {
 DOMHighResTimeStamp Performance::ClampTimeResolution(
     base::TimeDelta time,
     bool cross_origin_isolated_capability) {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(TimeClamper, clamper, ());
+  static TimeClamper clamper;
   return clamper.ClampTimeResolution(time, cross_origin_isolated_capability)
       .InMillisecondsF();
 }
@@ -1293,8 +1295,8 @@ bool Performance::CanExposeNode(Node* node) {
 void Performance::AddPaintTiming(PerformancePaintTiming::PaintType type,
                                  const DOMPaintTimingInfo& paint_timing_info) {
   PerformancePaintTiming* entry = MakeGarbageCollected<PerformancePaintTiming>(
-      type, paint_timing_info,
-      DynamicTo<LocalDOMWindow>(GetExecutionContext()));
+      type, paint_timing_info, DynamicTo<LocalDOMWindow>(GetExecutionContext()),
+      NavigationId());
   DCHECK((type == PerformancePaintTiming::PaintType::kFirstPaint) ||
          (type == PerformancePaintTiming::PaintType::kFirstContentfulPaint));
 

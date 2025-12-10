@@ -40,7 +40,7 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/DevToolsServer_jni.h"
 
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 using content::DevToolsAgentHost;
 using content::RenderViewHost;
 using content::WebContents;
@@ -60,7 +60,7 @@ const char kDevToolsChannelNameFormat[] = "%s_devtools_remote";
 
 const char kTetheringSocketName[] = "chrome_devtools_tethering_%d_%d";
 
-const int kBackLog = 10;
+const int kBackLog = 4096;
 
 bool AuthorizeSocketAccessWithDebugPermission(
     const net::UnixDomainServerSocket::Credentials& credentials) {
@@ -167,29 +167,23 @@ bool DevToolsServer::IsStarted() const {
 
 static jlong JNI_DevToolsServer_InitRemoteDebugging(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     std::string& socket_name_prefix) {
   DevToolsServer* server = new DevToolsServer(socket_name_prefix);
   return reinterpret_cast<intptr_t>(server);
 }
 
-static void JNI_DevToolsServer_DestroyRemoteDebugging(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jlong server) {
+static void JNI_DevToolsServer_DestroyRemoteDebugging(JNIEnv* env,
+                                                      jlong server) {
   delete reinterpret_cast<DevToolsServer*>(server);
 }
 
-static jboolean JNI_DevToolsServer_IsRemoteDebuggingEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jlong server) {
+static jboolean JNI_DevToolsServer_IsRemoteDebuggingEnabled(JNIEnv* env,
+                                                            jlong server) {
   return reinterpret_cast<DevToolsServer*>(server)->IsStarted();
 }
 
 static void JNI_DevToolsServer_SetRemoteDebuggingEnabled(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jlong server,
     jboolean enabled,
     jboolean allow_debug_permission) {
@@ -200,3 +194,5 @@ static void JNI_DevToolsServer_SetRemoteDebuggingEnabled(
     devtools_server->Stop();
   }
 }
+
+DEFINE_JNI(DevToolsServer)

@@ -8,9 +8,12 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 
+#include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
 #include "extensions/renderer/extension_throttle_entry.h"
+#include "extensions/renderer/extension_throttle_manager_access.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "url/gurl.h"
 
@@ -37,6 +40,10 @@ namespace extensions {
 // are registered, and does garbage collection from time to time in order to
 // clean out outdated entries. URL ID consists of lowercased scheme, host, port
 // and path. All URLs converted to the same ID will share the same entry.
+//
+// ExtensionThrottleManager can be destructed before ExtensionURLLoaderThrottle
+// even though it is an explicit constructor argument. In that case, the
+// throttle will have no effect (failing open).
 class ExtensionThrottleManager {
  public:
   ExtensionThrottleManager();
@@ -75,6 +82,10 @@ class ExtensionThrottleManager {
   // It is only used by unit tests.
   void OverrideEntryForTests(const GURL& url,
                              std::unique_ptr<ExtensionThrottleEntry> entry);
+
+  scoped_refptr<ExtensionThrottleManagerAccess> GetAccess() const {
+    return access_;
+  }
 
   int GetNumberOfEntriesForTests() const { return url_entries_.size(); }
 
@@ -131,6 +142,10 @@ class ExtensionThrottleManager {
 
   // Used to synchronize all public methods.
   base::Lock lock_;
+
+  // Shared access helper for throttles that depend on this manager.
+  scoped_refptr<ExtensionThrottleManagerAccess> access_ =
+      base::MakeRefCounted<ExtensionThrottleManagerAccess>(this);
 };
 
 }  // namespace extensions

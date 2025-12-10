@@ -13,9 +13,9 @@ import {assertNotReached} from 'chrome://resources/js/assert.js';
 import {PromiseResolver} from 'chrome://resources/js/promise_resolver.js';
 import type {CrLitElement, PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import {SaveRequestType} from '../constants.js';
-
+const SaveRequestType = chrome.pdfViewerPrivate.SaveRequestType;
 type Constructor<T> = new (...args: any[]) => T;
+type SaveRequestType = chrome.pdfViewerPrivate.SaveRequestType;
 
 export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
     superClass: T): T&Constructor<ViewerSaveControlsMixinInterface> => {
@@ -29,10 +29,6 @@ export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
         hasInk2Edits: {type: Boolean},
         // </if>
         isFormFieldFocused: {type: Boolean},
-        menuOpen_: {
-          type: Boolean,
-          reflect: true,
-        },
       };
     }
 
@@ -42,7 +38,6 @@ export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
     accessor hasInk2Edits: boolean = false;
     // </if>
     accessor isFormFieldFocused: boolean = false;
-    private accessor menuOpen_: boolean = false;
     private waitForFormFocusChange_: PromiseResolver<boolean>|null = null;
 
 
@@ -73,16 +68,8 @@ export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
       return this.waitForFormFocusChange_.promise;
     }
 
-    isMenuOpen(): boolean {
-      return this.menuOpen_;
-    }
-
-    closeMenu() {
-      this.getMenu().close();
-    }
-
     /**
-     * Client code should override this method to return the appropriate
+     * Subclasses should override this method to return the appropriate
      * CrActionMenuElement.
      */
     getMenu(): CrActionMenuElement {
@@ -90,20 +77,24 @@ export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
     }
 
     /**
-     * Client code should override this method to return the appropriate
+     * Subclasses should override this method to return the appropriate
      * CrIconButtonElement.
      */
     getSaveButton(): CrIconButtonElement {
       assertNotReached();
     }
 
-    onOpenChanged(e: CustomEvent<{value: boolean}>) {
-      this.menuOpen_ = e.detail.value;
+    /**
+     * Subclasses should override this method to return the appropriate save
+     * event type.
+     */
+    getSaveEventType(): string {
+      assertNotReached();
     }
 
     onSaveClick() {
       this.waitForEdits_().then(hasEdits => {
-        if (hasEdits) {
+        if (this.shouldShowSaveMenuOnSaveClick(hasEdits)) {
           this.showSaveMenu_();
         } else {
           this.dispatchSaveEvent_(SaveRequestType.ORIGINAL);
@@ -132,9 +123,16 @@ export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
       this.getMenu().close();
     }
 
+    /**
+     * Subclasses can override this method to control whether the save menu
+     * should be shown.
+     */
+    shouldShowSaveMenuOnSaveClick(hasEdits: boolean): boolean {
+      return hasEdits;
+    }
+
     private dispatchSaveEvent_(type: SaveRequestType) {
-      this.dispatchEvent(new CustomEvent(
-          'save', {detail: type, bubbles: true, composed: true}));
+      this.fire(this.getSaveEventType(), type);
     }
 
     private hasEditsToSave_(): boolean {
@@ -159,7 +157,7 @@ export const ViewerSaveControlsMixin = <T extends Constructor<CrLitElement>>(
     /**
      * @return The value for the aria-haspopup attribute for the button.
      */
-    saveButtonHasPopup(): string {
+    getAriaHasPopup(): string {
       return this.hasEditsToSave_() ? 'menu' : 'false';
     }
   }
@@ -170,11 +168,12 @@ export interface ViewerSaveControlsMixinInterface {
   hasEdits: boolean;
   hasEnteredAnnotationMode: boolean;
   isFormFieldFocused: boolean;
+  getAriaHasPopup(): string;
   getMenu(): CrActionMenuElement;
   getSaveButton(): CrIconButtonElement;
-  onOpenChanged(e: CustomEvent<{value: boolean}>): void;
+  getSaveEventType(): string;
   onSaveClick(): void;
   onSaveEditedClick(): void;
   onSaveOriginalClick(): void;
-  saveButtonHasPopup(): string;
+  shouldShowSaveMenuOnSaveClick(hasEdits: boolean): boolean;
 }

@@ -19,10 +19,12 @@
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/html/media/html_video_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
+#include "third_party/blink/renderer/core/timing/interaction_effects_monitor.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_context.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_paint_attribution_tracker.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
@@ -153,20 +155,20 @@ constexpr bool IsInteractionEnd(
 }
 
 std::optional<SoftNavigationHeuristics::EventScope::Type>
-EventScopeTypeFromEvent(const Event& event) {
+EventScopeTypeFromInputEvent(const Event& event,
+                             bool has_interaction_effects_monitor) {
   if (!event.isTrusted()) {
     return std::nullopt;
   }
   if (event.IsMouseEvent() && event.type() == event_type_names::kClick) {
     return SoftNavigationHeuristics::EventScope::Type::kClick;
   }
-  if (event.type() == event_type_names::kNavigate) {
-    return SoftNavigationHeuristics::EventScope::Type::kNavigate;
-  }
   if (event.IsKeyboardEvent()) {
-    Node* target_node = event.target() ? event.target()->ToNode() : nullptr;
-    if (target_node && target_node->IsHTMLElement() &&
-        DynamicTo<HTMLElement>(target_node)->IsHTMLBodyElement()) {
+    Node* target_node =
+        event.RawTarget() ? event.RawTarget()->ToNode() : nullptr;
+    if ((target_node && target_node->IsHTMLElement() &&
+         DynamicTo<HTMLElement>(target_node)->IsHTMLBodyElement()) ||
+        has_interaction_effects_monitor) {
       if (event.type() == event_type_names::kKeydown) {
         return SoftNavigationHeuristics::EventScope::Type::kKeydown;
       } else if (event.type() == event_type_names::kKeypress) {
@@ -179,45 +181,15 @@ EventScopeTypeFromEvent(const Event& event) {
   return std::nullopt;
 }
 
-features::SoftNavigationHeuristicsMode GetPaintAttributionMode(
-    const FeatureContext* context) {
-  // If the feature flag for SoftNavigationHeuristics is enabled, prefer the
-  // feature param to determine whether to enable advanced paint attribution.
-  // This allows users to select the mode via about://flags.
-  if (base::FeatureList::IsEnabled(features::kSoftNavigationHeuristics)) {
-    return features::kSoftNavigationHeuristicsModeParam.Get();
-  }
-  // Without the feature flag enabled, query the runtime enabled feature
-  // directly. This allows the finch experiments to control the features; it
-  // also enables the feature for tests.
-  //
-  // But since the paint attribution modes are mutually exclusive and have
-  // different flags, we need to pick an order. Since the pre-paint-based
-  // attribution mode needs to be enabled intentionally from the command line or
-  // about:flags (it has no REF status), pick that first.
-  if (RuntimeEnabledFeatures::
-          SoftNavigationDetectionPrePaintBasedAttributionEnabled(context)) {
-    return features::SoftNavigationHeuristicsMode::kPrePaintBasedAttribution;
-  }
-  if (RuntimeEnabledFeatures::
-          SoftNavigationDetectionAdvancedPaintAttributionEnabled(context)) {
-    return features::SoftNavigationHeuristicsMode::kAdvancedPaintAttribution;
-  }
-  return features::SoftNavigationHeuristicsMode::kBasic;
-}
-
 SoftNavigationHeuristics* GetHeuristicsForNodeIfShouldTrack(const Node& node) {
-  const Document& document = node.GetDocument();
-  if (!document.IsTrackingSoftNavigationHeuristics()) {
+  // This handles both disconnected nodes and detached frames.
+  if (!node.InActiveDocument()) {
     return nullptr;
   }
-  if (!node.isConnected()) {
-    return nullptr;
-  }
-  LocalDOMWindow* window = document.domWindow();
-  if (!window) {
-    return nullptr;
-  }
+  // The window cannot be null unless the document has been shut down, which is
+  // not true for active documents.
+  LocalDOMWindow* window = node.GetDocument().domWindow();
+  CHECK(window);
   return window->GetSoftNavigationHeuristics();
 }
 
@@ -225,15 +197,14 @@ SoftNavigationHeuristics* GetHeuristicsForNodeIfShouldTrack(const Node& node) {
 
 SoftNavigationHeuristics::SoftNavigationHeuristics(LocalDOMWindow* window)
     : window_(window),
-      paint_attribution_mode_(GetPaintAttributionMode(window)),
       task_attribution_tracker_(
           scheduler::TaskAttributionTracker::From(window->GetIsolate())) {
   LocalFrame* frame = window->GetFrame();
   CHECK(frame && frame->View());
-  if (IsPrePaintBasedAttributionEnabled()) {
-    paint_attribution_tracker_ =
-        MakeGarbageCollected<SoftNavigationPaintAttributionTracker>();
-  }
+  TextPaintTimingDetector* detector =
+      &frame->View()->GetPaintTimingDetector().GetTextPaintTimingDetector();
+  paint_attribution_tracker_ =
+      MakeGarbageCollected<SoftNavigationPaintAttributionTracker>(detector);
 }
 
 SoftNavigationHeuristics* SoftNavigationHeuristics::CreateIfNeeded(
@@ -242,7 +213,7 @@ SoftNavigationHeuristics* SoftNavigationHeuristics::CreateIfNeeded(
   if (!base::FeatureList::IsEnabled(features::kSoftNavigationDetection)) {
     return nullptr;
   }
-  if (!window->GetFrame()->IsMainFrame()) {
+  if (!window->GetFrame()->IsOutermostMainFrame()) {
     return nullptr;
   }
   if (Document* document = window->document()) {
@@ -260,17 +231,17 @@ void SoftNavigationHeuristics::Shutdown() {
   const auto viewport_area = CalculateViewportArea();
   const auto required_paint_area = CalculateRequiredPaintArea();
   for (const auto& context : potential_soft_navigations_) {
+    context->Shutdown();
     OnSoftNavigationContextWasExhausted(*context.Get(), viewport_area,
                                         required_paint_area);
   }
-  potential_soft_navigations_.clear();
-}
 
-void SoftNavigationHeuristics::SetIsTrackingSoftNavigationHeuristicsOnDocument(
-    bool value) const {
-  if (Document* document = window_->document()) {
-    document->SetIsTrackingSoftNavigationHeuristics(value);
+  for (const auto& monitor : interaction_effects_monitors_) {
+    monitor->Shutdown();
   }
+  interaction_effects_monitors_.clear();
+
+  potential_soft_navigations_.clear();
 }
 
 SoftNavigationContext* SoftNavigationHeuristics::EnsureContextForCurrentWindow(
@@ -303,30 +274,9 @@ SoftNavigationHeuristics::GetSoftNavigationContextForCurrentTask() const {
   return nullptr;
 }
 
-std::optional<scheduler::TaskAttributionId>
-SoftNavigationHeuristics::AsyncSameDocumentNavigationStarted() {
-  // `task_attribution_tracker_` will be null if
-  // TaskAttributionInfrastructureDisabledForTesting is enabled.
-  if (!task_attribution_tracker_) {
-    return std::nullopt;
-  }
-  scheduler::TaskAttributionInfo* task_state =
-      task_attribution_tracker_->CurrentTaskState();
-  if (!task_state) {
-    return std::nullopt;
-  }
-  // We don't need to EnsureContextForCurrentWindow here because this function
-  // is not really "part" of SNH. It's a helper for task attribution.
-  SoftNavigationContext* context = task_state->GetSoftNavigationContext();
-  if (!context) {
-    return std::nullopt;
-  }
-  task_attribution_tracker_->AddSameDocumentNavigationTask(task_state);
-  return task_state->Id();
-}
-
 void SoftNavigationHeuristics::SameDocumentNavigationCommitted(
     const String& url,
+    base::UnguessableToken same_document_metrics_token,
     SoftNavigationContext* context) {
   context = EnsureContextForCurrentWindow(context);
   if (!context && !context_for_current_url_) {
@@ -345,7 +295,7 @@ void SoftNavigationHeuristics::SameDocumentNavigationCommitted(
     // the emitting of existing contexts.
     // TODO(crbug.com/353043684, crbug.com/40943017): Perhaps there should be
     // limits to how long we will keep the current context as active.
-    context_for_current_url_->AddUrl(url);
+    context_for_current_url_->AddUrl(url, same_document_metrics_token);
 
     TRACE_EVENT_INSTANT("loading",
                         "SoftNavigationHeuristics::"
@@ -358,7 +308,7 @@ void SoftNavigationHeuristics::SameDocumentNavigationCommitted(
         SoftNavigationOutcome::
             kNoSoftNavContextDuringUrlChangeButMergingIntoPreviousContext);
   } else {
-    context->AddUrl(url);
+    context->AddUrl(url, same_document_metrics_token);
     // TODO(crbug.com/416705860): If we replace a previous context that is for a
     // previous URL change, maybe we should check if it was emitted?  If not,
     // we will no longer be attributing paints to it and so it will never meet
@@ -370,46 +320,50 @@ void SoftNavigationHeuristics::SameDocumentNavigationCommitted(
         "loading", "SoftNavigationHeuristics::SameDocumentNavigationCommitted",
         perfetto::Track::FromPointer(context), "context", *context);
 
-    EmitSoftNavigationEntryIfAllConditionsMet(context);
+    MaybeCommitNavigationOrEmitSoftNavigationEntry(context);
   }
 }
 
 bool SoftNavigationHeuristics::ModifiedDOM(Node* node) {
-  // Don't bother marking dom nodes unless they are in the right frame.
-  if (!GetLocalFrameIfOutermostAndNotDetached()) {
-    return false;
-  }
+  // This should only be called by `ModifiedNode()` and `InsertedNode()`, and
+  // detached windows should already be filtered out.
+  CHECK(window_->GetFrame());
+
   SoftNavigationContext* context = GetSoftNavigationContextForCurrentTask();
   if (!context) {
     return false;
   }
+  paint_attribution_tracker_->MarkNodeAsDirectlyModified(node, context);
 
-  if (IsPrePaintBasedAttributionEnabled()) {
-    CHECK(paint_attribution_tracker_);
-    paint_attribution_tracker_->MarkNodeAsDirectlyModified(node, context);
-  } else {
-    context->AddModifiedNode(node);
-  }
-
-  EmitSoftNavigationEntryIfAllConditionsMet(context);
+  MaybeCommitNavigationOrEmitSoftNavigationEntry(context);
   return true;
 }
 
 // TODO(crbug.com/424448145): re-architect how we pick our FCP point, when we
 // "slice" navigationID, and when we actually Emit soft-navigation entry.  Then,
 // rename and re-organize these functions.
-void SoftNavigationHeuristics::EmitSoftNavigationEntryIfAllConditionsMet(
+void SoftNavigationHeuristics::MaybeCommitNavigationOrEmitSoftNavigationEntry(
     SoftNavigationContext* context) {
+  // This is already a soft nav, and the performance entry has already been
+  // emitted.
+  if (context->WasEmitted()) {
+    return;
+  }
+
+  // If the navigation ID was set but it hasn't been emitted, then we're waiting
+  // on FCP presentation time to emit. If we have that, emit now; otherwise do
+  // nothing, since we don't want to count it twice.
+  if (context->HasNavigationId()) {
+    if (context->HasFirstContentfulPaint()) {
+      EmitSoftNavigationEntry(context);
+    }
+    return;
+  }
+
   // We don't want to Emit for any context except the current URL.
   // If we collect painted area for contexts other than this one, we still don't
   // want to reach "Emit" criteria.
   if (context != context_for_current_url_) {
-    return;
-  }
-
-  // If we've already emitted this entry, we might still be tracking paints.
-  // Skip the rest since we only want to emit new soft-navs.
-  if (context->HasNavigationId()) {
     return;
   }
 
@@ -442,30 +396,59 @@ void SoftNavigationHeuristics::EmitSoftNavigationEntryIfAllConditionsMet(
   // re-write history when we get a new navigationId with a timeOrigin in the
   // past.
   ++soft_navigation_count_;
-  window_->GenerateNewNavigationId();
 
-  context->SetNavigationId(window_->GetNavigationId());
+  WindowPerformance* performance = GlobalPerformance::performance(*window_);
+  CHECK(performance);
+  performance->IncrementNavigationId();
+  context->SetNavigationId(performance->NavigationId());
 
-  context_for_first_contentful_paint_ = context;
+  // Postpone emitting the entry if we're still waiting for FCP presentation
+  // feedback.
+  if (!context->HasFirstContentfulPaint()) {
+    contexts_waiting_for_paint_timestamp_.insert(context);
+    return;
+  }
+  EmitSoftNavigationEntry(context);
+}
+
+void SoftNavigationHeuristics::EmitSoftNavigationEntry(
+    SoftNavigationContext* context) {
+  CHECK(context->HasFirstContentfulPaint());
+  CHECK(!context->WasEmitted());
+  context->MarkEmitted();
+
+  WindowPerformance* performance = GlobalPerformance::performance(*window_);
+  CHECK(performance);
+  performance->AddSoftNavigationEntry(
+      AtomicString(context->InitialUrl()), context->UserInteractionTimestamp(),
+      context->FirstContentfulPaintTimingInfo(), context->NavigationId());
+  ReportSoftNavigationToMetrics(context);
+
+  TRACE_EVENT_INSTANT("scheduler,devtools.timeline,loading",
+                      "SoftNavigationHeuristics::EmitSoftNavigationEntry",
+                      perfetto::Track::FromPointer(context),
+                      context->FirstContentfulPaint(), "context", *context,
+                      "frame", GetFrameIdForTracing(window_->GetFrame()));
+
+  // LCP calculation is now unblocked, so update/emit the buffered LCP
+  // candidate, if possible.
+  UpdateSoftLcpCandidateForContext(context);
 }
 
 SoftNavigationContext*
 SoftNavigationHeuristics::MaybeGetSoftNavigationContextForTiming(Node* node) {
-  if (!context_for_current_url_ ||
-      !context_for_current_url_->IsRecordingLargestContentfulPaint()) {
+  SoftNavigationContext* context =
+      paint_attribution_tracker_->GetSoftNavigationContextForNode(node);
+  if (!context || !context->IsRecordingLargestContentfulPaint()) {
     return nullptr;
   }
-  bool attributable = IsPrePaintBasedAttributionEnabled()
-                          ? paint_attribution_tracker_->IsAttributable(
-                                node, context_for_current_url_)
-                          : context_for_current_url_->IsNeededForTiming(node);
-  return attributable ? context_for_current_url_ : nullptr;
+  return context;
 }
 
 void SoftNavigationHeuristics::OnPaintFinished() {
   for (const auto& context : potential_soft_navigations_) {
     if (context->OnPaintFinished()) {
-      EmitSoftNavigationEntryIfAllConditionsMet(context);
+      MaybeCommitNavigationOrEmitSoftNavigationEntry(context);
     }
   }
 }
@@ -479,116 +462,76 @@ void SoftNavigationHeuristics::OnInputOrScroll() {
   }
 }
 
-OptionalPaintTimingCallback
-SoftNavigationHeuristics::TakePaintTimingCallback() {
-  if (!context_for_first_contentful_paint_) {
-    return {};
-  }
-  // If we need paint timing, we must have a context that needs FCP.
-  CHECK(!context_for_first_contentful_paint_->HasFirstContentfulPaint());
-
-  // TODO(crbug.com/40871933): We are already only marking dom nodes when we
-  // have a frame, and we are already limiting paints attribution to contexts
-  // that come from the same SNH/window instance.  So, this might be safe to
-  // CHECK().  However, potentially it is possible to meet paint criteria,
-  // then meet some other final criteria in a different frame?  Until we test
-  // that, let's just guard carefully.
-  LocalFrame* frame = GetLocalFrameIfOutermostAndNotDetached();
-  if (!frame) {
-    return {};
-  }
-  String frameIdForTracing = GetFrameIdForTracing(frame);
-
-  auto callback = WTF::BindOnce(
-      [](SoftNavigationHeuristics* self, Member<SoftNavigationContext> context,
-         String frameIdForTracing,
-         const base::TimeTicks& presentation_timestamp,
-         const DOMPaintTimingInfo& paint_timing_info) {
-        if (!self) {
-          return;
-        }
-        CHECK(context);
-        context->SetFirstContentfulPaint(presentation_timestamp,
-                                         paint_timing_info);
-
-        auto* performance =
-            DOMWindowPerformance::performance(*self->window_.Get());
-
-        performance->AddSoftNavigationEntry(AtomicString(context->InitialUrl()),
-                                            context->UserInteractionTimestamp(),
-                                            paint_timing_info);
-        self->ReportSoftNavigationToMetrics(context);
-
-        TRACE_EVENT_INSTANT("scheduler,devtools.timeline,loading",
-                            "SoftNavigationHeuristics::EmitSoftNavigationEntry",
-                            perfetto::Track::FromPointer(context),
-                            context->FirstContentfulPaint(), "context",
-                            *context, "frame", frameIdForTracing);
-      },
-      WrapWeakPersistent(this),
-      WrapPersistent(context_for_first_contentful_paint_.Get()),
-      frameIdForTracing);
-
-  context_for_first_contentful_paint_ = nullptr;
-  return std::move(callback);
-}
-
 void SoftNavigationHeuristics::UpdateSoftLcpCandidate() {
+  // If we're waiting on FCP presentation feedback to emit entries, check if we
+  // can emit now.
+  if (!contexts_waiting_for_paint_timestamp_.empty()) {
+    for (auto& context : contexts_waiting_for_paint_timestamp_) {
+      CHECK(!context->WasEmitted());
+      MaybeCommitNavigationOrEmitSoftNavigationEntry(context);
+    }
+    contexts_waiting_for_paint_timestamp_.erase_if(
+        [&](const auto& context) { return context->WasEmitted(); });
+  }
+
   // This is called from PaintTimingMixin on every paint timing update, without
   // feature flag check. We shouldn't have a url context without the feature.
+  //
+  // TODO(crbug.com/434151263): Consider emitting ICP entries for all committed
+  // `SoftNavigationContext`s, not just the `context_for_current_url_`.
   if (!context_for_current_url_) {
     return;
   }
+  UpdateSoftLcpCandidateForContext(context_for_current_url_);
+}
+
+void SoftNavigationHeuristics::UpdateSoftLcpCandidateForContext(
+    SoftNavigationContext* context) {
   CHECK(RuntimeEnabledFeatures::SoftNavigationDetectionEnabled(window_));
 
-  bool has_new_lcp_candidate =
-      context_for_current_url_->TryUpdateLcpCandidate();
-  if (!has_new_lcp_candidate) {
+  if (!context->TryUpdateLcpCandidate()) {
     return;
   }
 
   // Performance timeline won't allow emitting soft-LCP entries without this
   // flag, but we can save some needless work by just not even trying to report.
   if (RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(window_)) {
-    context_for_current_url_->UpdateWebExposedLargestContentfulPaintIfNeeded();
+    context->UpdateWebExposedLargestContentfulPaintIfNeeded();
   }
 
-  soft_navigation_lcp_details_for_metrics_ =
-      context_for_current_url_->LatestLcpDetailsForUkm();
+  soft_navigation_lcp_details_for_metrics_ = context->LatestLcpDetailsForUkm();
 
-  Document* document = window_->document();
-  if (!document) {
-    return;
-  }
-  DocumentLoader* loader = document->Loader();
-  if (!loader) {
-    return;
-  }
+  LocalFrame* frame = window_->GetFrame();
+  // We should not be running paint timing callbacks for detached frames.
+  CHECK(frame);
+  auto* loader = frame->Loader().GetDocumentLoader();
+  // This should only be null if the frame was detached.
+  CHECK(loader);
   loader->DidChangePerformanceTiming();
 }
 
 void SoftNavigationHeuristics::ReportSoftNavigationToMetrics(
     SoftNavigationContext* context) const {
-  LocalFrame* frame = GetLocalFrameIfOutermostAndNotDetached();
-  if (!frame) {
-    return;
-  }
+  LocalFrame* frame = window_->GetFrame();
+  // We should not be running paint timing callbacks for detached frames.
+  CHECK(frame);
   auto* loader = frame->Loader().GetDocumentLoader();
-  if (!loader) {
-    return;
-  }
+  // This should only be null if the frame was detached.
+  CHECK(loader);
 
   CHECK(EnsureContextForCurrentWindow(context));
 
   if (LocalFrameClient* frame_client = frame->Client()) {
-    blink::SoftNavigationMetrics metrics = {
+    blink::SoftNavigationMetricsForReporting metrics = {
         .count = soft_navigation_count_,
         .start_time = loader->GetTiming().MonotonicTimeToPseudoWallTime(
             context->UserInteractionTimestamp()),
         .first_contentful_paint =
             loader->GetTiming().MonotonicTimeToPseudoWallTime(
                 context->FirstContentfulPaint()),
-        .navigation_id = context->GetNavigationId().Utf8()};
+        .navigation_id = context->NavigationId(),
+        .same_document_metrics_token = context->SameDocumentMetricsToken(),
+    };
     // This notifies UKM about this soft navigation.
     frame_client->DidObserveSoftNavigation(metrics);
   }
@@ -601,42 +544,16 @@ void SoftNavigationHeuristics::ReportSoftNavigationToMetrics(
 void SoftNavigationHeuristics::Trace(Visitor* visitor) const {
   visitor->Trace(active_interaction_context_);
   visitor->Trace(context_for_current_url_);
-  visitor->Trace(context_for_first_contentful_paint_);
   visitor->Trace(window_);
   visitor->Trace(paint_attribution_tracker_);
+  visitor->Trace(contexts_waiting_for_paint_timestamp_);
+  visitor->Trace(interaction_effects_monitors_);
   // Register a custom weak callback, which runs after processing weakness for
   // the container. This allows us to observe the collection becoming empty
   // without needing to observe individual element disposal.
   visitor->RegisterWeakCallbackMethod<
       SoftNavigationHeuristics,
       &SoftNavigationHeuristics::ProcessCustomWeakness>(this);
-}
-
-// This is invoked when executing a callback with an active `EventScope`,
-// which happens for click and keyboard input events, as well as
-// user-initiated navigation and popstate events. Running such an event
-// listener "activates" the `SoftNavigationContext` as a candidate soft
-// navigation.
-void SoftNavigationHeuristics::OnCreateTaskScope(
-    scheduler::TaskAttributionInfo& task_state) {
-  CHECK(active_interaction_context_);
-  // A task scope can be created without a `SoftNavigationContext` or one that
-  // differs from the one associated with the current `EventScope` if, for
-  // example, a previously created and awaited promise is resolved in an event
-  // handler.
-  if (task_state.GetSoftNavigationContext() !=
-      active_interaction_context_.Get()) {
-    return;
-  }
-
-  // TODO(crbug.com/40942324): Replace task_id with either an id for the
-  // `SoftNavigationContext` or a serialized version of the object.
-  TRACE_EVENT_INSTANT("loading", "SoftNavigationHeuristics::OnCreateTaskScope",
-                      perfetto::Track::FromPointer(active_interaction_context_),
-                      "context", active_interaction_context_.Get(), "task_id",
-                      task_state.Id().value());
-
-  SetIsTrackingSoftNavigationHeuristicsOnDocument(true);
 }
 
 void SoftNavigationHeuristics::ProcessCustomWeakness(
@@ -661,36 +578,18 @@ void SoftNavigationHeuristics::ProcessCustomWeakness(
     return false;
   });
 
-  // If we fully clear out all contexts via GC, then turn off soft-navs tracking
-  // on document.  This should never happen if we have a
-  // `context_for_current_url_`, which means we won't ever turn off tracking
-  // once an attributable URL change is detected.
+  // The set should not become empty if we're still tracking contexts for the
+  // current interaction of current URL change.
   // TODO(crbug.com/416706750, crbug.com/420402247): Consider enabling some
   // mechanism for eventually resetting things.
-  if (potential_soft_navigations_.empty()) {
-    CHECK(!active_interaction_context_, base::NotFatalUntil::M142);
-    CHECK(!context_for_current_url_, base::NotFatalUntil::M142);
-    SetIsTrackingSoftNavigationHeuristicsOnDocument(false);
-  }
-}
-
-LocalFrame* SoftNavigationHeuristics::GetLocalFrameIfOutermostAndNotDetached()
-    const {
-  if (!window_->IsCurrentlyDisplayedInFrame()) {
-    return nullptr;
-  }
-
-  LocalFrame* frame = window_->GetFrame();
-  if (!frame->IsOutermostMainFrame()) {
-    return nullptr;
-  }
-
-  return frame;
+  CHECK(!potential_soft_navigations_.empty() || !active_interaction_context_,
+        base::NotFatalUntil::M142);
+  CHECK(!potential_soft_navigations_.empty() || !context_for_current_url_,
+        base::NotFatalUntil::M142);
 }
 
 SoftNavigationHeuristics::EventScope SoftNavigationHeuristics::CreateEventScope(
-    EventScope::Type type,
-    ScriptState* script_state) {
+    EventScope::Type type) {
   // TODO(crbug.com/417164510): It appears that we can create many contexts for
   // a single interaction, because we can get many ::CreateEventScope (non
   // nested) even for a single interaction.
@@ -706,8 +605,8 @@ SoftNavigationHeuristics::EventScope SoftNavigationHeuristics::CreateEventScope(
     // "new interaction" (i.e. keydown), but will create a new one if that has
     // been cleared, which can happen in tests.
     if (IsInteractionStart(type) || !active_interaction_context_) {
-      active_interaction_context_ = MakeGarbageCollected<SoftNavigationContext>(
-          *window_, paint_attribution_mode_);
+      active_interaction_context_ =
+          MakeGarbageCollected<SoftNavigationContext>(*window_);
       potential_soft_navigations_.insert(active_interaction_context_);
       TRACE_EVENT_BEGIN(
           "loading", "SoftNavigation",
@@ -727,27 +626,23 @@ SoftNavigationHeuristics::EventScope SoftNavigationHeuristics::CreateEventScope(
   // is enabled.
   if (!tracker) {
     return SoftNavigationHeuristics::EventScope(this,
-                                                /*observer_scope=*/std::nullopt,
                                                 /*task_scope=*/std::nullopt,
                                                 type, is_nested);
   }
   return SoftNavigationHeuristics::EventScope(
-      this, tracker->RegisterObserver(this),
-      tracker->CreateTaskScope(script_state, active_interaction_context_.Get()),
+      this, tracker->SetTaskStateVariable(active_interaction_context_.Get()),
       type, is_nested);
 }
 
 std::optional<SoftNavigationHeuristics::EventScope>
-SoftNavigationHeuristics::MaybeCreateEventScopeForEvent(const Event& event) {
-  std::optional<EventScope::Type> type = EventScopeTypeFromEvent(event);
+SoftNavigationHeuristics::MaybeCreateEventScopeForInputEvent(
+    const Event& event) {
+  std::optional<EventScope::Type> type = EventScopeTypeFromInputEvent(
+      event, !interaction_effects_monitors_.empty());
   if (!type) {
     return std::nullopt;
   }
-  auto* script_state = ToScriptStateForMainWorld(window_.Get());
-  if (!script_state) {
-    return std::nullopt;
-  }
-  return CreateEventScope(*type, script_state);
+  return CreateEventScope(*type);
 }
 
 void SoftNavigationHeuristics::OnSoftNavigationEventScopeDestroyed(
@@ -766,7 +661,8 @@ void SoftNavigationHeuristics::OnSoftNavigationEventScopeDestroyed(
     return;
   }
 
-  EmitSoftNavigationEntryIfAllConditionsMet(active_interaction_context_.Get());
+  MaybeCommitNavigationOrEmitSoftNavigationEntry(
+      active_interaction_context_.Get());
   // For keyboard events, we can't clear `active_interaction_context_` until
   // keyup because keypress and keyup need to reuse the keydown context.
   if (IsInteractionEnd(event_scope.type_)) {
@@ -778,13 +674,14 @@ void SoftNavigationHeuristics::OnSoftNavigationEventScopeDestroyed(
 }
 
 uint64_t SoftNavigationHeuristics::CalculateViewportArea() const {
-  static constexpr uint64_t kMinViewportArea = 1;
+  // This should not be called after detach, so neither the frame nor the frame
+  // view should be null.
   LocalFrame* frame = window_->GetFrame();
   CHECK(frame);
   LocalFrameView* local_frame_view = frame->View();
-  if (!local_frame_view) {
-    return kMinViewportArea;
-  }
+  CHECK(local_frame_view);
+
+  static constexpr uint64_t kMinViewportArea = 1;
   uint64_t viewport_area = local_frame_view->GetLayoutSize().Area64();
   return std::max(viewport_area, kMinViewportArea);
 }
@@ -799,6 +696,33 @@ uint64_t SoftNavigationHeuristics::CalculateRequiredPaintArea() const {
     return required_paint_area;
   }
   return kMinRequiredArea;
+}
+
+void SoftNavigationHeuristics::ForEachInteractionEffectsMonitor(
+    base::FunctionRef<void(InteractionEffectsMonitor&)> callback) {
+  for (const auto& monitor : interaction_effects_monitors_) {
+    callback(*monitor.Get());
+  }
+}
+
+void SoftNavigationHeuristics::RegisterInteractionEffectsMonitor(
+    InteractionEffectsMonitor* monitor) {
+  // This should not be called after detach.
+  CHECK(window_->GetFrame());
+  auto result = interaction_effects_monitors_.insert(monitor);
+  CHECK(result.is_new_entry);
+}
+
+void SoftNavigationHeuristics::UnregisterInteractionEffectsMonitor(
+    InteractionEffectsMonitor* monitor) {
+  // `interaction_effects_monitors_` is cleared on detach, and the observer
+  // might be unregistered after that.
+  if (!window_->GetFrame()) {
+    return;
+  }
+  auto iter = interaction_effects_monitors_.find(monitor);
+  CHECK_NE(iter, interaction_effects_monitors_.end());
+  interaction_effects_monitors_.erase(monitor);
 }
 
 // static
@@ -817,24 +741,32 @@ void SoftNavigationHeuristics::InsertedNode(Node* inserted_node,
                                                          : container_node);
 }
 
-void SoftNavigationHeuristics::ModifiedNode(Node* node) {
+// static
+bool SoftNavigationHeuristics::ModifiedNode(Node* node) {
   auto* heuristics = GetHeuristicsForNodeIfShouldTrack(*node);
   if (!heuristics) {
-    return;
+    return false;
   }
-  heuristics->ModifiedDOM(node);
+  return heuristics->ModifiedDOM(node);
+}
+
+// static
+void SoftNavigationHeuristics::OnVideoSrcChanged(HTMLVideoElement* element) {
+  if (ModifiedNode(element)) {
+    if (LayoutObject* object = element->GetLayoutObject()) {
+      PaintTimingDetector::NotifyInteractionTriggeredVideoSrcChange(*object);
+    }
+  }
 }
 
 // SoftNavigationHeuristics::EventScope implementation
 // ///////////////////////////////////////////
 SoftNavigationHeuristics::EventScope::EventScope(
     SoftNavigationHeuristics* heuristics,
-    std::optional<ObserverScope> observer_scope,
     std::optional<TaskScope> task_scope,
     Type type,
     bool is_nested)
     : heuristics_(heuristics),
-      observer_scope_(std::move(observer_scope)),
       task_scope_(std::move(task_scope)),
       type_(type),
       is_nested_(is_nested) {
@@ -843,7 +775,6 @@ SoftNavigationHeuristics::EventScope::EventScope(
 
 SoftNavigationHeuristics::EventScope::EventScope(EventScope&& other)
     : heuristics_(std::exchange(other.heuristics_, nullptr)),
-      observer_scope_(std::move(other.observer_scope_)),
       task_scope_(std::move(other.task_scope_)),
       type_(other.type_),
       is_nested_(other.is_nested_) {}
@@ -851,7 +782,6 @@ SoftNavigationHeuristics::EventScope::EventScope(EventScope&& other)
 SoftNavigationHeuristics::EventScope&
 SoftNavigationHeuristics::EventScope::operator=(EventScope&& other) {
   heuristics_ = std::exchange(other.heuristics_, nullptr);
-  observer_scope_ = std::move(other.observer_scope_);
   task_scope_ = std::move(other.task_scope_);
   type_ = other.type_;
   is_nested_ = other.is_nested_;

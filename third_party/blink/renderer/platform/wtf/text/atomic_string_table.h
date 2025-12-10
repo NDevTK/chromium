@@ -14,7 +14,7 @@
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 
-namespace WTF {
+namespace blink {
 
 // The underlying storage that keeps the map of unique AtomicStrings. This is
 // thread safe and there is a single table for all threads. Adding and removing
@@ -42,9 +42,8 @@ class WTF_EXPORT AtomicStringTable final {
   // convert the string to save memory if possible.
   scoped_refptr<StringImpl> Add(StringImpl*);
   scoped_refptr<StringImpl> Add(scoped_refptr<StringImpl>&&);
-  scoped_refptr<StringImpl> Add(const LChar* chars, unsigned length);
-  scoped_refptr<StringImpl> Add(const UChar* chars,
-                                unsigned length,
+  scoped_refptr<StringImpl> Add(base::span<const LChar> chars);
+  scoped_refptr<StringImpl> Add(base::span<const UChar> chars,
                                 AtomicStringUCharEncoding encoding);
   scoped_refptr<StringImpl> Add(const StringView& string_view);
 
@@ -157,8 +156,6 @@ inline bool operator==(const AtomicString& lhs,
   return lhs.Impl() == rhs;
 }
 
-}  // namespace WTF
-
-using WTF::AtomicStringTable;
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_ATOMIC_STRING_TABLE_H_

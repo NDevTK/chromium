@@ -11,10 +11,12 @@
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/signin/signin_modal_dialog.h"
+#include "chrome/browser/ui/webui/signin/history_sync_optin_helper.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "chrome/common/url_constants.h"
 #include "components/signin/public/base/signin_buildflags.h"
@@ -83,7 +85,9 @@ class SigninViewController {
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  explicit SigninViewController(BrowserWindowInterface* browser);
+  SigninViewController(BrowserWindowInterface* browser,
+                       Profile* profile,
+                       TabStripModel* tab_strip_model);
 
   SigninViewController(const SigninViewController&) = delete;
   SigninViewController& operator=(const SigninViewController&) = delete;
@@ -168,8 +172,12 @@ class SigninViewController {
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   // Shows the modal history sync opt in dialog as a browser-modal dialog on top
-  // of the `browser_`'s window.
-  void ShowModalHistorySyncOptInDialog();
+  // of the `browser_`'s window. Executes the provided callback when the dialog
+  // closes.
+  void ShowModalHistorySyncOptInDialog(
+      bool should_close_modal_dialog,
+      HistorySyncOptinHelper::FlowCompletedCallback
+          history_optin_completed_callback);
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
   // Shows the modal managed user notice dialog as a browser-modal dialog on
@@ -214,26 +222,21 @@ class SigninViewController {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SignInViewControllerBrowserTest,
-                           EmailConfirmationDefaultFocus);
-  FRIEND_TEST_ALL_PREFIXES(SignInViewControllerBrowserTest,
                            ErrorDialogDefaultFocus);
-  FRIEND_TEST_ALL_PREFIXES(SignInViewControllerBrowserTest,
-                           EnterpriseConfirmationDefaultFocus);
-  FRIEND_TEST_ALL_PREFIXES(SignInViewControllerBrowserOIDCAccountTest,
-                           EnterpriseConfirmationDefaultFocus);
-  FRIEND_TEST_ALL_PREFIXES(SignInViewControllerBrowserOIDCAccountTest,
-                           EnterpriseConfirmationCancel);
   FRIEND_TEST_ALL_PREFIXES(SigninViewControllerDelegateViewsBrowserTest,
                            CloseImmediately);
   FRIEND_TEST_ALL_PREFIXES(ProfilePickerCreationFlowBrowserTest,
                            CreateLocalProfile);
   FRIEND_TEST_ALL_PREFIXES(ProfilePickerCreationFlowBrowserTest,
                            CancelLocalProfileCreation);
+  FRIEND_TEST_ALL_PREFIXES(
+      ProfilePickerWithReducedFrictionRemoveSigninBrowserTest,
+      CreateLocalProfileWithoutSigninStep);
   FRIEND_TEST_ALL_PREFIXES(SyncSettingsInteractiveTest,
                            PressingSignOutButtonsSignsOutUser);
   friend class ChromeSignoutConfirmationPromptPixelTest;
   friend class login_ui_test_utils::SigninViewControllerTestUtil;
-  friend class SigninInterceptFirstRunExperienceDialogBrowserTest;
+  friend class SigninInterceptFirstRunExperienceDialogBrowserTestBase;
   friend class SyncConfirmationUIDialogPixelTest;
   friend class SigninViewControllerBrowserTestBase;
   friend class ProfileMenuViewSignoutTest;
@@ -269,6 +272,7 @@ class SigninViewController {
   // prompt.
   void ShowSignoutConfirmationPrompt(
       ChromeSignoutConfirmationPromptVariant prompt_variant,
+      size_t unsynced_data_count,
       SignoutConfirmationCallback callback);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
@@ -282,11 +286,14 @@ class SigninViewController {
   // Helper to create an on close callback for `SigninModalDialog`.
   base::OnceClosure GetOnModalDialogClosedCallback();
 
-  // BrowserWindowInterface owning this controller.
-  const raw_ptr<BrowserWindowInterface> browser_;
+  Profile* GetProfile();
+  TabStripModel* GetTabStripModel();
 
-  const raw_ptr<Profile> profile_;
-  const raw_ptr<TabStripModel> tab_strip_model_;
+  // BrowserWindowInterface owning this controller.
+  const raw_ref<BrowserWindowInterface> browser_;
+
+  const raw_ref<Profile> profile_;
+  const raw_ref<TabStripModel> tab_strip_model_;
 
   // Currently displayed modal dialog, or nullptr if none is displayed.
   std::unique_ptr<SigninModalDialog> dialog_;

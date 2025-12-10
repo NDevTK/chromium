@@ -6,6 +6,7 @@
 
 #import "base/base64.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/dom_distiller/core/dom_distiller_features.h"
 #import "components/dom_distiller/ios/distiller_page_utils.h"
 #import "ios/chrome/browser/reader_mode/model/reader_mode_java_script_feature.h"
 #import "ios/web/public/js_messaging/web_frame.h"
@@ -31,8 +32,7 @@ void ReaderModeDistillerPage::DistillPageImpl(const GURL& url,
   if (!main_frame) {
     return;
   }
-  if (!main_frame->GetSecurityOrigin().IsSameOriginWith(
-          url::Origin::Create(url))) {
+  if (!main_frame->GetSecurityOrigin().IsSameOriginWith(url)) {
     return;
   }
 
@@ -46,10 +46,29 @@ bool ReaderModeDistillerPage::ShouldFetchOfflineData() {
   return false;
 }
 
+dom_distiller::DistillerType ReaderModeDistillerPage::GetDistillerType() {
+  return dom_distiller::ShouldUseReadabilityDistiller()
+             ? dom_distiller::DistillerType::kReadability
+             : dom_distiller::DistillerType::kDOMDistiller;
+}
+
 void ReaderModeDistillerPage::HandleJavaScriptResult(
     const GURL& url,
     const base::Value* result) {
-  base::Value result_as_value =
-      dom_distiller::ParseValueFromScriptResult(result);
-  OnDistillationDone(url, &result_as_value);
+  switch (GetDistillerType()) {
+    case dom_distiller::DistillerType::kReadability: {
+      base::Value result_as_value;
+      if (result) {
+        result_as_value = result->Clone();
+      }
+      OnDistillationDone(url, &result_as_value);
+      break;
+    }
+    case dom_distiller::DistillerType::kDOMDistiller: {
+      base::Value result_as_value =
+          dom_distiller::ParseValueFromScriptResult(result);
+      OnDistillationDone(url, &result_as_value);
+      break;
+    }
+  }
 }

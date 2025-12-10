@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "ash/webui/recorder_app_ui/recorder_app_ui.h"
 
@@ -241,14 +237,6 @@ RecorderAppUI::~RecorderAppUI() {
   if (speech::IsOnDeviceSpeechRecognitionSupported()) {
     speech::SodaInstaller::GetInstance()->RemoveObserver(this);
   }
-}
-
-void RecorderAppUI::BindInterface(
-    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
-      web_ui()->GetWebContents(), std::move(receiver));
 }
 
 void RecorderAppUI::BindInterface(
@@ -650,8 +638,6 @@ void RecorderAppUI::InstallSoda(const std::string& language,
 
   // Get SODA state directly from SodaInstaller in case the cached state is
   // outdated.
-  // TODO: b/375306309 - Get cached state instead when SODA states are always
-  // consistent after having `OnSodaUninstalled` event.
   auto soda_state = GetSodaState(language_code);
   if (soda_state.type == recorder_app::mojom::ModelStateType::kNotInstalled ||
       soda_state.type == recorder_app::mojom::ModelStateType::kError) {

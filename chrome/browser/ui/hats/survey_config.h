@@ -13,11 +13,14 @@
 #include "base/time/time.h"
 #include "build/branding_buildflags.h"
 #include "components/compose/buildflags.h"
+#include "pdf/buildflags.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 // Trigger identifiers currently used; duplicates not allowed.
 extern const char kHatsSurveyTriggerAutofillAddress[];
 extern const char kHatsSurveyTriggerAutofillAddressUserPerception[];
+extern const char kHatsSurveyTriggerAutofillAiFilling[];
+extern const char kHatsSurveyTriggerAutofillAiSavePrompt[];
 extern const char kHatsSurveyTriggerAutofillAddressUserDeclinedSuggestion[];
 extern const char kHatsSurveyTriggerAutofillAddressUserDeclinedSave[];
 extern const char kHatsSurveyTriggerAutofillCreditCardUserPerception[];
@@ -31,9 +34,26 @@ extern const char kHatsSurveyTriggerDownloadWarningPageBypass[];
 extern const char kHatsSurveyTriggerDownloadWarningPageHeed[];
 extern const char kHatsSurveyTriggerDownloadWarningPageIgnore[];
 extern const char kHatsSurveyTriggerHistoryEmbeddings[];
+extern const char kHatsSurveyTriggerIdentityAddressBubbleSignin[];
+extern const char kHatsSurveyTriggerIdentityDiceWebSigninAccepted[];
+extern const char kHatsSurveyTriggerIdentityDiceWebSigninDeclined[];
+extern const char kHatsSurveyTriggerIdentityFirstRunSignin[];
+extern const char kHatsSurveyTriggerIdentityPasswordBubbleSignin[];
+extern const char kHatsSurveyTriggerIdentityProfileMenuDismissed[];
+extern const char kHatsSurveyTriggerIdentityProfileMenuSignin[];
+extern const char kHatsSurveyTriggerIdentityProfilePickerAddProfileSignin[];
+extern const char kHatsSurveyTriggerIdentitySigninInterceptProfileSeparation[];
+extern const char kHatsSurveyTriggerIdentitySigninPromoBubbleDismissed[];
+extern const char kHatsSurveyTriggerIdentitySwitchProfileFromProfileMenu[];
+extern const char kHatsSurveyTriggerIdentitySwitchProfileFromProfilePicker[];
 extern const char kHatsSurveyTriggerLensOverlayResults[];
 extern const char kHatsSurveyTriggerNtpModules[];
+extern const char kHatsSurveyTriggerNextPanel[];
 extern const char kHatsSurveyTriggerNtpPhotosModuleOptOut[];
+extern const char kHatsSurveyTriggerPasswordChangeCanceled[];
+extern const char kHatsSurveyTriggerPasswordChangeDelayed[];
+extern const char kHatsSurveyTriggerPasswordChangeError[];
+extern const char kHatsSurveyTriggerPasswordChangeSuccess[];
 extern const char kHatsSurveyTriggerPerformanceControlsPPM[];
 extern const char kHatsSurveyTriggerPrivacyGuide[];
 extern const char kHatsSurveyTriggerRedWarning[];
@@ -62,14 +82,15 @@ extern const char kHatsSurveyTriggerWallpaperSearch[];
 extern const char kHatsSurveyTriggerComposeAcceptance[];
 extern const char kHatsSurveyTriggerComposeClose[];
 extern const char kHatsSurveyTriggerComposeNudgeClose[];
-#endif  // BUILDFLAG(ENABLE_COMPOSE)
+#endif  // #if BUILDFLAG(ENABLE_COMPOSE)
 extern const char kHatsSurveyTriggerWhatsNew[];
-#else
+#else   // BUILDFLAG(IS_ANDROID)
 extern const char kHatsSurveyTriggerAndroidStartupSurvey[];
-extern const char kHatsSurveyTriggerQuickDelete[];
-extern const char kHatsSurveyTriggerClearBrowsingData[];
-extern const char kHatsSurveyTriggerSafetyHubAndroid[];
-extern const char kHatsSurveyOrganicTriggerSafetyHubAndroid[];
+extern const char kHatsSurveyTriggerSigninFirstRun[];
+extern const char kHatsSurveyTriggerSigninWeb[];
+extern const char kHatsSurveyTriggerSigninNtpAvatar[];
+extern const char kHatsSurveyTriggerSigninNtpPromo[];
+extern const char kHatsSurveyTriggerSigninBookmarkPromo[];
 #endif  // #if !BUILDFLAG(IS_ANDROID)
 
 extern const char kHatsSurveyTriggerPermissionsPrompt[];
@@ -91,6 +112,11 @@ extern const char kHatsSurveyTriggerMerchantTrustEvaluationExperimentSurvey[];
 extern const char kHatsSurveyTriggerMerchantTrustLearnSurvey[];
 extern const char kHatsSurveyTriggerOnFocusZpsSuggestionsHappiness[];
 extern const char kHatsSurveyTriggerOnFocusZpsSuggestionsUtility[];
+
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+extern const char kHatsSurveyConsumerTriggerPdfSaveToDrive[];
+extern const char kHatsSurveyEnterpriseTriggerPdfSaveToDrive[];
+#endif  // BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
 
 extern const char kHatsSurveyTriggerTesting[];
 // The Trigger ID for a test HaTS Next survey which is available for testing

@@ -153,14 +153,13 @@ Vector<ModuleRequest> ModuleRecord::ModuleRequests(
   Vector<ModuleRequest> requests;
   requests.ReserveInitialCapacity(length);
   bool needs_text_position =
-      !WTF::IsMainThread() ||
+      !IsMainThread() ||
       probe::ToCoreProbeSink(ExecutionContext::From(script_state))
           ->HasDevToolsSessions();
 
   for (int i = 0; i < length; ++i) {
     v8::Local<v8::ModuleRequest> v8_module_request =
-        v8_module_requests->Get(script_state->GetContext(), i)
-            .As<v8::ModuleRequest>();
+        v8_module_requests->Get(i).As<v8::ModuleRequest>();
     v8::Local<v8::String> v8_specifier = v8_module_request->GetSpecifier();
     v8::ModuleImportPhase import_phase = v8_module_request->GetPhase();
     TextPosition position = TextPosition::MinimumPosition();
@@ -178,8 +177,7 @@ Vector<ModuleRequest> ModuleRecord::ModuleRequests(
     }
     Vector<ImportAttribute> import_attributes =
         ModuleRecord::ToBlinkImportAttributes(
-            script_state->GetContext(), record,
-            v8_module_request->GetImportAttributes(),
+            record, v8_module_request->GetImportAttributes(),
             /*v8_import_attributes_has_positions=*/true);
 
     requests.emplace_back(
@@ -200,14 +198,14 @@ v8::MaybeLocal<v8::Module> ModuleRecord::ResolveModuleCallback(
     v8::Local<v8::String> specifier,
     v8::Local<v8::FixedArray> import_attributes,
     v8::Local<v8::Module> referrer) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   Modulator* modulator = Modulator::From(ScriptState::From(isolate, context));
   DCHECK(modulator);
 
   ModuleRequest module_request(ToCoreStringWithNullCheck(isolate, specifier),
                                TextPosition::MinimumPosition(),
                                ModuleRecord::ToBlinkImportAttributes(
-                                   context, referrer, import_attributes,
+                                   referrer, import_attributes,
                                    /*v8_import_attributes_has_positions=*/true),
                                ModuleImportPhase::kEvaluation);
 
@@ -222,7 +220,7 @@ v8::MaybeLocal<v8::Object> ModuleRecord::ResolveSourceCallback(
     v8::Local<v8::String> specifier,
     v8::Local<v8::FixedArray> import_attributes,
     v8::Local<v8::Module> referrer) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   ScriptState* script_state = ScriptState::From(isolate, context);
   Modulator* modulator = Modulator::From(script_state);
   DCHECK(modulator);
@@ -230,7 +228,7 @@ v8::MaybeLocal<v8::Object> ModuleRecord::ResolveSourceCallback(
   ModuleRequest module_request(ToCoreStringWithNullCheck(isolate, specifier),
                                TextPosition::MinimumPosition(),
                                ModuleRecord::ToBlinkImportAttributes(
-                                   context, referrer, import_attributes,
+                                   referrer, import_attributes,
                                    /*v8_import_attributes_has_positions=*/true),
                                ModuleImportPhase::kSource);
 
@@ -242,7 +240,6 @@ v8::MaybeLocal<v8::Object> ModuleRecord::ResolveSourceCallback(
 }
 
 Vector<ImportAttribute> ModuleRecord::ToBlinkImportAttributes(
-    v8::Local<v8::Context> context,
     v8::Local<v8::Module> record,
     v8::Local<v8::FixedArray> v8_import_attributes,
     bool v8_import_attributes_has_positions) {
@@ -253,22 +250,21 @@ Vector<ImportAttribute> ModuleRecord::ToBlinkImportAttributes(
   // in the form [key1, value1, key2, value2, ...].
   const int kV8AttributeEntrySize = v8_import_attributes_has_positions ? 3 : 2;
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   Vector<ImportAttribute> import_attributes;
   int number_of_import_attributes =
       v8_import_attributes->Length() / kV8AttributeEntrySize;
   import_attributes.ReserveInitialCapacity(number_of_import_attributes);
   for (int i = 0; i < number_of_import_attributes; ++i) {
     v8::Local<v8::String> v8_attribute_key =
-        v8_import_attributes->Get(context, i * kV8AttributeEntrySize)
-            .As<v8::String>();
+        v8_import_attributes->Get(i * kV8AttributeEntrySize).As<v8::String>();
     v8::Local<v8::String> v8_attribute_value =
-        v8_import_attributes->Get(context, (i * kV8AttributeEntrySize) + 1)
+        v8_import_attributes->Get((i * kV8AttributeEntrySize) + 1)
             .As<v8::String>();
     TextPosition attribute_position = TextPosition::MinimumPosition();
     if (v8_import_attributes_has_positions) {
       int32_t v8_attribute_source_offset =
-          v8_import_attributes->Get(context, (i * kV8AttributeEntrySize) + 2)
+          v8_import_attributes->Get((i * kV8AttributeEntrySize) + 2)
               .As<v8::Int32>()
               ->Value();
       v8::Location v8_attribute_loc =

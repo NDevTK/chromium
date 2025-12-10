@@ -9,9 +9,9 @@
 #import "base/strings/sys_string_conversions.h"
 #import "components/signin/public/base/signin_metrics.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/managed_profile_creation/browsing_data_migration_view_controller.h"
-#import "ios/chrome/browser/authentication/ui_bundled/enterprise/managed_profile_creation/learn_more_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/managed_profile_creation/managed_profile_creation_mediator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/managed_profile_creation/managed_profile_creation_view_controller.h"
+#import "ios/chrome/browser/authentication/ui_bundled/enterprise/managed_profile_creation/managed_profile_learn_more_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
@@ -24,7 +24,7 @@
 @interface ManagedProfileCreationCoordinator () <
     ManagedProfileCreationMediatorDelegate,
     ManagedProfileCreationViewControllerDelegate,
-    LearnMoreCoordinatorDelegate,
+    ManagedProfileLearnMoreCoordinatorDelegate,
     UINavigationControllerDelegate>
 @end
 
@@ -34,6 +34,7 @@
   BOOL _skipBrowsingDataMigration;
   BOOL _mergeBrowsingDataByDefault;
   BOOL _browsingDataMigrationDisabledByPolicy;
+  BOOL _multiProfileForceMigration;
   ManagedProfileCreationViewController* _viewController;
   // Used to display `_viewController` initially and
   // `_browsingDataMigrationViewController` if the user tries to modify how
@@ -41,7 +42,7 @@
   UINavigationController* _navigationController;
   ManagedProfileCreationMediator* _mediator;
   BrowsingDataMigrationViewController* _browsingDataMigrationViewController;
-  LearnMoreCoordinator* _learnMoreCoordinator;
+  ManagedProfileLearnMoreCoordinator* _learnMoreCoordinator;
 }
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
@@ -51,26 +52,32 @@
                  skipBrowsingDataMigration:(BOOL)skipBrowsingDataMigration
                 mergeBrowsingDataByDefault:(BOOL)mergeBrowsingDataByDefault
      browsingDataMigrationDisabledByPolicy:
-         (BOOL)browsingDataMigrationDisabledByPolicy {
+         (BOOL)browsingDataMigrationDisabledByPolicy
+                multiProfileForceMigration:(BOOL)multiProfileForceMigration {
   // TODO(crbug.com/381853288): Add a mediator to listen to the identity
   // changes.
   DCHECK(viewController);
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
+    // Sign-in related work should be done on regular browser.
+    CHECK_EQ(browser->type(), Browser::Type::kRegular,
+             base::NotFatalUntil::M145);
     _identity = identity;
     _hostedDomain = hostedDomain;
     _skipBrowsingDataMigration = skipBrowsingDataMigration;
     _mergeBrowsingDataByDefault = mergeBrowsingDataByDefault;
     _browsingDataMigrationDisabledByPolicy =
         browsingDataMigrationDisabledByPolicy;
+    _multiProfileForceMigration = multiProfileForceMigration;
   }
   return self;
 }
 
 - (void)start {
   _viewController = [[ManagedProfileCreationViewController alloc]
-      initWithUserEmail:_identity.userEmail
-           hostedDomain:_hostedDomain];
+               initWithUserEmail:_identity.userEmail
+                    hostedDomain:_hostedDomain
+      multiProfileForceMigration:_multiProfileForceMigration];
   _viewController.delegate = self;
   _viewController.managedProfileCreationViewControllerPresentationDelegate =
       self;
@@ -89,7 +96,7 @@
                  mergeBrowsingDataByDefault:_mergeBrowsingDataByDefault
       browsingDataMigrationDisabledByPolicy:
           _browsingDataMigrationDisabledByPolicy
-                                     gaiaID:_identity.gaiaID];
+                                     gaiaID:_identity.gaiaId];
   _mediator.consumer = _viewController;
   _mediator.delegate = self;
 
@@ -167,9 +174,10 @@
   }
 }
 
-#pragma mark - LearnMoreCoordinatorDelegate
+#pragma mark - ManagedProfileLearnMoreCoordinatorDelegate
 
-- (void)removeLearnMoreCoordinator:(LearnMoreCoordinator*)coordinator {
+- (void)removeLearnMoreCoordinator:
+    (ManagedProfileLearnMoreCoordinator*)coordinator {
   DCHECK(_learnMoreCoordinator);
   DCHECK_EQ(_learnMoreCoordinator, coordinator);
   [self stopLearnMoreCoordinator];
@@ -191,7 +199,7 @@
 
 - (void)showLearnMorePage {
   DCHECK(!_learnMoreCoordinator);
-  _learnMoreCoordinator = [[LearnMoreCoordinator alloc]
+  _learnMoreCoordinator = [[ManagedProfileLearnMoreCoordinator alloc]
       initWithBaseViewController:_viewController
                          browser:self.browser
                        userEmail:_identity.userEmail

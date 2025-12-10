@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/thumbnail/cc/etc1_thumbnail_helper.h"
 
@@ -19,6 +15,7 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "third_party/android_opengl/etc1/etc1.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "ui/android/resources/etc1_utils.h"
 
@@ -29,15 +26,8 @@ void CompressTask(SkBitmap raw_data,
                   bool supports_etc_non_power_of_two,
                   base::OnceCallback<void(sk_sp<SkPixelRef>, const gfx::Size&)>
                       post_compression_task) {
-  sk_sp<SkPixelRef> compressed_data = nullptr;
-
-  if (base::FeatureList::IsEnabled(ui::kCompressBitmapAtBackgroundPriority)) {
-    compressed_data = ui::Etc1::CompressBitmapAtBackgroundPriority(
-        raw_data, supports_etc_non_power_of_two);
-  } else {
-    compressed_data =
-        ui::Etc1::CompressBitmap(raw_data, supports_etc_non_power_of_two);
-  }
+  sk_sp<SkPixelRef> compressed_data =
+      ui::Etc1::CompressBitmap(raw_data, supports_etc_non_power_of_two);
   gfx::Size content_size = compressed_data
                                ? gfx::Size(raw_data.width(), raw_data.height())
                                : gfx::Size();

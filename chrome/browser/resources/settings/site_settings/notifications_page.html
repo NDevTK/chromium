@@ -1,4 +1,8 @@
 <style include="cr-hidden-style settings-shared site-settings-shared"></style>
+<settings-subpage page-title="$i18n{siteSettingsCategoryNotifications}"
+    search-label="$i18n{siteSettingsAllSitesFilter}"
+    search-icon="settings20:filter-list"
+    search-term="{{searchTerm}}" route-path$="[[routePath]]">
 <template is="dom-if"
     if="[[enablePermissionSiteSettingsRadioButton_]]">
   <div class="content-settings-header secondary">
@@ -30,7 +34,7 @@
     <cr-radio-group
         on-selected-changed="onNotificationTopLevelRadioChanged_">
       <cr-radio-button
-          id="notification-ask-radio-button"
+          id="notificationAskRadioButton"
           name="notification-ask-radio-button"
           checked$="[[isNotificationAllowed_]]">
         <cr-icon icon="privacy:notifications"></cr-icon>
@@ -42,26 +46,26 @@
           selectable-elements="cr-radio-button"
           hidden$="[[!isNotificationAllowed_]]">
         <cr-radio-button class="padded-radio-section"
-            id="notification-ask-quiet"
+            id="notificationAskQuiet"
             name="[[settingsStateEnum_.QUIET]]"
             pref="[[prefs.generated.notification]]"
             label="$i18n{siteSettingsNotificationsAskQuiet}">
         </cr-radio-button>
         <cr-radio-button class="padded-radio-section"
-            id="notification-ask-cpss"
+            id="notificationAskCpss"
             name="[[settingsStateEnum_.CPSS]]"
             pref="[[prefs.generated.notification]]"
             label="$i18n{siteSettingsNotificationsAskCPSS}">
         </cr-radio-button>
         <cr-radio-button class="padded-radio-section"
-            id="notification-ask-loud"
+            id="notificationAskLoud"
             name="[[settingsStateEnum_.LOUD]]"
             pref="[[prefs.generated.notification]]"
             label="$i18n{siteSettingsNotificationsAskLoud}">
         </cr-radio-button>
       </settings-radio-group>
       <cr-radio-button class="two-line"
-          id="notification-block"
+          id="notificationBlock"
           name="notification-block-radio-button"
           sub-label="$i18n{siteSettingsNotificationsBlockedSubLabel}"
           checked$="[[!isNotificationAllowed_]]">
@@ -90,21 +94,21 @@
         pref="{{prefs.generated.notification}}"
         selectable-elements="settings-collapse-radio-button">
       <settings-collapse-radio-button
-          id="notification-ask-quiet"
+          id="notificationAskQuiet"
           name="[[settingsStateEnum_.QUIET]]"
           pref="[[prefs.generated.notification]]"
           label="$i18n{siteSettingsNotificationsAskQuiet}"
           no-collapse>
       </settings-collapse-radio-button>
       <settings-collapse-radio-button
-          id="notification-ask-cpss"
+          id="notificationAskCpss"
           name="[[settingsStateEnum_.CPSS]]"
           pref="[[prefs.generated.notification]]"
           label="$i18n{siteSettingsNotificationsAskCPSS}"
           no-collapse>
       </settings-collapse-radio-button>
       <settings-collapse-radio-button
-          id="notification-ask-loud"
+          id="notificationAskLoud"
           name="[[settingsStateEnum_.LOUD]]"
           pref="[[prefs.generated.notification]]"
           label="$i18n{siteSettingsNotificationsAskLoud}"
@@ -119,3 +123,4 @@
     block-header="$i18n{siteSettingsNotificationsBlockedExceptions}"
     search-filter="[[searchTerm]]">
 </category-setting-exceptions>
+</settings-subpage>

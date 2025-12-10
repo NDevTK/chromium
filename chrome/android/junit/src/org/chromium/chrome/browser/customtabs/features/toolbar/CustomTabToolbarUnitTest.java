@@ -14,7 +14,6 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
@@ -28,6 +27,7 @@ import static org.mockito.Mockito.when;
 
 import static org.chromium.chrome.browser.flags.ActivityType.CUSTOM_TAB;
 import static org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant.PRICE_INSIGHTS;
+import static org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant.READER_MODE;
 import static org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant.TRANSLATE;
 import static org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant.UNKNOWN;
 
@@ -70,6 +70,7 @@ import org.robolectric.annotation.LooperMode.Mode;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.Callback;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.task.TaskTraits;
@@ -83,22 +84,24 @@ import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsV
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.CustomButtonParams.ButtonType;
 import org.chromium.chrome.browser.customtabs.CustomButtonParamsImpl;
-import org.chromium.chrome.browser.customtabs.CustomTabFeatureOverridesManager;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
-import org.chromium.chrome.browser.customtabs.features.minimizedcustomtab.CustomTabMinimizeDelegate;
 import org.chromium.chrome.browser.customtabs.features.minimizedcustomtab.MinimizedFeatureUtils;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar.CustomTabLocationBar;
+import org.chromium.chrome.browser.dom_distiller.ReaderModeManager;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.omnibox.UrlBarData;
 import org.chromium.chrome.browser.omnibox.status.PageInfoIphController;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.IncognitoStateProvider;
+import org.chromium.chrome.browser.theme.ThemeColorProvider;
 import org.chromium.chrome.browser.toolbar.LocationBarModel;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
 import org.chromium.chrome.browser.toolbar.ToolbarProgressBar;
 import org.chromium.chrome.browser.toolbar.ToolbarTabController;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.chrome.browser.toolbar.menu_button.MenuButtonCoordinator;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData;
 import org.chromium.chrome.browser.toolbar.optional_button.ButtonData.ButtonSpec;
 import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataImpl;
 import org.chromium.chrome.browser.toolbar.top.CaptureReadinessResult;
@@ -129,6 +132,7 @@ import java.util.function.BooleanSupplier;
         manifest = Config.NONE,
         shadows = {ShadowLooper.class, ShadowPostTask.class})
 @LooperMode(Mode.PAUSED)
+@DisableFeatures(ChromeFeatureList.CCT_TOOLBAR_REFACTOR)
 public class CustomTabToolbarUnitTest {
     private static final GURL TEST_URL = JUnitTestGURLs.INITIAL_URL;
     private static final GURL AMP_URL =
@@ -156,9 +160,9 @@ public class CustomTabToolbarUnitTest {
     @Mock WindowAndroid mWindowAndroid;
     @Mock AppMenuHandler mAppMenuHandler;
     private @Mock PageInfoIphController mPageInfoIphController;
-    @Mock private CustomTabFeatureOverridesManager mFeatureOverridesManager;
     @Mock private BrowserServicesIntentDataProvider mIntentDataProvider;
-    @Mock private CustomTabMinimizeDelegate mMinimizeDelegate;
+    @Mock private ThemeColorProvider mThemeColorProvider;
+    @Mock private IncognitoStateProvider mIncognitoStateProvider;
     @Captor ArgumentCaptor<AppMenuObserver> mAppMenuObserverCaptor;
 
     private Activity mActivity;
@@ -196,7 +200,6 @@ public class CustomTabToolbarUnitTest {
         when(mIntentDataProvider.getActivityType()).thenReturn(CUSTOM_TAB);
         when(mIntentDataProvider.isOptionalButtonSupported())
                 .thenReturn(ChromeFeatureList.sCctAdaptiveButton.isEnabled());
-        when(mFeatureOverridesManager.isFeatureEnabled(anyString())).thenReturn(null);
 
         mActivity = Robolectric.buildActivity(TestActivity.class).get();
         var shareButtonParams = CustomButtonParamsImpl.createShareButton(mActivity, Color.WHITE);
@@ -223,10 +226,13 @@ public class CustomTabToolbarUnitTest {
                 mToolbarProgressBar,
                 null,
                 null,
-                /* homeButtonDisplay= */ null);
+                null,
+                /* homeButtonDisplay= */ null,
+                mThemeColorProvider,
+                mIncognitoStateProvider,
+                /* incognitoWindowCountSupplier= */ null);
         if (!ChromeFeatureList.sCctToolbarRefactor.isEnabled()) {
             mToolbar.initVisibilityRule(mActivity, () -> mAppMenuHandler, mIntentDataProvider);
-            mToolbar.setFeatureOverridesManager(mFeatureOverridesManager);
         }
         mLocationBar =
                 (CustomTabLocationBar)
@@ -267,7 +273,7 @@ public class CustomTabToolbarUnitTest {
 
         // Attempt to update title and URL, should noop since location bar is still in empty state.
         mLocationBar.onTitleChanged();
-        mLocationBar.onUrlChanged();
+        mLocationBar.onUrlChanged(false);
         verify(mLocationBarModel, never()).notifySecurityStateChanged();
 
         mLocationBar.showRegularToolbar();
@@ -335,7 +341,7 @@ public class CustomTabToolbarUnitTest {
         when(mTab.getUrl()).thenReturn(JUnitTestGURLs.RED_1);
         UrlBarData urlBarData = UrlBarData.forUrl(JUnitTestGURLs.RED_1);
         when(mLocationBarModel.getUrlBarData()).thenReturn(urlBarData);
-        mLocationBar.onUrlChanged();
+        mLocationBar.onUrlChanged(false);
         result = mToolbar.isReadyForTextureCapture();
         assertTrue(result.isReady);
         assertEquals(ToolbarSnapshotDifference.URL_TEXT, result.snapshotDifference);
@@ -375,7 +381,7 @@ public class CustomTabToolbarUnitTest {
     public void testAboutBlankUrlIsShown() {
         setUpForAboutBlank();
         ShadowLooper.idleMainLooper();
-        mLocationBar.onUrlChanged();
+        mLocationBar.onUrlChanged(false);
         assertEquals("The url bar should be visible.", View.VISIBLE, mUrlBar.getVisibility());
         assertEquals(
                 "The url bar should show about:blank",
@@ -388,7 +394,7 @@ public class CustomTabToolbarUnitTest {
         setUpForAboutBlank();
         mLocationBar.setShowTitle(true);
         ShadowLooper.idleMainLooper();
-        mLocationBar.onUrlChanged();
+        mLocationBar.onUrlChanged(false);
         assertEquals("The title should be gone.", View.GONE, mTitleBar.getVisibility());
     }
 
@@ -397,7 +403,7 @@ public class CustomTabToolbarUnitTest {
         setUpForAboutBlank();
         mLocationBar.setUrlBarHidden(true);
         ShadowLooper.idleMainLooper();
-        mLocationBar.onUrlChanged();
+        mLocationBar.onUrlChanged(false);
         assertEquals("The url bar should be visible.", View.VISIBLE, mUrlBar.getVisibility());
         assertEquals(
                 "The url bar should show about:blank",
@@ -443,7 +449,6 @@ public class CustomTabToolbarUnitTest {
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.CCT_MINIMIZED})
     public void testMinimizeButtonEnabled() {
         MinimizedFeatureUtils.setDeviceEligibleForMinimizedCustomTabForTesting(true);
         setup();
@@ -480,27 +485,6 @@ public class CustomTabToolbarUnitTest {
     }
 
     @Test
-    @DisableFeatures({ChromeFeatureList.CCT_MINIMIZED})
-    public void testMinimizeButtonDisabled() {
-        ImageButton minimizeButton = mToolbar.findViewById(R.id.custom_tabs_minimize_button);
-        ImageButton closeButton = mToolbar.findViewById(R.id.close_button);
-
-        // Button on left side
-        assertNull("Minimize button should never be initialized", minimizeButton);
-        assertEquals("Close button should still be present", mToolbar.getChildAt(0), closeButton);
-
-        // Button on right side
-        mToolbar.setCloseButtonPosition(CustomTabsIntent.CLOSE_BUTTON_POSITION_END);
-        mToolbar.onMeasure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED);
-        assertNull("Minimize button should never be initialized", minimizeButton);
-        assertEquals(
-                "Close button should still be present",
-                mToolbar.getChildAt(mToolbar.getChildCount() - 1),
-                closeButton);
-    }
-
-    @Test
-    @EnableFeatures({ChromeFeatureList.CCT_MINIMIZED})
     public void testMinimizeButtonEnabled_MultiWindowMode() {
         MinimizedFeatureUtils.setDeviceEligibleForMinimizedCustomTabForTesting(true);
         setup();
@@ -597,30 +581,14 @@ public class CustomTabToolbarUnitTest {
     }
 
     @Test
-    @DisableFeatures({
-        ChromeFeatureList.CCT_REVAMPED_BRANDING,
-        ChromeFeatureList.CCT_NESTED_SECURITY_ICON
-    })
-    public void testSecurityIconVisibility() {
-        assertEquals(View.INVISIBLE, mSecurityButton.getVisibility());
-        assertEquals(View.GONE, mSecurityIcon.getVisibility());
-    }
-
-    @Test
-    @EnableFeatures({
-        ChromeFeatureList.CCT_REVAMPED_BRANDING,
-        ChromeFeatureList.CCT_NESTED_SECURITY_ICON
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NESTED_SECURITY_ICON})
     public void testSecurityIconVisibility_nestedIcon() {
         assertEquals(View.GONE, mSecurityButton.getVisibility());
         assertEquals(View.INVISIBLE, mSecurityIcon.getVisibility());
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.CCT_REVAMPED_BRANDING,
-        ChromeFeatureList.CCT_NESTED_SECURITY_ICON
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NESTED_SECURITY_ICON})
     public void testSecurityIconHidden() {
         when(mLocationBarModel.getSecurityIconResource(anyBoolean()))
                 .thenReturn(R.drawable.omnibox_https_valid_page_info);
@@ -632,10 +600,7 @@ public class CustomTabToolbarUnitTest {
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.CCT_REVAMPED_BRANDING,
-        ChromeFeatureList.CCT_NESTED_SECURITY_ICON
-    })
+    @EnableFeatures({ChromeFeatureList.CCT_NESTED_SECURITY_ICON})
     public void testSecurityIconShown() {
         when(mLocationBarModel.getSecurityIconResource(anyBoolean()))
                 .thenReturn(R.drawable.omnibox_not_secure_warning);
@@ -708,7 +673,24 @@ public class CustomTabToolbarUnitTest {
 
     @Test
     @EnableFeatures(ChromeFeatureList.CCT_ADAPTIVE_BUTTON)
-    public void testOptionalButton_notEnabledForWidthConstraint() {
+    public void testOptionalButton_readerMode_notEnabledForWidthConstraint() {
+        FeatureOverrides.overrideParam(
+                ChromeFeatureList.CCT_ADAPTIVE_BUTTON,
+                ReaderModeManager.CPA_FALLBACK_MENU_PARAM,
+                true);
+        testOptionalButton_notEnabledForWidthConstraint(
+                READER_MODE, getDataForReaderModeIconButton());
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.CCT_ADAPTIVE_BUTTON)
+    public void testOptionalButton_priceInsights_notEnabledForWidthConstraint() {
+        testOptionalButton_notEnabledForWidthConstraint(
+                PRICE_INSIGHTS, getDataForPriceInsightsIconButton());
+    }
+
+    private void testOptionalButton_notEnabledForWidthConstraint(
+            @AdaptiveToolbarButtonVariant int variant, ButtonData buttonData) {
         int urlBarWidth =
                 mActivity.getResources().getDimensionPixelSize(R.dimen.location_bar_min_url_width);
         int buttonWidth =
@@ -716,7 +698,7 @@ public class CustomTabToolbarUnitTest {
         // Set the toolbar width small enough (just a single button and the url bar will fit) to
         // have MTB hidden.
         mToolbar.setToolbarWidthForTesting(urlBarWidth + buttonWidth);
-        mToolbar.updateOptionalButton(getDataForPriceInsightsIconButton());
+        mToolbar.updateOptionalButton(buttonData);
 
         // For MTB hidden due to width constraint, |OptionButtonCoordinator| is instantiated
         // since the button visibility rule needs to be applied after the MTB is added to
@@ -726,7 +708,7 @@ public class CustomTabToolbarUnitTest {
         assertEquals(View.VISIBLE, mToolbar.findViewById(R.id.menu_dot).getVisibility());
         assertEquals(
                 "Fallback UI should be set",
-                PRICE_INSIGHTS,
+                variant,
                 mToolbar.getVariantForFallbackMenuForTesting());
 
         // Tapping non-fallback menu item like 'Translate...' has no effect.
@@ -740,8 +722,8 @@ public class CustomTabToolbarUnitTest {
         // Tapping the matching menu item leads to logging the histogram.
         watcher =
                 HistogramWatcher.newSingleRecordWatcher(
-                        "CustomTab.AdaptiveToolbarButton.FallbackUi", PRICE_INSIGHTS);
-        mToolbar.maybeRecordHistogramForAdaptiveToolbarButtonFallbackUi(PRICE_INSIGHTS);
+                        "CustomTab.AdaptiveToolbarButton.FallbackUi", variant);
+        mToolbar.maybeRecordHistogramForAdaptiveToolbarButtonFallbackUi(variant);
         watcher.assertExpected();
         assertEquals(
                 "Fallback UI should be reset",
@@ -820,7 +802,7 @@ public class CustomTabToolbarUnitTest {
         Mockito.doReturn(UrlBarData.forUrl(url)).when(mLocationBarModel).getUrlBarData();
     }
 
-    private ButtonDataImpl getDataForPriceInsightsIconButton() {
+    private ButtonData getDataForPriceInsightsIconButton() {
         Drawable iconDrawable =
                 AppCompatResources.getDrawable(mActivity, R.drawable.ic_trending_down_24dp);
         OnClickListener clickListener = mock(OnClickListener.class);
@@ -837,6 +819,33 @@ public class CustomTabToolbarUnitTest {
                         true,
                         null,
                         /* buttonVariant= */ AdaptiveToolbarButtonVariant.PRICE_INSIGHTS,
+                        /* actionChipLabelResId= */ Resources.ID_NULL,
+                        /* tooltipTextResId= */ Resources.ID_NULL,
+                        /* hasErrorBadge= */ false);
+        ButtonDataImpl buttonData = new ButtonDataImpl();
+        buttonData.setButtonSpec(buttonSpec);
+        buttonData.setCanShow(true);
+        buttonData.setEnabled(true);
+        return buttonData;
+    }
+
+    private ButtonData getDataForReaderModeIconButton() {
+        Drawable iconDrawable =
+                AppCompatResources.getDrawable(mActivity, R.drawable.ic_mobile_friendly_24dp);
+        OnClickListener clickListener = mock(OnClickListener.class);
+        OnLongClickListener longClickListener = mock(OnLongClickListener.class);
+        String contentDescription = mActivity.getString(R.string.reader_mode_cpa_button_text);
+
+        // Whether a button is static or dynamic is determined by the button variant.
+        ButtonSpec buttonSpec =
+                new ButtonSpec(
+                        iconDrawable,
+                        clickListener,
+                        longClickListener,
+                        contentDescription,
+                        true,
+                        null,
+                        /* buttonVariant= */ READER_MODE,
                         /* actionChipLabelResId= */ Resources.ID_NULL,
                         /* tooltipTextResId= */ Resources.ID_NULL,
                         /* hasErrorBadge= */ false);

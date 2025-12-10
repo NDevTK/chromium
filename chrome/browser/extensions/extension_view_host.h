@@ -12,13 +12,15 @@
 #include "build/build_config.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_registry.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/extensions/extension_view_host_web_modal_handler.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
 namespace content {
-class SiteInstance;
 class WebContents;
 }
 
@@ -64,7 +66,6 @@ class ExtensionViewHost
   };
 
   ExtensionViewHost(const Extension* extension,
-                    content::SiteInstance* site_instance,
                     content::BrowserContext* browser_context,
                     const GURL& url,
                     mojom::ViewType host_type,

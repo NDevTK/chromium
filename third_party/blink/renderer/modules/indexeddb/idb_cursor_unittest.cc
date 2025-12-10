@@ -48,8 +48,8 @@ class MockCursorImpl : public mojom::blink::IDBCursor {
   explicit MockCursorImpl(
       mojo::PendingAssociatedReceiver<mojom::blink::IDBCursor> receiver)
       : receiver_(this, std::move(receiver)) {
-    receiver_.set_disconnect_handler(WTF::BindOnce(
-        &MockCursorImpl::CursorDestroyed, WTF::Unretained(this)));
+    receiver_.set_disconnect_handler(
+        BindOnce(&MockCursorImpl::CursorDestroyed, Unretained(this)));
   }
 
   void Prefetch(int32_t count,
@@ -130,7 +130,7 @@ class IDBCursorTest : public testing::Test {
     // Set up `store`.
     IDBKeyPath store_key_path("primaryKey");
     scoped_refptr<IDBObjectStoreMetadata> store_metadata = base::AdoptRef(
-        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true, 1));
+        new IDBObjectStoreMetadata("store", kStoreId, store_key_path, true));
     IDBObjectStore* store =
         MakeGarbageCollected<IDBObjectStore>(store_metadata, transaction);
 

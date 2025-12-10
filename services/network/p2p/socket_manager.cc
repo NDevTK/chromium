@@ -132,15 +132,16 @@ class P2PSocketManager::DnsRequest {
  private:
   void OnDone(int result) {
     net::IPAddressList list;
-    const net::AddressList* addresses = request_->GetAddressResults();
-    if (result != net::OK || !addresses) {
+    const net::AddressList& addresses = request_->GetAddressResults();
+    if (result != net::OK) {
       LOG(ERROR) << "Failed to resolve address for " << host_name_
                  << ", errorcode: " << result;
       std::move(done_callback_).Run(list);
       return;
     }
 
-    for (const auto& endpoint : *addresses) {
+    list.reserve(addresses.size());
+    for (const auto& endpoint : addresses) {
       list.push_back(endpoint.address());
     }
     std::move(done_callback_).Run(list);
@@ -223,11 +224,6 @@ void P2PSocketManager::ResumeNetworkChangeNotifications() {
   }
 }
 
-void P2PSocketManager::AddAcceptedConnection(
-    std::unique_ptr<P2PSocket> accepted_connection) {
-  sockets_[accepted_connection.get()] = std::move(accepted_connection);
-}
-
 void P2PSocketManager::DestroySocket(P2PSocket* socket) {
   auto iter = sockets_.find(socket);
   CHECK(iter != sockets_.end());
@@ -254,8 +250,7 @@ void P2PSocketManager::DumpPacket(base::span<const uint8_t> packet,
   auto rtp_packet = packet.subspan(rtp_packet_pos, rtp_packet_size);
 
   size_t header_size = 0;
-  bool valid = webrtc::ValidateRtpHeader(rtp_packet.data(), rtp_packet.size(),
-                                         &header_size);
+  bool valid = webrtc::ValidateRtpHeader(rtp_packet, &header_size);
   if (!valid) {
     NOTREACHED();
   }

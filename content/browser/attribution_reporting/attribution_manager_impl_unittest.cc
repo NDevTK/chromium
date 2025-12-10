@@ -57,7 +57,6 @@
 #include "content/browser/attribution_reporting/aggregatable_debug_report.h"
 #include "content/browser/attribution_reporting/attribution_constants.h"
 #include "content/browser/attribution_reporting/attribution_debug_report.h"
-#include "content/browser/attribution_reporting/attribution_features.h"
 #include "content/browser/attribution_reporting/attribution_input_event.h"
 #include "content/browser/attribution_reporting/attribution_observer.h"
 #include "content/browser/attribution_reporting/attribution_os_level_manager.h"
@@ -226,7 +225,6 @@ constexpr base::TimeDelta kImpressionExpiry = base::Days(30);
 
 class MockReportSender : public AttributionReportSender {
  public:
-  MOCK_METHOD(void, SetInFirstBatch, (bool in_first_batch), (override));
   MOCK_METHOD(void,
               SendReport,
               (AttributionReport report,
@@ -605,16 +603,6 @@ TEST_F(AttributionManagerImplTest,
 
   histograms.ExpectTotalCount(
       "Conversions.TimeFromTriggerToReportSentSuccessfully", 0);
-
-  static constexpr char kNetworkConnectionTypeOnFailureHistogram[] =
-      "Conversions.EventLevelReport.NetworkConnectionTypeOnFailure";
-
-  histograms.ExpectBucketCount(
-      kNetworkConnectionTypeOnFailureHistogram,
-      network::mojom::ConnectionType::CONNECTION_UNKNOWN, 2);
-  histograms.ExpectBucketCount(kNetworkConnectionTypeOnFailureHistogram,
-                               network::mojom::ConnectionType::CONNECTION_2G,
-                               1);
 }
 
 TEST_F(AttributionManagerImplTest, RetryLogicOverridesGetReportTimer) {
@@ -769,7 +757,7 @@ TEST_F(AttributionManagerImplTest, QueuedReportAlwaysFails_StopsSending) {
       "Conversions.TimeFromTriggerToReportSentSuccessfully", 0);
 
   histograms.ExpectUniqueSample(
-      "Conversions.EventLevelReport.ReportRetriesTillSuccessOrFailure", 3, 1);
+      "Conversions.EventLevelReport.ReportRetriesTillSuccessOrFailure2", 4, 1);
 }
 
 TEST_F(AttributionManagerImplTest, ReportExpiredAtStartup_Deleted) {
@@ -2114,7 +2102,7 @@ TEST_F(AttributionManagerImplTest, TimeFromConversionToReportSendHistogram) {
       "Conversions.TimeFromTriggerToReportSentSuccessfully",
       kFirstReportingWindow.InHours() + 1, 1);
   histograms.ExpectUniqueSample(
-      "Conversions.EventLevelReport.ReportRetriesTillSuccessOrFailure", 0, 1);
+      "Conversions.EventLevelReport.ReportRetriesTillSuccessOrFailure2", 0, 1);
 }
 
 TEST_F(AttributionManagerImplTest, ReportRetriesTillSuccessHistogram) {
@@ -2159,7 +2147,7 @@ TEST_F(AttributionManagerImplTest, ReportRetriesTillSuccessHistogram) {
   histograms.ExpectUniqueSample("Conversions.ReportSendOutcome3", 0, 1);
 
   histograms.ExpectUniqueSample(
-      "Conversions.EventLevelReport.ReportRetriesTillSuccessOrFailure", 1, 1);
+      "Conversions.EventLevelReport.ReportRetriesTillSuccessOrFailure2", 1, 1);
 }
 
 TEST_F(AttributionManagerImplTest, SendReport_RecordsExtraReportDelay2) {
@@ -2204,177 +2192,6 @@ TEST_F(AttributionManagerImplTest, SendReport_RecordsExtraReportDelay2) {
   histograms.ExpectUniqueTimeSample(
       "Conversions.AggregatableReport.NoContextID.ExtraReportDelay",
       base::Days(3) + kDefaultOfflineReportDelay.min, 1);
-}
-
-TEST_F(AttributionManagerImplTest,
-       30DaysBetweenTriggerAndReportSentSuccessfully) {
-  const struct {
-    base::TimeDelta time;
-    bool sample;
-  } kTestCases[] = {
-      // Offset by `kDefaultOfflineReportDelay.max`.
-      {base::Days(30) - kDefaultOfflineReportDelay.max, /*sample=*/false},
-      {base::Days(30) - kDefaultOfflineReportDelay.max + base::Microseconds(1),
-       /*sample=*/true},
-  };
-  for (const auto& test_case : kTestCases) {
-    base::HistogramTester histograms;
-    attribution_manager_->HandleSource(
-        SourceBuilder().SetExpiry(kImpressionExpiry).Build(), kFrameId);
-    attribution_manager_->HandleTrigger(
-        DefaultAggregatableTriggerBuilder().Build(), kFrameId);
-
-    ReportSentCallback report_sent_callback;
-    std::optional<AttributionReport> sent_report;
-
-    EXPECT_CALL(*report_sender_, SendReport(_, /*is_debug_report=*/false, _))
-        .WillOnce([&](AttributionReport report, bool is_debug_report,
-                      ReportSentCallback callback) {
-          report_sent_callback = std::move(callback);
-          sent_report = std::move(report);
-        });
-
-    SetConnectionTypeAndWaitForObserversToBeNotified(
-        network::mojom::ConnectionType::CONNECTION_NONE);
-
-    task_environment_.FastForwardBy(test_case.time);
-
-    SetConnectionTypeAndWaitForObserversToBeNotified(
-        network::mojom::ConnectionType::CONNECTION_UNKNOWN);
-
-    task_environment_.FastForwardBy(kDefaultOfflineReportDelay.max);
-
-    ASSERT_TRUE(report_sent_callback);
-    ASSERT_TRUE(sent_report);
-    std::move(report_sent_callback)
-        .Run(*std::move(sent_report), SendResult::Sent(SentResult::kSent,
-                                                       /*status=*/0));
-
-    histograms.ExpectUniqueSample(
-        "Conversions.TimeFromTriggerToReportSentSuccessfullyExceeds30Days",
-        test_case.sample, 1);
-  }
-}
-
-TEST_F(AttributionManagerImplTest,
-       30DaysBetweenInitialReportTimeAndReportSentSuccessfully) {
-  const struct {
-    base::TimeDelta time;
-    bool sample;
-  } kTestCases[] = {
-      // Offset by `kDefaultOfflineReportDelay.max`.
-      {base::Days(30) - kDefaultOfflineReportDelay.max, /*sample=*/false},
-      {base::Days(30) - kDefaultOfflineReportDelay.max + base::Microseconds(1),
-       /*sample=*/true},
-  };
-  for (const auto& test_case : kTestCases) {
-    base::HistogramTester histograms;
-    attribution_manager_->HandleSource(
-        SourceBuilder().SetExpiry(kImpressionExpiry).Build(), kFrameId);
-    attribution_manager_->HandleTrigger(
-        DefaultAggregatableTriggerBuilder().Build(), kFrameId);
-
-    ReportSentCallback report_sent_callback;
-    std::optional<AttributionReport> sent_report;
-
-    EXPECT_CALL(*report_sender_, SendReport(_, /*is_debug_report=*/false, _))
-        .WillOnce([&](AttributionReport report, bool is_debug_report,
-                      ReportSentCallback callback) {
-          report_sent_callback = std::move(callback);
-          sent_report = std::move(report);
-        });
-
-    SetConnectionTypeAndWaitForObserversToBeNotified(
-        network::mojom::ConnectionType::CONNECTION_NONE);
-
-    task_environment_.FastForwardBy(test_case.time + kFirstReportingWindow);
-
-    SetConnectionTypeAndWaitForObserversToBeNotified(
-        network::mojom::ConnectionType::CONNECTION_UNKNOWN);
-
-    task_environment_.FastForwardBy(kDefaultOfflineReportDelay.max);
-
-    ASSERT_TRUE(report_sent_callback);
-    ASSERT_TRUE(sent_report);
-    std::move(report_sent_callback)
-        .Run(*std::move(sent_report), SendResult::Sent(SentResult::kSent,
-                                                       /*status=*/0));
-
-    histograms.ExpectUniqueSample(
-        "Conversions.ExtraReportDelayForSuccessfulSendExceeds30Days",
-        test_case.sample, 1);
-  }
-}
-
-TEST_F(AttributionManagerImplTest, SendReport_RecordsSchedulerReportDelay) {
-  base::HistogramTester histograms;
-
-  attribution_manager_->HandleSource(TestAggregatableSourceProvider()
-                                         .GetBuilder()
-                                         .SetExpiry(kImpressionExpiry)
-                                         .Build(),
-                                     kFrameId);
-  attribution_manager_->HandleTrigger(
-      DefaultAggregatableTriggerBuilder().Build(), kFrameId);
-
-  EXPECT_THAT(StoredReports(), SizeIs(2));
-
-  // Deliberately avoid running tasks so that the scheduler is delayed.
-  task_environment_.AdvanceClock(kFirstReportingWindow + base::Seconds(1));
-
-  // Cause any scheduled tasks to run.
-  task_environment_.FastForwardBy(base::TimeDelta());
-
-  histograms.ExpectUniqueTimeSample("Conversions.SchedulerReportDelay",
-                                    base::Seconds(1), 1);
-  histograms.ExpectUniqueTimeSample(
-      "Conversions.AggregatableReport.SchedulerReportDelay", base::Seconds(1),
-      1);
-}
-
-TEST_F(AttributionManagerImplTest,
-       SendReport_RecordsTimeFromLastNavigation_Successful) {
-  base::HistogramTester histograms;
-
-  EXPECT_CALL(*report_sender_, SendReport(_, /*is_debug_report=*/false, _))
-      .WillOnce(InvokeReportSentCallback(SentResult::kSent));
-
-  base::Time start = base::Time::Now();
-  attribution_manager_->UpdateLastNavigationTime(start);
-
-  attribution_manager_->HandleSource(
-      SourceBuilder().SetExpiry(kImpressionExpiry).Build(), kFrameId);
-  attribution_manager_->HandleTrigger(DefaultTrigger(), kFrameId);
-
-  task_environment_.FastForwardBy(kFirstReportingWindow + base::Minutes(20));
-
-  histograms.ExpectTotalCount(
-      "Conversions.TimeFromLastNavigationToDelivery_Succeeded.EventLevelReport",
-      1);
-  histograms.ExpectUniqueSample("Conversions.ReportSendOutcome3", 0, 1);
-}
-
-TEST_F(AttributionManagerImplTest,
-       SendReport_RecordsTimeFromLastNavigation_Failure) {
-  base::HistogramTester histograms;
-
-  EXPECT_CALL(*report_sender_, SendReport(_, /*is_debug_report=*/false, _))
-      .WillRepeatedly(InvokeReportSentCallback(SentResult::kTransientFailure));
-
-  base::Time start = base::Time::Now();
-  attribution_manager_->UpdateLastNavigationTime(start);
-
-  attribution_manager_->HandleSource(
-      SourceBuilder().SetExpiry(kImpressionExpiry).Build(), kFrameId);
-  attribution_manager_->HandleTrigger(DefaultTrigger(), kFrameId);
-
-  // Reporting window + both retry attempts.
-  task_environment_.FastForwardBy(kFirstReportingWindow + base::Minutes(20));
-
-  histograms.ExpectTotalCount(
-      "Conversions.TimeFromLastNavigationToDelivery_Failed.EventLevelReport",
-      1);
-  histograms.ExpectUniqueSample("Conversions.ReportSendOutcome3", 1, 1);
 }
 
 TEST_F(AttributionManagerImplTest, SendReportsFromWebUI_DoesNotRecordMetrics) {
@@ -2893,7 +2710,8 @@ TEST_F(AttributionManagerImplTest, OnReportSent_RecordReportDelay) {
       "Conversions.AggregatableReport.ExtraReportDelayForSuccessfulSend",
       base::Days(3) + base::Minutes(1), 1);
   histograms.ExpectUniqueSample(
-      "Conversions.AggregatableReport.ReportRetriesTillSuccessOrFailure", 0, 1);
+      "Conversions.AggregatableReport.ReportRetriesTillSuccessOrFailure2", 0,
+      1);
 
   // The content is set as the reporting origin. In unit tests, this value is
   // set to "https://report.test". DWA content sanitization extracts the eTLD+1
@@ -3010,7 +2828,8 @@ TEST_F(AttributionManagerImplTest,
   histograms.ExpectUniqueSample(
       "Conversions.AggregatableReport.ReportSendOutcome2", 3, 1);
   histograms.ExpectUniqueSample(
-      "Conversions.AggregatableReport.ReportRetriesTillSuccessOrFailure", 3, 1);
+      "Conversions.AggregatableReport.ReportRetriesTillSuccessOrFailure2", 4,
+      1);
 }
 
 TEST_F(AttributionManagerImplTest, AggregationServiceDisabled_ReportNotSent) {
@@ -3043,18 +2862,19 @@ TEST_F(AttributionManagerImplTest, AggregationServiceDisabled_ReportNotSent) {
 }
 
 TEST_F(AttributionManagerImplTest, GetFailedReportDelay) {
+  base::Time now = base::Time::Now();
   const struct {
     int failed_send_attempts;
-    std::optional<base::TimeDelta> expected;
+    std::optional<base::Time> expected;
   } kTestCases[] = {
-      {1, base::Minutes(5)},
-      {2, base::Minutes(15)},
+      {1, now + base::Minutes(5)},
+      {2, now + base::Minutes(15)},
       {3, std::nullopt},
   };
 
   for (const auto& test_case : kTestCases) {
     EXPECT_EQ(test_case.expected,
-              GetFailedReportDelay(test_case.failed_send_attempts))
+              GetReportTimeForRetry(test_case.failed_send_attempts))
         << "failed_send_attempts=" << test_case.failed_send_attempts;
   }
 }

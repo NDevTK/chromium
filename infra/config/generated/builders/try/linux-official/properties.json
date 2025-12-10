@@ -40,12 +40,14 @@
           "project": "chromium"
         }
       ],
-      "targets_spec_directory": "src/infra/config/generated/builders/try/linux-official/targets"
+      "targets_spec_directory": "infra/config/generated/builders/try/linux-official/targets",
+      "targets_spec_directory_relative_to_source_dir": true
     }
   },
   "$build/siso": {
     "configs": [
       "builder",
+      "no-remote-timeout",
       "remote-link"
     ],
     "enable_cloud_monitoring": true,

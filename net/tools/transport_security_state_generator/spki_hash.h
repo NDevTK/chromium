@@ -8,9 +8,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <string_view>
 
-#include "crypto/hash.h"
+#include "base/containers/span.h"
+#include "third_party/boringssl/src/include/openssl/sha2.h"
 
 namespace net::transport_security_state {
 
@@ -32,11 +34,11 @@ class SPKIHash {
   // Returns the size of the hash in bytes.
   size_t size() const { return data_.size(); }
 
-  uint8_t* data() { return data_.data(); }
-  const uint8_t* data() const { return data_.data(); }
+  base::span<uint8_t> span() { return data_; }
+  base::span<const uint8_t> span() const { return data_; }
 
  private:
-  std::array<uint8_t, crypto::hash::kSha256Size> data_;
+  std::array<uint8_t, SHA256_DIGEST_LENGTH> data_;
 };
 
 }  // namespace net::transport_security_state

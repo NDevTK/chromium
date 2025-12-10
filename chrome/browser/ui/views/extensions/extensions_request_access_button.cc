@@ -16,15 +16,16 @@
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
+#include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/extension_dialog_utils.h"
-#include "chrome/browser/ui/extensions/extensions_container.h"
-#include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
+#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "chrome/browser/ui/views/extensions/extension_view_utils.h"
+#include "chrome/browser/ui/views/extensions/extensions_container_views.h"
 #include "chrome/browser/ui/views/extensions/extensions_request_access_hover_card_coordinator.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_chip_button.h"
 #include "chrome/grit/generated_resources.h"
@@ -57,7 +58,7 @@ std::vector<const extensions::Extension*> GetExtensions(
 
 ExtensionsRequestAccessButton::ExtensionsRequestAccessButton(
     Browser* browser,
-    ExtensionsContainer* extensions_container)
+    ExtensionsContainerViews* extensions_container)
     : ToolbarChipButton(
           base::BindRepeating(&ExtensionsRequestAccessButton::OnButtonPressed,
                               base::Unretained(this)),
@@ -176,18 +177,18 @@ void ExtensionsRequestAccessButton::UpdateTooltipText() {
 
   tooltip_parts.push_back(l10n_util::GetStringFUTF16(
       IDS_EXTENSIONS_REQUEST_ACCESS_BUTTON_TOOLTIP_MULTIPLE_EXTENSIONS,
-      GetCurrentHost(active_contents)));
+      extensions::ui_util::GetFormattedHostForDisplay(*active_contents)));
   for (const auto& extension_id : extension_ids_) {
-    ToolbarActionViewController* action =
+    ToolbarActionViewModel* view_model =
         extensions_container_->GetActionForId(extension_id);
-    tooltip_parts.push_back(action->GetActionName());
+    tooltip_parts.push_back(view_model->GetActionName());
   }
   SetTooltipText(base::JoinString(tooltip_parts, u"\n"));
 }
 
 void ExtensionsRequestAccessButton::OnButtonPressed() {
   // Record IPH usage.
-  browser_->window()->NotifyFeaturePromoFeatureUsed(
+  BrowserUserEducationInterface::From(browser_)->NotifyFeaturePromoFeatureUsed(
       feature_engagement::kIPHExtensionsRequestAccessButtonFeature,
       FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   content::WebContents* web_contents = GetActiveWebContents();
@@ -226,7 +227,7 @@ void ExtensionsRequestAccessButton::OnButtonPressed() {
   // lifetime of `extensions_container_`.
   collapse_timer_.Start(
       FROM_HERE, collapse_duration,
-      base::BindOnce(&ExtensionsContainer::CollapseConfirmation,
+      base::BindOnce(&ExtensionsContainerViews::CollapseConfirmation,
                      base::Unretained(extensions_container_)));
 
   base::RecordAction(base::UserMetricsAction(

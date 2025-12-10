@@ -33,6 +33,7 @@
 #import "ios/chrome/browser/content_notification/model/content_notification_settings_action.h"
 #import "ios/chrome/browser/content_notification/model/content_notification_util.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
+#import "ios/chrome/browser/push_notification/model/notification_metrics_recorder.h"
 #import "ios/chrome/browser/push_notification/model/provisional_push_notification_service.h"
 #import "ios/chrome/browser/push_notification/model/provisional_push_notification_service_factory.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_account_context_manager.h"
@@ -518,6 +519,7 @@ void ProcessIncomingNotification(
 }  // anonymous namespace
 
 @interface PushNotificationDelegate () <AppStateObserver,
+                                        NotificationClassifier,
                                         ProfileStateObserver,
                                         SceneStateObserver>
 
@@ -530,20 +532,26 @@ void ProcessIncomingNotification(
 @property(nonatomic, readonly)
     PushNotificationClientManager* appWideClientManager;
 
+// The object that records metrics about push notifications.
+@property(nonatomic, readonly) NotificationMetricsRecorder* metricsRecorder;
+
 @end
 
 @implementation PushNotificationDelegate {
   __weak AppState* _appState;
   // Stores blocks to execute once the app is finished foregrounding.
   NSMutableArray<ProceduralBlock>* _runAfterForeground;
-  // Storage for the lazy-loaded `appWideClientManager` property.
-  raw_ptr<PushNotificationClientManager> _appWideClientManager;
 }
 
-- (instancetype)initWithAppState:(AppState*)appState {
+- (instancetype)initWithAppState:(AppState*)appState
+          userNotificationCenter:
+              (UNUserNotificationCenter*)userNotificationCenter {
   if ((self = [super init])) {
     _appState = appState;
     [_appState addObserver:self];
+    _metricsRecorder = [[NotificationMetricsRecorder alloc]
+        initWithNotificationCenter:userNotificationCenter];
+    _metricsRecorder.classifier = self;
   }
   return self;
 }
@@ -560,6 +568,7 @@ void ProcessIncomingNotification(
   __weak __typeof(self) weakSelf = self;
   [self executeWhenForeground:^{
     [weakSelf handleNotificationResponse:response];
+    [weakSelf.metricsRecorder recordInteraction:response.notification];
   }];
   // TODO(crbug.com/401537165): Consider changing when completionHandler is
   // called.
@@ -575,28 +584,11 @@ void ProcessIncomingNotification(
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))
                  completionHandler {
-  [self recordLifeCycleEvent:PushNotificationLifecycleEvent::
-                                 kNotificationForegroundPresentation];
-
-  NSDictionary* userInfo = notification.request.content.userInfo;
-
   __weak __typeof(self) weakSelf = self;
-
-  void (^presentationCompletionBlock)(UIBackgroundFetchResult result) =
-      ^(UIBackgroundFetchResult /* result */) {
-        [weakSelf handlePresentationCompletionWithUserInfo:userInfo
-                                         completionHandler:completionHandler];
-      };
-
-  if (IsMultiProfilePushNotificationHandlingEnabled()) {
-    ProcessIncomingNotification(
-        userInfo,
-        PushNotificationClientManagerFailurePoint::kWillPresentNotification,
-        presentationCompletionBlock);
-  } else {
-    HandleNotificationReceptionWithAppWideManager(userInfo,
-                                                  presentationCompletionBlock);
-  }
+  [self executeWhenForeground:^{
+    [weakSelf handleWillPresentNotification:notification
+                      withCompletionHandler:completionHandler];
+  }];
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter*)center
@@ -739,6 +731,25 @@ void ProcessIncomingNotification(
   }
 }
 
+#pragma mark - NotificationClassifier
+
+- (NotificationType)classifyNotification:(UNNotification*)notification {
+  // Use an arbitrary profile that is loaded - a specific profile is not needed
+  // to determine the type of notification.
+  std::vector<ProfileIOS*> loaded_profiles =
+      GetApplicationContext()->GetProfileManager()->GetLoadedProfiles();
+  CHECK(!loaded_profiles.empty());
+  ProfileIOS* profile = loaded_profiles.back();
+  PushNotificationClient* client = [self clientForNotification:notification
+                                                       profile:profile];
+  if (!client) {
+    return NotificationType::kUnknown;
+  }
+  std::optional<NotificationType> type =
+      client->GetNotificationType(notification);
+  return type.value_or(NotificationType::kUnknown);
+}
+
 #pragma mark - AppStateObserver
 
 - (void)appState:(AppState*)appState
@@ -821,15 +832,40 @@ void ProcessIncomingNotification(
 }
 
 - (PushNotificationClientManager*)appWideClientManager {
-  if (!_appWideClientManager) {
-    _appWideClientManager = GetApplicationContext()
-                                ->GetPushNotificationService()
-                                ->GetPushNotificationClientManager();
-  }
-  return _appWideClientManager;
+  return GetApplicationContext()
+      ->GetPushNotificationService()
+      ->GetPushNotificationClientManager();
 }
 
 #pragma mark - Private
+
+// Handles a notification that is about to be presented.
+- (void)handleWillPresentNotification:(UNNotification*)notification
+                withCompletionHandler:
+                    (void (^)(UNNotificationPresentationOptions options))
+                        completionHandler {
+  [self.metricsRecorder recordReceived:notification];
+  [self recordLifeCycleEvent:PushNotificationLifecycleEvent::
+                                 kNotificationForegroundPresentation];
+
+  NSDictionary* userInfo = notification.request.content.userInfo;
+  __weak __typeof(self) weakSelf = self;
+  void (^presentationCompletionBlock)(UIBackgroundFetchResult result) =
+      ^(UIBackgroundFetchResult /* result */) {
+        [weakSelf handlePresentationCompletionWithUserInfo:userInfo
+                                         completionHandler:completionHandler];
+      };
+
+  if (IsMultiProfilePushNotificationHandlingEnabled()) {
+    ProcessIncomingNotification(
+        userInfo,
+        PushNotificationClientManagerFailurePoint::kWillPresentNotification,
+        presentationCompletionBlock);
+  } else {
+    HandleNotificationReceptionWithAppWideManager(userInfo,
+                                                  presentationCompletionBlock);
+  }
+}
 
 // Determines how a notification should be presented when received while the app
 // is in the foreground and invokes the system completion handler with the
@@ -887,8 +923,12 @@ void ProcessIncomingNotification(
 
 // Notifies the client manager that the scene is "foreground active".
 - (void)appDidEnterForeground:(SceneState*)sceneState {
-  DCHECK(self.appWideClientManager);
-  self.appWideClientManager->OnSceneActiveForegroundBrowserReady();
+  PushNotificationClientManager* appWideClientManager =
+      self.appWideClientManager;
+  DCHECK(appWideClientManager);
+  appWideClientManager->OnSceneActiveForegroundBrowserReady();
+  [self.metricsRecorder
+      handleDeliveredNotificationsWithClosure:base::DoNothing()];
 
   __weak PushNotificationDelegate* weakSelf = self;
   __weak SceneState* weakSceneState = sceneState;
@@ -992,8 +1032,8 @@ void ProcessIncomingNotification(
 
   AuthenticationService* authService =
       AuthenticationServiceFactory::GetForProfile(profile);
-  NSString* gaiaID =
-      authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin).gaiaID;
+  GaiaId gaiaID =
+      authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin).gaiaId;
 
   // Early return if 1) the user has previously disabled Send Tab push
   // notifications, because in that case we don't want to automatically enable
@@ -1002,7 +1042,7 @@ void ProcessIncomingNotification(
           prefs::kSendTabNotificationsPreviouslyDisabled) ||
       push_notification_settings::
           GetMobileNotificationPermissionStatusForClient(
-              PushNotificationClientId::kSendTab, GaiaId(gaiaID))) {
+              PushNotificationClientId::kSendTab, gaiaID)) {
     return;
   }
 

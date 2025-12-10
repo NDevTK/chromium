@@ -7,7 +7,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "content/public/browser/federated_identity_auto_reauthn_permission_context_delegate.h"
+#include "content/public/browser/webid/federated_identity_auto_reauthn_permission_context_delegate.h"
 
 namespace password_manager {
 class PasswordManagerSettingsService;
@@ -57,6 +57,8 @@ class FederatedIdentityAutoReauthnPermissionContext
   bool IsAutoReauthnSettingEnabled() override;
   bool IsAutoReauthnEmbargoed(
       const url::Origin& relying_party_embedder) override;
+  bool IsAutoReauthnDisabledByEmbedder(
+      content::WebContents* web_contents) override;
   base::Time GetAutoReauthnEmbargoStartTime(
       const url::Origin& relying_party_embedder) override;
   void RecordEmbargoForAutoReauthn(

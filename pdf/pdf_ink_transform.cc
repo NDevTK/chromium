@@ -27,90 +27,47 @@ namespace chrome_pdf {
 
 namespace {
 
-// Performs an inverse operation of `EventPositionToCanonicalPosition()`, to
-// convert from canonical coordinates to screen coordinates.
-// TODO(crbug.com/379003898): Change EventPositionToCanonicalPosition() to
-// return gfx::AxisTransform2d, so that callers can just use the inverse of
-// the transform instead of this helper.
-gfx::PointF CanonicalPositionToScreenPosition(
-    const gfx::PointF& canonical_position,
-    PageOrientation orientation,
-    const gfx::Rect& page_content_rect,
-    float scale_factor) {
-  CHECK_GT(scale_factor, 0.0f);
-  CHECK(!page_content_rect.IsEmpty());
-  gfx::PointF screen_position = canonical_position;
-  screen_position.Scale(scale_factor);
-  switch (orientation) {
-    case PageOrientation::kOriginal:
-      // No further modification needed.
-      break;
-    case PageOrientation::kClockwise90:
-      screen_position.SetPoint(
-          page_content_rect.width() - screen_position.y() - 1,
-          screen_position.x());
-      break;
-    case PageOrientation::kClockwise180:
-      screen_position.SetPoint(
-          page_content_rect.width() - screen_position.x() - 1,
-          page_content_rect.height() - screen_position.y() - 1);
-      break;
-    case PageOrientation::kClockwise270:
-      screen_position.SetPoint(
-          screen_position.y(),
-          page_content_rect.height() - screen_position.x() - 1);
-      break;
-  }
-  // Account for scrolling, which is in the page content's origin.
-  screen_position += page_content_rect.origin().OffsetFromOrigin();
-  return screen_position;
-}
-
 gfx::Size GetOriginalUnrotatedSize(PageOrientation orientation,
                                    const gfx::Size& size) {
-  switch (orientation) {
-    case PageOrientation::kOriginal:
-    case PageOrientation::kClockwise180:
-      return size;
-    case PageOrientation::kClockwise90:
-    case PageOrientation::kClockwise270:
-      gfx::Size transposed_size(size);
-      transposed_size.Transpose();
-      return transposed_size;
+  if (!IsTransposedPageOrientation(orientation)) {
+    return size;
   }
-  NOTREACHED();
+
+  gfx::Size transposed_size(size);
+  transposed_size.Transpose();
+  return transposed_size;
 }
 
 }  // namespace
 
-gfx::PointF EventPositionToCanonicalPosition(const gfx::PointF& event_position,
-                                             PageOrientation orientation,
-                                             const gfx::Rect& page_content_rect,
-                                             float scale_factor) {
+gfx::Transform GetEventToCanonicalTransform(PageOrientation orientation,
+                                            const gfx::Rect& page_content_rect,
+                                            float scale_factor) {
   CHECK_GT(scale_factor, 0.0f);
   CHECK(!page_content_rect.IsEmpty());
-  gfx::PointF page_position =
-      event_position - page_content_rect.OffsetFromOrigin();
+
+  gfx::Transform transform;
+  transform.PostTranslate(-page_content_rect.OffsetFromOrigin());
   switch (orientation) {
     case PageOrientation::kOriginal:
       // No further modification needed.
       break;
     case PageOrientation::kClockwise90:
-      page_position.SetPoint(page_position.y(),
-                             page_content_rect.width() - page_position.x() - 1);
+      transform.PostConcat(gfx::Transform::Make270degRotation());
+      transform.PostTranslate(0, page_content_rect.width() - 1);
       break;
     case PageOrientation::kClockwise180:
-      page_position.SetPoint(
-          page_content_rect.width() - page_position.x() - 1,
-          page_content_rect.height() - page_position.y() - 1);
+      transform.PostConcat(gfx::Transform::Make180degRotation());
+      transform.PostTranslate(page_content_rect.width() - 1,
+                              page_content_rect.height() - 1);
       break;
     case PageOrientation::kClockwise270:
-      page_position.SetPoint(page_content_rect.height() - page_position.y() - 1,
-                             page_position.x());
+      transform.PostConcat(gfx::Transform::Make90degRotation());
+      transform.PostTranslate(page_content_rect.height() - 1, 0);
       break;
   }
-  page_position.InvScale(scale_factor);
-  return page_position;
+  transform.PostScale(1 / scale_factor);
+  return transform;
 }
 
 ink::AffineTransform GetInkRenderTransform(
@@ -180,26 +137,27 @@ ink::AffineTransform GetInkThumbnailTransform(
 
 gfx::Rect CanonicalInkEnvelopeToInvalidationScreenRect(
     const ink::Envelope& envelope,
-    PageOrientation orientation,
-    const gfx::Rect& page_content_rect,
-    float scale_factor) {
+    const gfx::Transform& transform) {
   const std::optional<ink::Rect>& ink_rect = envelope.AsRect();
   CHECK(ink_rect.has_value());
 
-  gfx::PointF p1 = CanonicalPositionToScreenPosition(
-      gfx::PointF(ink_rect->XMin(), ink_rect->YMin()), orientation,
-      page_content_rect, scale_factor);
-  gfx::PointF p2 = CanonicalPositionToScreenPosition(
-      gfx::PointF(ink_rect->XMax(), ink_rect->YMax()), orientation,
-      page_content_rect, scale_factor);
+  gfx::PointF p1 =
+      transform.MapPoint(gfx::PointF(ink_rect->XMin(), ink_rect->YMin()));
+  gfx::PointF p2 =
+      transform.MapPoint(gfx::PointF(ink_rect->XMax(), ink_rect->YMax()));
 
   // Width and height get +1 since both of the points are to be included in the
   // area; otherwise it would be an open rectangle on two edges.
-  float x = std::min(p1.x(), p2.x());
-  float y = std::min(p1.y(), p2.y());
-  float w = std::max(p1.x(), p2.x()) - x + 1;
-  float h = std::max(p1.y(), p2.y()) - y + 1;
-  return gfx::ToEnclosingRect(gfx::RectF(x, y, w, h));
+  const std::pair<float, float> minmax_x = std::minmax(p1.x(), p2.x());
+  const std::pair<float, float> minmax_y = std::minmax(p1.y(), p2.y());
+  float w = 1 + minmax_x.second - minmax_x.first;
+  float h = 1 + minmax_y.second - minmax_y.first;
+  gfx::Rect result =
+      gfx::ToEnclosingRect(gfx::RectF(minmax_x.first, minmax_y.first, w, h));
+  // Expand the invalidation rect a bit more to account for any other rounding
+  // errors that may have occurred.
+  result.Outset(1);
+  return result;
 }
 
 gfx::Transform GetCanonicalToPdfTransform(const gfx::SizeF& page_size,

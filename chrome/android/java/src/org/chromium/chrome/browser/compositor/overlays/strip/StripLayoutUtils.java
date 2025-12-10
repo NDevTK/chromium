@@ -6,20 +6,18 @@ package org.chromium.chrome.browser.compositor.overlays.strip;
 
 import static org.chromium.build.NullUtil.assumeNonNull;
 
-import android.content.Context;
-import android.text.TextUtils;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.MathUtils;
 import org.chromium.base.Token;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
-import org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
@@ -30,6 +28,7 @@ import org.chromium.ui.base.LocalizationUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 @NullMarked
 public class StripLayoutUtils {
@@ -38,10 +37,23 @@ public class StripLayoutUtils {
     // calculated as:
     // closeButtonEndPadding(10) + tabContainerEndPadding(16) + groupTitleStartMargin(13)
     //         - overlap(28-16) =
-    public static final float TAB_GROUP_BOTTOM_INDICATOR_WIDTH_OFFSET = 27.f;
-    static final float MIN_TAB_WIDTH_DP = 108.f;
+    public static final float TAB_GROUP_BOTTOM_INDICATOR_WIDTH_OFFSET = 27f;
+
+    // Tab width constants.
+    private static final float MIN_TAB_WIDTH_DESKTOP_DP = 76f;
+    private static final float MIN_TAB_WIDTH_TABLET_DP = 108f;
+    public static final float MIN_TAB_WIDTH_DP =
+            shouldApplyMoreDensity() ? MIN_TAB_WIDTH_DESKTOP_DP : MIN_TAB_WIDTH_TABLET_DP;
     public static final float MAX_TAB_WIDTH_DP = TabUiThemeUtil.getMaxTabStripTabWidthDp();
-    public static final float TAB_OVERLAP_WIDTH_DP = 28.f;
+    public static final float TAB_OVERLAP_WIDTH_DP = 28f;
+
+    // Pinned tab width.
+    public static final float PINNED_TAB_WIDTH_DP = MIN_TAB_WIDTH_DESKTOP_DP;
+
+    // Button size constants.
+    public static final float BUTTON_BACKGROUND_SIZE_DP = 32f;
+    public static final float BUTTON_TOUCH_TARGET_SIZE_DP =
+            shouldApplyMoreDensity() ? BUTTON_BACKGROUND_SIZE_DP : 48f;
 
     // Animation Constants.
     public static final int ANIM_TAB_MOVE_MS = 125;
@@ -112,29 +124,36 @@ public class StripLayoutUtils {
     }
 
     /**
-     * @param groupTitles A list of {@link StripLayoutGroupTitle}.
-     * @param rootId The root ID for the tab group title we're searching for.
-     * @return The {@link StripLayoutGroupTitle} with the given root ID. {@code null} otherwise.
+     * @param stripTabs The list of {@link StripLayoutTab}.
+     * @param view The {@link StripLayoutView} to check whether is the last pinned tab.
+     * @return Whether the view is the last pinned tab.
      */
-    public static @Nullable StripLayoutGroupTitle findGroupTitle(
-            StripLayoutGroupTitle[] groupTitles, int rootId) {
-        for (int i = 0; i < groupTitles.length; i++) {
-            final StripLayoutGroupTitle groupTitle = groupTitles[i];
-            if (groupTitle.getRootId() == rootId) return groupTitle;
+    public static boolean isLastPinnedTab(StripLayoutTab[] stripTabs, StripLayoutView view) {
+        StripLayoutTab tab = (view instanceof StripLayoutTab) ? (StripLayoutTab) view : null;
+        if (tab == null) return false;
+        for (int i = 0; i < stripTabs.length; i++) {
+            if (!stripTabs[i].getIsPinned()) {
+                if (i > 0) {
+                    return tab == stripTabs[i - 1];
+                } else {
+                    break;
+                }
+            }
         }
-        return null;
+        return false;
     }
 
     /**
      * @param groupTitles A list of {@link StripLayoutGroupTitle}.
-     * @param tabGroupId The {@link Token} for the tab group title we're searching for.
-     * @return The {@link StripLayoutGroupTitle} with the {@link Token}. {@code null} otherwise.
+     * @param tabGroupId The tab group ID for the tab group title we're searching for.
+     * @return The {@link StripLayoutGroupTitle} with the given root ID. {@code null} otherwise.
      */
     public static @Nullable StripLayoutGroupTitle findGroupTitle(
             StripLayoutGroupTitle[] groupTitles, @Nullable Token tabGroupId) {
+        if (tabGroupId == null) return null;
         for (int i = 0; i < groupTitles.length; i++) {
             final StripLayoutGroupTitle groupTitle = groupTitles[i];
-            if (groupTitle.getTabGroupId().equals(tabGroupId)) return groupTitle;
+            if (tabGroupId.equals(groupTitle.getTabGroupId())) return groupTitle;
         }
         return null;
     }
@@ -163,44 +182,6 @@ public class StripLayoutUtils {
     }
 
     /**
-     * Returns the group title text for the given {@link Tab}'s group. Falls back to the default
-     * title if needed.
-     *
-     * @param context The Android {@link Context}.
-     * @param modelFilter The {@link TabGroupModelFilter} that holds the given tab.
-     * @param tab A grouped tab.
-     */
-    public static String getGroupTitleText(
-            Context context, TabGroupModelFilter modelFilter, Tab tab) {
-        assert tab != null && tab.getTabGroupId() != null;
-        return getDefaultGroupTitleTextIfEmpty(
-                context,
-                modelFilter,
-                tab.getTabGroupId(),
-                modelFilter.getTabGroupTitle(tab.getRootId()));
-    }
-
-    /**
-     * Returns the provided title text if it isn't empty. Otherwise, returns the default title.
-     *
-     * @param context The Android {@link Context}.
-     * @param modelFilter The {@link TabGroupModelFilter} that holds the given group.
-     * @param tabGroupId The tab group ID of the relevant tab group.
-     * @param titleText The tab group's title text, if any. {@code null} otherwise.
-     */
-    public static String getDefaultGroupTitleTextIfEmpty(
-            Context context,
-            TabGroupModelFilter modelFilter,
-            Token tabGroupId,
-            @Nullable String titleText) {
-        // TODO(crbug.com/407545128): Unify with similar checks elsewhere.
-        if (!TextUtils.isEmpty(titleText)) return titleText;
-
-        int numTabs = modelFilter.getTabCountForGroup(tabGroupId);
-        return TabGroupTitleUtils.getDefaultTitle(context, numTabs);
-    }
-
-    /**
      * @param groupTitle The tab group title indicator {@link StripLayoutGroupTitle}.
      * @param numTabsInGroup Number of tabs in the tab group.
      * @param effectiveTabWidth The width of a tab, accounting for overlap.
@@ -216,36 +197,66 @@ public class StripLayoutUtils {
         return groupTitle.getWidth() + totalTabWidth;
     }
 
+    /** Returns a list of the {@link StripLayoutTab}s in a given group. */
     public static List<StripLayoutTab> getGroupedTabs(
-            TabModel tabModel, StripLayoutTab[] stripTabs, int rootId) {
+            TabModel tabModel, StripLayoutTab[] stripTabs, Token tabGroupId) {
         ArrayList<StripLayoutTab> groupedTabs = new ArrayList<>();
         for (int i = 0; i < stripTabs.length; ++i) {
             final StripLayoutTab stripTab = stripTabs[i];
             final Tab tab = tabModel.getTabById(stripTab.getTabId());
-            if (tab != null && tab.getRootId() == rootId) groupedTabs.add(stripTab);
+            if (tab != null && tabGroupId.equals(tab.getTabGroupId())) groupedTabs.add(stripTab);
         }
         return groupedTabs;
+    }
+
+    /** Returns the number of non-closing {@link StripLayoutTab}s in a given group. */
+    public static int getNumLiveGroupedTabs(
+            TabModel tabModel, StripLayoutTab[] stripTabs, Token tabGroupId) {
+        // TODO(crbug.com/443337907): This will be obsolete once we immediately close in the
+        //  TabModel, as we could then instead use TabGroupModelFilter#getTabCountForGroup.
+        List<StripLayoutTab> groupedTabs = getGroupedTabs(tabModel, stripTabs, tabGroupId);
+
+        int numLiveGroupedTabs = 0;
+        for (StripLayoutTab tab : groupedTabs) {
+            if (!tab.isDying()) numLiveGroupedTabs++;
+        }
+        return numLiveGroupedTabs;
     }
 
     // ============================================================================================
     // Tab util methods
     // ============================================================================================
 
-    /** Returns half of {@code mEffectiveTabWidth}. */
-    public static float getHalfTabWidth(Supplier<Float> tabWidthSupplier) {
-        return getEffectiveTabWidth(tabWidthSupplier) / 2;
+    /**
+     * @param tabWidthSupplier supplies the cached tab width for non-pinned tabs
+     * @param isPinned Whether the tab is pinned; currently always false for grouped tabs.
+     * @return Returns half of {@code mEffectiveTabWidth}.
+     */
+    public static float getHalfTabWidth(Supplier<Float> tabWidthSupplier, boolean isPinned) {
+        return getEffectiveTabWidth(tabWidthSupplier, isPinned) / 2;
     }
 
-    /** Returns the current effective tab width (accounting for overlap). */
-    public static float getEffectiveTabWidth(Supplier<Float> tabWidthSupplier) {
-        return (tabWidthSupplier.get() - TAB_OVERLAP_WIDTH_DP);
+    /**
+     * @param tabWidthSupplier supplies the cached tab width for non-pinned tabs.
+     * @param isPinned Whether the tab is pinned; currently always false for grouped tabs.
+     * @return Returns the current effective tab width (accounting for overlap).
+     */
+    public static float getEffectiveTabWidth(Supplier<Float> tabWidthSupplier, boolean isPinned) {
+        float tabWidth = isPinned ? PINNED_TAB_WIDTH_DP : tabWidthSupplier.get();
+        return (tabWidth - TAB_OVERLAP_WIDTH_DP);
     }
 
-    /** Shifts x by half tab width to accommodate for tab drop. */
-    public static float adjustXForTabDrop(float x, Supplier<Float> tabWidthSupplier) {
+    /**
+     * @param x raw drag X in strip coordinates.
+     * @param tabWidthSupplier supplies the cached tab width for non-pinned tabs.
+     * @param isPinned Whether the tab is pinned; currently always false for grouped tabs.
+     * @return Returns x shifted by half tab width to accommodate for tab drop.
+     */
+    public static float adjustXForTabDrop(
+            float x, Supplier<Float> tabWidthSupplier, boolean isPinned) {
         return x
                 - MathUtils.flipSignIf(
-                        StripLayoutUtils.getHalfTabWidth(tabWidthSupplier),
+                        StripLayoutUtils.getHalfTabWidth(tabWidthSupplier, isPinned),
                         LocalizationUtils.isLayoutRtl());
     }
 
@@ -281,10 +292,12 @@ public class StripLayoutUtils {
     }
 
     /**
+     * Returns a visible {@link StripLayoutView} at the given x-position, or {@code null} if none.
+     *
      * @param views The list of {@link StripLayoutView}.
      * @param x The x position to use to retrieve view.
      * @param includeGroupTitles Whether to include group title when finding view.
-     * @return View at x position.{@code null} if no view at position or if input criteria not met.
+     * @return View at x position. {@code null} if no view at position or if input criteria not met.
      */
     public static @Nullable StripLayoutView findViewAtPositionX(
             StripLayoutView[] views, float x, boolean includeGroupTitles) {
@@ -382,6 +395,17 @@ public class StripLayoutUtils {
         return false;
     }
 
+    /**
+     * Records the number of tabs that are currently multi-selected.
+     *
+     * @param tabModel The {@link TabModel}.
+     */
+    public static void recordTabMultiSelectionTabCount(@Nullable TabModel tabModel) {
+        if (!ChromeFeatureList.sAndroidTabHighlighting.isEnabled() || tabModel == null) return;
+        RecordHistogram.recordCount100Histogram(
+                "Tabs.Selections.Count",tabModel.getMultiSelectedTabsCount());
+    }
+
     // Other methods.
 
     public static void performHapticFeedback(View view) {
@@ -389,8 +413,25 @@ public class StripLayoutUtils {
         view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
     }
 
-    public static boolean skipTabEdgePositionCalculation(StripLayoutTab tab) {
-        return (tab.isDying() && !ChromeFeatureList.sTabletTabStripAnimation.isEnabled())
-                || tab.isDraggedOffStrip();
+    public static boolean shouldApplyMoreDensity() {
+        return ChromeFeatureList.sTabStripDensityChangeAndroid.isEnabled()
+                && DeviceInfo.isDesktop();
+    }
+
+    // Testing booleans
+    public static boolean isTabHighlightingForceCtrlClick() {
+        return ChromeFeatureList.sAndroidTabHighlightingForceCtrlClick.getValue();
+    }
+
+    public static boolean isTabHighlightingForceShiftClick() {
+        return ChromeFeatureList.sAndroidTabHighlightingForceShiftClick.getValue();
+    }
+
+    public static boolean isTabHighlightingTestingEnabled() {
+        return isTabHighlightingForceCtrlClick() || isTabHighlightingForceShiftClick();
+    }
+
+    public static boolean isTabPinningFromStripEnabled() {
+        return ChromeFeatureList.sAndroidPinnedTabsTabletTabStrip.isEnabled();
     }
 }

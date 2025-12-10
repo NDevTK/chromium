@@ -12,6 +12,7 @@
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "chrome/browser/ui/safety_hub/safety_hub_result.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_service.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
@@ -19,13 +20,16 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/permissions/notifications_engagement_service.h"
-#include "components/safe_browsing/core/common/features.h"
 #include "components/site_engagement/content/site_engagement_service.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
 constexpr char kExcludedKey[] = "exempted";
+
+// Engagement limits notification permissions module.
+const int kMinEngagementNotificationLimit = 0;
+const int kLowEngagementNotificationLimit = 4;
 
 std::set<std::pair<ContentSettingsPattern, ContentSettingsPattern>>
 GetIgnoredPatternPairs(scoped_refptr<HostContentSettingsMap> hcsm) {
@@ -53,12 +57,6 @@ NotificationPermissionsReviewService::NotificationPermissionsReviewService(
     site_engagement::SiteEngagementService* engagement_service)
     : engagement_service_(engagement_service), hcsm_(hcsm) {
   content_settings_observation_.Observe(hcsm);
-
-#if BUILDFLAG(IS_ANDROID)
-  if (!base::FeatureList::IsEnabled(features::kSafetyHub)) {
-    return;
-  }
-#endif  // BUILDFLAG(IS_ANDROID)
 
   // Disruptive notification revocation overlaps with the notification review
   // module. Disable this module when the disruptive revocation is running.
@@ -134,9 +132,9 @@ void NotificationPermissionsReviewService::
       ContentSettingsType::NOTIFICATION_PERMISSION_REVIEW, {});
 }
 
-std::unique_ptr<SafetyHubService::Result>
+std::unique_ptr<SafetyHubResult>
 NotificationPermissionsReviewService::UpdateOnUIThread(
-    std::unique_ptr<SafetyHubService::Result> interim_result) {
+    std::unique_ptr<SafetyHubResult> interim_result) {
   // Get blocklisted pattern pairs that should not be shown in the review list.
   std::set<std::pair<ContentSettingsPattern, ContentSettingsPattern>>
       ignored_patterns_set = GetIgnoredPatternPairs(hcsm_);
@@ -226,19 +224,19 @@ NotificationPermissionsReviewService::GetRepeatedUpdateInterval() {
   return base::Days(1);
 }
 
-base::OnceCallback<std::unique_ptr<SafetyHubService::Result>()>
+base::OnceCallback<std::unique_ptr<SafetyHubResult>()>
 NotificationPermissionsReviewService::GetBackgroundTask() {
   return base::BindOnce(&UpdateOnBackgroundThread);
 }
 
 // static
-std::unique_ptr<SafetyHubService::Result>
+std::unique_ptr<SafetyHubResult>
 NotificationPermissionsReviewService::UpdateOnBackgroundThread() {
   // Return an empty result.
   return std::make_unique<NotificationPermissionsReviewResult>();
 }
 
-std::unique_ptr<SafetyHubService::Result>
+std::unique_ptr<SafetyHubResult>
 NotificationPermissionsReviewService::InitializeLatestResultImpl() {
   return UpdateOnUIThread(
       std::make_unique<NotificationPermissionsReviewResult>());
@@ -260,18 +258,14 @@ bool NotificationPermissionsReviewService::
   // more than 3. Otherwise, the notification permission should not be added
   // to review list.
   double score = engagement_service_->GetScore(url);
-  int low_engagement_notification_limit =
-      features::kSafetyCheckNotificationPermissionsLowEnagementLimit.Get();
   bool is_low_engagement =
       !site_engagement::SiteEngagementService::IsEngagementAtLeast(
           score, blink::mojom::EngagementLevel::MEDIUM) &&
-      notification_count > low_engagement_notification_limit;
-  int min_engagement_notification_limit =
-      features::kSafetyCheckNotificationPermissionsMinEnagementLimit.Get();
+      notification_count > kLowEngagementNotificationLimit;
   bool is_minimal_engagement =
       !site_engagement::SiteEngagementService::IsEngagementAtLeast(
           score, blink::mojom::EngagementLevel::LOW) &&
-      notification_count > min_engagement_notification_limit;
+      notification_count > kMinEngagementNotificationLimit;
 
   return is_minimal_engagement || is_low_engagement;
 }

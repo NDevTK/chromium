@@ -4,22 +4,23 @@
 
 #include "chrome/browser/ui/views/data_sharing/data_sharing_bubble_controller.h"
 
-#include "base/memory/raw_ptr.h"
+#include "base/check_deref.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_navigator.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/views/data_sharing/data_sharing_utils.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
-#include "chrome/browser/ui/views/tabs/tab_group_header.h"
-#include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/saved_tab_groups/public/types.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "net/base/url_util.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
+#include "ui/views/view.h"
 #include "ui/views/view_class_properties.h"
 
 namespace {
@@ -27,8 +28,9 @@ namespace {
 class DataSharingBubbleDialogView : public WebUIBubbleDialogView {
   METADATA_HEADER(DataSharingBubbleDialogView, WebUIBubbleDialogView)
  public:
-  explicit DataSharingBubbleDialogView(
-      Browser* browser,
+  DataSharingBubbleDialogView(
+      BrowserWindowInterface* browser,
+      TabStripModel* tab_strip_model,
       views::View* anchor_view,
       std::unique_ptr<WebUIContentsWrapper> contents_wrapper)
       : WebUIBubbleDialogView(anchor_view,
@@ -36,7 +38,8 @@ class DataSharingBubbleDialogView : public WebUIBubbleDialogView {
                               std::nullopt,
                               views::BubbleBorder::Arrow::TOP_LEFT),
         contents_wrapper_(std::move(contents_wrapper)),
-        browser_(browser) {}
+        browser_(CHECK_DEREF(browser)),
+        tab_strip_model_(CHECK_DEREF(tab_strip_model)) {}
 
   // WebUIContentsWrapper::Host override. Handle opening WebUI href links into
   // browser.
@@ -51,7 +54,8 @@ class DataSharingBubbleDialogView : public WebUIBubbleDialogView {
 
  private:
   std::unique_ptr<WebUIContentsWrapper> contents_wrapper_;
-  raw_ptr<Browser> browser_;
+  const raw_ref<BrowserWindowInterface> browser_;
+  const raw_ref<TabStripModel> tab_strip_model_;
 };
 
 content::WebContents* DataSharingBubbleDialogView::AddNewContents(
@@ -62,8 +66,9 @@ content::WebContents* DataSharingBubbleDialogView::AddNewContents(
     const blink::mojom::WindowFeatures& window_features,
     bool user_gesture,
     bool* was_blocked) {
-  NavigateParams params(browser_, std::move(new_contents));
-  params.tabstrip_index = browser_->tab_strip_model()->count();
+  NavigateParams params(browser_->GetBrowserForMigrationOnly(),
+                        std::move(new_contents));
+  params.tabstrip_index = tab_strip_model_->count();
   // Open link in a new window for better visibility because the bubble lays on
   // top of the current window.
   params.disposition = WindowOpenDisposition::NEW_WINDOW;
@@ -76,20 +81,19 @@ END_METADATA
 
 views::View* GetAnchorViewForShare(const BrowserView* browser_view,
                                    tab_groups::LocalTabGroupID group_id) {
-  if (!browser_view->tabstrip()) {
+  if (!browser_view->tab_strip_view()) {
     return nullptr;
   }
 
-  TabGroupHeader* const group_header =
-      browser_view->tabstrip()->group_header(group_id);
-  if (!group_header) {
-    return nullptr;
-  }
+  views::View* const group_header =
+      browser_view->tab_strip_view()->GetTabGroupAnchorView(group_id);
 
   return group_header;
 }
 
 }  // namespace
+
+DEFINE_USER_DATA(DataSharingBubbleController);
 
 DataSharingBubbleController::~DataSharingBubbleController() = default;
 
@@ -98,8 +102,7 @@ void DataSharingBubbleController::Show(data_sharing::RequestInfo request_info) {
     return;
   }
 
-  auto url =
-      data_sharing::GenerateWebUIUrl(request_info, GetBrowser().profile());
+  auto url = data_sharing::GenerateWebUIUrl(request_info, GetProfile());
   if (!url) {
     return;
   }
@@ -108,8 +111,8 @@ void DataSharingBubbleController::Show(data_sharing::RequestInfo request_info) {
   CHECK(net::GetValueForKeyInQuery(url.value(), data_sharing::kQueryParamFlow,
                                    &flow_value));
 
-  const BrowserView* const browser_view =
-      BrowserView::GetBrowserViewForBrowser(&GetBrowser());
+  const BrowserView* const browser_view = BrowserView::GetBrowserViewForBrowser(
+      browser_->GetBrowserForMigrationOnly());
 
   views::View* anchor_view_for_share = nullptr;
   if (flow_value == data_sharing::kFlowShare) {
@@ -123,14 +126,14 @@ void DataSharingBubbleController::Show(data_sharing::RequestInfo request_info) {
 
   auto contents_wrapper =
       std::make_unique<WebUIContentsWrapperT<DataSharingUI>>(
-          url.value(), GetBrowser().profile(),
-          IDS_DATA_SHARING_BUBBLE_DIALOG_TITLE,
+          url.value(), GetProfile(), IDS_DATA_SHARING_BUBBLE_DIALOG_TITLE,
           /*esc_closes_ui=*/true,
           /*supports_draggable_regions=*/false);
   contents_wrapper->GetWebUIController()->SetDelegate(this);
 
   auto bubble_view = std::make_unique<DataSharingBubbleDialogView>(
-      &GetBrowser(), anchor_view_for_share, std::move(contents_wrapper));
+      &browser_.get(), &tab_strip_model_.get(), anchor_view_for_share,
+      std::move(contents_wrapper));
   bubble_view->SetProperty(views::kElementIdentifierKey,
                            kDataSharingBubbleElementId);
   bubble_view_ = bubble_view->GetWeakPtr();
@@ -263,7 +266,20 @@ void DataSharingBubbleController::MaybeRunJoinCallback(bool on_close) {
   }
 }
 
-DataSharingBubbleController::DataSharingBubbleController(Browser* browser)
-    : BrowserUserData<DataSharingBubbleController>(*browser) {}
+Profile* DataSharingBubbleController::GetProfile() {
+  return &profile_.get();
+}
 
-BROWSER_USER_DATA_KEY_IMPL(DataSharingBubbleController);
+DataSharingBubbleController::DataSharingBubbleController(
+    BrowserWindowInterface* browser,
+    Profile* profile,
+    TabStripModel* tab_strip_model)
+    : browser_(CHECK_DEREF(browser)),
+      profile_(CHECK_DEREF(profile)),
+      tab_strip_model_(CHECK_DEREF(tab_strip_model)),
+      scoped_unowned_user_data_(browser->GetUnownedUserDataHost(), *this) {}
+
+DataSharingBubbleController* DataSharingBubbleController::From(
+    BrowserWindowInterface* browser_window_interface) {
+  return Get(browser_window_interface->GetUnownedUserDataHost());
+}

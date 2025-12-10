@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/strings/string_util.h"
-#include "base/test/metrics/action_suffix_reader.h"
+#include "base/test/metrics/action_variants_reader.h"
 #include "base/test/metrics/histogram_variants_reader.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -17,7 +17,6 @@
 #include "components/feature_engagement/public/feature_configurations.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/user_education/common/feature_promo/feature_promo_registry.h"
-#include "components/user_education/common/ntp_promo/ntp_promo_registry.h"
 #include "components/user_education/common/tutorial/tutorial_registry.h"
 #include "components/user_education/common/user_education_data.h"
 #include "components/user_education/common/user_education_metadata.h"
@@ -77,13 +76,13 @@ TEST(BrowserUserEducationServiceTest, CheckFeaturePromoHistograms) {
 }
 
 TEST(BrowserUserEducationServiceTest, CheckFeaturePromoActions) {
-  std::vector<base::ActionSuffixEntryMap> iph_suffixes;
+  std::vector<base::test::ActionVariantsEntryMap> iph_variants;
   std::vector<std::string> missing_features;
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
-    iph_suffixes =
-        base::ReadActionSuffixesForAction("UserEducation.MessageShown.IPH");
-    ASSERT_EQ(1U, iph_suffixes.size());
+    iph_variants = base::test::ReadActionVariantsForAction(
+        "UserEducation.MessageShown.IPH", "_");
+    ASSERT_EQ(1U, iph_variants.size());
   }
 
   user_education::FeaturePromoRegistry registry;
@@ -94,7 +93,7 @@ TEST(BrowserUserEducationServiceTest, CheckFeaturePromoActions) {
     if (feature_name.starts_with("IPH_")) {
       feature_name = feature_name.substr(4);
     }
-    if (!base::Contains(iph_suffixes[0], feature_name)) {
+    if (!base::Contains(iph_variants[0], feature_name)) {
       missing_features.emplace_back(feature->name);
     }
   }
@@ -102,7 +101,7 @@ TEST(BrowserUserEducationServiceTest, CheckFeaturePromoActions) {
       << "IPH Features:\n"
       << base::JoinString(missing_features, ", ")
       << "\nconfigured in browser_user_education_service.cc but no "
-         "corresponding action suffixes were added in "
+         "corresponding action variants were added in "
          "//tools/metrics/actions/actions.xml";
 }
 
@@ -201,7 +200,6 @@ TEST(BrowserUserEducationServiceTest, PreventNewHardCodedConfigurations) {
       &feature_engagement::kIPHReadingListInSidePanelFeature,
       &feature_engagement::kIPHReadingModeSidePanelFeature,
       &feature_engagement::kIPHSidePanelGenericPinnableFeature,
-      &feature_engagement::kIPHSignoutWebInterceptFeature,
       &feature_engagement::kIPHTabOrganizationSuccessFeature,
       &feature_engagement::kIPHProfileSwitchFeature,
       &feature_engagement::kIPHPriceTrackingInSidePanelFeature,
@@ -253,7 +251,6 @@ TEST(BrowserUserEducationServiceTest, CheckFeaturePromoMetadata) {
   const base::Feature* const kExistingPromosWithoutMetadata[] = {
       &feature_engagement::kIPHComposeMSBBSettingsFeature,
       &feature_engagement::kIPHDesktopSharedHighlightingFeature,
-      &feature_engagement::kIPHDesktopCustomizeChromeFeature,
       &feature_engagement::kIPHExplicitBrowserSigninPreferenceRememberedFeature,
       &feature_engagement::kIPHGMCCastStartStopFeature,
       &feature_engagement::kIPHGMCLocalMediaCastingFeature,
@@ -266,7 +263,6 @@ TEST(BrowserUserEducationServiceTest, CheckFeaturePromoMetadata) {
       &feature_engagement::kIPHReadingListDiscoveryFeature,
       &feature_engagement::kIPHReadingListEntryPointFeature,
       &feature_engagement::kIPHReadingListInSidePanelFeature,
-      &feature_engagement::kIPHSignoutWebInterceptFeature,
       &feature_engagement::kIPHProfileSwitchFeature,
       &feature_engagement::kIPHBackNavigationMenuFeature,
       &feature_engagement::kIPHCookieControlsFeature};
@@ -319,23 +315,6 @@ TEST(BrowserUserEducationServiceTest, CheckNewBadgeMetadata) {
       failed = true;
       oss << "\n"
           << feature->name
-          << " is missing metadata: " << base::JoinString(errors, ", ");
-    }
-  }
-  EXPECT_FALSE(failed) << "\"New\" Badges missing metadata:" << oss.str();
-}
-
-TEST(BrowserUserEducationServiceTest, CheckNtpPromoMetadata) {
-  user_education::NtpPromoRegistry registry;
-  MaybeRegisterNtpPromos(registry);
-  std::ostringstream oss;
-  bool failed = false;
-  for (const auto& identifier : registry.GetNtpPromoIdentifiers()) {
-    const auto* spec = registry.GetNtpPromoSpecification(identifier);
-    const auto errors = CheckMetadata(spec->metadata());
-    if (!errors.empty()) {
-      failed = true;
-      oss << "\nPromo " << identifier
           << " is missing metadata: " << base::JoinString(errors, ", ");
     }
   }

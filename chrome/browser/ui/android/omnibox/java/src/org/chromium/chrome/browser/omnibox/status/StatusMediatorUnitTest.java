@@ -39,8 +39,6 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.merchant_viewer.MerchantTrustSignalsCoordinator;
 import org.chromium.chrome.browser.omnibox.LocationBarDataProvider;
@@ -59,7 +57,6 @@ import org.chromium.components.content_settings.CookieControlsBridgeJni;
 import org.chromium.components.content_settings.CookieControlsState;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
-import org.chromium.components.omnibox.OmniboxFeatureList;
 import org.chromium.components.permissions.PermissionDialogController;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.search_engines.TemplateUrlService;
@@ -100,7 +97,6 @@ public final class StatusMediatorUnitTest {
     private @Mock Tab mTab;
 
     private @Mock WebContents mWebContents;
-    private @Mock StatusView mStatusView;
     @Mock UserPrefsJni mMockUserPrefsJni;
     @Mock private PrefService mPrefs;
     @Mock private Tracker mTracker;
@@ -175,7 +171,7 @@ public final class StatusMediatorUnitTest {
         mMediator.setShowIconsWhenUrlFocused(true);
         Assert.assertEquals(
                 R.drawable.ic_logo_googleg_20dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -183,7 +179,7 @@ public final class StatusMediatorUnitTest {
     public void testStatusViewHoverActions() {
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
 
         // Tooltip and background should be set when StatusViewIcon is visible.
         mMediator.setStatusIconShown(true);
@@ -201,18 +197,7 @@ public final class StatusMediatorUnitTest {
 
     @Test
     @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void searchEngineLogo_isGoogleLogo_hideAfterUnfocusFinished() {
-        doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
-
-        mMediator.setUrlHasFocus(true);
-        mMediator.setUrlHasFocus(false);
-        Assert.assertFalse(mModel.get(StatusProperties.SHOW_STATUS_ICON));
-    }
-
-    @Test
-    @SmallTest
-    @EnableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
+    // OmniboxMobileParityUpdate is now always enabled
     public void searchEngineLogoPersistent() {
         doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
 
@@ -244,45 +229,6 @@ public final class StatusMediatorUnitTest {
 
     @Test
     @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void searchEngineLogo_isGoogleLogoOnNtp() {
-        doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
-
-        mMediator.setUrlHasFocus(false);
-        mMediator.setShowIconsWhenUrlFocused(true);
-        Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_ICON));
-        Assert.assertFalse(mMediator.shouldDisplaySearchEngineIcon());
-    }
-
-    @Test
-    @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void searchEngineLogo_isGoogleLogoOnNtpTablet() {
-        setupStatusMediator(/* isTablet= */ true);
-        doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
-
-        mMediator.setUrlHasFocus(false);
-        Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_ICON));
-        Assert.assertFalse(mMediator.shouldDisplaySearchEngineIcon());
-    }
-
-    @Test
-    @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void searchEngineLogoTablet() {
-        setupStatusMediator(/* isTablet= */ true);
-        mMediator.setUrlHasFocus(true);
-
-        Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_ICON));
-        Assert.assertTrue(mMediator.shouldDisplaySearchEngineIcon());
-
-        doReturn(true).when(mLocationBarDataProvider).isIncognitoBranded();
-        Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_ICON));
-        Assert.assertFalse(mMediator.shouldDisplaySearchEngineIcon());
-    }
-
-    @Test
-    @SmallTest
     public void searchEngineLogo_isGoogleLogo_whenScrolled() {
         doReturn(false).when(mLocationBarDataProvider).isLoading();
         doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
@@ -292,7 +238,7 @@ public final class StatusMediatorUnitTest {
         mMediator.setUrlFocusChangePercent(1f);
         Assert.assertEquals(
                 R.drawable.ic_logo_googleg_20dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -305,7 +251,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateLocationBarIconForDefaultMatchCategory(false);
         Assert.assertEquals(
                 R.drawable.ic_globe_24dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -318,7 +264,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateLocationBarIconForDefaultMatchCategory(false);
         Assert.assertEquals(
                 R.drawable.ic_globe_24dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -331,7 +277,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateLocationBarIconForDefaultMatchCategory(true);
         Assert.assertNotEquals(
                 R.drawable.ic_globe_24dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -346,17 +292,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateLocationBarIconForDefaultMatchCategory(true);
         Assert.assertNotEquals(
                 R.drawable.ic_globe_24dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
-    }
-
-    @Test
-    @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void searchEngineLogo_incognitoStateChanged() {
-        mMediator.onIncognitoStateChanged();
-
-        Assert.assertEquals(false, mModel.get(StatusProperties.SHOW_STATUS_ICON));
-        Assert.assertEquals(1f, mModel.get(StatusProperties.STATUS_ICON_ALPHA), 0f);
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -381,7 +317,7 @@ public final class StatusMediatorUnitTest {
         Assert.assertTrue(mMediator.maybeUpdateStatusIconForSearchEngineIcon());
         Assert.assertEquals(
                 R.drawable.ic_logo_googleg_20dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
     }
 
     @Test
@@ -392,31 +328,6 @@ public final class StatusMediatorUnitTest {
         mMediator.updateSecurityIcon(0, 0, 0);
 
         Assert.assertFalse(mMediator.maybeUpdateStatusIconForSearchEngineIcon());
-    }
-
-    @Test
-    @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void searchEngineLogo_intermediateUrlFocusPercent() {
-        doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
-        mMediator.setUrlFocusChangePercent(0f);
-
-        Assert.assertEquals(false, mModel.get(StatusProperties.SHOW_STATUS_ICON));
-
-        mMediator.setUrlFocusChangePercent(0.1f);
-        Assert.assertEquals(true, mModel.get(StatusProperties.SHOW_STATUS_ICON));
-
-        mMediator.setUrlFocusChangePercent(0.4f);
-        Assert.assertEquals(true, mModel.get(StatusProperties.SHOW_STATUS_ICON));
-
-        mMediator.setUrlFocusChangePercent(0.7f);
-        Assert.assertEquals(true, mModel.get(StatusProperties.SHOW_STATUS_ICON));
-
-        mMediator.setUrlFocusChangePercent(0.9f);
-        Assert.assertEquals(true, mModel.get(StatusProperties.SHOW_STATUS_ICON));
-
-        mMediator.setUrlFocusChangePercent(0.0f);
-        Assert.assertEquals(false, mModel.get(StatusProperties.SHOW_STATUS_ICON));
     }
 
     @Test
@@ -442,33 +353,6 @@ public final class StatusMediatorUnitTest {
 
     @Test
     @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void testIncognitoStateChange_goingToIncognito() {
-        mMediator.setShowIconsWhenUrlFocused(true);
-
-        doReturn(true).when(mLocationBarDataProvider).isIncognito();
-        mMediator.onIncognitoStateChanged();
-        Assert.assertEquals(null, mModel.get(StatusProperties.STATUS_ICON_RESOURCE));
-        Assert.assertEquals(1f, mModel.get(StatusProperties.STATUS_ICON_ALPHA), 0f);
-    }
-
-    @Test
-    @SmallTest
-    @DisableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
-    public void testIncognitoStateChange_backFromIncognito() {
-        mMediator.setShowIconsWhenUrlFocused(true);
-
-        doReturn(true).when(mLocationBarDataProvider).isIncognito();
-        mMediator.onIncognitoStateChanged();
-        doReturn(false).when(mLocationBarDataProvider).isIncognito();
-        mMediator.onIncognitoStateChanged();
-        Assert.assertEquals(null, mModel.get(StatusProperties.STATUS_ICON_RESOURCE));
-        Assert.assertEquals(1f, mModel.get(StatusProperties.STATUS_ICON_ALPHA), 0f);
-    }
-
-    @Test
-    @SmallTest
-    @EnableFeatures(OmniboxFeatureList.OMNIBOX_MOBILE_PARITY_UPDATE)
     public void testIncognitoStateChange() {
         mMediator.setShowIconsWhenUrlFocused(true);
         doReturn(true).when(mLocationBarDataProvider).isIncognito();
@@ -481,13 +365,13 @@ public final class StatusMediatorUnitTest {
 
         Assert.assertEquals(
                 R.drawable.ic_logo_googleg_20dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
         Assert.assertFalse(mModel.get(StatusProperties.INCOGNITO_BADGE_VISIBLE));
 
         mMediator.setUrlHasFocus(true);
         Assert.assertEquals(
                 R.drawable.ic_logo_googleg_20dp,
-                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconResForTesting());
+                mModel.get(StatusProperties.STATUS_ICON_RESOURCE).getIconRes());
         Assert.assertFalse(mModel.get(StatusProperties.INCOGNITO_BADGE_VISIBLE));
     }
 
@@ -609,7 +493,7 @@ public final class StatusMediatorUnitTest {
         // Test default behaviour first.
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
         mMediator.updateLocationBarIcon(IconTransitionType.CROSSFADE);
         Assert.assertEquals(
                 R.string.accessibility_toolbar_view_site_info,
@@ -617,7 +501,7 @@ public final class StatusMediatorUnitTest {
 
         doReturn(PageClassification.ANDROID_HUB_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
         mMediator.updateLocationBarIcon(IconTransitionType.CROSSFADE);
 
         Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_ICON));
@@ -637,7 +521,7 @@ public final class StatusMediatorUnitTest {
     public void testSetTooltipText() {
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
 
         mModel.set(StatusProperties.SHOW_STATUS_ICON, true);
         mMediator.setTooltipText(Resources.ID_NULL);
@@ -652,7 +536,7 @@ public final class StatusMediatorUnitTest {
     public void testSetBackground() {
         doReturn(PageClassification.NTP_VALUE)
                 .when(mLocationBarDataProvider)
-                .getPageClassification(false);
+                .getPageClassification(/* prefetch= */ false);
 
         mModel.set(StatusProperties.SHOW_STATUS_ICON, true);
         mMediator.setBackground();
@@ -775,14 +659,14 @@ public final class StatusMediatorUnitTest {
 
         doReturn(CURRENT_TAB_ID).when(mTab).getId();
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(1)).updateWebContents(any(), any(), anyBoolean());
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(1)).updateWebContents(any(), any(), anyBoolean());
 
         doReturn(NEW_TAB_ID).when(mTab).getId();
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(2)).updateWebContents(any(), any(), anyBoolean());
     }
 
@@ -795,10 +679,10 @@ public final class StatusMediatorUnitTest {
 
         doReturn(CURRENT_TAB_ID).when(mTab).getId();
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(1)).updateWebContents(any(), any(), anyBoolean());
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(1)).updateWebContents(any(), any(), anyBoolean());
     }
 
@@ -811,16 +695,16 @@ public final class StatusMediatorUnitTest {
 
         doReturn(CURRENT_TAB_ID).when(mTab).getId();
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(1)).updateWebContents(any(), any(), anyBoolean());
 
         // Tab crashed, need to update the web contents at next url change.
         mMediator.onTabCrashed();
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(2)).updateWebContents(any(), any(), anyBoolean());
 
         // Subsequent url changes on the same tab should not trigger any web contents update.
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(2)).updateWebContents(any(), any(), anyBoolean());
     }
 
@@ -832,7 +716,7 @@ public final class StatusMediatorUnitTest {
 
         Assert.assertEquals(mMediator.getCookieControlsBridge(), null);
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
 
         Assert.assertNotEquals(mMediator.getCookieControlsBridge(), null);
     }
@@ -846,7 +730,7 @@ public final class StatusMediatorUnitTest {
         doReturn(true).when(mProfile).isIncognitoBranded();
         doReturn(CURRENT_TAB_ID).when(mTab).getId();
 
-        mMediator.onUrlChanged();
+        mMediator.onUrlChanged(false);
         verify(mCookieControlsBridge, times(1))
                 .updateWebContents(any(), any(), /* isIncognitoBranded= */ eq(true));
     }
@@ -866,7 +750,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateVerboseStatus(ConnectionSecurityLevel.SECURE, false, false);
         Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
 
-        mMediator.setHideStatusIconForSecureOrigins(true);
+        mMediator.setShowStatusIconForSecureOrigins(false);
         Assert.assertFalse(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
 
         mMediator.updateVerboseStatus(ConnectionSecurityLevel.WARNING, false, false);
@@ -875,7 +759,7 @@ public final class StatusMediatorUnitTest {
         mMediator.updateVerboseStatus(ConnectionSecurityLevel.SECURE, false, false);
         Assert.assertFalse(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
 
-        mMediator.setHideStatusIconForSecureOrigins(false);
+        mMediator.setShowStatusIconForSecureOrigins(true);
         Assert.assertTrue(mModel.get(StatusProperties.SHOW_STATUS_VIEW));
     }
 

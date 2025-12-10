@@ -35,7 +35,7 @@ CORE_EXPORT String ToCoreString(const v8_inspector::StringView&);
 CORE_EXPORT String ToCoreString(std::unique_ptr<v8_inspector::StringBuffer>);
 
 namespace protocol {
-using String = WTF::String;
+using String = blink::String;
 
 class CORE_EXPORT StringUtil {
   STATIC_ONLY(StringUtil);
@@ -115,15 +115,16 @@ class CORE_EXPORT Binary : public crdtp::Serializable {
 
 }  // namespace blink
 
-// TODO(dgozman): migrate core/inspector/protocol to wtf::HashMap.
+// TODO(dgozman): migrate core/inspector/protocol to blink::HashMap.
 
 // See third_party/inspector_protocol/crdtp/serializer_traits.h.
 namespace crdtp {
 
 template <>
-struct ProtocolTypeTraits<WTF::String> {
-  static bool Deserialize(DeserializerState* state, String* value);
-  static void Serialize(const String& value, std::vector<uint8_t>* bytes);
+struct ProtocolTypeTraits<blink::String> {
+  static bool Deserialize(DeserializerState* state, blink::String* value);
+  static void Serialize(const blink::String& value,
+                        std::vector<uint8_t>* bytes);
 };
 
 template <>

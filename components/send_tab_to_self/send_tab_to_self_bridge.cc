@@ -79,7 +79,9 @@ std::optional<syncer::ModelError> ParseLocalEntriesOnBackendSequence(
       (*entries)[specifics->specifics().guid()] =
           SendTabToSelfEntry::FromLocalProto(*specifics, now);
     } else {
-      return syncer::ModelError(FROM_HERE, "Failed to deserialize specifics.");
+      return syncer::ModelError(
+          FROM_HERE,
+          syncer::ModelError::Type::kSendTabToSelfFailedToDeserializeSpecifics);
     }
   }
 
@@ -518,7 +520,6 @@ void SendTabToSelfBridge::NotifyRemoteSendTabToSelfEntryDeleted(
     return;
   }
 
-  // TODO(crbug.com/40624520): Only send the entries that targeted this device.
   for (SendTabToSelfModelObserver& observer : observers_) {
     observer.EntriesRemovedRemotely(guids);
   }

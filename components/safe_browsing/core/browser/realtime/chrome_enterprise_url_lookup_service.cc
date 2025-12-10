@@ -35,6 +35,13 @@ namespace safe_browsing {
 
 namespace {
 
+// From chrome/common/webui_url_constants.h
+inline constexpr char kChromeUINewTabPageURL[] = "chrome://new-tab-page/";
+inline constexpr char kChromeUINewTabURL[] = "chrome://newtab/";
+
+// From content/public/common/url_constants.h
+inline constexpr char kChromeUIScheme[] = "chrome";
+
 // Return an override for the Url filtering endpoint set via command line.
 std::optional<GURL> GetUrlOverride(bool is_command_line_switch_supported) {
   // Ignore this flag on Stable and Beta to avoid abuse.
@@ -75,6 +82,8 @@ ChromeEnterpriseRealTimeUrlLookupService::
         bool is_off_the_record,
         bool is_guest_session,
         base::RepeatingCallback<std::string()> get_profile_email_callback,
+        base::RepeatingCallback<std::string(const GURL&)>
+            get_content_area_account_email_callback,
         base::RepeatingCallback<bool()> is_profile_affiliated_callback,
         bool is_command_line_switch_supported)
     : RealTimeUrlLookupServiceBase(url_loader_factory,
@@ -91,6 +100,8 @@ ChromeEnterpriseRealTimeUrlLookupService::
       is_off_the_record_(is_off_the_record),
       is_guest_session_(is_guest_session),
       get_profile_email_callback_(get_profile_email_callback),
+      get_content_area_account_email_callback_(
+          get_content_area_account_email_callback),
       is_profile_affiliated_callback_(is_profile_affiliated_callback),
       is_command_line_switch_supported_(is_command_line_switch_supported) {}
 
@@ -207,6 +218,13 @@ std::string ChromeEnterpriseRealTimeUrlLookupService::GetMetricSuffix() const {
   return ".Enterprise";
 }
 
+bool ChromeEnterpriseRealTimeUrlLookupService::
+    ShouldOverrideKnownSafeUrlDecision(const GURL& url) const {
+  // No need to check new tab to reduce number of rpc calls
+  bool new_tab = url == kChromeUINewTabPageURL || url == kChromeUINewTabURL;
+  return url.SchemeIs(kChromeUIScheme) && !new_tab;
+}
+
 bool ChromeEnterpriseRealTimeUrlLookupService::CanCheckUrl(const GURL& url) {
   // Any URL can be checked in the enterprise case since URLs that might return
   // false when passed to `safe_browsing::CanGetReputationOfUrl` could still
@@ -255,6 +273,12 @@ std::string ChromeEnterpriseRealTimeUrlLookupService::GetProfileDMTokenString()
 std::unique_ptr<enterprise_connectors::ClientMetadata>
 ChromeEnterpriseRealTimeUrlLookupService::GetClientMetadata() const {
   return connectors_service_->BuildClientMetadata(true);
+}
+
+std::string
+ChromeEnterpriseRealTimeUrlLookupService::GetContentAreaAccountEmail(
+    const GURL& tab_url) const {
+  return get_content_area_account_email_callback_.Run(tab_url);
 }
 
 }  // namespace safe_browsing

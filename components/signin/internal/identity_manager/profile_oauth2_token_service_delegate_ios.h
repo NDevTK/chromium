@@ -4,7 +4,6 @@
 #ifndef COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_PROFILE_OAUTH2_TOKEN_SERVICE_DELEGATE_IOS_H_
 #define COMPONENTS_SIGNIN_INTERNAL_IDENTITY_MANAGER_PROFILE_OAUTH2_TOKEN_SERVICE_DELEGATE_IOS_H_
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -81,8 +80,10 @@ class ProfileOAuth2TokenServiceIOSDelegate
   void LoadCredentialsInternal(
       const CoreAccountId& primary_account_id) override;
   // This method should not be called when using shared authentication.
-  void UpdateCredentialsInternal(const CoreAccountId& account_id,
-                                 const std::string& refresh_token) override;
+  void UpdateCredentialsInternal(
+      const CoreAccountId& account_id,
+      const std::string& refresh_token,
+      const std::vector<uint8_t>& wrapped_binding_key) override;
   // Removes all credentials from this instance of |ProfileOAuth2TokenService|,
   // however, it does not revoke the identities from the device.
   // Subsequent calls to |RefreshTokenIsAvailable| will return |false|.

@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/platform/webrtc/convert_to_webrtc_video_frame_buffer.h"
 
+#include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
 #include "gpu/command_buffer/client/test_shared_image_interface.h"
@@ -29,10 +25,8 @@ namespace blink {
 class ConvertToWebRtcVideoFrameBufferTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    resources_ =
-        base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+    resources_ = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
     test_sii_ = base::MakeRefCounted<gpu::TestSharedImageInterface>();
-    test_sii_->UseTestGMBInSharedImageCreationWithBufferUsage();
   }
 
   scoped_refptr<WebRtcVideoFrameAdapter::SharedResources> resources_;
@@ -44,10 +38,8 @@ class ConvertToWebRtcVideoFrameBufferParamTest
           std::tuple<media::VideoFrame::StorageType, media::VideoPixelFormat>> {
  protected:
   void SetUp() override {
-    resources_ =
-        base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+    resources_ = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
     test_sii_ = base::MakeRefCounted<gpu::TestSharedImageInterface>();
-    test_sii_->UseTestGMBInSharedImageCreationWithBufferUsage();
   }
 
   scoped_refptr<WebRtcVideoFrameAdapter::SharedResources> resources_;
@@ -64,7 +56,7 @@ std::vector<ConvertToWebRtcVideoFrameBufferParamTest::ParamType> TestParams() {
         media::VideoFrame::StorageType::STORAGE_OWNED_MEMORY, format);
   }
   test_params.emplace_back(
-      media::VideoFrame::StorageType::STORAGE_GPU_MEMORY_BUFFER,
+      media::VideoFrame::StorageType::STORAGE_MAPPABLE_SHARED_IMAGE,
       media::VideoPixelFormat::PIXEL_FORMAT_NV12);
   return test_params;
 }
@@ -103,8 +95,7 @@ TEST_F(ConvertToWebRtcVideoFrameBufferTest, ToI420ADownScale) {
   const gfx::Size kCodedSize(1280, 960);
   const gfx::Rect kVisibleRect(0, 120, 1280, 720);
   const gfx::Size kNaturalSize(640, 360);
-  auto resources =
-      base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+  auto resources = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
 
   // The adapter should report width and height from the natural size for
   // VideoFrame backed by owned memory.
@@ -132,12 +123,11 @@ TEST_F(ConvertToWebRtcVideoFrameBufferTest,
   const gfx::Rect kVisibleRect(0, 120, 1280, 720);
   // Same size as visible rect so no scaling.
   const gfx::Size kNaturalSize = kVisibleRect.size();
-  auto resources =
-      base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+  auto resources = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
 
-  auto gmb_frame = CreateTestFrame(kCodedSize, kVisibleRect, kNaturalSize,
-                                   media::VideoFrame::STORAGE_GPU_MEMORY_BUFFER,
-                                   test_sii_.get());
+  auto gmb_frame = CreateTestFrame(
+      kCodedSize, kVisibleRect, kNaturalSize,
+      media::VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE, test_sii_.get());
 
   // The adapter should report width and height from the natural size for
   // VideoFrame backed by GpuMemoryBuffer.
@@ -165,12 +155,11 @@ TEST_F(ConvertToWebRtcVideoFrameBufferTest, Nv12ScalesGmbWithFeature) {
   const gfx::Size kCodedSize(1280, 960);
   const gfx::Rect kVisibleRect(0, 120, 1280, 720);
   const gfx::Size kNaturalSize(640, 360);
-  auto resources =
-      base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+  auto resources = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
 
-  auto gmb_frame = CreateTestFrame(kCodedSize, kVisibleRect, kNaturalSize,
-                                   media::VideoFrame::STORAGE_GPU_MEMORY_BUFFER,
-                                   test_sii_.get());
+  auto gmb_frame = CreateTestFrame(
+      kCodedSize, kVisibleRect, kNaturalSize,
+      media::VideoFrame::STORAGE_MAPPABLE_SHARED_IMAGE, test_sii_.get());
 
   // The adapter should report width and height from the natural size for
   // VideoFrame backed by GpuMemoryBuffer.
@@ -198,8 +187,7 @@ TEST_F(ConvertToWebRtcVideoFrameBufferTest, Nv12OwnedMemoryFrame) {
   const gfx::Size kCodedSize(1280, 960);
   const gfx::Rect kVisibleRect(0, 120, 1280, 720);
   const gfx::Size kNaturalSize = kVisibleRect.size();
-  auto resources =
-      base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+  auto resources = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
 
   // The adapter should report width and height from the natural size for
   // VideoFrame backed by owned memory.
@@ -225,8 +213,7 @@ TEST_F(ConvertToWebRtcVideoFrameBufferTest, Nv12ScaleOwnedMemoryFrame) {
   const gfx::Size kCodedSize(1280, 960);
   const gfx::Rect kVisibleRect(0, 120, 1280, 720);
   const gfx::Size kNaturalSize(640, 360);
-  auto resources =
-      base::MakeRefCounted<WebRtcVideoFrameAdapter::SharedResources>(nullptr);
+  auto resources = WebRtcVideoFrameAdapter::SharedResources::Create(nullptr);
 
   // The adapter should report width and height from the natural size for
   // VideoFrame backed by owned memory.
@@ -298,8 +285,9 @@ TEST_F(ConvertToWebRtcVideoFrameBufferTest,
                       media::VideoPixelFormat::PIXEL_FORMAT_ARGB,
                       base::TimeDelta(), test_sii_.get());
   // fill mock image with whilte color.
-  memset(memory_frame->writable_data(media::VideoFrame::Plane::kARGB), 0xFF,
-         kCodedSize.GetArea() * 4);
+  UNSAFE_TODO(
+      memset(memory_frame->writable_data(media::VideoFrame::Plane::kARGB), 0xFF,
+             kCodedSize.GetArea() * 4));
 
   // Should call texture conversion.
   resources->ExpectCreateFrameWithRealImplementation();

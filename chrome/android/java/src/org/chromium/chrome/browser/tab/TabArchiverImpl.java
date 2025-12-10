@@ -24,6 +24,8 @@ import org.chromium.build.annotations.Contract;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.night_mode.NightModeUtils;
+import org.chromium.chrome.browser.night_mode.ThemeType;
 import org.chromium.chrome.browser.tab.TabArchiver.Observer;
 import org.chromium.chrome.browser.tab.state.ArchivePersistedTabData;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
@@ -32,6 +34,7 @@ import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.tasks.tab_management.TabShareUtils;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
@@ -44,10 +47,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Responsible for moving tabs to/from the archived {@link TabModel}. */
 @NullMarked
 public class TabArchiverImpl implements TabArchiver {
+    // The {@link ThemeType} checked at the end of each declutter pass.
+    private static @ThemeType int sUiThemeSetting = NightModeUtils.getThemeSetting();
+
     /** Provides the current timestamp. */
     // TODO(crbug.com/389152957): Collect Clock implementations in base for code reuse.
     @FunctionalInterface
@@ -116,13 +123,14 @@ public class TabArchiverImpl implements TabArchiver {
                 });
 
         TabGroupModelFilter regularTabGroupModelFilter =
-                assumeNonNull(
-                        selectorToArchive
-                                .getTabGroupModelFilterProvider()
-                                .getCurrentTabGroupModelFilter());
+                selectorToArchive
+                        .getTabGroupModelFilterProvider()
+                        .getTabGroupModelFilter(/* isIncognito= */ false);
+        assert regularTabGroupModelFilter != null;
         TabModel model = regularTabGroupModelFilter.getTabModel();
 
-        if (!isUserActive(model)) {
+        // Skip archiving if the declutter pass arises from a UI theme change or user is inactive.
+        if (!isUserActive(model) || wasUiThemeChanged()) {
             broadcastDeclutterComplete();
             return;
         }
@@ -151,18 +159,21 @@ public class TabArchiverImpl implements TabArchiver {
         broadcastDeclutterComplete();
     }
 
-    private List<Tab> getTabsToArchive(TabGroupModelFilter regularTabGroupModelFilter) {
+    @VisibleForTesting
+    List<Tab> getTabsToArchive(TabGroupModelFilter regularTabGroupModelFilter) {
+        List<Tab> tabsToArchive = new ArrayList<>();
         TabModel model = regularTabGroupModelFilter.getTabModel();
         int activeTabId = TabModelUtils.getCurrentTabId(model);
+        if (activeTabId == Tab.INVALID_TAB_ID) return tabsToArchive;
 
-        List<Tab> tabsToArchive = new ArrayList<>();
+        Tab activeTab = model.getTabByIdChecked(activeTabId);
         // Maps unique URLs to their MRU timestamp, used to declutter duplicate tabs.
         Map<GURL, Long> tabUrlToLastActiveTimestampMap = createUrlToMruTimestampMap(model);
         // Maps unique tab group tokens to the eligibility of that group.
         Map<Token, Boolean> tabGroupIdToArchiveEligibilityMap = new HashMap<>();
 
         int maxSimultaneousArchives = mTabArchiveSettings.getMaxSimultaneousArchives();
-        for (int i = 0; i < model.getCount(); i++) {
+        for (Tab tab : model) {
             // TODO(crbug.com/369845089): Investigate a more graceful fix to
             // batch these so all relevant tabs still get archived in the same
             // session.
@@ -172,9 +183,15 @@ public class TabArchiverImpl implements TabArchiver {
                 break;
             }
 
-            Tab tab = model.getTabAtChecked(i);
-            // The active tab is never archived.
-            if (activeTabId == tab.getId()) {
+            // The active tab is never archived, including if the active tab is actually a group.
+            if (activeTab.getId() == tab.getId()
+                    || (activeTab.getTabGroupId() != null
+                            && activeTab.getTabGroupId().equals(tab.getTabGroupId()))) {
+                continue;
+            }
+
+            // Pinned tabs are never archived.
+            if (tab.getIsPinned()) {
                 continue;
             }
 
@@ -200,8 +217,7 @@ public class TabArchiverImpl implements TabArchiver {
         TabModel model = regularTabGroupModelFilter.getTabModel();
         List<Tab> tabsToClose = new ArrayList<>();
 
-        for (int i = 0; i < model.getCount(); i++) {
-            Tab tab = model.getTabAtChecked(i);
+        for (Tab tab : model) {
             Tab archivedTab = mArchivedTabGroupModelFilter.getTabModel().getTabById(tab.getId());
             if (archivedTab != null) {
                 tabsToClose.add(tab);
@@ -218,11 +234,29 @@ public class TabArchiverImpl implements TabArchiver {
         long startTimeMs = mClock.currentTimeMillis();
 
         List<Tab> tabs = new ArrayList<>();
-        for (int i = 0; i < mArchivedTabGroupModelFilter.getTabModel().getCount(); i++) {
-            tabs.add(mArchivedTabGroupModelFilter.getTabModel().getTabAt(i));
+        List<SavedTabGroup> tabGroups = new ArrayList<>();
+
+        for (Tab tab : mArchivedTabGroupModelFilter.getTabModel()) {
+            tabs.add(tab);
         }
 
-        deleteArchivedTabsIfEligibleAsync(tabs, startTimeMs);
+        final boolean tabGroupDeclutterEnabled =
+                ChromeFeatureList.sAndroidTabDeclutterArchiveTabGroups.isEnabled();
+        final int autodeleteTaskCount = tabGroupDeclutterEnabled ? 2 : 1;
+        final AtomicInteger autodeleteTasksRemaining = new AtomicInteger(autodeleteTaskCount);
+
+        deleteArchivedTabsIfEligibleAsync(tabs, startTimeMs, autodeleteTasksRemaining);
+
+        if (tabGroupDeclutterEnabled) {
+            for (String syncGroupId : mTabGroupSyncService.getAllGroupIds()) {
+                SavedTabGroup savedTabGroup = mTabGroupSyncService.getGroup(syncGroupId);
+                if (savedTabGroup != null && savedTabGroup.archivalTimeMs != null) {
+                    tabGroups.add(savedTabGroup);
+                }
+            }
+            deleteArchivedTabGroupsIfEligibleAsync(
+                    tabGroups, startTimeMs, autodeleteTasksRemaining);
+        }
     }
 
     @Override
@@ -301,6 +335,7 @@ public class TabArchiverImpl implements TabArchiver {
             boolean updateTimestamp,
             boolean areTabsBeingOpened) {
         ThreadUtils.assertOnUiThread();
+        int tabCount = 0;
         for (Tab tab : tabs) {
             // Update the timestamp so that the tab isn't immediately re-archived on the next pass.
             if (updateTimestamp) {
@@ -312,10 +347,12 @@ public class TabArchiverImpl implements TabArchiver {
             Tab newTab =
                     tabCreator.createFrozenTab(
                             tabState, tab.getId(), areTabsBeingOpened ? INVALID_TAB_INDEX : 0);
-            newTab.onTabRestoredFromArchivedTabModel();
+            if (newTab != null) {
+                tabCount++;
+                newTab.onTabRestoredFromArchivedTabModel();
+            }
         }
 
-        int tabCount = tabs.size();
         mArchivedTabGroupModelFilter
                 .getTabModel()
                 .getTabRemover()
@@ -341,14 +378,10 @@ public class TabArchiverImpl implements TabArchiver {
 
     @VisibleForTesting
     void initializePersistedTabDataAsync(List<Tab> archivedTabs) {
-        PostTask.postTask(
-                TaskTraits.UI_DEFAULT,
-                mCallbackController.makeCancelable(
-                        () ->
-                                initializePersistedTabDataAsyncImpl(
-                                        archivedTabs,
-                                        /* currentIndex= */ 0,
-                                        mClock.currentTimeMillis())));
+        postUiThreadCancellableTask(
+                () ->
+                        initializePersistedTabDataAsyncImpl(
+                                archivedTabs, /* currentIndex= */ 0, mClock.currentTimeMillis()));
     }
 
     void initializePersistedTabDataAsyncImpl(
@@ -361,74 +394,132 @@ public class TabArchiverImpl implements TabArchiver {
         }
 
         Callback<@Nullable ArchivePersistedTabData> callback =
-                mCallbackController.makeCancelable(
-                        (@Nullable ArchivePersistedTabData archivePersistedTabData) -> {
-                            if (archivePersistedTabData != null) {
-                                // Persisted tab data requires a true supplier before saving to
-                                // disk.
-                                archivePersistedTabData.registerIsTabSaveEnabledSupplier(
-                                        new ObservableSupplierImpl<>(true));
-                                archivePersistedTabData.setArchivedTimeMs(
-                                        mClock.currentTimeMillis());
-                            }
+                (@Nullable ArchivePersistedTabData archivePersistedTabData) -> {
+                    if (archivePersistedTabData != null) {
+                        // Persisted tab data requires a true supplier before saving to
+                        // disk.
+                        archivePersistedTabData.registerIsTabSaveEnabledSupplier(
+                                new ObservableSupplierImpl<>(true));
+                        archivePersistedTabData.setArchivedTimeMs(mClock.currentTimeMillis());
+                    }
 
-                            PostTask.postTask(
-                                    TaskTraits.UI_DEFAULT,
-                                    mCallbackController.makeCancelable(
-                                            () ->
-                                                    initializePersistedTabDataAsyncImpl(
-                                                            archivedTabs,
-                                                            currentIndex + 1,
-                                                            startTimeMs)));
-                        });
+                    postUiThreadCancellableTask(
+                            () ->
+                                    initializePersistedTabDataAsyncImpl(
+                                            archivedTabs, currentIndex + 1, startTimeMs));
+                };
+        callback = mCallbackController.makeCancelable(callback);
+
         ArchivePersistedTabData.from(archivedTabs.get(currentIndex), callback);
     }
 
-    void deleteArchivedTabsIfEligibleAsync(List<Tab> tabs, long startTimeMs) {
-        PostTask.postTask(
-                TaskTraits.UI_DEFAULT,
-                mCallbackController.makeCancelable(
-                        () ->
-                                deleteArchivedTabsIfEligibleAsyncImpl(
-                                        tabs, /* currentIndex= */ 0, startTimeMs)));
+    void deleteArchivedTabsIfEligibleAsync(
+            List<Tab> tabs, long startTimeMs, AtomicInteger autodeleteTasksRemaining) {
+        postUiThreadCancellableTask(
+                () ->
+                        deleteArchivedTabsIfEligibleAsyncImpl(
+                                tabs,
+                                /* currentIndex= */ 0,
+                                startTimeMs,
+                                autodeleteTasksRemaining));
     }
 
-    void deleteArchivedTabsIfEligibleAsyncImpl(List<Tab> tabs, int currentIndex, long startTimeMs) {
+    void deleteArchivedTabsIfEligibleAsyncImpl(
+            List<Tab> tabs,
+            int currentIndex,
+            long startTimeMs,
+            AtomicInteger autodeleteTasksRemaining) {
         if (currentIndex >= tabs.size()) {
             RecordHistogram.recordTimesHistogram(
                     "Tabs.DeleteWithPTD.DurationMs", mClock.currentTimeMillis() - startTimeMs);
-            broadcastAutodeletePassComplete();
+            if (autodeleteTasksRemaining.decrementAndGet() == 0) {
+                broadcastAutodeletePassComplete();
+            }
             return;
         }
 
         Tab tab = tabs.get(currentIndex);
         Callback<@Nullable ArchivePersistedTabData> callback =
-                mCallbackController.makeCancelable(
-                        (@Nullable ArchivePersistedTabData archivePersistedTabData) -> {
-                            if (isArchivedTabEligibleForDeletion(archivePersistedTabData)) {
-                                int tabAgeDays =
-                                        timestampMillisToDays(
-                                                archivePersistedTabData.getArchivedTimeMs());
-                                mArchivedTabGroupModelFilter
-                                        .getTabModel()
-                                        .getTabRemover()
-                                        .closeTabs(
-                                                TabClosureParams.closeTab(tab)
-                                                        .allowUndo(false)
-                                                        .build(),
-                                                /* allowDialog= */ false);
-                                RecordHistogram.recordCount1000Histogram(
-                                        "Tabs.TabAutoDeleted.AfterNDays", tabAgeDays);
-                                RecordUserAction.record("Tabs.ArchivedTabAutoDeleted");
-                            }
-                            PostTask.postTask(
-                                    TaskTraits.UI_DEFAULT,
-                                    mCallbackController.makeCancelable(
-                                            () ->
-                                                    deleteArchivedTabsIfEligibleAsyncImpl(
-                                                            tabs, currentIndex + 1, startTimeMs)));
-                        });
+                (@Nullable ArchivePersistedTabData archivePersistedTabData) -> {
+                    if (isArchivedTabEligibleForDeletion(archivePersistedTabData)) {
+                        int tabAgeDays =
+                                timestampMillisToDays(archivePersistedTabData.getArchivedTimeMs());
+                        mArchivedTabGroupModelFilter
+                                .getTabModel()
+                                .getTabRemover()
+                                .closeTabs(
+                                        TabClosureParams.closeTab(tab).allowUndo(false).build(),
+                                        /* allowDialog= */ false);
+                        RecordHistogram.recordCount1000Histogram(
+                                "Tabs.TabAutoDeleted.AfterNDays", tabAgeDays);
+                        RecordUserAction.record("Tabs.ArchivedTabAutoDeleted");
+                    }
+                    postUiThreadCancellableTask(
+                            () ->
+                                    deleteArchivedTabsIfEligibleAsyncImpl(
+                                            tabs,
+                                            currentIndex + 1,
+                                            startTimeMs,
+                                            autodeleteTasksRemaining));
+                };
+        callback = mCallbackController.makeCancelable(callback);
+
         ArchivePersistedTabData.from(tab, callback);
+    }
+
+    void deleteArchivedTabGroupsIfEligibleAsync(
+            List<SavedTabGroup> tabGroups,
+            long startTimeMs,
+            AtomicInteger autodeleteTasksRemaining) {
+        postUiThreadCancellableTask(
+                () ->
+                        deleteArchivedTabGroupsIfEligibleAsyncImpl(
+                                tabGroups,
+                                /* currentIndex= */ 0,
+                                startTimeMs,
+                                autodeleteTasksRemaining));
+    }
+
+    void deleteArchivedTabGroupsIfEligibleAsyncImpl(
+            List<SavedTabGroup> tabGroups,
+            int currentIndex,
+            long startTimeMs,
+            AtomicInteger autodeleteTasksRemaining) {
+        if (currentIndex >= tabGroups.size()) {
+            RecordHistogram.recordTimesHistogram(
+                    "TabGroups.AutodeletePass.DurationMs",
+                    mClock.currentTimeMillis() - startTimeMs);
+            if (autodeleteTasksRemaining.decrementAndGet() == 0) {
+                broadcastAutodeletePassComplete();
+            }
+            return;
+        }
+
+        SavedTabGroup tabGroup = tabGroups.get(currentIndex);
+        if (tabGroup != null && tabGroup.archivalTimeMs != null) {
+            int tabGroupArchivedDays = timestampMillisToDays(tabGroup.archivalTimeMs);
+            RecordHistogram.recordCount1000Histogram(
+                    "TabGroups.TabGroupAutoDeleteEligibilityCheck.AfterNDays",
+                    tabGroupArchivedDays);
+            if (isTimestampWithinTargetHours(
+                            tabGroup.archivalTimeMs,
+                            mTabArchiveSettings.getAutoDeleteTimeDeltaHours())
+                    && tabGroup.syncId != null) {
+                mTabGroupSyncService.updateArchivalStatus(
+                        tabGroup.syncId, /* archivalStatus= */ false);
+                RecordHistogram.recordCount1000Histogram(
+                        "TabGroups.TabGroupAutoDeleted.TabCount", tabGroup.savedTabs.size());
+                RecordUserAction.record("TabGroups.ArchivedTabGroupAutoDeleted");
+            }
+        }
+
+        postUiThreadCancellableTask(
+                () ->
+                        deleteArchivedTabGroupsIfEligibleAsyncImpl(
+                                tabGroups,
+                                currentIndex + 1,
+                                startTimeMs,
+                                autodeleteTasksRemaining));
     }
 
     // Check if tab groups are eligible for archive. Only archive a tab group if all tabs in that
@@ -461,6 +552,13 @@ public class TabArchiverImpl implements TabArchiver {
             TabGroupModelFilter regularTabGroupModelFilter,
             Map<GURL, Long> tabUrlToLastActiveTimestampMap,
             Tab tab) {
+        // Do not archived shared tab groups, defined by a null collaboration ID.
+        if (TabShareUtils.getCollaborationIdOrNull(
+                        tab.getId(), regularTabGroupModelFilter.getTabModel(), mTabGroupSyncService)
+                != null) {
+            return false;
+        }
+
         List<Tab> relatedTabList = regularTabGroupModelFilter.getTabsInGroup(tab.getTabGroupId());
         for (Tab relatedTab : relatedTabList) {
             if (!isTabEligibleForArchive(tabUrlToLastActiveTimestampMap, relatedTab)) {
@@ -529,8 +627,7 @@ public class TabArchiverImpl implements TabArchiver {
         if (!mTabArchiveSettings.isArchiveDuplicateTabsEnabled()) {
             return urlToTimestampMap;
         }
-        for (int i = 0; i < model.getCount(); i++) {
-            Tab tab = model.getTabAtChecked(i);
+        for (Tab tab : model) {
             GURL url = tab.getUrl();
             long tabLastActiveTimestamp = tab.getTimestampMillis();
 
@@ -574,9 +671,7 @@ public class TabArchiverImpl implements TabArchiver {
     @VisibleForTesting
     void ensureArchivedTabsHaveCorrectFields() {
         TabModel model = mArchivedTabGroupModelFilter.getTabModel();
-        int count = model.getCount();
-        for (int i = 0; i < count; i++) {
-            Tab archivedTab = model.getTabAtChecked(i);
+        for (Tab archivedTab : model) {
             // Archived tabs shouldn't have a root id or parent id. It's possible that there's
             // stale data around for clients that have archived tabs prior to crrev.com/c/5750590
             // landing. Fix those fields so that they're corrected in the tab state file.
@@ -586,21 +681,37 @@ public class TabArchiverImpl implements TabArchiver {
     }
 
     private void broadcastDeclutterComplete() {
-        for (Observer obs : mObservers) {
-            PostTask.postTask(TaskTraits.UI_DEFAULT, obs::onDeclutterPassCompleted);
-        }
+        PostTask.postTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    for (Observer obs : mObservers) {
+                        obs.onDeclutterPassCompleted();
+                    }
+                });
+
+        // Store the UI {@link ThemeType} at the current instant to compare with the up-to-date
+        // theme setting during the next declutter pass.
+        sUiThemeSetting = NightModeUtils.getThemeSetting();
     }
 
     private void broadcastPersistedTabDataCreated() {
-        for (Observer obs : mObservers) {
-            PostTask.postTask(TaskTraits.UI_DEFAULT, obs::onArchivePersistedTabDataCreated);
-        }
+        PostTask.postTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    for (Observer obs : mObservers) {
+                        obs.onArchivePersistedTabDataCreated();
+                    }
+                });
     }
 
     private void broadcastAutodeletePassComplete() {
-        for (Observer obs : mObservers) {
-            PostTask.postTask(TaskTraits.UI_DEFAULT, obs::onAutodeletePassCompleted);
-        }
+        PostTask.postTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    for (Observer obs : mObservers) {
+                        obs.onAutodeletePassCompleted();
+                    }
+                });
     }
 
     // Determine if the user was active during the declutter inactivity period by checking all tabs
@@ -612,8 +723,7 @@ public class TabArchiverImpl implements TabArchiver {
         }
 
         long lastActiveTabTimestamp = 0L;
-        for (int i = 0; i < model.getCount(); i++) {
-            Tab tab = model.getTabAtChecked(i);
+        for (Tab tab : model) {
             if (TabModelUtils.getCurrentTabId(model) == tab.getId()) {
                 continue;
             }
@@ -631,6 +741,17 @@ public class TabArchiverImpl implements TabArchiver {
             return false;
         }
         return true;
+    }
+
+    // Returns whether the UI theme was changed since the time of last check as it causes an app
+    // restart and runs a declutter pass.
+    private boolean wasUiThemeChanged() {
+        return sUiThemeSetting != NightModeUtils.getThemeSetting();
+    }
+
+    // Helper method to reduce boilerplate needed when posting cancellable task.
+    private void postUiThreadCancellableTask(Runnable runnable) {
+        PostTask.postTask(TaskTraits.UI_DEFAULT, mCallbackController.makeCancelable(runnable));
     }
 
     // Testing-specific methods.

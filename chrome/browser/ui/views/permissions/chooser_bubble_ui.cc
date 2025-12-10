@@ -103,7 +103,7 @@ ChooserBubbleUiViewDelegate::ChooserBubbleUiViewDelegate(
     content::WebContents* contents,
     std::unique_ptr<permissions::ChooserController> chooser_controller)
     : LocationBarBubbleDelegateView(
-          GetChooserAnchorConfiguration(browser).anchor_view,
+          GetChooserAnchorConfiguration(browser).anchor,
           contents) {
   // ------------------------------------
   // | Chooser bubble title             |
@@ -168,9 +168,9 @@ void ChooserBubbleUiViewDelegate::OnSelectionChanged() {
 
 void ChooserBubbleUiViewDelegate::UpdateAnchor(Browser* browser) {
   AnchorConfiguration configuration = GetChooserAnchorConfiguration(browser);
-  SetAnchorView(configuration.anchor_view);
+  SetAnchor(configuration.anchor);
   SetHighlightedButton(configuration.highlighted_button);
-  if (!configuration.anchor_view) {
+  if (std::holds_alternative<std::nullptr_t>(configuration.anchor)) {
     SetAnchorRect(GetChooserAnchorRect(browser));
   }
   SetArrow(configuration.bubble_arrow);
@@ -287,11 +287,7 @@ base::OnceClosure ShowDeviceChooserDialog(
   views::Widget* widget =
       views::BubbleDialogDelegateView::CreateBubble(std::move(bubble));
   widget->SetZOrderSublevel(ChromeWidgetSublevel::kSublevelSecurity);
-  if (browser->window()->IsActive()) {
-    widget->Show();
-  } else {
-    widget->ShowInactive();
-  }
+  widget->Show();
 
   // If we're opening this device chooser dialog on a picture-in-picture window,
   // then our widget is also always-on-top and needs to be tracked by the

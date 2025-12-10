@@ -4,6 +4,7 @@
 
 #include <iterator>
 #include <memory>
+#include <string>
 
 #include "base/command_line.h"
 #include "base/containers/fixed_flat_set.h"
@@ -51,6 +52,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/browsing_data_remover_test_util.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "net/base/filename_util.h"
 #include "net/dns/mock_host_resolver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/blink/public/common/features_generated.h"
@@ -60,7 +62,6 @@ using ::blink::mojom::CanCreateTranslatorResult;
 using ::blink::mojom::TranslatorLanguageCode;
 using ::content::JsReplace;
 using ::testing::_;
-using ::testing::Invoke;
 
 namespace on_device_translation {
 
@@ -122,7 +123,7 @@ std::unique_ptr<net::test_server::HttpResponse> RespondWithJS(
     base::OnceClosure done_callback,
     const net::test_server::HttpRequest& request) {
   GURL request_url = request.GetURL();
-  if (request_url.path() != path) {
+  if (request_url.GetPath() != path) {
     return nullptr;
   }
 
@@ -401,15 +402,15 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
 
   base::RunLoop run_loop_for_register_translate_kit;
   EXPECT_CALL(mock_component_manager, RegisterTranslateKitComponentImpl())
-      .WillOnce(Invoke([&]() { run_loop_for_register_translate_kit.Quit(); }));
+      .WillOnce([&]() { run_loop_for_register_translate_kit.Quit(); });
 
   base::RunLoop run_loop_for_register_language_pack;
   EXPECT_CALL(mock_component_manager,
               RegisterTranslateKitLanguagePackComponent(_))
-      .WillOnce(Invoke([&](LanguagePackKey key) {
+      .WillOnce([&](LanguagePackKey key) {
         EXPECT_EQ(key, LanguagePackKey::kEn_Ja);
         run_loop_for_register_language_pack.Quit();
-      }));
+      });
 
   // Create a translator.
   EXPECT_EQ(EvalJsCatchingError(R"(
@@ -456,15 +457,15 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
 
   base::RunLoop run_loop_for_register_translate_kit;
   EXPECT_CALL(mock_component_manager, RegisterTranslateKitComponentImpl())
-      .WillOnce(Invoke([&]() { run_loop_for_register_translate_kit.Quit(); }));
+      .WillOnce([&]() { run_loop_for_register_translate_kit.Quit(); });
 
   base::RunLoop run_loop_for_register_language_pack;
   EXPECT_CALL(mock_component_manager,
               RegisterTranslateKitLanguagePackComponent(_))
-      .WillOnce(Invoke([&](LanguagePackKey key) {
+      .WillOnce([&](LanguagePackKey key) {
         EXPECT_EQ(key, LanguagePackKey::kEn_Ja);
         run_loop_for_register_language_pack.Quit();
-      }));
+      });
 
   // Create a translator.
   EXPECT_EQ(EvalJsCatchingError(R"(
@@ -511,24 +512,24 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
 
   base::RunLoop run_loop_for_register_translate_kit;
   EXPECT_CALL(mock_component_manager, RegisterTranslateKitComponentImpl())
-      .WillOnce(Invoke([&]() { run_loop_for_register_translate_kit.Quit(); }));
+      .WillOnce([&]() { run_loop_for_register_translate_kit.Quit(); });
 
   base::RunLoop run_loop_for_register_en_ja_language_pack;
   base::RunLoop run_loop_for_register_en_es_language_pack;
   EXPECT_CALL(mock_component_manager,
               RegisterTranslateKitLanguagePackComponent(_))
-      .WillOnce(Invoke([&](LanguagePackKey key) {
+      .WillOnce([&](LanguagePackKey key) {
         EXPECT_EQ(key, LanguagePackKey::kEn_Ja);
         // Call RegisterLanguagePack() to avoid redundant calls of
         // RegisterTranslateKitLanguagePackComponent().
         mock_component_manager.RegisterLanguagePack(key);
         run_loop_for_register_en_ja_language_pack.Quit();
-      }))
-      .WillOnce(Invoke([&](LanguagePackKey key) {
+      })
+      .WillOnce([&](LanguagePackKey key) {
         EXPECT_EQ(key, LanguagePackKey::kEn_Es);
         mock_component_manager.RegisterLanguagePack(key);
         run_loop_for_register_en_es_language_pack.Quit();
-      }));
+      });
 
   // Helper function to get the state of a promise at the moment the helper
   // function is called.
@@ -620,18 +621,18 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
 
   base::RunLoop run_loop_for_register_translate_kit;
   EXPECT_CALL(mock_component_manager, RegisterTranslateKitComponentImpl())
-      .WillOnce(Invoke([&]() { run_loop_for_register_translate_kit.Quit(); }));
+      .WillOnce([&]() { run_loop_for_register_translate_kit.Quit(); });
 
   base::RunLoop run_loop_for_register_language_pack;
   EXPECT_CALL(mock_component_manager,
               RegisterTranslateKitLanguagePackComponent(_))
-      .WillOnce(Invoke([&](LanguagePackKey key) {
+      .WillOnce([&](LanguagePackKey key) {
         EXPECT_EQ(key, LanguagePackKey::kEn_Ja);
         // Call RegisterLanguagePack() to avoid redundant calls of
         // RegisterTranslateKitLanguagePackComponent().
         mock_component_manager.RegisterLanguagePack(key);
         run_loop_for_register_language_pack.Quit();
-      }));
+      });
 
   // TODO(crbug.com/421947718): Each `Translator.create` call should be in it's
   // own `EvalJs` call like
@@ -875,6 +876,95 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
   WaitForConsoleObserver(*console_observer);
 }
 
+// Tests behavior of translator.translateStreaming().
+class OnDeviceTranslateStreamingBrowserTest
+    : public OnDeviceTranslationBrowserTest {
+ public:
+  OnDeviceTranslateStreamingBrowserTest() {
+    scoped_feature_list_.InitAndEnableFeature(kTranslateStreamingBySentence);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Tests the behavior of streaming translation.
+IN_PROC_BROWSER_TEST_F(OnDeviceTranslateStreamingBrowserTest,
+                       TranslateStreaming) {
+  MockComponentManager mock_component_manager(GetTempDir());
+  mock_component_manager.ExpectCallRegisterTranslateKitComponentAndInstall();
+  mock_component_manager.ExpectCallRegisterLanguagePackComponentAndInstall(
+      {LanguagePackKey::kEn_Ja});
+
+  NavigateToEmptyPage();
+
+  // Create a translator and call translateStreaming().
+  // The mock sentence splitter will split the input by ".".
+  // The mock translator will prepend "en to ja: " to each sentence.
+  // The streaming response will be concatenated with spaces in between.
+  // Confirms correctness of chunk content and the number of chunks streamed.
+  EXPECT_EQ(EvalJsCatchingError(R"(
+      const translator = await Translator.create({
+          sourceLanguage: 'en',
+          targetLanguage: 'ja',
+        });
+      const stream =
+          translator.translateStreaming('Sentence one. Sentence two.');
+      let result = '';
+      const chunks = [];
+      for await (const chunk of stream) {
+        result += chunk;
+        chunks.push(chunk);
+      }
+      if (chunks.length !== 2) return `Expected 2 chunks, got ${chunks.length}`;
+      if (chunks[0] !== 'en to ja: Sentence one')
+        return `Unexpected chunk 0: ${chunks[0]}`;
+      if (chunks[1] !== ' en to ja: Sentence two')
+        return `Unexpected chunk 1: ${chunks[1]}`;
+      return result;
+  )"),
+            "en to ja: Sentence one en to ja: Sentence two");
+}
+
+// Tests the FIFO order of multiple parallel invocations of
+// TranslateStreaming().
+IN_PROC_BROWSER_TEST_F(OnDeviceTranslateStreamingBrowserTest,
+                       MultipleInvocations) {
+  MockComponentManager mock_component_manager(GetTempDir());
+  mock_component_manager.ExpectCallRegisterTranslateKitComponentAndInstall();
+  mock_component_manager.ExpectCallRegisterLanguagePackComponentAndInstall(
+      {LanguagePackKey::kEn_Ja});
+
+  NavigateToEmptyPage();
+
+  // Create one translator and call translateStreaming() multiple times in
+  // parallel. The results should be correct and not interfere with each other.
+  EXPECT_EQ(EvalJsCatchingError(R"(
+      const translator = await Translator.create({
+          sourceLanguage: 'en',
+          targetLanguage: 'ja',
+        });
+
+      async function streamAndCollect(input) {
+        const stream = translator.translateStreaming(input);
+        let result = '';
+        for await (const chunk of stream) {
+          result += chunk;
+        }
+        return result;
+      }
+
+      const results = await Promise.all([
+        streamAndCollect('First call. Sentence one.'),
+        streamAndCollect('Second call. Sentence two.'),
+      ]);
+
+      return results.join('|');
+  )"),
+            "en to ja: First call en to ja: Sentence one|en to ja: Second call "
+            "en to ja: Sentence two");
+}
+
 // Tests progress monitor behavior.
 class OnDeviceTranslationProgressMonitorBrowserTest
     : public OnDeviceTranslationBrowserTest {
@@ -890,11 +980,19 @@ class OnDeviceTranslationProgressMonitorBrowserTest
 
     // Setup a ComponentUpdateService to be used by the TranslationManager.
     EXPECT_CALL(*translation_manager_, GetComponentUpdateService())
-        .WillOnce(Invoke([&]() { return &component_update_service_; }));
+        .WillOnce([&]() { return &component_update_service_; });
 
-    // `GetComponentIDs` should be called by the
+    // `GetComponentDetails` should be called by the
     // `AIModelDownloadProgressManager` to filter out existing downloads.
-    EXPECT_CALL(component_update_service_, GetComponentIDs()).Times(1);
+    EXPECT_CALL(component_update_service_, GetComponentDetails(_, _))
+        .WillRepeatedly(
+            [&](const std::string& id, component_updater::CrxUpdateItem* item) {
+              // The `total_bytes` doesn't matter since
+              // `AIModelDownloadProgressManager` doesn't check it for now.
+              *item = GetComponentForTranslateKit(100).CreateUpdateItem(
+                  update_client::ComponentState::kNew, 0);
+              return true;
+            });
   }
 
   void TearDownOnMainThread() override {
@@ -909,17 +1007,17 @@ class OnDeviceTranslationProgressMonitorBrowserTest
 
     base::RunLoop run_loop_translate_kit;
     EXPECT_CALL(component_manager_, RegisterTranslateKitComponentImpl())
-        .WillOnce(Invoke([&]() { run_loop_translate_kit.Quit(); }));
+        .WillOnce([&]() { run_loop_translate_kit.Quit(); });
 
     base::RunLoop run_loop_language_pack;
     EXPECT_CALL(component_manager_,
                 RegisterTranslateKitLanguagePackComponent(_))
-        .WillRepeatedly(Invoke([&](LanguagePackKey key) {
+        .WillRepeatedly([&](LanguagePackKey key) {
           EXPECT_EQ(language_pack_keys.erase(key), 1u);
           if (language_pack_keys.empty()) {
             run_loop_language_pack.Quit();
           }
-        }));
+        });
 
     EXPECT_EQ(EvalJsCatchingError(base::StringPrintf(R"(
                   self.progressEvents = [];
@@ -991,7 +1089,8 @@ class OnDeviceTranslationProgressMonitorBrowserTest
                             await self.createTranslatorPromise;
                             return self.progressEvents;
                           })())")
-                                           .ExtractList();
+                                           .TakeValue()
+                                           .TakeList();
 
     ASSERT_EQ(actual_updates.size(), expected_updates.size());
     for (size_t i = 0; i < actual_updates.size(); i++) {
@@ -1406,15 +1505,15 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
 
   base::RunLoop run_loop_for_register_translate_kit;
   EXPECT_CALL(mock_component_manager, RegisterTranslateKitComponentImpl())
-      .WillOnce(Invoke([&]() { run_loop_for_register_translate_kit.Quit(); }));
+      .WillOnce([&]() { run_loop_for_register_translate_kit.Quit(); });
 
   base::RunLoop run_loop_for_register_language_pack;
   EXPECT_CALL(mock_component_manager,
               RegisterTranslateKitLanguagePackComponent(_))
-      .WillOnce(Invoke([&](LanguagePackKey key) {
+      .WillOnce([&](LanguagePackKey key) {
         EXPECT_EQ(key, LanguagePackKey::kEn_Ja);
         run_loop_for_register_language_pack.Quit();
-      }));
+      });
 
   NavigateToEmptyPage();
 
@@ -1612,6 +1711,8 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
       "en", "ja", CanCreateTranslatorResult::kAfterDownloadLibraryNotReady);
 }
 
+// CreateGuestBrowser isn't available on ChromeOS
+#if !BUILDFLAG(IS_CHROMEOS)
 // Tests the behavior when the Translator API is accessed from an invalid
 // storage partition.
 IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
@@ -1659,6 +1760,7 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
       }));
   run_loop.Run();
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // Test the behavior of availability() when the language is not supported.
 IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest,
@@ -1989,7 +2091,7 @@ class OnDeviceTranslationCrossOriginBrowserTest
   // URLLoaderInterceptor callback
   static bool InterceptRequest(
       content::URLLoaderInterceptor::RequestParams* params) {
-    if (params->url_request.url.path() == "/index.html") {
+    if (params->url_request.url.GetPath() == "/index.html") {
       content::URLLoaderInterceptor::WriteResponse(
           "HTTP/1.1 200 OK\nContent-Type: text/html; charset=utf-8\n\n",
           R"(
@@ -2030,7 +2132,7 @@ class OnDeviceTranslationCrossOriginBrowserTest
           params->client.get(),
           /*ssl_info=*/std::nullopt, params->url_request.url);
       return true;
-    } else if (params->url_request.url.path() == "/frame.html") {
+    } else if (params->url_request.url.GetPath() == "/frame.html") {
       content::URLLoaderInterceptor::WriteResponse(
           "HTTP/1.1 200 OK\nContent-Type: text/html; charset=utf-8\n\n",
           R"(
@@ -2124,6 +2226,8 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationCrossOriginBrowserTest,
   EXPECT_EQ(CheckTranslateInIframe(iframe1), "NotAllowedError");
 }
 
+// CreateGuestBrowser isn't available on ChromeOS
+#if !BUILDFLAG(IS_CHROMEOS)
 // Tests the behavior of the Translation API in a cross origin iframe using the
 // guest profile.
 IN_PROC_BROWSER_TEST_F(OnDeviceTranslationCrossOriginBrowserTest,
@@ -2140,7 +2244,10 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationCrossOriginBrowserTest,
       AddIframe(0, guest_browser, /*enable_permission_policy=*/true);
   EXPECT_EQ(CheckTranslateInIframe(iframe), "en to ja: hello");
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
+// CreateGuestBrowser isn't available on ChromeOS
+#if !BUILDFLAG(IS_CHROMEOS)
 // TODO(crbug.com/423029203): This is timing out on a CQ bot so it is disabled
 // for now until we can resolve that issue.
 //
@@ -2211,6 +2318,7 @@ IN_PROC_BROWSER_TEST_F(OnDeviceTranslationCrossOriginBrowserTest,
     EXPECT_EQ(CheckTranslateInIframe(iframe), "en to ja: hello");
   }
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // Tests the behavior of the Translation API in a cross origin iframe using
 // the command line. We need this test because the implementation of
@@ -2446,4 +2554,42 @@ IN_PROC_BROWSER_TEST_F(
   TestSimpleTranslationWorks(browser(), "en", "ja");
 }
 
+// Tests the behavior of the Translator API on a page with a file scheme URL.
+IN_PROC_BROWSER_TEST_F(OnDeviceTranslationBrowserTest, FileSchemeUrl) {
+  MockComponentManager mock_component_manager(GetTempDir());
+  mock_component_manager.ExpectCallRegisterTranslateKitComponentAndInstall();
+  mock_component_manager.ExpectCallRegisterLanguagePackComponentAndInstall(
+      {LanguagePackKey::kEn_Ja});
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  base::FilePath empty_html_path = temp_dir.GetPath().AppendASCII("empty.html");
+  ASSERT_TRUE(base::WriteFile(empty_html_path, "<html></html>"));
+  base::FilePath empty2_html_path =
+      temp_dir.GetPath().AppendASCII("empty2.html");
+  ASSERT_TRUE(base::WriteFile(empty2_html_path, "<html></html>"));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), net::FilePathToFileURL(empty_html_path)));
+
+  // The language pack for Japanese needs to be downloaded.
+  TestTranslationAvailable(browser(), "en", "ja", "downloadable");
+
+  // Create a translator.
+  EXPECT_EQ(EvalJsCatchingError(R"(
+      window._translator = await Translator.create({
+        sourceLanguage: 'en',
+        targetLanguage: 'ja',
+      });
+      return await window._translator.translate('hello');
+    )"),
+            "en to ja: hello");
+
+  // After creating a translator, the language pair should be available.
+  TestTranslationAvailable(browser(), "en", "ja", "available");
+
+  // Navigate to another file URL. The availability should be reset.
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), net::FilePathToFileURL(empty2_html_path)));
+  TestTranslationAvailable(browser(), "en", "ja", "downloadable");
+}
 }  // namespace on_device_translation

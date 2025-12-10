@@ -213,7 +213,7 @@ TEST_F(ComputedStyleTest, TrackedPseudoStyle) {
     match_result.SetHasPseudoElementStyle(pseudo_id);
 
     ComputedStyleBuilder builder = CreateComputedStyleBuilder();
-    builder.SetPseudoElementStyles(match_result.PseudoElementStyles());
+    builder.SetPseudoElementStyles(match_result.PseudoElementStyles().Bits());
     const ComputedStyle* style = builder.TakeStyle();
 
     EXPECT_TRUE(style->HasPseudoElementStyle(pseudo_id));
@@ -816,7 +816,7 @@ TEST_F(ComputedStyleTest, ApplyColorSchemeLightOnDark) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   CSSPropertyRef ref("color-scheme", state.GetDocument());
 
@@ -851,7 +851,7 @@ TEST_F(ComputedStyleTest, ApplyLightDarkColor) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   CSSValueList* dark_value = CSSValueList::CreateSpaceSeparated();
   dark_value->Append(*CSSIdentifierValue::Create(CSSValueID::kDark));
@@ -867,9 +867,11 @@ TEST_F(ComputedStyleTest, ApplyLightDarkColor) {
   StyleCascade cascade1(state);
   cascade1.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
   cascade1.MutableMatchResult().AddMatchedProperties(
-      color_declaration, {.origin = CascadeOrigin::kAuthor});
+      color_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade1.MutableMatchResult().AddMatchedProperties(
-      dark_declaration, {.origin = CascadeOrigin::kAuthor});
+      dark_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade1.Apply();
   const ComputedStyle* style = state.StyleBuilder().CloneStyle();
   EXPECT_EQ(Color::kWhite, style->VisitedDependentColor(GetCSSPropertyColor()));
@@ -877,9 +879,11 @@ TEST_F(ComputedStyleTest, ApplyLightDarkColor) {
   StyleCascade cascade2(state);
   cascade2.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
   cascade2.MutableMatchResult().AddMatchedProperties(
-      color_declaration, {.origin = CascadeOrigin::kAuthor});
+      color_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade2.MutableMatchResult().AddMatchedProperties(
-      light_declaration, {.origin = CascadeOrigin::kAuthor});
+      light_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade2.Apply();
   style = state.StyleBuilder().CloneStyle();
   EXPECT_EQ(Color::kBlack, style->VisitedDependentColor(GetCSSPropertyColor()));
@@ -899,7 +903,7 @@ TEST_F(ComputedStyleTest, ApplyLightDarkBackgroundImage) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   auto* bgimage_declaration = ParseDeclarationBlock(
       "background-image:light-dark(none, url(dummy.png))", kUASheetMode);
@@ -909,20 +913,24 @@ TEST_F(ComputedStyleTest, ApplyLightDarkBackgroundImage) {
   StyleCascade cascade1(state);
   cascade1.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
   cascade1.MutableMatchResult().AddMatchedProperties(
-      bgimage_declaration, {.origin = CascadeOrigin::kAuthor});
+      bgimage_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade1.MutableMatchResult().AddMatchedProperties(
-      dark_declaration, {.origin = CascadeOrigin::kAuthor});
+      dark_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade1.Apply();
   EXPECT_TRUE(state.TakeStyle()->HasBackgroundImage());
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   StyleCascade cascade2(state);
   cascade2.MutableMatchResult().BeginAddingAuthorRulesForTreeScope(document);
   cascade2.MutableMatchResult().AddMatchedProperties(
-      bgimage_declaration, {.origin = CascadeOrigin::kAuthor});
+      bgimage_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade2.MutableMatchResult().AddMatchedProperties(
-      light_declaration, {.origin = CascadeOrigin::kAuthor});
+      light_declaration, /*env_bindings=*/nullptr,
+      {.origin = CascadeOrigin::kAuthor});
   cascade2.Apply();
   EXPECT_FALSE(state.TakeStyle()->HasBackgroundImage());
 }
@@ -936,7 +944,7 @@ TEST_F(ComputedStyleTest, StrokeWidthZoomAndCalc) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
   state.StyleBuilder().SetEffectiveZoom(1.5);
 
   auto* calc_value = CSSMathFunctionValue::Create(
@@ -1148,7 +1156,7 @@ TEST_F(ComputedStyleTest, GetVariableNamesWithInitialData_Invalidation) {
 
 TEST_F(ComputedStyleTest, BorderWidthZoom) {
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div {
         border-top-style: solid;
@@ -1215,7 +1223,7 @@ TEST_F(ComputedStyleTest, BorderWidthConversion) {
   // are converted as expected.
 
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div {
         border-top-style: solid;
@@ -1299,7 +1307,7 @@ TEST_F(ComputedStyleTest, BorderWidthConversionWithZoom) {
   // are converted as expected when Zoom is applied.
 
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div {
         border-top-style: solid;
@@ -1367,7 +1375,7 @@ TEST_F(ComputedStyleTest,
   using css_test_helpers::ParseDeclarationBlock;
 
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div {
         text-decoration: underline solid green 5px;
@@ -1379,7 +1387,7 @@ TEST_F(ComputedStyleTest,
     <div id="clone"></div>
     <div id="other" style="text-decoration-color: blue;"></div>
   )HTML",
-                                ASSERT_NO_EXCEPTION);
+                                                   ASSERT_NO_EXCEPTION);
   document.View()->UpdateAllLifecyclePhasesForTest();
 
   const ComputedStyle* style =
@@ -1403,7 +1411,7 @@ TEST_F(ComputedStyleTest, TextDecorationNotEqualRequiresRecomputeInkOverflow) {
   using css_test_helpers::ParseDeclarationBlock;
 
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       div {
         text-decoration: underline solid green 5px;
@@ -1418,7 +1426,7 @@ TEST_F(ComputedStyleTest, TextDecorationNotEqualRequiresRecomputeInkOverflow) {
     <div id="offset" style="text-underline-offset: 4px;"></div>
     <div id="position" style="text-underline-position: left;"></div>
   )HTML",
-                                ASSERT_NO_EXCEPTION);
+                                                   ASSERT_NO_EXCEPTION);
   document.View()->UpdateAllLifecyclePhasesForTest();
 
   const ComputedStyle* style =
@@ -1511,7 +1519,7 @@ TEST_F(ComputedStyleTest, ApplyInitialAnimationNameAndTransitionProperty) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
   EXPECT_FALSE(state.StyleBuilder().Animations());
   EXPECT_FALSE(state.StyleBuilder().Transitions());
 
@@ -1535,28 +1543,13 @@ TEST_F(ComputedStyleTest, ApplyInitialAnimationNameAndTransitionProperty) {
     EXPECT_FALSE(diff.HasDifference());                            \
   }
 
-// Ensures ref-counted values are compared by their values, not by pointers.
-#define TEST_STYLE_REFCOUNTED_VALUE_NO_DIFF(type, field_name)              \
-  {                                                                        \
-    ComputedStyleBuilder builder1 = CreateComputedStyleBuilder();          \
-    ComputedStyleBuilder builder2 = CreateComputedStyleBuilder();          \
-    scoped_refptr<type> value1 = base::MakeRefCounted<type>();             \
-    scoped_refptr<type> value2 = base::MakeRefCounted<type>(value1->data); \
-    builder1.Set##field_name(value1);                                      \
-    builder2.Set##field_name(value2);                                      \
-    const ComputedStyle* style1 = builder1.TakeStyle();                    \
-    const ComputedStyle* style2 = builder2.TakeStyle();                    \
-    auto diff = style1->VisualInvalidationDiff(document, *style2);         \
-    EXPECT_FALSE(diff.HasDifference());                                    \
-  }
-
 TEST_F(ComputedStyleTest, SvgStrokeStyleShouldCompareValue) {
   Document& document = GetDocument();
   TEST_STYLE_VALUE_NO_DIFF(StrokeOpacity);
   TEST_STYLE_VALUE_NO_DIFF(StrokeMiterLimit);
   TEST_STYLE_VALUE_NO_DIFF(StrokeWidth);
   TEST_STYLE_VALUE_NO_DIFF(StrokeDashOffset);
-  TEST_STYLE_REFCOUNTED_VALUE_NO_DIFF(SVGDashArray, StrokeDashArray);
+  TEST_STYLE_VALUE_NO_DIFF(StrokeDashArray);
 
   TEST_STYLE_VALUE_NO_DIFF(StrokePaint);
   TEST_STYLE_VALUE_NO_DIFF(InternalVisitedStrokePaint);
@@ -1945,7 +1938,7 @@ TEST_F(ComputedStyleTest, BackgroundRepeat) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   auto* repeat_style_value = MakeGarbageCollected<CSSRepeatStyleValue>(
       CSSIdentifierValue::Create(CSSValueID::kRepeatX));
@@ -1970,7 +1963,7 @@ TEST_F(ComputedStyleTest, MaskRepeat) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   auto* repeat_style_value = MakeGarbageCollected<CSSRepeatStyleValue>(
       CSSIdentifierValue::Create(CSSValueID::kRepeatY));
@@ -1995,7 +1988,7 @@ TEST_F(ComputedStyleTest, MaskMode) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   auto* mode_style_value = CSSIdentifierValue::Create(CSSValueID::kAlpha);
 
@@ -2032,7 +2025,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixStandardToConstrainedHigh) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   GetCSSPropertyDynamicRangeLimit().ApplyValue(
       state, *dynamic_range_limit_mix_value, CSSProperty::ValueMode::kNormal);
@@ -2066,7 +2059,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixStandardToHigh) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   GetCSSPropertyDynamicRangeLimit().ApplyValue(
       state, *dynamic_range_limit_mix_value, CSSProperty::ValueMode::kNormal);
@@ -2100,7 +2093,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixConstrainedHighToHigh) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   GetCSSPropertyDynamicRangeLimit().ApplyValue(
       state, *dynamic_range_limit_mix_value, CSSProperty::ValueMode::kNormal);
@@ -2135,7 +2128,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixAllThree) {
                            nullptr /* StyleRecalcContext */,
                            StyleRequest(initial));
 
-  state.SetStyle(*initial);
+  state.CreateNewClonedStyle(*initial);
 
   GetCSSPropertyDynamicRangeLimit().ApplyValue(
       state, *dynamic_range_limit_mix_value, CSSProperty::ValueMode::kNormal);
@@ -2147,33 +2140,9 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixAllThree) {
                   limit.constrained_high_mix);
 }
 
-TEST_F(ComputedStyleTest, UseCountInsideListMarkerPositionQuirk) {
-  Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
-    <style>.marker-content-none::marker { content: none }</style>
-    <ul><li></li></ul>
-    <ol><li></li></ol>
-    <ul><div><li></li></ul>
-    <ol><li><li></li></li></ol>
-    <div style="display: list-item"></div>
-    <li style="list-style-position: inside"></li>
-    <li style="list-style: none"></li>
-    <li class="marker-content-none"></li>
-    <li style="display: flex"></li>
-  )HTML");
-  document.View()->UpdateAllLifecyclePhasesForTest();
-  EXPECT_FALSE(
-      document.IsUseCounted(WebFeature::kInsideListMarkerPositionQuirk));
-
-  document.body()->setInnerHTML("<li></li>");
-  document.View()->UpdateAllLifecyclePhasesForTest();
-  EXPECT_TRUE(
-      document.IsUseCounted(WebFeature::kInsideListMarkerPositionQuirk));
-}
-
 TEST_F(ComputedStyleTest, ZoomInheritance) {
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="target" style="line-height: revert; zoom: 2;">Hello, world!</div>
   )HTML");
   document.View()->UpdateAllLifecyclePhasesForTest();
@@ -2186,7 +2155,7 @@ TEST_F(ComputedStyleTest, ColorSchemeFlagsIsNormal) {
   color_scheme_helper.SetPreferredColorScheme(
       mojom::blink::PreferredColorScheme::kLight);
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="normal" style="color-scheme: normal"></div>
     <div id="light" style="color-scheme: light"></div>
     <div id="dark" style="color-scheme: dark"></div>
@@ -2212,7 +2181,7 @@ TEST_F(ComputedStyleTest, ColorSchemeFlagsIsNormal_WithMeta) {
   color_scheme_helper.SetPreferredColorScheme(
       mojom::blink::PreferredColorScheme::kLight);
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <meta name="color-scheme" content="light">
     <div id="normal" style="color-scheme: normal"></div>
     <div id="light" style="color-scheme: light"></div>
@@ -2235,7 +2204,7 @@ TEST_F(ComputedStyleTest, ColorSchemeFlagsIsNormal_WithMeta) {
 
 TEST_F(ComputedStyleTest, BottomRelativeToSafeAreaInset) {
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="f1" style="bottom: 5px"></div>
     <div id="f2" style="bottom: calc(5px + 5px)"></div>
     <div id="f3" style="bottom: env(safe-area-inset-top)"></div>
@@ -2311,7 +2280,7 @@ TEST_F(ComputedStyleTest, BottomRelativeToSafeAreaInset) {
 
 TEST_F(ComputedStyleTest, HasEnvSafeAreaInsetBottom) {
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="f1" style="bottom: 5px"></div>
     <div id="f2" style="bottom: calc(5px + 5px)"></div>
     <div id="f3" style="bottom: env(safe-area-inset-top)"></div>
@@ -2349,7 +2318,7 @@ TEST_F(ComputedStyleTest, HasEnvSafeAreaInsetBottom) {
 
 TEST_F(ComputedStyleTest, CursorInheritance) {
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       #parent {
         cursor: pointer;
@@ -2389,7 +2358,7 @@ TEST_F(ComputedStyleTest, CursorInheritance) {
 TEST_F(ComputedStyleTest, HasGapRule) {
   ScopedCSSGapDecorationForTest scoped_gap_decoration(true);
   Document& document = GetDocument();
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       #multi-col {
         columns: 4;

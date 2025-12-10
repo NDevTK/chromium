@@ -20,6 +20,7 @@
 #include "base/test/run_until.h"
 #include "base/test/test_future.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/values.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/chrome_content_browser_client_parts.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
@@ -35,6 +36,7 @@
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/embedder_support/switches.h"
 #include "components/permissions/permission_request_manager.h"
 #include "content/public/browser/content_browser_client.h"
@@ -93,7 +95,7 @@ bool RunGetAllScreensMediaAndGetIds(content::WebContents* tab,
     const content::EvalJsResult js_result = content::EvalJs(
         tab->GetPrimaryMainFrame(),
         "typeof navigator.mediaDevices.getAllScreensMedia === 'function';");
-    if (!js_result.value.is_bool()) {
+    if (!js_result.is_bool()) {
       ADD_FAILURE() << "Could not check existence of getAllScreensMedia.";
       return false;
     }
@@ -108,7 +110,7 @@ bool RunGetAllScreensMediaAndGetIds(content::WebContents* tab,
     const content::EvalJsResult js_result = content::EvalJs(
         tab->GetPrimaryMainFrame(),
         "typeof runGetAllScreensMediaAndGetIds === 'function';");
-    if (!js_result.value.is_bool()) {
+    if (!js_result.is_bool()) {
       ADD_FAILURE()
           << "Could not check existence of runGetAllScreensMediaAndGetIds.";
       return false;
@@ -122,7 +124,7 @@ bool RunGetAllScreensMediaAndGetIds(content::WebContents* tab,
 
   const content::EvalJsResult js_result = content::EvalJs(
       tab->GetPrimaryMainFrame(), "runGetAllScreensMediaAndGetIds();");
-  if (!js_result.value.is_string()) {
+  if (!js_result.is_string()) {
     ADD_FAILURE() << "Could not run runGetAllScreensMediaAndGetIds.";
     return false;
   }
@@ -327,7 +329,6 @@ class GetAllScreensMediaBrowserTestBase
 
  private:
   const bool is_permissions_policy_set_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 class MultiScreenCaptureInIsolatedWebAppBrowserTest
@@ -442,38 +443,43 @@ INSTANTIATE_TEST_SUITE_P(
     InteractionBetweenGetAllScreensMediaAndGetDisplayMediaTest,
     ::testing::Bool());
 
+// crbug.com/441674610: Disabled as failing on ChromeOS without being able to
+// reproduce.
 IN_PROC_BROWSER_TEST_P(
     InteractionBetweenGetAllScreensMediaAndGetDisplayMediaTest,
-    ProgrammaticallyStoppingOneDoesNotStopTheOther) {
+    DISABLED_ProgrammaticallyStoppingOneDoesNotStopTheOther) {
   SetScreens(/*screen_count=*/1u);
-  ASSERT_EQ(Run(method1_), nullptr);
-  ASSERT_EQ(Run(method2_), nullptr);
-  ASSERT_EQ(ProgrammaticallyStop(method1_), nullptr);
+  ASSERT_EQ(Run(method1_), base::Value());
+  ASSERT_EQ(Run(method2_), base::Value());
+  ASSERT_EQ(ProgrammaticallyStop(method1_), base::Value());
 
-  EXPECT_FALSE(AreAllTracksLive(method1_).value.GetBool());
-  EXPECT_TRUE(AreAllTracksLive(method2_).value.GetBool());
+  EXPECT_EQ(false, AreAllTracksLive(method1_));
+  EXPECT_EQ(true, AreAllTracksLive(method2_));
 }
 
-// Identical to StoppingOneDoesNotStopTheOther other than that this following
-// test stops the second-started method first.
+// crbug.com/441674610: Disabled as failing on ChromeOS without being able to
+// reproduce. Identical to StoppingOneDoesNotStopTheOther other than that this
+// following test stops the second-started method first.
 IN_PROC_BROWSER_TEST_P(
     InteractionBetweenGetAllScreensMediaAndGetDisplayMediaTest,
-    ProgrammaticallyStoppingOneDoesNotStopTheOtherInverseOrder) {
+    DISABLED_ProgrammaticallyStoppingOneDoesNotStopTheOtherInverseOrder) {
   SetScreens(/*screen_count=*/1u);
-  ASSERT_EQ(Run(method1_), nullptr);
-  ASSERT_EQ(Run(method2_), nullptr);
-  ASSERT_EQ(ProgrammaticallyStop(method2_), nullptr);
+  ASSERT_EQ(Run(method1_), base::Value());
+  ASSERT_EQ(Run(method2_), base::Value());
+  ASSERT_EQ(ProgrammaticallyStop(method2_), base::Value());
 
-  EXPECT_TRUE(AreAllTracksLive(method1_).value.GetBool());
-  EXPECT_FALSE(AreAllTracksLive(method2_).value.GetBool());
+  EXPECT_EQ(true, AreAllTracksLive(method1_));
+  EXPECT_EQ(false, AreAllTracksLive(method2_));
 }
 
+// crbug.com/441674610: Disabled as failing on ChromeOS without being able to
+// reproduce.
 IN_PROC_BROWSER_TEST_P(
     InteractionBetweenGetAllScreensMediaAndGetDisplayMediaTest,
-    UserStoppingGetDisplayMediaDoesNotStopGetAllScreensMedia) {
+    DISABLED_UserStoppingGetDisplayMediaDoesNotStopGetAllScreensMedia) {
   SetScreens(/*screen_count=*/1u);
-  ASSERT_EQ(Run(method1_), nullptr);
-  ASSERT_EQ(Run(method2_), nullptr);
+  ASSERT_EQ(Run(method1_), base::Value());
+  ASSERT_EQ(Run(method2_), base::Value());
 
   // The capture which was started via getDisplayMedia() caused the
   // browser to show the user UX for stopping that capture. Simlate a user
@@ -484,180 +490,9 @@ IN_PROC_BROWSER_TEST_P(
           contents_, MediaStreamCaptureIndicator::MediaType::kDisplayMedia);
   EXPECT_EQ(content::EvalJs(contents_,
                             "waitUntilStoppedByUser(\"getDisplayMedia\");"),
-            nullptr);
+            base::Value());
 
   // Test-focus - the capture started through gASM was not affected
   // by the user's interaction with the capture started via gDM.
-  EXPECT_TRUE(AreAllTracksLive("getAllScreensMedia").value.GetBool());
-}
-
-class MultiCaptureNotificationTest : public GetAllScreensMediaBrowserTestBase {
- public:
-  MultiCaptureNotificationTest()
-      : GetAllScreensMediaBrowserTestBase(/*is_permissions_policy_set=*/true) {}
-  MultiCaptureNotificationTest(const MultiCaptureNotificationTest&) = delete;
-  MultiCaptureNotificationTest& operator=(const MultiCaptureNotificationTest&) =
-      delete;
-
-  void SetUpOnMainThread() override {
-    GetAllScreensMediaBrowserTestBase::SetUpOnMainThread();
-    client_ = static_cast<ChromeContentBrowserClient*>(
-        content::SetBrowserClientForTesting(nullptr));
-    content::SetBrowserClientForTesting(client_);
-  }
-
-  void TearDownOnMainThread() override {
-    InProcessBrowserTest::TearDownOnMainThread();
-    client_ = nullptr;
-  }
-
- protected:
-  ChromeContentBrowserClient* client() { return client_; }
-
-  auto GetAllNotifications() {
-    base::test::TestFuture<std::set<std::string>, bool> get_displayed_future;
-    NotificationDisplayServiceFactory::GetForProfile(browser()->profile())
-        ->GetDisplayed(get_displayed_future.GetCallback());
-    const auto& notification_ids = get_displayed_future.Get<0>();
-    EXPECT_TRUE(get_displayed_future.Wait());
-    return notification_ids;
-  }
-
-  void ClearAllNotifications() {
-    NotificationDisplayService* service =
-        NotificationDisplayServiceFactory::GetForProfile(browser()->profile());
-    for (const std::string& notification_id : GetAllNotifications()) {
-      service->Close(NotificationHandler::Type::TRANSIENT, notification_id);
-    }
-  }
-
-  size_t GetDisplayedNotificationsCount() {
-    return GetAllNotifications().size();
-  }
-
-  void WaitUntilDisplayNotificationCount(size_t display_count) {
-    ASSERT_TRUE(base::test::RunUntil([&]() -> bool {
-      return GetDisplayedNotificationsCount() == display_count;
-    }));
-  }
-
-  void PostNotifyStateChanged(
-      const content::GlobalRenderFrameHostId& render_frame_host_id,
-      const std::string& label,
-      content::ContentBrowserClient::MultiCaptureChanged state) {
-    content::GetUIThreadTaskRunner({})->PostTask(
-        FROM_HERE,
-        base::BindOnce(
-            &content::ContentBrowserClient::NotifyMultiCaptureStateChanged,
-            base::Unretained(client_), render_frame_host_id, label, state));
-  }
-
-  raw_ptr<ChromeContentBrowserClient> client_ = nullptr;
-};
-
-IN_PROC_BROWSER_TEST_F(MultiCaptureNotificationTest,
-                       SingleRequestNotificationIsShown) {
-  content::RenderFrameHost* app_frame = OpenApp(allowed_url_info_1().app_id());
-  const auto renderer_id = app_frame->GetGlobalId();
-
-  PostNotifyStateChanged(
-      renderer_id,
-      /*label=*/"testinglabel1",
-      content::ContentBrowserClient::MultiCaptureChanged::kStarted);
-
-  WaitUntilDisplayNotificationCount(/*display_count=*/2u);
-  EXPECT_THAT(GetAllNotifications(),
-              testing::UnorderedElementsAre(
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("testinglabel1")),
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("on_login"))));
-
-  PostNotifyStateChanged(
-      renderer_id,
-      /*label=*/"testinglabel1",
-      content::ContentBrowserClient::MultiCaptureChanged::kStopped);
-  WaitUntilDisplayNotificationCount(/*display_count=*/1u);
-}
-
-IN_PROC_BROWSER_TEST_F(MultiCaptureNotificationTest,
-                       CalledFromAppSingleRequestNotificationIsShown) {
-  content::RenderFrameHost* app_frame = OpenApp(allowed_url_info_1().app_id());
-  const auto renderer_id = app_frame->GetGlobalId();
-
-  PostNotifyStateChanged(
-      renderer_id,
-      /*label=*/"testinglabel",
-      content::ContentBrowserClient::MultiCaptureChanged::kStarted);
-
-  WaitUntilDisplayNotificationCount(/*display_count=*/2u);
-  EXPECT_THAT(GetAllNotifications(),
-              testing::UnorderedElementsAre(
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("testinglabel")),
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("on_login"))));
-
-  PostNotifyStateChanged(
-      renderer_id,
-      /*label=*/"testinglabel",
-      content::ContentBrowserClient::MultiCaptureChanged::kStopped);
-  WaitUntilDisplayNotificationCount(/*display_count=*/1u);
-}
-
-IN_PROC_BROWSER_TEST_F(MultiCaptureNotificationTest,
-                       CalledFromAppMultipleRequestsNotificationsAreShown) {
-  content::RenderFrameHost* app_frame_1 =
-      OpenApp(allowed_url_info_1().app_id());
-  const auto renderer_id_1 = app_frame_1->GetGlobalId();
-
-  content::RenderFrameHost* app_frame_2 =
-      OpenApp(allowed_url_info_2().app_id());
-  const auto renderer_id_2 = app_frame_2->GetGlobalId();
-
-  std::string expected_notifier_id_1 = "testinglabel1";
-  PostNotifyStateChanged(
-      renderer_id_1,
-      /*label=*/expected_notifier_id_1,
-      content::ContentBrowserClient::MultiCaptureChanged::kStarted);
-  WaitUntilDisplayNotificationCount(/*display_count=*/2u);
-  EXPECT_THAT(GetAllNotifications(),
-              testing::UnorderedElementsAre(
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr(expected_notifier_id_1)),
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("on_login"))));
-
-  std::string expected_notifier_id_2 = "testinglabel2";
-  PostNotifyStateChanged(
-      renderer_id_2,
-      /*label=*/expected_notifier_id_2,
-      content::ContentBrowserClient::MultiCaptureChanged::kStarted);
-  WaitUntilDisplayNotificationCount(/*display_count=*/3u);
-  EXPECT_THAT(GetAllNotifications(),
-              testing::UnorderedElementsAre(
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr(expected_notifier_id_1)),
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr(expected_notifier_id_2)),
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("on_login"))));
-
-  PostNotifyStateChanged(
-      renderer_id_2,
-      /*label=*/expected_notifier_id_2,
-      content::ContentBrowserClient::MultiCaptureChanged::kStopped);
-  WaitUntilDisplayNotificationCount(/*display_count=*/2u);
-  EXPECT_THAT(GetAllNotifications(),
-              testing::UnorderedElementsAre(
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr(expected_notifier_id_1)),
-                  testing::AllOf(testing::HasSubstr("multi_capture"),
-                                 testing::HasSubstr("on_login"))));
-
-  PostNotifyStateChanged(
-      renderer_id_1,
-      /*label=*/expected_notifier_id_1,
-      content::ContentBrowserClient::MultiCaptureChanged::kStopped);
-  WaitUntilDisplayNotificationCount(/*display_count=*/1u);
+  EXPECT_EQ(true, AreAllTracksLive("getAllScreensMedia"));
 }

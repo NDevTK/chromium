@@ -120,13 +120,16 @@ bool LayoutSVGContainer::UpdateAfterSVGLayout(
 
   if (!IsSVGHiddenContainer()) {
     SetTransformAffectsVectorEffect(false);
-    ClearSVGDescendantMayHaveTransformRelatedAnimation();
+    ClearSVGDescendantMayHaveTransformRelatedOperations();
     for (auto* child = FirstChild(); child; child = child->NextSibling()) {
       if (child->TransformAffectsVectorEffect())
         SetTransformAffectsVectorEffect(true);
       if (child->StyleRef().HasCurrentTransformRelatedAnimation() ||
-          child->SVGDescendantMayHaveTransformRelatedAnimation()) {
-        SetSVGDescendantMayHaveTransformRelatedAnimation();
+          child->SVGDescendantMayHaveTransformRelatedOperations() ||
+          (RuntimeEnabledFeatures::
+               SvgAvoidCullingElementsWithTransformOperationsEnabled() &&
+           child->StyleRef().HasNonIdentityTransformOperation())) {
+        SetSVGDescendantMayHaveTransformRelatedOperations();
       }
     }
   }
@@ -159,10 +162,12 @@ void LayoutSVGContainer::RemoveChild(LayoutObject* child) {
     DescendantIsolationRequirementsChanged(kDescendantIsolationNeedsUpdate);
 }
 
-void LayoutSVGContainer::StyleDidChange(StyleDifference diff,
-                                        const ComputedStyle* old_style) {
+void LayoutSVGContainer::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutSVGModelObject::StyleDidChange(diff, old_style);
+  LayoutSVGModelObject::StyleDidChange(diff, old_style, style_change_context);
 
   if (IsSVGHiddenContainer()) {
     return;

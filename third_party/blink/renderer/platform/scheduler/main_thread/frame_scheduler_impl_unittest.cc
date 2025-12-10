@@ -88,7 +88,7 @@ std::unique_ptr<FrameSchedulerImpl> CreateFrameScheduler(
     bool is_in_embedded_frame_tree,
     FrameScheduler::FrameType frame_type) {
   auto frame_scheduler = page_scheduler->CreateFrameScheduler(
-      delegate, is_in_embedded_frame_tree, frame_type);
+      delegate, LocalFrameToken(), is_in_embedded_frame_tree, frame_type);
   std::unique_ptr<FrameSchedulerImpl> frame_scheduler_impl(
       static_cast<FrameSchedulerImpl*>(frame_scheduler.release()));
   return frame_scheduler_impl;
@@ -301,20 +301,15 @@ class FrameSchedulerImplTest : public testing::Test {
 
   void StorePageInBackForwardCache() {
     page_scheduler_->SetPageVisible(false);
-    // Set the BFCache state before freezing the page. The scheduler policy
-    // update, triggered by SetPageFrozen(), depends on this state to correctly
-    // handle queues that can run in BFCache.
+    // Set BFCache state first to avoid a duplicate policy update.
     page_scheduler_->SetPageBackForwardCached(true);
     page_scheduler_->SetPageFrozen(true);
   }
 
   void RestorePageFromBackForwardCache() {
     page_scheduler_->SetPageVisible(true);
-    // Set the BFCache state before freezing the page. The scheduler policy
-    // update, triggered by SetPageFrozen(), depends on this state to correctly
-    // handle queues that can run in BFCache.
-    page_scheduler_->SetPageBackForwardCached(false);
     page_scheduler_->SetPageFrozen(false);
+    page_scheduler_->SetPageBackForwardCached(false);
   }
 
   void TearDown() override {
@@ -1070,49 +1065,6 @@ TEST_F(FrameSchedulerImplTest, PageFreezeAndPageVisible) {
   EXPECT_EQ(5, counter);
 }
 
-TEST_F(FrameSchedulerImplTest, CanRunInBFCache_RunsWhenInBFCache) {
-  int counter = 0;
-  GetTaskQueue(TaskType::kBackForwardCachePostedMessage)
-      ->GetTaskRunnerWithDefaultTaskType()
-      ->PostTask(FROM_HERE,
-                 base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
-  PausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
-      FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
-
-  StorePageInBackForwardCache();
-
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_EQ(1, counter);
-
-  RestorePageFromBackForwardCache();
-  task_environment_.FastForwardUntilNoTasksRemain();
-
-  EXPECT_EQ(2, counter);
-}
-
-TEST_F(FrameSchedulerImplTest, CanRunInBFCache_IsFrozenWhenNotInBFCache) {
-  int counter = 0;
-  GetTaskQueue(TaskType::kBackForwardCachePostedMessage)
-      ->GetTaskRunnerWithDefaultTaskType()
-      ->PostTask(FROM_HERE,
-                 base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
-  PausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
-      FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
-
-  page_scheduler_->SetPageVisible(false);
-  page_scheduler_->SetPageFrozen(true);
-
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_EQ(0, counter);
-
-  page_scheduler_->SetPageFrozen(false);
-  task_environment_.FastForwardUntilNoTasksRemain();
-
-  EXPECT_EQ(2, counter);
-}
-
 TEST_F(FrameSchedulerImplTest, PagePostsCpuTasks) {
   EXPECT_TRUE(GetUnreportedTaskTime().is_zero());
   EXPECT_EQ(0, GetTotalUpdateTaskTimeCalls());
@@ -1184,6 +1136,58 @@ TEST_F(FrameSchedulerImplTest, FramePostsCpuTasksThroughReloadRenavigate) {
               GetUnreportedTaskTime().is_zero());
     EXPECT_EQ(test_case.expected_total_calls, GetTotalUpdateTaskTimeCalls());
   }
+}
+
+class FrameSchedulerImplTestWithBFCacheWithSharedWorker
+    : public FrameSchedulerImplTest {
+ public:
+  FrameSchedulerImplTestWithBFCacheWithSharedWorker()
+      : FrameSchedulerImplTest({features::kBFCacheWithSharedWorker}, {}) {}
+};
+
+TEST_F(FrameSchedulerImplTestWithBFCacheWithSharedWorker,
+       CanRunInBFCache_RunsWhenInBFCache) {
+  int counter = 0;
+  GetTaskQueue(TaskType::kBackForwardCachePostedMessage)
+      ->GetTaskRunnerWithDefaultTaskType()
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+  PausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
+      FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+
+  StorePageInBackForwardCache();
+
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(1, counter);
+
+  RestorePageFromBackForwardCache();
+  task_environment_.FastForwardUntilNoTasksRemain();
+
+  EXPECT_EQ(2, counter);
+}
+
+TEST_F(FrameSchedulerImplTestWithBFCacheWithSharedWorker,
+       CanRunInBFCache_IsFrozenWhenNotInBFCache) {
+  int counter = 0;
+  GetTaskQueue(TaskType::kBackForwardCachePostedMessage)
+      ->GetTaskRunnerWithDefaultTaskType()
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+  PausableTaskQueue()->GetTaskRunnerWithDefaultTaskType()->PostTask(
+      FROM_HERE, base::BindOnce(&IncrementCounter, base::Unretained(&counter)));
+
+  page_scheduler_->SetPageVisible(false);
+  page_scheduler_->SetPageFrozen(true);
+
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(0, counter);
+
+  page_scheduler_->SetPageFrozen(false);
+  task_environment_.FastForwardUntilNoTasksRemain();
+
+  EXPECT_EQ(2, counter);
 }
 
 class FrameSchedulerImplTestWithUnfreezableLoading
@@ -2166,7 +2170,7 @@ TEST_F(FrameSchedulerImplTest, ReportFMPAndFCPForMainFrames) {
 
   EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(2);
 
-  main_frame_scheduler->OnFirstMeaningfulPaint(base::TimeTicks::Now());
+  main_frame_scheduler->OnFirstMeaningfulPaint();
   main_frame_scheduler->OnFirstContentfulPaintInMainFrame();
 
   main_frame_scheduler = nullptr;
@@ -2191,7 +2195,7 @@ TEST_F(FrameSchedulerImplTest, DontReportFMPAndFCPForSubframes) {
 
     EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(0);
 
-    subframe_scheduler->OnFirstMeaningfulPaint(base::TimeTicks::Now());
+    subframe_scheduler->OnFirstMeaningfulPaint();
   }
 
   // Now test for embedded main frames.
@@ -2203,7 +2207,7 @@ TEST_F(FrameSchedulerImplTest, DontReportFMPAndFCPForSubframes) {
 
     EXPECT_CALL(mock_main_thread_scheduler, OnMainFramePaint).Times(0);
 
-    subframe_scheduler->OnFirstMeaningfulPaint(base::TimeTicks::Now());
+    subframe_scheduler->OnFirstMeaningfulPaint();
   }
 
   page_scheduler = nullptr;

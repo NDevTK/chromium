@@ -168,7 +168,7 @@ cr-progress,
   visibility: visible;
 }
 
-<if expr="enable_ink or enable_pdf_ink2">
+<if expr="enable_pdf_ink2">
 .annotate-button {
   margin-inline-end: 4px;
 }
@@ -199,10 +199,13 @@ cr-progress,
 }
 </if>
 
- #print,
- #more {
-   margin-inline-start: 4px;
- }
+<if expr="enable_pdf_save_to_drive">
+viewer-download-controls::part(button),
+</if>
+#print,
+#more {
+  margin-inline-start: 4px;
+}
 
 .dropdown-item {
   padding-inline-end: 16px;

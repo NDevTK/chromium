@@ -7,11 +7,6 @@
 namespace prefs {
 
 #if BUILDFLAG(IS_CHROMEOS)
-// A boolean pref - should unauthenticated user should be logged out
-// automatically. Default value is false.
-const char kForceLogoutUnauthenticatedUserEnabled[] =
-    "profile.force_logout_unauthenticated_user_enabled";
-
 // An integer property indicating the state of account id migration from
 // email to gaia id for the the profile.  See account_tracker_service.h
 // for possible values.
@@ -75,12 +70,6 @@ const char kGoogleServicesLastSyncingUsername[] =
 const char kGoogleServicesLastSignedInUsername[] =
     "google.services.last_signed_in_username";
 
-// Holds a copy of what `kGoogleServicesLastSyncingGaiaId` contained before it
-// was updated to contain the latest value, which happens when the Sync consent
-// is granted.
-const char kGoogleServicesSecondLastSyncingGaiaId[] =
-    "google.services.second_last_gaia_id";
-
 // Device id scoped to single signin. This device id will be regenerated if user
 // signs out and signs back in. When refresh token is requested for this user it
 // will be annotated with this device id.
@@ -113,11 +102,6 @@ const char kSignedInWithCredentialProvider[] =
 // Boolean which stores if the user is allowed to signin to chrome.
 const char kSigninAllowed[] = "signin.allowed";
 
-// Contains last |ListAccounts| data which corresponds to Gaia cookies encoded
-// in jspb.
-const char kGaiaCookieLastListAccountsData[] =
-    "gaia_cookie.last_list_accounts_data";
-
 // Contains last |ListAccounts| data which corresponds to Gaia cookies in
 // base64-encoded protobuf.
 const char kGaiaCookieLastListAccountsBinaryData[] =
@@ -138,6 +122,11 @@ const char kHistorySyncLastDeclinedTimestamp[] =
 // pref to this one.
 const char kHistorySyncSuccessiveDeclineCount[] =
     "signin.history_sync.successive_decline_count";
+
+// An integer preference to store the number of times the history sync promo
+// has been shown on the history page.
+const char kHistoryPageHistorySyncPromoShownCount[] =
+    "history.sync_promo_shown_count";
 
 #if BUILDFLAG(IS_IOS)
 // List of patterns to determine the account visibility, according to the
@@ -168,6 +157,24 @@ const char kSigninAllowedOnNextStartup[] = "signin.allowed_on_next_startup";
 // newly created profile via signin interception.
 const char kSigninInterceptionIDPCookiesUrl[] =
     "signin.interception.idp_cookies.url";
+
+// Integer pref to store the number of times the address bubble signin promo
+// has been shown per profile while the user is signed out used for
+// SigninPromoLimitsExperiment.
+const char kAddressSignInPromoShownCountPerProfileForLimitsExperiment[] =
+    "signin.AddressSignInPromoShownCountForLimitsExperiment";
+
+// Integer pref to store the number of times the bookmark bubble signin promo
+// has been shown per profile while the user is signed out used for
+// SigninPromoLimitsExperiment.
+const char kBookmarkSignInPromoShownCountPerProfileForLimitsExperiment[] =
+    "signin.BookmarkSignInPromoShownCountForLimitsExperiment";
+
+// Integer pref to store the number of times the password bubble signin promo
+// has been shown per profile while the user is signed out used for
+// SigninPromoLimitsExperiment.
+const char kPasswordSignInPromoShownCountPerProfileForLimitsExperiment[] =
+    "signin.PasswordSignInPromoShownCountForLimitsExperiment";
 
 // Integer which indicates whether enterprise profile separation is enforced or
 // disabled.
@@ -209,5 +216,18 @@ const char kPrefsThemesSearchEnginesAccountStorageEnabled[] =
 // policy. More details can be found at BoundSessionCredentialsEnabled.yaml.
 const char kBoundSessionCredentialsEnabled[] =
     "signin.bound_session_credentials_enabled";
+
+// A boolean that is true if the primary account was set after the
+// sync-to-signin migration, where Sync is deprecated. This value is not cleared
+// on signout.
+//
+// This pref is used to provide a different welcome experience for various
+// groups of users. If false (signed in before the migration) and if the user:
+//   - did not have Sync enabled,
+//   - was not migrated from DICe,
+// they are shown an In-Product Help (IPH) bubble explaining the new benefits.
+// Otherwise, other UIs are used to inform the user of the benefits.
+const char kPrimaryAccountSetAfterSigninMigration[] =
+    "signin.primary_account_set_after_signin_migration";
 
 }  // namespace prefs

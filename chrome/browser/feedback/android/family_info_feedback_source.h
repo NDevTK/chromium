@@ -5,9 +5,9 @@
 #ifndef CHROME_BROWSER_FEEDBACK_ANDROID_FAMILY_INFO_FEEDBACK_SOURCE_H_
 #define CHROME_BROWSER_FEEDBACK_ANDROID_FAMILY_INFO_FEEDBACK_SOURCE_H_
 
-#include <map>
 #include <memory>
 
+#include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
@@ -29,7 +29,7 @@ namespace chrome::android {
 // asynchronously.
 class FamilyInfoFeedbackSource {
  public:
-  FamilyInfoFeedbackSource(const base::android::JavaParamRef<jobject>& obj,
+  FamilyInfoFeedbackSource(const base::android::JavaRef<jobject>& obj,
                            Profile* profile);
 
   FamilyInfoFeedbackSource(const FamilyInfoFeedbackSource&) = delete;

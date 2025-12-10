@@ -19,7 +19,7 @@ class PrefChangeRegistrar;
 class PrefService;
 
 namespace content {
-class WebContents;
+class RenderFrameHost;
 }  // namespace content
 
 namespace captions {
@@ -61,25 +61,25 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
     virtual ~Listener() = default;
 
     // Called when a transcription is received from the service for audio that
-    // originated in `web_contents`.  `web_contents` may be null if the audio
-    // was not associated with any particulat WebContents.
+    // originated in the RFH.  This may be null if the audio was not associated
+    // with any particulat RFH.
     //
     // Transcriptions will halt if this returns false.
     virtual bool OnTranscription(
-        content::WebContents*,
+        content::RenderFrameHost*,
         CaptionBubbleContext*,
         const media::SpeechRecognitionResult& result) = 0;
 
-    // Called when the audio stream has ended for audio from `web_contents`,
-    // which may be null.
+    // Called when the audio stream has ended for audio from the
+    // RenderFrameHost, which may be null.
     virtual void OnAudioStreamEnd(
-        content::WebContents*,
+        content::RenderFrameHost*,
         CaptionBubbleContext* caption_bubble_context) = 0;
 
-    // Called when the language is identified for audio from `web_contents`,
-    // which may be null.
+    // Called when the language is identified for audio from the
+    // RenderFrameHost, which may be null.
     virtual void OnLanguageIdentificationEvent(
-        content::WebContents*,
+        content::RenderFrameHost*,
         CaptionBubbleContext* caption_bubble_context,
         const media::mojom::LanguageIdentificationEventPtr& event) = 0;
 
@@ -103,17 +103,17 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   // there's at most one listener anyway.
   //
   // Transcriptions will halt if this returns false.
-  bool DispatchTranscription(content::WebContents* web_contents,
+  bool DispatchTranscription(content::RenderFrameHost* rfh,
                              CaptionBubbleContext* caption_bubble_context,
                              const media::SpeechRecognitionResult& result);
 
   // Alerts all listeners that the audio stream has ended.
-  void OnAudioStreamEnd(content::WebContents* web_contents,
+  void OnAudioStreamEnd(content::RenderFrameHost* rfh,
                         CaptionBubbleContext* caption_bubble_context);
 
   // Notifies all listeners about a language identification event.
   void OnLanguageIdentificationEvent(
-      content::WebContents* web_contents,
+      content::RenderFrameHost* rfh,
       CaptionBubbleContext* caption_bubble_context,
       const media::mojom::LanguageIdentificationEventPtr& event);
 
@@ -121,6 +121,10 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   void destroy_ui_for_testing() { DestroyUI(); }
   CaptionBubbleController* caption_bubble_controller_for_testing() const {
     return caption_bubble_controller();
+  }
+
+  void remove_listener_for_testing(Listener* listener) {
+    RemoveListener(listener);
   }
 
  protected:
@@ -139,6 +143,11 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   virtual std::unique_ptr<TranslationViewWrapperBase>
   CreateTranslationViewWrapper();
 
+  // Called when the size of the listener set goes to or from zero.  This allows
+  // subclasses to handle SODA installation as needed on a per-platform basis.
+  virtual void OnFirstListenerAdded() {}
+  virtual void OnLastListenerRemoved() {}
+
  private:
   virtual CaptionBubbleSettings* caption_bubble_settings() = 0;
 
@@ -155,11 +164,6 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   const std::string application_locale_;
   const std::unique_ptr<Delegate> delegate_;
 
-  // The controller is also a `Listener`, and is owned by `listeners_` when we
-  // create it.  While it exists, `caption_bubble_controller_` aliases it.  This
-  // alias is cleared when it's destroyed.
-  raw_ptr<CaptionBubbleController> caption_bubble_controller_ = nullptr;
-
   const std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
 
   // Whether the UI has been created. The UI is created asynchronously from the
@@ -171,6 +175,11 @@ class CaptionControllerBase : public ui::NativeThemeObserver {
   // All the listeners we own.  One of them will be `caption_bubble_controller_`
   // if we have one.
   std::list<std::unique_ptr<Listener>> listeners_;
+
+  // The controller is also a `Listener`, and is owned by `listeners_` when we
+  // create it.  While it exists, `caption_bubble_controller_` aliases it.  This
+  // alias is cleared when it's destroyed.
+  raw_ptr<CaptionBubbleController> caption_bubble_controller_ = nullptr;
 };
 
 }  // namespace captions

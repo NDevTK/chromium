@@ -78,6 +78,7 @@ bool ShouldUploadToDownloadFeedback(DownloadCheckResult result) {
     case DownloadCheckResult::BLOCKED_PASSWORD_PROTECTED:
     case DownloadCheckResult::BLOCKED_TOO_LARGE:
     case DownloadCheckResult::SENSITIVE_CONTENT_BLOCK:
+    case DownloadCheckResult::FORCE_SAVE_TO_GDRIVE:
     case DownloadCheckResult::ALLOWLISTED_BY_POLICY:
     case DownloadCheckResult::BLOCKED_SCAN_FAILED:
       return false;
@@ -133,7 +134,7 @@ void CheckClientDownloadRequest::OnDownloadUpdated(
     if (settings.has_value()) {
       RecordDeepScanMetrics(
           settings->cloud_or_local_settings.is_cloud_analysis(),
-          /*access_point=*/DeepScanAccessPoint::DOWNLOAD,
+          /*access_point=*/enterprise_connectors::DeepScanAccessPoint::DOWNLOAD,
           /*duration=*/base::TimeTicks::Now() - upload_start_time_,
           /*total_size=*/item_->GetTotalBytes(),
           /*result=*/"BypassedByUser",

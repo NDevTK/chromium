@@ -8,7 +8,7 @@ import androidx.test.espresso.Espresso;
 
 import org.chromium.base.test.transit.Facility;
 import org.chromium.base.test.transit.Station;
-import org.chromium.base.test.transit.Transition;
+import org.chromium.base.test.transit.TripBuilder;
 import org.chromium.base.test.transit.ViewElement;
 import org.chromium.ui.test.transit.SoftKeyboardElement;
 
@@ -33,20 +33,28 @@ public class SoftKeyboardFacility extends Facility<Station<?>> {
     public void close(ViewElement... viewElementsToSettle) {
         assertInPhase(Phase.ACTIVE);
 
-        if (softKeyboardElement.get()) {
+        if (softKeyboardElement.value()) {
             // Keyboard was expected to be shown
 
             // If this fails, the keyboard was closed before, but not by this facility.
             recheckActiveConditions();
-            Transition.TransitionOptions.Builder options = Transition.newOptions();
-            options.withRetry();
-            for (ViewElement<?> viewElement : viewElementsToSettle) {
-                options.withCondition(viewElement.createSettleCondition());
+
+            TripBuilder tripBuilder = runTo(Espresso::closeSoftKeyboard).withRetry();
+
+            if (viewElementsToSettle.length > 0) {
+                Facility<?> viewsSettledFacility = new Facility<>("ViewsSettled");
+                for (ViewElement<?> viewElement : viewElementsToSettle) {
+                    viewsSettledFacility.declareView(
+                            viewElement.getViewSpec(),
+                            viewElement.copyOptions().initialSettleTime(1000).build());
+                }
+                tripBuilder = tripBuilder.enterFacilityAnd(viewsSettledFacility);
             }
-            mHostStation.exitFacilitySync(this, options.build(), Espresso::closeSoftKeyboard);
+
+            tripBuilder.exitFacility();
         } else {
             // Keyboard was not expected to be shown
-            mHostStation.exitFacilitySync(this, /* trigger= */ null);
+            noopTo().exitFacility();
         }
     }
 }

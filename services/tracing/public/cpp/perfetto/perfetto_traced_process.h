@@ -13,6 +13,7 @@
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/thread_annotations.h"
+#include "base/trace_event/trace_config.h"
 #include "base/trace_event/trace_event.h"
 #include "base/tracing/perfetto_task_runner.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_tracing_backend.h"
@@ -163,8 +164,7 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
   static base::Thread* GetTraceThread();
 
   // Creates the process-wide instance of the PerfettoTracedProcess.
-  static PerfettoTracedProcess& MaybeCreateInstance();
-  static PerfettoTracedProcess& MaybeCreateInstanceWithThread(
+  static PerfettoTracedProcess& MaybeCreateInstance(
       bool will_trace_thread_restart);
   static PerfettoTracedProcess& MaybeCreateInstanceForTesting();
 
@@ -197,8 +197,17 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
   bool SetupStartupTracing(const base::trace_event::TraceConfig&,
                            bool privacy_filtering_enabled);
 
+  // Initialize the Perfetto client library (i.e., perfetto::Tracing) for this
+  // process.
+  // |enable_consumer| should be true if the system consumer can be enabled.
+  // Currently this is only the case if this is running in the browser process.
   // Called on the process's main thread once the thread pool is ready.
-  void OnThreadPoolAvailable(bool enable_consumer);
+  // |enable_system_backend| indicates if the system backend should be enabled
+  // on Posix platforms. It is ignored on other platforms.
+  void SetupClientLibrary(
+      bool enable_consumer,
+      bool enable_system_backend,
+      std::optional<uint64_t> process_track_uuid = std::nullopt);
 
   // Set a callback that returns whether a system tracing session is allowed.
   // The callback will be executed on the sequence that set it. Only a single
@@ -223,15 +232,6 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
     return platform_.get();
   }
 
-  // Indicate that startup tracing will need to start when thread pool becomes
-  // available. This is used in Perfetto client library build, because currently
-  // it requires a threadpool to run tracing tasks.
-  // TODO(khokhlov): Remove this method once startup tracing no longer depends
-  // on threadpool in client library build.
-  void RequestStartupTracing(
-      const perfetto::TraceConfig& config,
-      const perfetto::Tracing::SetupStartupTracingOpts& opts);
-
 #if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
   void DeferOrConnectProducerSocket(perfetto::CreateSocketCallback cb);
 #endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
@@ -243,12 +243,6 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
   explicit PerfettoTracedProcess(bool will_trace_thread_restart);
   explicit PerfettoTracedProcess(
       scoped_refptr<base::SequencedTaskRunner> task_runner);
-
-  // Initialize the Perfetto client library (i.e., perfetto::Tracing) for this
-  // process.
-  // |enable_consumer| should be true if the system consumer can be enabled.
-  // Currently this is only the case if this is running in the browser process.
-  void SetupClientLibrary(bool enable_consumer);
 
   // perfetto::TracingPolicy implementation:
   void ShouldAllowConsumerSession(
@@ -277,11 +271,6 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
   // Platform implementation for the Perfetto client library.
   std::unique_ptr<base::tracing::PerfettoPlatform> platform_;
   std::unique_ptr<PerfettoTracingBackend> tracing_backend_;
-
-  bool startup_tracing_needed_ = false;
-  bool thread_pool_started_ = false;
-  perfetto::TraceConfig saved_config_;
-  perfetto::Tracing::SetupStartupTracingOpts saved_opts_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

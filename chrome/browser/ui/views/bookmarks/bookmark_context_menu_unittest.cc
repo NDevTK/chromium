@@ -44,7 +44,7 @@
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/test/test_clipboard.h"
 #include "ui/events/platform/platform_event_source.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/test/scoped_views_test_helper.h"
 
@@ -187,12 +187,12 @@ TEST_P(BookmarkContextMenuTest, OpenCount) {
   const BookmarkNode* folder = model_->bookmark_bar_node()->children()[1].get();
   // Should count F1's child but not F11's child, as that's what OpenAll would
   // open.
-  EXPECT_EQ(2, bookmarks::OpenCount(gfx::NativeWindow(), folder));
+  EXPECT_EQ(2, bookmarks::OpenCount(folder));
 
   if (SyncEnableBookmarksInTransportModeEnabled()) {
     folder = model_->account_bookmark_bar_node()->children()[1].get();
     // Should count acc_F1's child but not acc_F11's child.
-    EXPECT_EQ(1, bookmarks::OpenCount(gfx::NativeWindow(), folder));
+    EXPECT_EQ(1, bookmarks::OpenCount(folder));
   }
 }
 
@@ -202,8 +202,7 @@ TEST_P(BookmarkContextMenuTest, OpenCountIncognito) {
   const BookmarkNode* folder = model_->bookmark_bar_node()->children()[1].get();
 
   // Should count f1a but not f1b, as that's what OpenAll would open.
-  EXPECT_EQ(1,
-            bookmarks::OpenCount(gfx::NativeWindow(), folder, profile_.get()));
+  EXPECT_EQ(1, bookmarks::OpenCount(folder, profile_.get()));
 }
 
 // Tests the enabled state of the menus when supplied a vector with a single
@@ -218,6 +217,7 @@ TEST_P(BookmarkContextMenuTest, SingleURL) {
   EXPECT_TRUE(
       controller.IsCommandEnabled(IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW));
   EXPECT_TRUE(controller.IsCommandEnabled(IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO));
+  // Due to no active browser.
   EXPECT_FALSE(controller.IsCommandEnabled(IDC_BOOKMARK_BAR_OPEN_SPLIT_VIEW));
   EXPECT_TRUE(controller.IsCommandEnabled(IDC_BOOKMARK_BAR_REMOVE));
   EXPECT_TRUE(controller.IsCommandEnabled(IDC_BOOKMARK_BAR_ADD_NEW_BOOKMARK));

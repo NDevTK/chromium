@@ -41,16 +41,26 @@ constexpr char kKind[] = "kind";
 constexpr char kIdPattern[] = "idPattern";
 constexpr char kNamePattern[] = "namePattern";
 
+idl::PrinterSource PrinterSourceToIdl(chromeos::Printer::Source source) {
+  switch (source) {
+    case chromeos::Printer::Source::SRC_USER_PREFS:
+      return idl::PrinterSource::kUser;
+    case chromeos::Printer::Source::SRC_POLICY:
+      return idl::PrinterSource::kPolicy;
+  }
+  NOTREACHED();
+}
+
 bool DoesPrinterMatchDefaultPrinterRules(
-    const crosapi::mojom::LocalDestinationInfo& printer,
+    const chromeos::Printer& printer,
     const std::optional<DefaultPrinterRules>& rules) {
   if (!rules.has_value())
     return false;
   return (rules->kind.empty() || rules->kind == kLocal) &&
          (rules->id_pattern.empty() ||
-          RE2::FullMatch(printer.id, rules->id_pattern)) &&
+          RE2::FullMatch(printer.id(), rules->id_pattern)) &&
          (rules->name_pattern.empty() ||
-          RE2::FullMatch(printer.name, rules->name_pattern));
+          RE2::FullMatch(printer.display_name(), rules->name_pattern));
 }
 
 // Validate a vendor ticket item from a print job ticket.  Items are validated
@@ -95,7 +105,8 @@ std::optional<DefaultPrinterRules> GetDefaultPrinterRules(
     return std::nullopt;
 
   std::optional<base::Value> default_destination_selection_rules_value =
-      base::JSONReader::Read(default_destination_selection_rules);
+      base::JSONReader::Read(default_destination_selection_rules,
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   base::Value::Dict* default_destination_selection_rules_dict =
       default_destination_selection_rules_value.has_value()
           ? default_destination_selection_rules_value->GetIfDict()
@@ -122,23 +133,23 @@ std::optional<DefaultPrinterRules> GetDefaultPrinterRules(
 }
 
 idl::Printer PrinterToIdl(
-    const crosapi::mojom::LocalDestinationInfo& printer,
+    const chromeos::Printer& printer,
     const std::optional<DefaultPrinterRules>& default_printer_rules,
     const base::flat_map<std::string, int>& recently_used_ranks) {
   idl::Printer idl_printer;
-  idl_printer.id = printer.id;
-  idl_printer.name = printer.name;
-  idl_printer.description = printer.description;
-  if (printer.uri)
-    idl_printer.uri = *printer.uri;
-  idl_printer.source = printer.configured_via_policy
-                           ? idl::PrinterSource::kPolicy
-                           : idl::PrinterSource::kUser;
+  idl_printer.id = printer.id();
+  idl_printer.name = printer.display_name();
+  idl_printer.description = printer.description();
+  idl_printer.uri = printer.uri().GetNormalized(true /*always_print_port*/);
+  idl_printer.source = PrinterSourceToIdl(printer.source());
   idl_printer.is_default =
       DoesPrinterMatchDefaultPrinterRules(printer, default_printer_rules);
-  auto it = recently_used_ranks.find(printer.id);
-  if (it != recently_used_ranks.end())
+  auto it = recently_used_ranks.find(printer.id());
+  if (it != recently_used_ranks.end()) {
     idl_printer.recently_used_rank = it->second;
+  } else {
+    idl_printer.recently_used_rank = std::nullopt;
+  }
   return idl_printer;
 }
 
@@ -318,7 +329,7 @@ std::unique_ptr<printing::PrintSettings> ParsePrintTicket(
       LOG(ERROR) << "Loaded invalid margins from print ticket.";
       return nullptr;
     } else {
-      settings->SetCustomMargins(
+      settings->SetCustomMarginsForBackend(
           {/*header=*/0, /*footer=*/0, margin_ticket.value().left_um,
            margin_ticket.value().right_um, margin_ticket.value().top_um,
            margin_ticket.value().bottom_um});
@@ -328,6 +339,9 @@ std::unique_ptr<printing::PrintSettings> ParsePrintTicket(
           margin_ticket.value().bottom_um == 0) {
         settings->set_margin_type(printing::mojom::MarginType::kNoMargins);
         settings->set_borderless(true);
+      } else {
+        CHECK_EQ(settings->margin_type(),
+                 printing::mojom::MarginType::kPrecomputedMarginsForBackend);
       }
     }
   }
@@ -398,6 +412,8 @@ bool CheckSettingsAndCapabilitiesCompatibility(
 
     if (settings.margin_type() !=
         printing::mojom::MarginType::kDefaultMargins) {
+      CHECK_NE(settings.margin_type(),
+               printing::mojom::MarginType::kCustomMargins);
       const auto& requested_margins_um =
           settings.requested_custom_margins_in_microns();
       bool margins_value_supported = std::ranges::any_of(

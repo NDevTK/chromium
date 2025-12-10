@@ -16,8 +16,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
-#include "base/task/sequenced_task_runner.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/threading/sequence_bound.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/memory_dump_provider.h"
@@ -28,9 +27,8 @@
 #include "components/services/storage/public/mojom/storage_usage_info.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
+#include "storage/common/database/db_status.h"
 #include "third_party/blink/public/mojom/dom_storage/storage_area.mojom.h"
-#include "third_party/leveldatabase/src/include/leveldb/status.h"
 
 namespace blink {
 class StorageKey;
@@ -49,13 +47,10 @@ class LocalStorageImpl : public base::trace_event::MemoryDumpProvider,
   using DestructLocalStorageCallback =
       base::OnceCallback<void(LocalStorageImpl*)>;
   // Constructs a Local Storage implementation which will create its root
-  // "Local Storage" directory in |storage_root| if non-empty. |task_runner|
-  // run tasks on the same sequence as the one which constructs this object.
-  // |legacy_task_runner| must support blocking operations and its tasks must
-  // be able to block shutdown. If valid, |receiver| will be bound to this
-  // object to allow for remote control via the LocalStorageControl interface.
+  // "Local Storage" directory in |storage_root| if non-empty.If valid,
+  // |receiver| will be bound to this object to allow for remote control via the
+  // LocalStorageControl interface.
   LocalStorageImpl(const base::FilePath& storage_root,
-                   scoped_refptr<base::SequencedTaskRunner> task_runner,
                    DestructLocalStorageCallback destruct_callback,
                    mojo::PendingReceiver<mojom::LocalStorageControl> receiver);
   ~LocalStorageImpl() override;
@@ -129,12 +124,10 @@ class LocalStorageImpl : public base::trace_event::MemoryDumpProvider,
 
   // Part of our asynchronous directory opening called from RunWhenConnected().
   void InitiateConnection(bool in_memory_only = false);
-  void OnDatabaseOpened(leveldb::Status status);
-  void OnGotDatabaseVersion(leveldb::Status status,
-                            DomStorageDatabase::Value value);
+  void OnDatabaseOpened(DbStatus status);
   void OnConnectionFinished();
   void DeleteAndRecreateDatabase();
-  void OnDBDestroyed(bool recreate_in_memory, leveldb::Status status);
+  void OnDBDestroyed(bool recreate_in_memory, DbStatus status);
 
   StorageAreaHolder* GetOrCreateStorageArea(
       const blink::StorageKey& storage_key);
@@ -143,21 +136,21 @@ class LocalStorageImpl : public base::trace_event::MemoryDumpProvider,
   // from that function, or through |on_database_open_callbacks_|.
   void RetrieveStorageUsage(GetUsageCallback callback);
   void OnGotWriteMetaData(GetUsageCallback callback,
-                          std::vector<DomStorageDatabase::KeyValuePair> data);
+                          StatusOr<DomStorageDatabase::Metadata> all_metadata);
 
   void OnGotStorageUsageForShutdown(
       std::vector<mojom::StorageUsageInfoPtr> usage);
-  void OnStorageKeysDeleted(leveldb::Status status);
+  void OnStorageKeysDeleted(DbStatus status);
   void OnShutdownComplete();
 
   void GetStatistics(size_t* total_cache_size, size_t* unused_area_count);
-  void OnCommitResult(leveldb::Status status);
+  void OnCommitResult(DbStatus status);
 
   // These clear stale storage areas (not read/written to within 400 days) from
   // the database. See crbug.com/40281870 for more info.
   void DeleteStaleStorageAreas();
   void OnGotMetaDataToDeleteStaleStorageAreas(
-      std::vector<DomStorageDatabase::KeyValuePair> data);
+      StatusOr<DomStorageDatabase::Metadata> all_metadata);
   void OnReceiverDisconnected();
 
   // Passed in by the StorageServiceImpl that owns this object. Used to signal
@@ -172,11 +165,8 @@ class LocalStorageImpl : public base::trace_event::MemoryDumpProvider,
     CONNECTION_FINISHED,
     CONNECTION_SHUTDOWN
   } connection_state_ = NO_CONNECTION;
-  bool database_initialized_ = false;
 
   bool force_keep_session_state_ = false;
-
-  const scoped_refptr<base::SequencedTaskRunner> database_task_runner_;
 
   base::trace_event::MemoryAllocatorDumpGuid memory_dump_id_;
 
@@ -189,7 +179,6 @@ class LocalStorageImpl : public base::trace_event::MemoryDumpProvider,
   // Maps between a StorageKey and its prefixed LevelDB view.
   std::map<blink::StorageKey, std::unique_ptr<StorageAreaHolder>> areas_;
 
-  bool is_low_end_device_;
   // Counts consecutive commit errors. If this number reaches a threshold, the
   // whole database is thrown away.
   int commit_error_count_ = 0;

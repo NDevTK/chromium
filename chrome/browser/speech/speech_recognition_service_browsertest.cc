@@ -36,6 +36,7 @@
 #include "media/audio/audio_device_description.h"
 #include "media/audio/wav_audio_handler.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 #include "media/mojo/mojom/audio_data.mojom.h"
 #include "media/mojo/mojom/audio_data_pipe.mojom.h"
 #include "media/mojo/mojom/audio_input_stream.mojom.h"
@@ -337,7 +338,7 @@ void SpeechRecognitionServiceTest::SendAudioChunk(
     }
 
     speech_recognition_recognizer_->SendAudioToSpeechRecognitionService(
-        std::move(signed_buffer));
+        std::move(signed_buffer), std::nullopt);
     chunk_start += chunk_size;
 
     // Sleep for 20ms to simulate real-time audio. SODA requires audio
@@ -468,7 +469,7 @@ IN_PROC_BROWSER_TEST_F(SpeechRecognitionServiceTest,
 #else
   usleep(100000);
 #endif
-  ASSERT_GT(static_cast<int>(recognition_results_.size()), 3);
+  ASSERT_GT(recognition_results_.size(), 3u);
   ASSERT_EQ(recognition_results_.back(), "Hey Google Hey Google");
 
   metrics::SubprocessMetricsProvider::MergeHistogramDeltasForTesting();

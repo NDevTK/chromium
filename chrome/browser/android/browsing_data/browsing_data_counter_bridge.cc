@@ -15,12 +15,12 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/BrowsingDataCounterBridge_jni.h"
 
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 BrowsingDataCounterBridge::BrowsingDataCounterBridge(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
+    const base::android::JavaRef<jobject>& obj,
     Profile* profile,
     jint selected_time_period,
     jint data_type)
@@ -58,7 +58,6 @@ BrowsingDataCounterBridge::~BrowsingDataCounterBridge() = default;
 
 void BrowsingDataCounterBridge::SetSelectedTimePeriod(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jint selected_time_period) {
   if (!counter_) {
     return;
@@ -68,8 +67,7 @@ void BrowsingDataCounterBridge::SetSelectedTimePeriod(
       static_cast<browsing_data::TimePeriod>(selected_time_period)));
 }
 
-void BrowsingDataCounterBridge::Destroy(JNIEnv* env,
-                                        const JavaParamRef<jobject>& obj) {
+void BrowsingDataCounterBridge::Destroy(JNIEnv* env) {
   delete this;
 }
 
@@ -84,10 +82,12 @@ void BrowsingDataCounterBridge::onCounterFinished(
 
 static jlong JNI_BrowsingDataCounterBridge_InitWithoutPeriodPref(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
+    const base::android::JavaRef<jobject>& obj,
     Profile* profile,
     jint selected_time_period,
     jint data_type) {
   return reinterpret_cast<intptr_t>(new BrowsingDataCounterBridge(
       env, obj, profile, selected_time_period, data_type));
 }
+
+DEFINE_JNI(BrowsingDataCounterBridge)

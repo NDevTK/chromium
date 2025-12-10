@@ -17,6 +17,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/global_media_controls/cast_device_list_host.h"
 #include "chrome/browser/ui/global_media_controls/media_notification_device_provider_impl.h"
 #include "chrome/browser/ui/global_media_controls/presentation_request_notification_producer.h"
@@ -53,13 +54,12 @@
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/system/unified/unified_system_tray_bubble.h"
 #include "ash/system/unified/unified_system_tray_controller.h"
-#include "chrome/browser/ash/crosapi/crosapi_ash.h"
-#include "chrome/browser/ash/crosapi/crosapi_manager.h"
-#include "chrome/browser/ash/crosapi/media_ui_ash.h"
 #endif
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_keyed_service.h"
+#include "chrome/browser/glic/host/host.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/widget/glic_window_controller.h"
 #endif
 
 namespace mojom {
@@ -94,22 +94,11 @@ bool IsWebContentsFocused(content::WebContents* web_contents) {
   // If the given WebContents is not in the focused window, then it's not
   // focused. Note that we know a Browser is focused because otherwise the user
   // could not interact with the MediaDialogView.
-  if (BrowserList::GetInstance()->GetLastActive() != browser) {
+  if (GetLastActiveBrowserWindowInterfaceWithAnyProfile() != browser) {
     return false;
   }
   return browser->tab_strip_model()->GetActiveWebContents() == web_contents;
 }
-
-#if BUILDFLAG(IS_CHROMEOS)
-crosapi::mojom::MediaUI* GetMediaUI() {
-  // TODO(crbug.com/373971535): Figure how to call `media_ui_ash()` once crosapi
-  // is gone.
-  if (crosapi::CrosapiManager::IsInitialized()) {
-    return crosapi::CrosapiManager::Get()->crosapi_ash()->media_ui_ash();
-  }
-  return nullptr;
-}
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
 bool ShouldInitializeWithRemotePlaybackSource(
     content::WebContents* web_contents,
@@ -213,15 +202,6 @@ MediaNotificationService::MediaNotificationService(Profile* profile,
     item_manager->AddItemProducer(supplemental_device_picker_producer_.get());
     SetDevicePickerProvider(supplemental_device_picker_producer_->PassRemote());
   }
-
-#if BUILDFLAG(IS_CHROMEOS)
-  // The Ash instance manages Casting from System Web Apps.
-  if (GetMediaUI()) {
-    GetMediaUI()->RegisterDeviceService(
-        content::MediaSession::GetSourceId(profile),
-        receiver_.BindNewPipeAndPassRemote());
-  }
-#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -690,16 +670,20 @@ bool MediaNotificationService::IsIdBlocked(
     return false;
   }
 
-  auto* host = glic_keyed_service->host().webui_contents();
-  if (!host) {
-    return false;
-  }
+  // Block if the request came from any glic instance.
+  for (glic::GlicInstance* instance :
+       glic_keyed_service->window_controller().GetInstances()) {
+    if (!instance->host().webui_contents()) {
+      continue;
+    }
 
-  std::vector<content::WebContents*> inner_contents =
-      host->GetInnerWebContents();
-  if (inner_contents.size() == 1ul) {
-    return content::MediaSession::GetRequestIdFromWebContents(inner_contents[0])
-               .ToString() == request_id;
+    std::vector<content::WebContents*> inner_contents =
+        instance->host().webui_contents()->GetInnerWebContents();
+    if (inner_contents.size() == 1ul &&
+        content::MediaSession::GetRequestIdFromWebContents(inner_contents[0])
+                .ToString() == request_id) {
+      return true;
+    }
   }
 #endif
   return false;

@@ -13,12 +13,15 @@
 #include "base/strings/strcat.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "content/browser/renderer_host/navigation_request.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
 namespace content {
 
 namespace {
+
+BASE_FEATURE(kReportStuckThrottle, base::FEATURE_DISABLED_BY_DEFAULT);
 
 NavigationThrottle::ThrottleCheckResult ExecuteNavigationEvent(
     NavigationThrottle* throttle,
@@ -41,7 +44,7 @@ NavigationThrottle::ThrottleCheckResult ExecuteNavigationEvent(
   NOTREACHED();
 }
 
-const char* GetEventName(NavigationThrottleEvent event) {
+perfetto::StaticString GetEventName(NavigationThrottleEvent event) {
   switch (event) {
     case NavigationThrottleEvent::kNoEvent:
       DUMP_WILL_BE_NOTREACHED();
@@ -130,17 +133,6 @@ void NavigationThrottleRunner::ProcessNavigationEvent(
 
 void NavigationThrottleRunner::ResumeProcessingNavigationEvent(
     NavigationThrottle* deferring_throttle) {
-  if (GetDeferringThrottle() != deferring_throttle) {
-    // TODO(https://crbug.com/411238078): Upgrade to CHECK_EQ once remaining
-    // known cases are fixed. Until then, collect dump data and ignore the
-    // resume request to avoid bypassing required throttle checks.
-    SCOPED_CRASH_KEY_STRING32("Bug411238078", "expected_throttle",
-                              GetDeferringThrottle()->GetNameForLogging());
-    SCOPED_CRASH_KEY_STRING32("Bug411238078", "actual_throttle",
-                              deferring_throttle->GetNameForLogging());
-    base::debug::DumpWithoutCrashing();
-    return;
-  }
   base::TimeDelta defer_time =
       RecordDeferTimeHistogram(current_event_, defer_start_time_);
   total_defer_duration_time_ += defer_time;
@@ -152,20 +144,9 @@ void NavigationThrottleRunner::ResumeProcessingNavigationEvent(
   }
   base::UmaHistogramEnumeration("Navigation.ThrottleDeferredEvent",
                                 current_event_);
+  report_stuck_throttle_timer_ = nullptr;
   RecordDeferTimeUKM();
   ProcessInternal();
-}
-
-void NavigationThrottleRunner::CallResumeForTesting() {
-  RecordDeferTimeUKM();
-  ProcessInternal();
-}
-
-NavigationThrottle* NavigationThrottleRunner::GetDeferringThrottle() const {
-  if (next_index_ == 0) {
-    return nullptr;
-  }
-  return &registry_->GetThrottleAtIndex(next_index_ - 1);
 }
 
 void NavigationThrottleRunner::ProcessInternal() {
@@ -184,12 +165,17 @@ void NavigationThrottleRunner::ProcessInternal() {
   int64_t local_navigation_id = navigation_id_;
 
   auto& throttles = registry_->GetThrottles();
+  if (registry_->GetNavigationHandle().IsInitialWebUINavigation()) {
+    // We've skipped adding throttles for navigations to the initial WebUI.
+    // TODO(crbug.com/457618572): Remove the cast to NavigationRequest.
+    CHECK_EQ(throttles.size(), 0u);
+  }
   for (size_t i = next_index_; i < throttles.size(); ++i) {
     TRACE_EVENT0("navigation",
                  "NavigationThrottleRunner::ProcessInternal.loop");
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
-        "navigation", GetEventName(current_event_), local_navigation_id,
-        "throttle", throttles[i]->GetNameForLogging());
+    TRACE_EVENT_BEGIN("navigation", GetEventName(current_event_),
+                      perfetto::Track::Global(local_navigation_id), "throttle",
+                      throttles[i]->GetNameForLogging());
 
     base::Time start = base::Time::Now();
     NavigationThrottle::ThrottleCheckResult result =
@@ -197,14 +183,16 @@ void NavigationThrottleRunner::ProcessInternal() {
     if (!weak_ref) {
       // The NavigationThrottle execution has destroyed this
       // NavigationThrottleRunner. Return immediately.
-      TRACE_EVENT_NESTABLE_ASYNC_END1("navigation", "", local_navigation_id,
-                                      "result", "deleted");
+      // GetEventName(current_event_)
+      TRACE_EVENT_END("navigation",
+                      perfetto::Track::Global(local_navigation_id), "result",
+                      "deleted");
       return;
     }
     RecordExecutionTimeHistogram(current_event_, start);
-    TRACE_EVENT_NESTABLE_ASYNC_END1("navigation", GetEventName(current_event_),
-                                    local_navigation_id, "result",
-                                    result.action());
+    // GetEventName(current_event_)
+    TRACE_EVENT_END("navigation", perfetto::Track::Global(local_navigation_id),
+                    "result", result.action());
 
     switch (result.action()) {
       case NavigationThrottle::PROCEED:
@@ -221,12 +209,17 @@ void NavigationThrottleRunner::ProcessInternal() {
         return;
 
       case NavigationThrottle::DEFER:
+        registry_->OnDeferProcessingNavigationEvent(throttles[i].get());
         next_index_ = i + 1;
         defer_start_time_ = base::Time::Now();
-        if (first_deferral_callback_for_testing_) {
-          std::move(first_deferral_callback_for_testing_).Run();
-        }
         event_process_execution_time_ += base::Time::Now() - start_time;
+        if (base::FeatureList::IsEnabled(kReportStuckThrottle)) {
+          report_stuck_throttle_timer_ = std::make_unique<base::OneShotTimer>();
+          report_stuck_throttle_timer_->Start(
+              FROM_HERE, base::Seconds(30),
+              base::BindOnce(&NavigationThrottleRunner::ReportStuckThrottle,
+                             weak_factory_.GetWeakPtr()));
+        }
         return;
     }
   }
@@ -260,7 +253,7 @@ void NavigationThrottleRunner::InformRegistry(
 }
 
 void NavigationThrottleRunner::RecordDeferTimeUKM() {
-  if (!is_primary_main_frame_ || !GetDeferringThrottle()) {
+  if (!is_primary_main_frame_ || registry_->GetDeferringThrottles().empty()) {
     return;
   }
   ukm::builders::NavigationThrottleDeferredTime builder(
@@ -272,9 +265,19 @@ void NavigationThrottleRunner::RecordDeferTimeUKM() {
   // UKM. The possible values are sparse, and analyses should hash the values
   // returned by NavigationThrottle::GetNameForLogging to determine which
   // throttle deferred the navigation.
-  builder.SetNavigationThrottleNameHash(
-      base::HashMetricName(GetDeferringThrottle()->GetNameForLogging()));
+  builder.SetNavigationThrottleNameHash(base::HashMetricName(
+      (*registry_->GetDeferringThrottles().cbegin())->GetNameForLogging()));
   builder.Record(ukm::UkmRecorder::Get());
+}
+
+void NavigationThrottleRunner::ReportStuckThrottle() {
+  CHECK(next_index_ > 0);
+  std::unique_ptr<NavigationThrottle>& running_throttle =
+      registry_->GetThrottles()[next_index_ - 1];
+  ;
+  SCOPED_CRASH_KEY_STRING32("Bug", "stuck_throttle_name",
+                            running_throttle->GetNameForLogging());
+  base::debug::DumpWithoutCrashing();
 }
 
 }  // namespace content

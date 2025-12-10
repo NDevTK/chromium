@@ -44,6 +44,7 @@
 #include "cc/trees/proxy_main.h"
 #include "cc/trees/single_thread_proxy.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "components/viz/common/features.h"
 #include "components/viz/common/frame_timing_details.h"
 #include "components/viz/service/display/display_compositor_memory_and_task_controller.h"
 #include "components/viz/service/display/skia_output_surface.h"
@@ -128,8 +129,11 @@ class SynchronousLayerTreeFrameSink : public TestLayerTreeFrameSink {
 
  private:
   void InvalidateIfPossible() {
-    if (!frame_request_pending_ || frame_ack_pending_)
+    if (!frame_request_pending_ ||
+        (frame_ack_pending_ &&
+         !base::FeatureList::IsEnabled(features::kNoCompositorFrameAcks))) {
       return;
+    }
     compositor_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&SynchronousLayerTreeFrameSink::DispatchInvalidation,
@@ -249,7 +253,7 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
     return LayerTreeHostImpl::PrepareTiles();
   }
 
-  DrawResult PrepareToDraw(FrameData* frame) override {
+  DrawResult PrepareToDraw(FrameData* frame, bool expects_to_draw) override {
     test_hooks_->WillPrepareToDrawOnThread(this);
 
     if (!active_tree()->local_surface_id_from_parent().is_valid()) {
@@ -259,7 +263,8 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
       UpdateChildLocalSurfaceId();
     }
 
-    DrawResult draw_result = LayerTreeHostImpl::PrepareToDraw(frame);
+    DrawResult draw_result =
+        LayerTreeHostImpl::PrepareToDraw(frame, expects_to_draw);
     return test_hooks_->PrepareToDrawOnThread(this, frame, draw_result);
   }
 
@@ -359,8 +364,11 @@ class LayerTreeHostImplForTesting : public LayerTreeHostImpl {
     test_hooks_->UpdateAnimationState(this, has_unfinished_animation);
   }
 
-  void NotifyTileStateChanged(const Tile* tile, bool update_damage) override {
-    LayerTreeHostImpl::NotifyTileStateChanged(tile, update_damage);
+  void NotifyTileStateChanged(const Tile* tile,
+                              bool update_damage,
+                              bool set_needs_redraw) override {
+    LayerTreeHostImpl::NotifyTileStateChanged(tile, update_damage,
+                                              set_needs_redraw);
     test_hooks_->NotifyTileStateChangedOnThread(this, tile, update_damage);
   }
 
@@ -420,7 +428,6 @@ class LayerTreeHostClientForTesting : public LayerTreeHostClient,
   void WillBeginMainFrame() override { test_hooks_->WillBeginMainFrame(); }
 
   void DidBeginMainFrame() override { test_hooks_->DidBeginMainFrame(); }
-
   void WillUpdateLayers() override {}
   void DidUpdateLayers() override {}
 
@@ -495,7 +502,9 @@ class LayerTreeHostClientForTesting : public LayerTreeHostClient,
   void BeginMainFrameNotExpectedSoon() override {
     test_hooks_->BeginMainFrameNotExpectedSoon();
   }
-  void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override {}
+  void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override {
+    test_hooks_->BeginMainFrameNotExpectedUntil(time);
+  }
   void DidPresentCompositorFrame(
       uint32_t frame_token,
       const viz::FrameTimingDetails& frame_timing_details) override {
@@ -675,11 +684,11 @@ class LayerTreeTestLayerTreeFrameSinkClient
 
  private:
   raw_ptr<TestHooks> hooks_;
-  raw_ptr<TaskRunnerProvider, AcrossTasksDanglingUntriaged>
-      task_runner_provider_;
+  raw_ptr<TaskRunnerProvider> task_runner_provider_;
 };
 
-LayerTreeTest::LayerTreeTest(viz::RendererType renderer_type)
+LayerTreeTest::LayerTreeTest(viz::RendererType renderer_type,
+                             bool disable_trees_in_viz)
     : renderer_type_(renderer_type), initial_root_bounds_(1, 1) {
   main_thread_weak_ptr_ = weak_factory_.GetWeakPtr();
 
@@ -726,11 +735,13 @@ LayerTreeTest::LayerTreeTest(viz::RendererType renderer_type)
   // Check if the graphics backend needs to initialize Vulkan.
   bool init_vulkan = false;
   bool init_dawn = false;
+  std::vector<base::test::FeatureRef> enabled_features;
+  std::vector<base::test::FeatureRef> disabled_features;
   if (renderer_type_ == viz::RendererType::kSkiaVk) {
-    scoped_feature_list_.InitAndEnableFeature(features::kVulkan);
+    enabled_features.push_back(features::kVulkan);
     init_vulkan = true;
   } else if (renderer_type_ == viz::RendererType::kSkiaGraphiteDawn) {
-    scoped_feature_list_.InitAndEnableFeature(features::kSkiaGraphite);
+    enabled_features.push_back(features::kSkiaGraphite);
     bool use_gpu = command_line->HasSwitch(::switches::kUseGpuInTests);
     // Force the use of Graphite even if disallowed for other reasons e.g.
     // ANGLE Metal is not enabled on Mac. Use dawn-swiftshader backend if
@@ -745,15 +756,19 @@ LayerTreeTest::LayerTreeTest(viz::RendererType renderer_type)
     init_vulkan = true;
 #endif
   } else if (renderer_type_ == viz::RendererType::kSkiaGraphiteMetal) {
-    scoped_feature_list_.InitAndEnableFeature(features::kSkiaGraphite);
+    enabled_features.push_back(features::kSkiaGraphite);
     // Force the use of Graphite even if disallowed for other reasons.
     command_line->AppendSwitch(::switches::kEnableSkiaGraphite);
     command_line->AppendSwitchASCII(::switches::kSkiaGraphiteBackend,
                                     ::switches::kSkiaGraphiteBackendMetal);
   } else {
-    scoped_feature_list_.InitWithFeatures(
-        {}, {features::kVulkan, features::kSkiaGraphite});
+    disabled_features.push_back(features::kVulkan);
+    disabled_features.push_back(features::kSkiaGraphite);
   }
+  if (disable_trees_in_viz) {
+    disabled_features.push_back(features::kTreesInViz);
+  }
+  scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
 
   if (init_vulkan) {
     bool use_gpu = command_line->HasSwitch(::switches::kUseGpuInTests);
@@ -1296,6 +1311,22 @@ size_t LayerTreeTest::NumCallsToWaitForProtectedSequenceCompletion() const {
 }
 
 void LayerTreeTest::DestroyLayerTreeHost() {
+  // The `LayerTreeFrameSink` must be released before the LayerTreeHost as some
+  // subclasses, such as `TestLayerTreeFrameSink` hold onto pointers to
+  // `LayerTreeTestLayerTreeFrameSinkClient` and other objects, such as
+  // `TestCompositorFrameSinkSupport` (which also references the task runner and
+  // client), which will trigger dangling ptr warnings if destroyed in the wrong
+  // order.
+  if (layer_tree_host_) {
+    // Forcing the LayerTreeHost to be !visible to avoid triggering the DCHECK
+    // in ReleaseLayerTreeFrameSink.
+    layer_tree_host_->SetVisible(false);
+    layer_tree_host_->ReleaseLayerTreeFrameSink();
+  }
+  // References the TaskRunnerProvider owned by LayerTreeHost so must be
+  // cleaned up first to avoid being a dangling ptr.
+  layer_tree_frame_sink_client_ = nullptr;
+
   if (layer_tree_host_ && layer_tree_host_->root_layer())
     layer_tree_host_->root_layer()->SetLayerTreeHost(nullptr);
   layer_tree_host_ = nullptr;

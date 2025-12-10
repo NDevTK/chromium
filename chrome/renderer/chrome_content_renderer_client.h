@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 
-#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -21,15 +20,13 @@
 #include "chrome/services/speech/buildflags/buildflags.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/buildflags/buildflags.h"
-#include "ipc/ipc_channel_proxy.h"
 #include "media/base/key_systems_support_registration.h"
 #include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/generic_pending_receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/service_manager/public/cpp/local_interface_provider.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
@@ -66,10 +63,6 @@ struct WebContentSecurityPolicyHeader;
 namespace chrome {
 class WebRtcLoggingAgentImpl;
 }  // namespace chrome
-
-namespace fingerprinting_protection_filter {
-class UnverifiedRulesetDealer;
-}  // namespace fingerprinting_protection_filter
 
 namespace subresource_filter {
 class UnverifiedRulesetDealer;
@@ -114,11 +107,6 @@ class ChromeContentRendererClient
   bool OverrideCreatePlugin(content::RenderFrame* render_frame,
                             const blink::WebPluginParams& params,
                             blink::WebPlugin** plugin) override;
-#if BUILDFLAG(ENABLE_PLUGINS)
-  blink::WebPlugin* CreatePluginReplacement(
-      content::RenderFrame* render_frame,
-      const base::FilePath& plugin_path) override;
-#endif
   void PrepareErrorPage(content::RenderFrame* render_frame,
                         const blink::WebURLError& error,
                         const std::string& http_method,
@@ -147,6 +135,7 @@ class ChromeContentRendererClient
       v8::Local<v8::Context> context) override;
   blink::ProtocolHandlerSecurityLevel GetProtocolHandlerSecurityLevel(
       const url::Origin& origin) override;
+  void WaitForProcessReady() override;
   void WillSendRequest(blink::WebLocalFrame* frame,
                        ui::PageTransition transition_type,
                        const blink::WebURL& upstream_url,
@@ -276,8 +265,6 @@ class ChromeContentRendererClient
 #endif
   std::unique_ptr<subresource_filter::UnverifiedRulesetDealer>
       subresource_filter_ruleset_dealer_;
-  std::unique_ptr<fingerprinting_protection_filter::UnverifiedRulesetDealer>
-      fingerprinting_protection_ruleset_dealer_;
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   std::unique_ptr<safe_browsing::PhishingModelSetterImpl>
       phishing_model_setter_;

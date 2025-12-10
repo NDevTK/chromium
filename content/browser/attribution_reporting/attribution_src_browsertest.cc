@@ -42,6 +42,7 @@
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/common/content_features.h"
@@ -115,8 +116,6 @@ class AttributionSrcBrowserTest : public ContentBrowserTest,
     if (enable_in_browser_migration) {
       enabled_features.emplace_back(
           blink::features::kKeepAliveInBrowserMigration);
-      enabled_features.emplace_back(
-          blink::features::kAttributionReportingInBrowserMigration);
     } else {
       disabled_features.emplace_back(
           blink::features::kKeepAliveInBrowserMigration);
@@ -134,8 +133,6 @@ class AttributionSrcBrowserTest : public ContentBrowserTest,
     auto data_host_manager =
         std::make_unique<AttributionDataHostManagerImpl>(mock_manager.get());
     mock_manager->SetDataHostManager(std::move(data_host_manager));
-    EXPECT_CALL(*mock_manager, UpdateLastNavigationTime)
-        .Times(testing::AnyNumber());
     static_cast<StoragePartitionImpl*>(
         web_contents()->GetBrowserContext()->GetDefaultStoragePartition())
         ->OverrideAttributionManagerForTesting(std::move(mock_manager));

@@ -59,25 +59,8 @@
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "url/gurl.h"
 
-namespace WTF {
-
-template <>
-struct CrossThreadCopier<network::mojom::URLResponseHeadPtr> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = network::mojom::URLResponseHeadPtr;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-template <>
-struct CrossThreadCopier<std::optional<mojo_base::BigBuffer>> {
-  STATIC_ONLY(CrossThreadCopier);
-  using Type = std::optional<mojo_base::BigBuffer>;
-  static Type Copy(Type&& value) { return std::move(value); }
-};
-
-}  // namespace WTF
-
 namespace blink {
+
 namespace {
 
 constexpr char kTestURL[] = "http://example.com/";
@@ -94,7 +77,7 @@ using MaybeStartFunction =
                                  BackgroundResponseProcessor::Client*)>;
 
 class BackgroundResponseProcessorTestUtil
-    : public WTF::ThreadSafeRefCounted<BackgroundResponseProcessorTestUtil> {
+    : public ThreadSafeRefCounted<BackgroundResponseProcessorTestUtil> {
  public:
   BackgroundResponseProcessorTestUtil() = default;
 
@@ -195,7 +178,7 @@ class BackgroundResponseProcessorTestUtil
     scoped_refptr<BackgroundResponseProcessorTestUtil> test_util_;
   };
 
-  friend class WTF::ThreadSafeRefCounted<BackgroundResponseProcessorTestUtil>;
+  friend class ThreadSafeRefCounted<BackgroundResponseProcessorTestUtil>;
   ~BackgroundResponseProcessorTestUtil() = default;
 
   bool result_of_maybe_start_processing_response_ = true;
@@ -1145,12 +1128,12 @@ TEST_F(BackgroundResourceFecherTest,
   // thread.
   PostCrossThreadTask(
       *test_util->background_task_runner(), FROM_HERE,
-      WTF::CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
-                                   DidFinishBackgroundResponseProcessor,
-                               WTF::CrossThreadUnretained(test_util->client()),
-                               std::move(test_util->head()),
-                               std::move(test_util->body()),
-                               std::move(test_util->cached_metadata_buffer())));
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
+                              DidFinishBackgroundResponseProcessor,
+                          CrossThreadUnretained(test_util->client()),
+                          std::move(test_util->head()),
+                          std::move(test_util->body()),
+                          std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
   task_environment_.RunUntilIdle();
 
@@ -1214,11 +1197,11 @@ TEST_F(BackgroundResourceFecherTest,
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
-  PostCrossThreadTask(*test_util->background_task_runner(), FROM_HERE,
-                      WTF::CrossThreadBindOnce(
-                          &BackgroundResponseProcessor::Client::
+  PostCrossThreadTask(
+      *test_util->background_task_runner(), FROM_HERE,
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
                               DidFinishBackgroundResponseProcessor,
-                          WTF::CrossThreadUnretained(test_util->client()),
+                          CrossThreadUnretained(test_util->client()),
                           std::move(test_util->head()), CreateTestBodyRawData(),
                           std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
@@ -1291,11 +1274,11 @@ TEST_F(BackgroundResourceFecherTest,
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
-  PostCrossThreadTask(*test_util->background_task_runner(), FROM_HERE,
-                      WTF::CrossThreadBindOnce(
-                          &BackgroundResponseProcessor::Client::
+  PostCrossThreadTask(
+      *test_util->background_task_runner(), FROM_HERE,
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
                               DidFinishBackgroundResponseProcessor,
-                          WTF::CrossThreadUnretained(test_util->client()),
+                          CrossThreadUnretained(test_util->client()),
                           std::move(test_util->head()), CreateTestBodyRawData(),
                           std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
@@ -1364,11 +1347,11 @@ TEST_F(BackgroundResourceFecherTest,
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
-  PostCrossThreadTask(*test_util->background_task_runner(), FROM_HERE,
-                      WTF::CrossThreadBindOnce(
-                          &BackgroundResponseProcessor::Client::
+  PostCrossThreadTask(
+      *test_util->background_task_runner(), FROM_HERE,
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
                               DidFinishBackgroundResponseProcessor,
-                          WTF::CrossThreadUnretained(test_util->client()),
+                          CrossThreadUnretained(test_util->client()),
                           std::move(test_util->head()), CreateTestBodyRawData(),
                           std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
@@ -1444,11 +1427,11 @@ TEST_F(BackgroundResourceFecherTest,
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
-  PostCrossThreadTask(*test_util->background_task_runner(), FROM_HERE,
-                      WTF::CrossThreadBindOnce(
-                          &BackgroundResponseProcessor::Client::
+  PostCrossThreadTask(
+      *test_util->background_task_runner(), FROM_HERE,
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
                               DidFinishBackgroundResponseProcessor,
-                          WTF::CrossThreadUnretained(test_util->client()),
+                          CrossThreadUnretained(test_util->client()),
                           std::move(test_util->head()), CreateTestBodyRawData(),
                           std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
@@ -1496,11 +1479,11 @@ TEST_F(BackgroundResourceFecherTest,
 
   // Call Client::DidFinishBackgroundResponseProcessor() on the background
   // thread.
-  PostCrossThreadTask(*test_util->background_task_runner(), FROM_HERE,
-                      WTF::CrossThreadBindOnce(
-                          &BackgroundResponseProcessor::Client::
+  PostCrossThreadTask(
+      *test_util->background_task_runner(), FROM_HERE,
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
                               DidFinishBackgroundResponseProcessor,
-                          WTF::CrossThreadUnretained(test_util->client()),
+                          CrossThreadUnretained(test_util->client()),
                           std::move(test_util->head()), CreateTestBodyRawData(),
                           std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
@@ -1576,12 +1559,12 @@ TEST_F(BackgroundResourceFecherTest,
   // thread.
   PostCrossThreadTask(
       *test_util->background_task_runner(), FROM_HERE,
-      WTF::CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
-                                   DidFinishBackgroundResponseProcessor,
-                               WTF::CrossThreadUnretained(test_util->client()),
-                               std::move(test_util->head()),
-                               std::move(body_raw_data),
-                               std::move(test_util->cached_metadata_buffer())));
+      CrossThreadBindOnce(&BackgroundResponseProcessor::Client::
+                              DidFinishBackgroundResponseProcessor,
+                          CrossThreadUnretained(test_util->client()),
+                          std::move(test_util->head()),
+                          std::move(body_raw_data),
+                          std::move(test_util->cached_metadata_buffer())));
   // RunUntilIdle() to run the FinishCallback.
   task_environment_.RunUntilIdle();
 

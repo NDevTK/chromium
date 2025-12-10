@@ -77,6 +77,7 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
        i <= static_cast<int>(ContentSettingsType::kMaxValue); ++i) {
     switch (static_cast<ContentSettingsType>(i)) {
       case ContentSettingsType::GEOLOCATION:
+      case ContentSettingsType::GEOLOCATION_WITH_OPTIONS:
       case ContentSettingsType::NOTIFICATIONS:
       case ContentSettingsType::MIDI:
       case ContentSettingsType::MIDI_SYSEX:
@@ -164,8 +165,6 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
       case ContentSettingsType::NOTIFICATION_INTERACTIONS:
       case ContentSettingsType::REDUCED_ACCEPT_LANGUAGE:
       case ContentSettingsType::NOTIFICATION_PERMISSION_REVIEW:
-      case ContentSettingsType::PRIVATE_NETWORK_GUARD:
-      case ContentSettingsType::PRIVATE_NETWORK_CHOOSER_DATA:
       case ContentSettingsType::
           FEDERATED_IDENTITY_IDENTITY_PROVIDER_SIGNIN_STATUS:
       case ContentSettingsType::REVOKED_UNUSED_SITE_PERMISSIONS:
@@ -179,9 +178,6 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
       case ContentSettingsType::COOKIE_CONTROLS_METADATA:
       case ContentSettingsType::TPCD_HEURISTICS_GRANTS:
       case ContentSettingsType::TPCD_METADATA_GRANTS:
-      case ContentSettingsType::TPCD_TRIAL:
-      case ContentSettingsType::TOP_LEVEL_TPCD_TRIAL:
-      case ContentSettingsType::TOP_LEVEL_TPCD_ORIGIN_TRIAL:
       case ContentSettingsType::AUTO_PICTURE_IN_PICTURE:
       case ContentSettingsType::FILE_SYSTEM_ACCESS_EXTENDED_PERMISSION:
       case ContentSettingsType::FILE_SYSTEM_ACCESS_RESTORE_PERMISSION:
@@ -203,6 +199,9 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
           ON_DEVICE_SPEECH_RECOGNITION_LANGUAGES_DOWNLOADED:
       case ContentSettingsType::INITIALIZED_TRANSLATIONS:
       case ContentSettingsType::SUSPICIOUS_NOTIFICATION_IDS:
+      case ContentSettingsType::DEVICE_ATTRIBUTES:
+      case ContentSettingsType::PERMISSION_ACTIONS_HISTORY:
+      case ContentSettingsType::SUSPICIOUS_NOTIFICATION_SHOW_ORIGINAL:
         break;
 
       default:

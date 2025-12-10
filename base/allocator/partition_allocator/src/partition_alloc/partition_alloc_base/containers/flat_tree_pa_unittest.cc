@@ -28,6 +28,7 @@
 // * No tests with min_allocator and no tests counting allocations.
 //   Flat sets currently don't support allocators.
 
+#include <algorithm>
 #include <deque>
 #include <forward_list>
 #include <functional>
@@ -36,7 +37,6 @@
 #include <string>
 #include <vector>
 
-#include "partition_alloc/partition_alloc_base/ranges/algorithm.h"
 #include "partition_alloc/partition_alloc_base/template_util.h"
 #include "partition_alloc/partition_alloc_base/test/gtest_util.h"
 #include "partition_alloc/partition_alloc_base/test/move_only_int.h"
@@ -64,7 +64,7 @@ class InputIterator {
   pointer operator->() const { return it_; }
 
   InputIterator& operator++() {
-    ++it_;
+    PA_UNSAFE_TODO(++it_);
     return *this;
   }
   InputIterator operator++(int) {
@@ -169,7 +169,7 @@ using EmplaceableTree = flat_tree<Emplaceable,
                                   std::less<>,
                                   std::vector<Emplaceable>>;
 using ReversedTree =
-    flat_tree<int, std::identity, std::greater<int>, std::vector<int>>;
+    flat_tree<int, std::identity, std::greater<>, std::vector<int>>;
 
 using TreeWithStrangeCompare = flat_tree<int,
                                          std::identity,
@@ -215,7 +215,7 @@ TEST(PAFlatTree, NoExcept) {
 
 TEST(PAFlatTree, IncompleteType) {
   struct A {
-    using Tree = flat_tree<A, std::identity, std::less<A>, std::vector<A>>;
+    using Tree = flat_tree<A, std::identity, std::less<>, std::vector<A>>;
     int data;
     Tree set_with_incomplete_type;
     Tree::iterator it;

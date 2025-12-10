@@ -8,8 +8,11 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
+#include "components/update_client/configurator.h"
+#include "components/update_client/test_configurator.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/extension_host_delegate.h"
+#include "extensions/browser/safe_browsing_delegate.h"
 #include "extensions/browser/test_runtime_api_delegate.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/buildflags/buildflags.h"
@@ -28,7 +31,8 @@ namespace extensions {
 
 TestExtensionsBrowserClient::TestExtensionsBrowserClient(
     BrowserContext* main_context)
-    : extension_cache_(std::make_unique<NullExtensionCache>()) {
+    : extension_cache_(std::make_unique<NullExtensionCache>()),
+      safe_browsing_delegate_(std::make_unique<SafeBrowsingDelegate>()) {
   if (main_context) {
     SetMainContext(main_context);
   }
@@ -294,12 +298,22 @@ KioskDelegate* TestExtensionsBrowserClient::GetKioskDelegate() {
   return nullptr;
 }
 
+SafeBrowsingDelegate* TestExtensionsBrowserClient::GetSafeBrowsingDelegate() {
+  return safe_browsing_delegate_.get();
+}
+
 scoped_refptr<update_client::UpdateClient>
 TestExtensionsBrowserClient::CreateUpdateClient(
-    content::BrowserContext* context) {
+    scoped_refptr<update_client::Configurator> /*configurator*/) {
   return update_client_factory_.is_null()
              ? nullptr
              : base::WrapRefCounted(update_client_factory_.Run());
+}
+
+scoped_refptr<update_client::Configurator>
+TestExtensionsBrowserClient::CreateUpdateClientConfigurator(
+    content::BrowserContext* context) {
+  return base::MakeRefCounted<update_client::TestConfigurator>(nullptr);
 }
 
 std::string TestExtensionsBrowserClient::GetApplicationLocale() {

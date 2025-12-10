@@ -4,10 +4,10 @@
 
 #include "chrome/browser/ui/tabs/tab_menu_model.h"
 
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_menu_model_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
-#include "chrome/browser/ui/tabs/test_util.h"
 #include "chrome/test/base/menu_model_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/web_contents.h"
@@ -25,8 +25,12 @@ class WebAppTabStripModelDelegate : public TestTabStripModelDelegate {
 // A TabMenuModelDelegate that simulates no other browser windows being open.
 class TabMenuModelTestDelegate : public TabMenuModelDelegate {
  public:
-  std::vector<Browser*> GetOtherBrowserWindows(bool is_app) override {
+  std::vector<BrowserWindowInterface*> GetOtherBrowserWindows(
+      bool is_app) override {
     return {};
+  }
+  tab_groups::TabGroupSyncService* GetTabGroupSyncService() override {
+    return nullptr;
   }
 };
 
@@ -40,7 +44,7 @@ class TabMenuModelTest : public MenuModelTest, public ::testing::Test {
   TabMenuModelDelegate& menu_model_delegate() { return menu_model_delegate_; }
 
  private:
-  tabs::PreventTabFeatureInitialization prevent_;
+  const tabs::TabModel::PreventFeatureInitializationForTesting prevent_;
   content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
   TabMenuModelTestDelegate menu_model_delegate_;

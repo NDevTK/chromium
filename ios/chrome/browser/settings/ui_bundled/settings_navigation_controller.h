@@ -46,7 +46,7 @@ extern NSString* const kSettingsDoneButtonId;
 
 // Controller to modify user settings.
 @interface SettingsNavigationController
-    : UINavigationController <SettingsCommands, KeyCommandActions>
+    : UINavigationController <KeyCommandActions, SettingsCommands>
 
 // Creates a new SettingsTableViewController and the chrome around it.
 // `browser` is the browser where settings are being displayed and should not be
@@ -59,11 +59,30 @@ extern NSString* const kSettingsDoneButtonId;
 
 // Creates a new ManageAccountsTableViewController and the chrome around it.
 // `browser` is the browser where settings are being displayed and should not be
+// nil.
+//`showSignoutButton` whether the view should contains a "signout" button.
+//`showDoneButton` whether the navigation controller top trailing corner should
+// have a "Done" button.
+// `signoutDismissalByParentCoordinator` if `YES` the view should not dismiss
+// itself when the user is signed-out, the owning coordinator will do it.
++ (instancetype)
+           accountsControllerForBrowser:(Browser*)browser
+                     baseViewController:(UIViewController*)baseViewController
+                               delegate:
+                                   (id<SettingsNavigationControllerDelegate>)
+                                       delegate
+              closeSettingsOnAddAccount:(BOOL)closeSettingsOnAddAccount
+                      showSignoutButton:(BOOL)showSignoutButton
+                         showDoneButton:(BOOL)showDoneButton
+    signoutDismissalByParentCoordinator:
+        (BOOL)signoutDismissalByParentCoordinator;
+
+// Creates a new SettingsNavigationController and the chrome around it.
+// `browser` is the browser where settings are being displayed and should not be
 // nil. `delegate` may be nil.
 + (instancetype)
-    accountsControllerForBrowser:(Browser*)browser
-                        delegate:
-                            (id<SettingsNavigationControllerDelegate>)delegate;
+    BWGControllerForBrowser:(Browser*)browser
+                   delegate:(id<SettingsNavigationControllerDelegate>)delegate;
 
 // Creates a new GoogleServicesSettingsCollectionViewController and the chrome
 // around it. `browser` is the browser where settings are being displayed and
@@ -131,6 +150,18 @@ extern NSString* const kSettingsDoneButtonId;
                                  (password_manager::CredentialUIEntry)credential
                              inEditMode:(BOOL)editMode;
 
+// Creates a new CredentialImportViewController displayed from a
+// PasswordManagerViewController and the chrome around it. `browser` is the
+// browser where settings are being displayed and should not be nil. `delegate`
+// may be nil. `UUID` is a token received from the OS during app launch needed
+// to receive credentials from an OS library.
++ (instancetype)
+    credentialImportControllerForBrowser:(Browser*)browser
+                                delegate:
+                                    (id<SettingsNavigationControllerDelegate>)
+                                        delegate
+                                    UUID:(NSUUID*)UUID;
+
 // Creates and displays a new UIViewController for user to report an issue.
 // `browser` is the browser where settings are being displayed and should not be
 // nil. `dataSource` is used to populate the UIViewController. `dispatcher`,
@@ -142,7 +173,7 @@ extern NSString* const kSettingsDoneButtonId;
                                          delegate
                     userFeedbackData:(UserFeedbackData*)userFeedbackData;
 
-// Creates a new AutofillProfileEditTableViewController and the
+// Creates a new AutofillProfileEditTableViewHelper and the
 // chrome around it. `browser` is the browser where settings are being displayed
 // and should not be nil. `delegate` may be nil. `address` is the address for
 // which the details should be opened.
@@ -200,15 +231,6 @@ extern NSString* const kSettingsDoneButtonId;
                                   (id<SettingsNavigationControllerDelegate>)
                                       delegate
                           sourceForUMA:(DefaultBrowserSettingsPageSource)source;
-
-// Creates a new ClearBrowsingDataTableViewController and the chrome
-// around it. `browser` is the browser where settings are being displayed and
-// should not be nil. `delegate` may be nil.
-+ (instancetype)
-    clearBrowsingDataControllerForBrowser:(Browser*)browser
-                                 delegate:
-                                     (id<SettingsNavigationControllerDelegate>)
-                                         delegate;
 
 // Creates a new SafetyCheckTableViewController and the chrome
 // around it. `browser` is the browser where settings are being displayed and

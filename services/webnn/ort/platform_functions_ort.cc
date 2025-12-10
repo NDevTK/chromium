@@ -7,10 +7,14 @@
 #include <winerror.h>
 #include <wrl.h>
 
+#include "base/command_line.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/native_library.h"
-#include "base/path_service.h"
+#include "base/strings/cstring_view.h"
 #include "base/strings/string_util_win.h"
+#include "services/webnn/public/cpp/platform_functions_win.h"
+#include "services/webnn/public/cpp/win_app_runtime_package_info.h"
+#include "services/webnn/webnn_switches.h"
 
 namespace webnn::ort {
 
@@ -18,99 +22,39 @@ namespace {
 
 using OrtGetApiBaseProc = decltype(OrtGetApiBase)*;
 
-constexpr base::wcstring_view kWindowsMLPackageFamilyName =
-    L"Microsoft.WindowsMLRuntime.0.3_8wekyb3d8bbwe";
-
-constexpr PACKAGE_VERSION kWindowsMLPackageVersion = {
-    .Major = 0,
-    .Minor = 0,
-    .Build = 0,
-    .Revision = 0,
-};
-
-struct ScopedWcharTypeTraits {
-  static wchar_t* InvalidValue() { return nullptr; }
-  static void Free(wchar_t* value) {
-    if (value) {
-      ::HeapFree(GetProcessHeap(), 0, value);
-    }
-  }
-};
-using ScopedWcharType = base::ScopedGeneric<wchar_t*, ScopedWcharTypeTraits>;
-
-std::optional<base::FilePath> GetPackagePath(const wchar_t* package_full_name) {
-  uint32_t path_length = 0;
-
-  // Get the required path length.
-  int32_t result =
-      GetPackagePathByFullName(package_full_name, &path_length, nullptr);
-  if (result != ERROR_INSUFFICIENT_BUFFER) {
-    LOG(ERROR) << "[WebNN] Failed to get package path length for package: "
-               << package_full_name << ". Error: "
-               << logging::SystemErrorCodeToString(HRESULT_FROM_WIN32(result));
-    return std::nullopt;
-  }
-
-  // Get the actual path.
-  std::wstring path_buffer;
-  result = GetPackagePathByFullName(package_full_name, &path_length,
-                                    base::WriteInto(&path_buffer, path_length));
-  if (result != ERROR_SUCCESS) {
-    LOG(ERROR) << "[WebNN] Failed to get package path for package: "
-               << package_full_name << ". Error: "
-               << logging::SystemErrorCodeToString(HRESULT_FROM_WIN32(result));
-    return std::nullopt;
-  }
-
-  return base::FilePath(path_buffer);
-}
+constexpr base::wcstring_view kOnnxRuntimeLibraryName = L"onnxruntime.dll";
 
 }  // namespace
 
 PlatformFunctions::PlatformFunctions() {
-  // KernelBase should always be present on Win10+ machines.
-  app_model_library_ = base::ScopedNativeLibrary(
-      base::LoadSystemLibrary(L"KernelBase.dll", nullptr));
-  CHECK(app_model_library_.is_valid());
-
-  try_create_package_dependency_proc_ =
-      reinterpret_cast<TryCreatePackageDependencyProc>(
-          app_model_library_.GetFunctionPointer("TryCreatePackageDependency"));
-  if (!try_create_package_dependency_proc_) {
-    LOG(ERROR) << "[WebNN] Failed to get TryCreatePackageDependency function "
-                  "from KernelBase.dll.";
-    return;
+  // If the switch `kWebNNOrtLibraryPathForTesting` is used, try to load ONNX
+  // Runtime library from the specified path for testing development ORT build.
+  // Otherwise, try to load it from the Windows ML package path.
+  base::FilePath ort_library_path;
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kWebNNOrtLibraryPathForTesting)) {
+    base::FilePath base_path =
+        base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
+            switches::kWebNNOrtLibraryPathForTesting);
+    if (base_path.empty()) {
+      LOG(ERROR) << "[WebNN] The specified ONNX Runtime library path is empty.";
+      return;
+    }
+    ort_library_path = base_path.Append(kOnnxRuntimeLibraryName);
+  } else {
+    ort_library_path = InitializePackageDependency(
+        kWinAppRuntimePackageFamilyName, kWinAppRuntimePackageMinVersion);
+    if (ort_library_path.empty()) {
+      return;
+    }
+    ort_library_path = ort_library_path.Append(kOnnxRuntimeLibraryName);
   }
 
-  add_package_dependency_proc_ = reinterpret_cast<AddPackageDependencyProc>(
-      app_model_library_.GetFunctionPointer("AddPackageDependency"));
-  if (!add_package_dependency_proc_) {
-    LOG(ERROR) << "[WebNN] Failed to get AddPackageDependency function from "
-                  "KernelBase.dll.";
-    return;
-  }
-
-  // Initialize Windows ML.
-  std::optional<base::FilePath> windows_ml_package_path =
-      InitializePackageDependency(kWindowsMLPackageFamilyName,
-                                  kWindowsMLPackageVersion);
-  if (!windows_ml_package_path) {
-    LOG(ERROR)
-        << "[WebNN] Failed to initialize Windows ML and get the package path.";
-    return;
-  }
-
-  // Load the onnxruntime.dll from the Windows ML package path.
-  //
-  // TODO(crbug.com/427242325): Add a flag to load the onnxruntime.dll from
-  // location passed in command line for testing development ORT build.
-  base::ScopedNativeLibrary ort_library =
-      base::ScopedNativeLibrary(base::LoadNativeLibrary(
-          windows_ml_package_path->Append(L"onnxruntime.dll"), nullptr));
+  base::ScopedNativeLibrary ort_library = base::ScopedNativeLibrary(
+      base::LoadNativeLibrary(ort_library_path, nullptr));
   if (!ort_library.is_valid()) {
-    LOG(ERROR)
-        << "[WebNN] Failed to load onnxruntime.dll from the package path: "
-        << windows_ml_package_path->value();
+    LOG(ERROR) << "[WebNN] Failed to load ONNX Runtime library from the path: "
+               << ort_library_path;
     return;
   }
 
@@ -140,8 +84,6 @@ PlatformFunctions::PlatformFunctions() {
   ort_model_editor_api_ = ort_model_editor_api;
 }
 
-PlatformFunctions::~PlatformFunctions() = default;
-
 // static
 PlatformFunctions* PlatformFunctions::GetInstance() {
   static base::NoDestructor<PlatformFunctions> instance;
@@ -151,42 +93,27 @@ PlatformFunctions* PlatformFunctions::GetInstance() {
   return instance.get();
 }
 
-std::optional<base::FilePath> PlatformFunctions::InitializePackageDependency(
-    base::wcstring_view package_family_name,
-    PACKAGE_VERSION min_version) {
-  ScopedWcharType package_dependency_id;
-  HRESULT hr = try_create_package_dependency_proc_(
-      /*user=*/nullptr, package_family_name.c_str(), min_version,
-      PackageDependencyProcessorArchitectures_None,
-      PackageDependencyLifetimeKind_Process,
-      /*lifetimeArtifact=*/nullptr, CreatePackageDependencyOptions_None,
-      ScopedWcharType::Receiver(package_dependency_id).get());
-  if (FAILED(hr)) {
-    LOG(ERROR) << "[WebNN] TryCreatePackageDependency failed for package: "
-               << package_family_name
-               << ". Error: " << logging::SystemErrorCodeToString(hr);
-    return std::nullopt;
-  }
-
-  PACKAGEDEPENDENCY_CONTEXT context{};
-  ScopedWcharType package_full_name;
-  hr = add_package_dependency_proc_(
-      package_dependency_id.get(), /*rank=*/0,
-      AddPackageDependencyOptions_PrependIfRankCollision, &context,
-      ScopedWcharType::Receiver(package_full_name).get());
-  if (FAILED(hr)) {
-    LOG(ERROR) << "[WebNN] AddPackageDependency failed for package: "
-               << package_full_name.get()
-               << ". Error: " << logging::SystemErrorCodeToString(hr);
-    return std::nullopt;
-  }
-
-  return GetPackagePath(package_full_name.get());
+bool PlatformFunctions::AllFunctionsLoaded() {
+  return ort_api_ && ort_model_editor_api_;
 }
 
-bool PlatformFunctions::AllFunctionsLoaded() {
-  return ort_api_ && ort_model_editor_api_ &&
-         try_create_package_dependency_proc_ && add_package_dependency_proc_;
+base::FilePath PlatformFunctions::InitializePackageDependency(
+    base::wcstring_view package_family_name,
+    PACKAGE_VERSION min_version) {
+  std::wstring dependency_id =
+      TryCreatePackageDependencyForProcess(package_family_name, min_version);
+  if (dependency_id.empty()) {
+    LOG(ERROR) << "[WebNN] Failed to create package dependency for package: "
+               << package_family_name;
+    return base::FilePath();
+  }
+
+  base::FilePath package_path = AddPackageDependency(dependency_id);
+  if (package_path.empty()) {
+    LOG(ERROR) << "[WebNN] Failed to add package dependency for package: "
+               << package_family_name;
+  }
+  return package_path;
 }
 
 }  // namespace webnn::ort

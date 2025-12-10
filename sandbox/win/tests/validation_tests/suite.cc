@@ -10,6 +10,7 @@
 
 #include "base/win/shlwapi.h"
 #include "base/win/windows_version.h"
+#include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/tests/common/controller.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -332,6 +333,20 @@ TEST(ValidationSuite, TestMemoryNoLimit) {
 
   wsprintf(command, L"AllocateCmd %d", kAllocationSize);
   EXPECT_EQ(SBOX_TEST_SUCCEEDED, runner.RunTest(command));
+}
+
+// Tests that the InitCompleted API works correctly in various states.
+TEST(ValidationSuite, TestInitCompleted) {
+  {
+    TestRunner runner;
+    runner.SetTestState(BEFORE_REVERT);
+    EXPECT_EQ(SBOX_TEST_FIRST_ERROR, runner.RunTest(L"InitCompleted"));
+  }
+  {
+    TestRunner runner;
+    runner.SetTestState(AFTER_REVERT);
+    EXPECT_EQ(SBOX_TEST_SUCCEEDED, runner.RunTest(L"InitCompleted"));
+  }
 }
 
 }  // namespace sandbox

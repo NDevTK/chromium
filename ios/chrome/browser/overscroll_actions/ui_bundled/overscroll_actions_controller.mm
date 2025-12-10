@@ -79,13 +79,13 @@ const CGFloat kSpringDampiness = 0.35;
 static int gInstanceCount = 0;
 
 // This holds the current state of the bounce back animation.
-typedef struct {
-  CGFloat yInset;
-  CGFloat headerInset;
-  CGFloat velocityInset;
-  CGFloat initialTopMargin;
-  CFAbsoluteTime time;
-} SpringInsetState;
+struct SpringInsetState {
+  CGFloat yInset = 0.0;
+  CGFloat headerInset = 0.0;
+  CGFloat velocityInset = 0.0;
+  CGFloat initialTopMargin = 0.0;
+  CFAbsoluteTime time = 0.0;
+};
 
 // Used to set the height of a view frame.
 // Implicit animations are disabled when setting the new frame.
@@ -964,7 +964,7 @@ UIEdgeInsets TopContentInset(UIScrollView* scrollView, CGFloat topInset) {
       [CADisplayLink displayLinkWithTarget:self
                                   selector:@selector(updateBounce)];
   _dpLink = dpLink;
-  memset(&_bounceState, 0, sizeof(_bounceState));
+  _bounceState = SpringInsetState();
   if (self.overscrollState == OverscrollState::ACTION_READY) {
     CGFloat distanceScrolled =
         [self scrollView].contentOffset.y - self.initialContentOffset;

@@ -15,6 +15,7 @@
 #include "content/public/renderer/plugin_ax_tree_action_target_adapter.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "pdf/accessibility_structs.h"
+#include "pdf/page_character_index.h"
 #include "pdf/pdf_accessibility_data_handler.h"
 #include "services/screen_ai/buildflags/buildflags.h"
 #include "third_party/blink/public/web/web_ax_object.h"
@@ -237,6 +238,8 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
   chrome_pdf::Selection selection_;
   uint32_t page_count_ = 0;
   bool is_tagged_ = false;
+  std::unique_ptr<chrome_pdf::AccessibilityStructureElement>
+      doc_structure_tree_root_;
   std::unique_ptr<ui::AXNodeData> doc_node_;
   // The banner node will have an appropriate ARIA landmark for easy navigation
   // for screen reader users. It will contain the status node below.

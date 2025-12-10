@@ -20,6 +20,7 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
 
@@ -37,18 +38,14 @@ void RecordInvalidRequestingContextUkmMetrics(Document& document) {
 }  // namespace
 
 // static
-const char BrowsingTopicsDocumentSupplement::kSupplementName[] =
-    "BrowsingTopicsDocumentSupplement";
-
-// static
 BrowsingTopicsDocumentSupplement* BrowsingTopicsDocumentSupplement::From(
     Document& document) {
-  auto* supplement =
-      Supplement<Document>::From<BrowsingTopicsDocumentSupplement>(document);
+  BrowsingTopicsDocumentSupplement* supplement =
+      document.GetBrowsingTopicsDocumentSupplement();
   if (!supplement) {
     supplement =
         MakeGarbageCollected<BrowsingTopicsDocumentSupplement>(document);
-    Supplement<Document>::ProvideTo(document, supplement);
+    document.SetBrowsingTopicsDocumentSupplement(supplement);
   }
   return supplement;
 }
@@ -78,8 +75,7 @@ BrowsingTopicsDocumentSupplement::browsingTopics(
 
 BrowsingTopicsDocumentSupplement::BrowsingTopicsDocumentSupplement(
     Document& document)
-    : Supplement<Document>(document),
-      document_host_(document.GetExecutionContext()) {}
+    : document_host_(document.GetExecutionContext()) {}
 
 ScriptPromise<IDLSequence<BrowsingTopic>>
 BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
@@ -96,7 +92,6 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
   }
 
   UseCounter::Count(document, mojom::blink::WebFeature::kPrivacySandboxAdsAPIs);
-  UseCounter::Count(document, mojom::blink::WebFeature::kTopicsAPIAll);
 
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<IDLSequence<BrowsingTopic>>>(
@@ -169,7 +164,7 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
 
   document_host_->GetBrowsingTopics(
       /*observe=*/!options->skipObservation(),
-      WTF::BindOnce(
+      blink::BindOnce(
           [](ScriptPromiseResolver<IDLSequence<BrowsingTopic>>* resolver,
              BrowsingTopicsDocumentSupplement* supplement,
              base::TimeTicks start_time,
@@ -214,8 +209,6 @@ BrowsingTopicsDocumentSupplement::GetBrowsingTopics(
 
 void BrowsingTopicsDocumentSupplement::Trace(Visitor* visitor) const {
   visitor->Trace(document_host_);
-
-  Supplement<Document>::Trace(visitor);
 }
 
 }  // namespace blink

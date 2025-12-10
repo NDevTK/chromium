@@ -37,6 +37,12 @@ class WindowControllerList {
   void RemoveExtensionWindow(WindowController* window);
   void NotifyWindowBoundsChanged(WindowController* window);
 
+  // Notifies that the focus of the given |window| is changed.
+  //
+  // As of Sep 23, 2025, this API was only used on desktop Android.
+  // TODO(http://crbug.com/446925633): Use this API on non-Android OSes.
+  void NotifyWindowFocusChanged(WindowController* window, bool has_focus);
+
   void AddObserver(WindowControllerListObserver* observer);
   void RemoveObserver(WindowControllerListObserver* observer);
 
@@ -55,7 +61,6 @@ class WindowControllerList {
       int id,
       WindowController::TypeFilter filter) const;
 
-#if !BUILDFLAG(IS_ANDROID)
   // Returns the focused or last added window matching the context the function
   // was invoked in.
   WindowController* CurrentWindowForFunction(ExtensionFunction* function) const;
@@ -65,7 +70,6 @@ class WindowControllerList {
   WindowController* CurrentWindowForFunctionWithFilter(
       ExtensionFunction* function,
       WindowController::TypeFilter filter) const;
-#endif  // !BUILDFLAG(IS_ANDROID)
 
   static WindowControllerList* GetInstance();
 

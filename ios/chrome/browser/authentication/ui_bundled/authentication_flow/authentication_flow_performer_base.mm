@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer_base.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
-
 #import <memory>
 #import <optional>
 
@@ -29,13 +27,14 @@
 #import "google_apis/gaia/gaia_id.h"
 #import "google_apis/gaia/gaia_urls.h"
 #import "ios/chrome/app/change_profile_commands.h"
+#import "ios/chrome/browser/authentication/history_sync/model/history_sync_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_delegate.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer_base+protected.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer_base_delegate.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_ui_util.h"
-#import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
+#import "ios/chrome/browser/bubble/model/utils.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_signin_service.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_signin_service_factory.h"
@@ -55,8 +54,9 @@
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
-#import "ios/chrome/browser/shared/ui/util/identity_snackbar/identity_snackbar_message.h"
-#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message_action.h"
+#import "ios/chrome/browser/shared/ui/util/identity_snackbar/identity_snackbar_utils.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -73,8 +73,6 @@
 
 namespace {
 const int64_t kAuthenticationFlowTimeoutSeconds = 10;
-NSString* const kAuthenticationSnackbarCategory =
-    @"AuthenticationSnackbarCategory";
 
 // The change profile continuation for the authentication flow.
 void AuthenticationFlowContinuationImpl(
@@ -83,8 +81,9 @@ void AuthenticationFlowContinuationImpl(
     base::OnceClosure closure) {
   CHECK(delegate);
   [delegate
-      didSwitchToProfileWithNewProfileBrowser:
-          scene_state.browserProviderInterface.currentBrowserProvider.browser
+      didSwitchToProfileWithNewProfileBrowser:scene_state
+                                                  .browserProviderInterface
+                                                  .mainBrowserProvider.browser
                                    completion:std::move(closure)];
 }
 
@@ -97,11 +96,13 @@ void HandleSignoutForSnackbar(
   if (!browser) {
     return;
   }
+  // The regular browser should be used to execute the signout.
+  CHECK_EQ(browser->type(), Browser::Type::kRegular, base::NotFatalUntil::M145);
 
   base::RecordAction(
       base::UserMetricsAction("Mobile.Signin.SnackbarUndoTapped"));
 
-  ProfileIOS* profile = browser->GetProfile();
+  ProfileIOS* profile = browser->GetProfile()->GetOriginalProfile();
   AuthenticationService* auth_service =
       AuthenticationServiceFactory::GetForProfile(profile);
   if (!auth_service->HasPrimaryIdentity(signin::ConsentLevel::kSignin)) {
@@ -114,15 +115,23 @@ void HandleSignoutForSnackbar(
         ->SetSelectedType(clear_selected_type.value(), false);
   }
 
+  // To complete the signout request, it should be guranteed to complete the
+  // request using a non-incognito browser.
+  Browser* mainBrowser =
+      browser->type() == Browser::Type::kIncognito
+          ? browser->GetSceneState()
+                .browserProviderInterface.mainBrowserProvider.browser
+          : browser;
   signin::ProfileSignoutRequest(
       signin_metrics::ProfileSignout::kUserTappedUndoRightAfterSignIn)
-      .Run(browser);
+      .Run(mainBrowser);
 }
 
 void MaybeShowHistorySyncScreenAfterProfileSwitch(
     Browser* browser,
     signin_metrics::AccessPoint access_point,
-    ProceduralBlock completion) {
+    id<SystemIdentity> identity,
+    BOOL showSnackbar) {
   ProfileIOS* profile = browser->GetProfile()->GetOriginalProfile();
   AuthenticationService* authenticationService =
       AuthenticationServiceFactory::GetForProfile(profile);
@@ -130,18 +139,11 @@ void MaybeShowHistorySyncScreenAfterProfileSwitch(
   if (history_sync::GetSkipReason(syncService, authenticationService,
                                   profile->GetPrefs(), /*isOptional=*/NO) !=
       history_sync::HistorySyncSkipReason::kNone) {
-    if (completion) {
-      completion();
+    if (showSnackbar) {
+      TriggerAccountSwitchSnackbarWithIdentity(identity, browser);
     }
     return;
   }
-
-  SigninCoordinatorCompletionCallback historySyncCompletion =
-      ^(SigninCoordinatorResult result, id<SystemIdentity> identity) {
-        if (identity && completion) {
-          completion();
-        }
-      };
 
   ShowSigninCommand* command = [[ShowSigninCommand alloc]
       initWithOperation:AuthenticationOperation::kHistorySync
@@ -149,40 +151,18 @@ void MaybeShowHistorySyncScreenAfterProfileSwitch(
             accessPoint:access_point
             promoAction:signin_metrics::PromoAction::
                             PROMO_ACTION_NO_SIGNIN_PROMO
-             completion:historySyncCompletion];
+             completion:nil];
+  command.showSnackbar = showSnackbar;
   command.optionalHistorySync = YES;
 
   UIViewController* view_controller =
-      browser->GetSceneState().rootViewController;
+      browser->GetSceneState().window.rootViewController;
   while (view_controller.presentedViewController) {
     view_controller = view_controller.presentedViewController;
   }
 
   [browser->GetSceneState().controller showSignin:command
                                baseViewController:view_controller];
-}
-
-// Displays the identity confirmation snackbar with `identity`.
-void TriggerAccountSwitchSnackbarWithIdentity(id<SystemIdentity> identity,
-                                              Browser* browser) {
-  ProfileIOS* profile = browser->GetProfile()->GetOriginalProfile();
-  UIImage* avatar = ChromeAccountManagerServiceFactory::GetForProfile(profile)
-                        ->GetIdentityAvatarWithIdentity(
-                            identity, IdentityAvatarSize::Regular);
-  ManagementState management_state =
-      GetManagementState(IdentityManagerFactory::GetForProfile(profile),
-                         AuthenticationServiceFactory::GetForProfile(profile),
-                         profile->GetPrefs());
-  MDCSnackbarMessage* snackbar_title =
-      [[IdentitySnackbarMessage alloc] initWithName:identity.userGivenName
-                                              email:identity.userEmail
-                                             avatar:avatar
-                                    managementState:management_state];
-  CommandDispatcher* dispatcher = browser->GetCommandDispatcher();
-  id<SnackbarCommands> snackbar_commands_handler =
-      HandlerForProtocol(dispatcher, SnackbarCommands);
-  [snackbar_commands_handler
-      showSnackbarMessageOverBrowserToolbar:snackbar_title];
 }
 
 void CompletePostSignInActionsContinuationImpl(
@@ -192,7 +172,7 @@ void CompletePostSignInActionsContinuationImpl(
     SceneState* scene_state,
     base::OnceClosure closure) {
   Browser* browser =
-      scene_state.browserProviderInterface.currentBrowserProvider.browser;
+      scene_state.browserProviderInterface.mainBrowserProvider.browser;
   CompletePostSignInActions(post_signin_actions, identity, browser,
                             access_point);
   std::move(closure).Run();
@@ -212,7 +192,9 @@ void CompletePostSignInActions(PostSignInActionSet post_signin_actions,
                                id<SystemIdentity> identity,
                                Browser* browser,
                                signin_metrics::AccessPoint access_point) {
-  DCHECK(browser);
+  CHECK(browser, base::NotFatalUntil::M145);
+  // Sign-in related work should be done on regular browser.
+  CHECK_EQ(browser->type(), Browser::Type::kRegular, base::NotFatalUntil::M145);
   ProfileIOS* profile = browser->GetProfile()->GetOriginalProfile();
   syncer::SyncService* sync_service =
       SyncServiceFactory::GetForProfile(profile);
@@ -238,15 +220,10 @@ void CompletePostSignInActions(PostSignInActionSet post_signin_actions,
 
   if (post_signin_actions.Has(
           PostSignInAction::kShowHistorySyncScreenAfterProfileSwitch)) {
-    ProceduralBlock showSnackbar;
-    if (post_signin_actions.Has(
-            PostSignInAction::kShowIdentityConfirmationSnackbar)) {
-      showSnackbar = ^{
-        TriggerAccountSwitchSnackbarWithIdentity(identity, browser);
-      };
-    }
+    BOOL showSnackbar = post_signin_actions.Has(
+        PostSignInAction::kShowIdentityConfirmationSnackbar);
     MaybeShowHistorySyncScreenAfterProfileSwitch(browser, access_point,
-                                                 showSnackbar);
+                                                 identity, showSnackbar);
     return;
   }
 
@@ -260,18 +237,17 @@ void CompletePostSignInActions(PostSignInActionSet post_signin_actions,
     return;
   }
 
-  MDCSnackbarMessageAction* action = [[MDCSnackbarMessageAction alloc] init];
+  SnackbarMessageAction* action = [[SnackbarMessageAction alloc] init];
   action.handler = base::CallbackToBlock(base::BindOnce(
       &HandleSignoutForSnackbar, browser->AsWeakPtr(), clear_selectable_type));
 
   action.title = l10n_util::GetNSString(IDS_IOS_SIGNIN_SNACKBAR_UNDO);
-  action.accessibilityIdentifier = kSigninSnackbarUndo;
   NSString* messageText =
       l10n_util::GetNSStringF(IDS_IOS_SIGNIN_SNACKBAR_SIGNED_IN_AS,
                               base::SysNSStringToUTF16(identity.userEmail));
-  MDCSnackbarMessage* message = CreateSnackbarMessage(messageText);
+  SnackbarMessage* message =
+      [[SnackbarMessage alloc] initWithTitle:messageText];
   message.action = action;
-  message.category = kAuthenticationSnackbarCategory;
 
   id<SnackbarCommands> handler =
       HandlerForProtocol(browser->GetCommandDispatcher(), SnackbarCommands);
@@ -327,6 +303,9 @@ void CompletePostSignInActions(PostSignInActionSet post_signin_actions,
                  withCompletion:(ProceduralBlock)callback
                  viewController:(UIViewController*)viewController
                         browser:(Browser*)browser {
+  CHECK(browser, base::NotFatalUntil::M150);
+  // Sign-in related work should be done on regular browser.
+  CHECK_EQ(browser->type(), Browser::Type::kRegular, base::NotFatalUntil::M145);
   [self checkNoDialog];
 
   base::RecordAction(base::UserMetricsAction(

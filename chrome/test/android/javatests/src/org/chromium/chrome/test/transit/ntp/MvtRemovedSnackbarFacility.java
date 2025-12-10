@@ -8,33 +8,33 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.test.transit.ui.SnackbarFacility;
 import org.chromium.chrome.test.util.browser.suggestions.mostvisited.FakeMostVisitedSites;
 
-import java.util.List;
-
-/** Facility for the Undo Snackbar displayed when a Most Visited Tiles tile is removed. */
+/** Facility for the Undo Snackbar displayed when a Top Sites Tile is removed. */
 public class MvtRemovedSnackbarFacility extends SnackbarFacility<RegularNewTabPageStation> {
     private final MvtsFacility mMvtsBeforeRemoval;
     private final MvtsFacility mMvtsAfterRemoval;
 
     public MvtRemovedSnackbarFacility(
             MvtsFacility mvtsBeforeRemoval, MvtsFacility mvtsAfterRemoval) {
-        super("Item removed", "Undo");
+        super("This site won't be shown again", "Undo");
         mMvtsBeforeRemoval = mvtsBeforeRemoval;
         mMvtsAfterRemoval = mvtsAfterRemoval;
     }
 
     /** Click Undo to undo the tile removal. */
     public MvtsFacility undo(FakeMostVisitedSites fakeMostVisitedSites) {
-        var mvtsAfterUndo = new MvtsFacility(mMvtsBeforeRemoval.getSiteSuggestions());
-        mHostStation.swapFacilitiesSync(
-                List.of(mMvtsAfterRemoval, this),
-                List.of(mvtsAfterUndo),
-                () -> {
-                    buttonElement.getClickTrigger().triggerTransition();
-                    ThreadUtils.runOnUiThreadBlocking(
-                            () ->
-                                    fakeMostVisitedSites.setTileSuggestions(
-                                            mMvtsBeforeRemoval.getSiteSuggestions()));
-                });
-        return mvtsAfterUndo;
+        var mvtsAfterUndo =
+                new MvtsFacility(
+                        mMvtsBeforeRemoval.getSiteSuggestions(),
+                        mMvtsBeforeRemoval.getSeparatorIndices());
+        return runTo(
+                        () -> {
+                            buttonElement.clickTo().executeTriggerWithoutTransition();
+                            ThreadUtils.runOnUiThreadBlocking(
+                                    () ->
+                                            fakeMostVisitedSites.setTileSuggestions(
+                                                    mMvtsBeforeRemoval.getSiteSuggestions()));
+                        })
+                .exitFacilitiesAnd(mMvtsAfterRemoval, this)
+                .enterFacility(mvtsAfterUndo);
     }
 }

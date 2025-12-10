@@ -304,7 +304,7 @@ void AutofillWalletMetadataSyncBridge::CreateForWebDataServiceAndBackend(
     const std::string& app_locale,
     AutofillWebDataBackend* web_data_backend,
     AutofillWebDataService* web_data_service) {
-  web_data_service->GetDBUserData()->SetUserData(
+  web_data_service->GetDBUserData().SetUserData(
       &kAutofillWalletMetadataSyncBridgeUserDataKey,
       std::make_unique<AutofillWalletMetadataSyncBridge>(
           std::make_unique<syncer::ClientTagBasedDataTypeProcessor>(
@@ -318,7 +318,7 @@ AutofillWalletMetadataSyncBridge*
 AutofillWalletMetadataSyncBridge::FromWebDataService(
     AutofillWebDataService* web_data_service) {
   return static_cast<AutofillWalletMetadataSyncBridge*>(
-      web_data_service->GetDBUserData()->GetUserData(
+      web_data_service->GetDBUserData().GetUserData(
           &kAutofillWalletMetadataSyncBridgeUserDataKey));
 }
 
@@ -480,7 +480,8 @@ void AutofillWalletMetadataSyncBridge::LoadDataCacheAndMetadata() {
   if (!web_data_backend_ || !web_data_backend_->GetDatabase() ||
       !GetAutofillTable() || !GetSyncMetadataStore()) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed to load AutofillWebDatabase."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kWalletMetadataFailedToLoadDatabase});
     return;
   }
 
@@ -490,7 +491,7 @@ void AutofillWalletMetadataSyncBridge::LoadDataCacheAndMetadata() {
   if (!GetAutofillTable()->GetServerCardsMetadata(cards_metadata) ||
       !GetAutofillTable()->GetServerIbansMetadata(ibans_metadata)) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed reading autofill data from WebDatabase."});
+        {FROM_HERE, syncer::ModelError::Type::kWalletMetadataFailedToReadData});
     return;
   }
   for (const PaymentsMetadata& card_metadata : cards_metadata) {
@@ -508,7 +509,8 @@ void AutofillWalletMetadataSyncBridge::LoadDataCacheAndMetadata() {
   if (!GetSyncMetadataStore()->GetAllSyncMetadata(
           syncer::AUTOFILL_WALLET_METADATA, batch.get())) {
     change_processor()->ReportError(
-        {FROM_HERE, "Failed reading autofill metadata from WebDatabase."});
+        {FROM_HERE,
+         syncer::ModelError::Type::kWalletMetadataFailedToReadMetadata});
     return;
   }
 

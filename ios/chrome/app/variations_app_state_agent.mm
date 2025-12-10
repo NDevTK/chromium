@@ -37,7 +37,8 @@ using ::variations::SeedApplicationStage;
 using ::variations::VariationsSeedStore;
 
 // The NSUserDefault key to store the time the last seed is fetched.
-NSString* kLastVariationsSeedFetchTimeKey = @"kLastVariationsSeedFetchTime";
+NSString* const kLastVariationsSeedFetchTimeKey =
+    @"kLastVariationsSeedFetchTime";
 
 // Local state key of experiment group assigned, persisted for subsequent runs.
 const char kFirstRunSeedFetchExperimentGroupPref[] = "ios.variations.first_run";
@@ -279,8 +280,9 @@ void SaveFetchTimeOfLatestSeed() {
 // scene will be active on the foreground but the seed has not been fetched to
 // initialize Chrome.
 - (void)showExtendedLaunchScreen:(SceneState*)sceneState {
-  [sceneState setRootViewController:[[LaunchScreenViewController alloc] init]
-                  makeKeyAndVisible:YES];
+  UIWindow* window = sceneState.window;
+  window.rootViewController = [[LaunchScreenViewController alloc] init];
+  [window makeKeyAndVisible];
 }
 
 @end

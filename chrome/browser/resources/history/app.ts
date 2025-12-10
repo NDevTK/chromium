@@ -5,47 +5,47 @@
 import 'chrome://resources/cr_components/history_clusters/clusters.js';
 import 'chrome://resources/cr_components/history_embeddings/filter_chips.js';
 import 'chrome://resources/cr_components/history_embeddings/history_embeddings.js';
-import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
-import 'chrome://resources/cr_elements/cr_shared_style.css.js';
-import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
-import 'chrome://resources/cr_elements/cr_tabs/cr_tabs.js';
+import 'chrome://resources/cr_elements/cr_drawer/cr_drawer.js';
+import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render_lit.js';
 import 'chrome://resources/cr_elements/cr_page_selector/cr_page_selector.js';
+import 'chrome://resources/cr_elements/cr_tabs/cr_tabs.js';
 import './history_embeddings_promo.js';
+// <if expr="not is_chromeos">
+import './history_sync_promo.js';
+// </if>
 import './history_list.js';
 import './history_toolbar.js';
 import './query_manager.js';
-import './shared_style.css.js';
+import './router.js';
 import './side_bar.js';
+import './synced_device_manager.js';
 import '/strings.m.js';
 
-import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
-import type {HelpBubbleMixinInterface} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
+import {HelpBubbleMixinLit} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin_lit.js';
 import {HistoryResultType} from 'chrome://resources/cr_components/history/constants.js';
-import type {HistoryEntry, HistoryQuery, PageCallbackRouter, PageHandlerRemote, QueryState} from 'chrome://resources/cr_components/history/history.mojom-webui.js';
+import type {PageCallbackRouter, PageHandlerRemote, QueryResult, QueryState} from 'chrome://resources/cr_components/history/history.mojom-webui.js';
 import {HistoryEmbeddingsBrowserProxyImpl} from 'chrome://resources/cr_components/history_embeddings/browser_proxy.js';
 import type {Suggestion} from 'chrome://resources/cr_components/history_embeddings/filter_chips.js';
 import type {HistoryEmbeddingsMoreActionsClickEvent} from 'chrome://resources/cr_components/history_embeddings/history_embeddings.js';
 import {getInstance as getAnnouncerInstance} from 'chrome://resources/cr_elements/cr_a11y_announcer/cr_a11y_announcer.js';
 import type {CrDrawerElement} from 'chrome://resources/cr_elements/cr_drawer/cr_drawer.js';
-import type {CrLazyRenderElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
+import type {CrLazyRenderLitElement} from 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render_lit.js';
 import type {CrPageSelectorElement} from 'chrome://resources/cr_elements/cr_page_selector/cr_page_selector.js';
-import type {FindShortcutListener} from 'chrome://resources/cr_elements/find_shortcut_manager.js';
-import {FindShortcutMixin} from 'chrome://resources/cr_elements/find_shortcut_mixin.js';
-import type {WebUiListenerMixinInterface} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js';
-import {assert} from 'chrome://resources/js/assert.js';
+import {FindShortcutMixinLit} from 'chrome://resources/cr_elements/find_shortcut_mixin_lit.js';
+import {WebUiListenerMixinLit} from 'chrome://resources/cr_elements/web_ui_listener_mixin_lit.js';
+import {assert, assertNotReachedCase} from 'chrome://resources/js/assert.js';
 import {EventTracker} from 'chrome://resources/js/event_tracker.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
-import {getTrustedScriptURL} from 'chrome://resources/js/static_types.js';
 import {hasKeyModifiers} from 'chrome://resources/js/util.js';
-import {IronScrollTargetBehavior} from 'chrome://resources/polymer/v3_0/iron-scroll-target-behavior/iron-scroll-target-behavior.js';
-import {mixinBehaviors, PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 
-import {getTemplate} from './app.html.js';
+import {getCss} from './app.css.js';
+import {getHtml} from './app.html.js';
 import type {BrowserService} from './browser_service.js';
 import {BrowserServiceImpl} from './browser_service.js';
-import {HistoryPageViewHistogram} from './constants.js';
-import type {ForeignSession} from './externs.js';
+import {HistoryPageViewHistogram, HistorySignInState, TabsSyncState} from './constants.js';
+import type {ForeignSession, HistoryIdentityState} from './externs.js';
 import type {HistoryListElement} from './history_list.js';
 import type {HistoryToolbarElement} from './history_toolbar.js';
 import {convertDateToQueryValue} from './query_manager.js';
@@ -53,314 +53,203 @@ import {Page, TABBED_PAGES} from './router.js';
 import type {HistoryRouterElement} from './router.js';
 import type {FooterInfo, HistorySideBarElement} from './side_bar.js';
 
-let lazyLoadPromise: Promise<void>|null = null;
-export function ensureLazyLoaded(): Promise<void> {
-  if (!lazyLoadPromise) {
-    const script = document.createElement('script');
-    script.type = 'module';
-    script.src = getTrustedScriptURL`./lazy_load.js` as unknown as string;
-    document.body.appendChild(script);
-
-    lazyLoadPromise = Promise.all([
-      customElements.whenDefined('history-synced-device-manager'),
-      customElements.whenDefined('cr-action-menu'),
-      customElements.whenDefined('cr-button'),
-      customElements.whenDefined('cr-checkbox'),
-      customElements.whenDefined('cr-dialog'),
-      customElements.whenDefined('cr-drawer'),
-      customElements.whenDefined('cr-icon-button'),
-      customElements.whenDefined('cr-toolbar-selection-overlay'),
-    ]) as unknown as Promise<void>;
-  }
-  return lazyLoadPromise;
-}
-
-// Adds click/auxclick listeners for any link on the page. If the link points
+// Click/auxclick listeners to intercept any link clicks. If the link points
 // to a chrome: or file: url, then calls into the browser to do the
-// navigation. Note: This method is *not* re-entrant. Every call to it, will
-// re-add listeners on |document|. It's up to callers to ensure this is only
-// called once.
-export function listenForPrivilegedLinkClicks() {
-  ['click', 'auxclick'].forEach(function(eventName) {
-    document.addEventListener(eventName, function(evt: Event) {
-      const e = evt as MouseEvent;
-      // Ignore buttons other than left and middle.
-      if (e.button > 1 || e.defaultPrevented) {
-        return;
-      }
+// navigation.
+function onDocumentClick(evt: Event) {
+  const e = evt as MouseEvent;
+  // Ignore buttons other than left and middle.
+  if (e.button > 1 || e.defaultPrevented) {
+    return;
+  }
 
-      const eventPath = e.composedPath() as HTMLElement[];
-      let anchor: HTMLAnchorElement|null = null;
-      if (eventPath) {
-        for (let i = 0; i < eventPath.length; i++) {
-          const element = eventPath[i];
-          if (element.tagName === 'A' && (element as HTMLAnchorElement).href) {
-            anchor = element as HTMLAnchorElement;
-            break;
-          }
-        }
+  const eventPath = e.composedPath() as HTMLElement[];
+  let anchor: HTMLAnchorElement|null = null;
+  if (eventPath) {
+    for (let i = 0; i < eventPath.length; i++) {
+      const element = eventPath[i];
+      if (element.tagName === 'A' && (element as HTMLAnchorElement).href) {
+        anchor = element as HTMLAnchorElement;
+        break;
       }
+    }
+  }
 
-      // Fallback if Event.path is not available.
-      let el = e.target as HTMLElement;
-      if (!anchor && el.nodeType === Node.ELEMENT_NODE &&
-          el.webkitMatchesSelector('A, A *')) {
-        while (el.tagName !== 'A') {
-          el = el.parentElement as HTMLElement;
-        }
-        anchor = el as HTMLAnchorElement;
-      }
+  // Fallback if Event.path is not available.
+  let el = e.target as HTMLElement;
+  if (!anchor && el.nodeType === Node.ELEMENT_NODE &&
+      el.webkitMatchesSelector('A, A *')) {
+    while (el.tagName !== 'A') {
+      el = el.parentElement as HTMLElement;
+    }
+    anchor = el as HTMLAnchorElement;
+  }
 
-      if (!anchor) {
-        return;
-      }
+  if (!anchor) {
+    return;
+  }
 
-      if ((anchor.protocol === 'file:' || anchor.protocol === 'about:') &&
-          (e.button === 0 || e.button === 1)) {
-        BrowserServiceImpl.getInstance().navigateToUrl(
-            anchor.href, anchor.target, e);
-        e.preventDefault();
-      }
-    });
-  });
+  if ((anchor.protocol === 'file:' || anchor.protocol === 'about:') &&
+      (e.button === 0 || e.button === 1)) {
+    BrowserServiceImpl.getInstance().navigateToUrl(
+        anchor.href, anchor.target, e);
+    e.preventDefault();
+  }
 }
-
 export interface HistoryAppElement {
   $: {
-    'content': CrPageSelectorElement,
-    'content-side-bar': HistorySideBarElement,
-    'drawer': CrLazyRenderElement<CrDrawerElement>,
-    'history': HistoryListElement,
-    'tabs-container': Element,
-    'tabs-content': CrPageSelectorElement,
-    'toolbar': HistoryToolbarElement,
+    content: CrPageSelectorElement,
+    contentSideBar: HistorySideBarElement,
+    drawer: CrLazyRenderLitElement<CrDrawerElement>,
+    history: HistoryListElement,
+    tabsContainer: HTMLElement,
+    tabsContent: CrPageSelectorElement,
+    toolbar: HistoryToolbarElement,
     tabsScrollContainer: HTMLElement,
     router: HistoryRouterElement,
-    historyEmbeddingsContainer: HTMLElement,
     historyEmbeddingsDisclaimerLink: HTMLElement,
   };
 }
 
-export interface QueryResult {
-  info?: HistoryQuery;
-  value?: HistoryEntry[];
-  sessionList?: ForeignSession[];
-}
-
-const HistoryAppElementBase = mixinBehaviors(
-                                  [IronScrollTargetBehavior],
-                                  HelpBubbleMixin(FindShortcutMixin(
-                                      WebUiListenerMixin(PolymerElement)))) as {
-  new (): PolymerElement & HelpBubbleMixinInterface & FindShortcutListener &
-      IronScrollTargetBehavior & WebUiListenerMixinInterface,
-};
+const HistoryAppElementBase = HelpBubbleMixinLit(
+    FindShortcutMixinLit(WebUiListenerMixinLit(CrLitElement)));
 
 export class HistoryAppElement extends HistoryAppElementBase {
   static get is() {
     return 'history-app';
   }
 
-  static get template() {
-    return getTemplate();
+  static override get styles() {
+    return getCss();
   }
 
-  static get properties() {
+  override render() {
+    return getHtml.bind(this)();
+  }
+
+  static override get properties() {
     return {
       enableHistoryEmbeddings_: {
         type: Boolean,
-        value: () => loadTimeData.getBoolean('enableHistoryEmbeddings'),
-        reflectToAttribute: true,
+        reflect: true,
       },
-
-      contentPage_: {
-        type: String,
-        value: Page.HISTORY,
-      },
-
-      tabsContentPage_: {
-        type: String,
-        value: Page.HISTORY,
-      },
-
+      // <if expr="not is_chromeos">
+      unoPhase2FollowUpEnabled_: {type: Boolean},
+      shouldShowHistorySyncPromo_: {type: Boolean},
+      // </if>
+      contentPage_: {type: String},
+      tabsContentPage_: {type: String},
       // The id of the currently selected page.
-      selectedPage_: {
-        type: String,
-        observer: 'selectedPageChanged_',
-      },
-
-      queryResult_: Object,
-
+      selectedPage_: {type: String},
+      queryResult_: {type: Object},
+      sessionList_: {type: Array},
       // Updated on synced-device-manager attach by chrome.sending
       // 'otherDevicesInitialized'.
-      isUserSignedIn_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('isUserSignedIn'),
-      },
-
-      pendingDelete_: Boolean,
-
-      toolbarShadow_: {
-        type: Boolean,
-        reflectToAttribute: true,
-        notify: true,
-      },
-
-      queryState_: Object,
-
+      identityState_: {type: Object},
+      pendingDelete_: {type: Boolean},
+      queryState_: {type: Object},
       // True if the window is narrow enough for the page to have a drawer.
-      hasDrawer_: {
-        type: Boolean,
-        observer: 'hasDrawerChanged_',
-      },
-
-      footerInfo: {
-        type: Object,
-        value() {
-          return {
-            managed: loadTimeData.getBoolean('isManaged'),
-            otherFormsOfHistory: false,
-          };
-        },
-      },
-
-      historyClustersEnabled_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('isHistoryClustersEnabled'),
-      },
-
-      historyClustersVisible_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('isHistoryClustersVisible'),
-      },
-
-      lastSelectedTab_: {
-        type: Number,
-        value: () => loadTimeData.getInteger('lastSelectedTab'),
-      },
-
+      hasDrawer_: {type: Boolean},
+      footerInfo: {type: Object},
+      historyClustersEnabled_: {type: Boolean},
+      historyClustersVisible_: {type: Boolean},
+      lastSelectedTab_: {type: Number},
       showHistoryClusters_: {
         type: Boolean,
-        computed:
-            'computeShowHistoryClusters_(historyClustersEnabled_, historyClustersVisible_)',
-        reflectToAttribute: true,
+        reflect: true,
       },
-
-      showTabs_: {
-        type: Boolean,
-        computed:
-            'computeShowTabs_(showHistoryClusters_, enableHistoryEmbeddings_)',
-      },
-
+      showTabs_: {type: Boolean},
       // The index of the currently selected tab.
-      selectedTab_: {
-        type: Number,
-        observer: 'selectedTabChanged_',
-      },
-
-      tabsIcons_: {
-        type: Array,
-        value: () =>
-            ['images/list.svg', 'chrome://resources/images/icon_journeys.svg'],
-      },
-
-      tabsNames_: {
-        type: Array,
-        value: () => {
-          return [
-            loadTimeData.getString('historyListTabLabel'),
-            loadTimeData.getString('historyClustersTabLabel'),
-          ];
-        },
-      },
-
-      scrollTarget_: Object,
-
-      queryStateAfterDate_: {
-        type: Object,
-        computed: 'computeQueryStateAfterDate_(queryState_.*)',
-      },
-
+      selectedTab_: {type: Number},
+      tabsIcons_: {type: Array},
+      tabsNames_: {type: Array},
+      scrollTarget_: {type: Object},
+      queryStateAfterDate_: {type: Object},
       hasHistoryEmbeddingsResults_: {
         type: Boolean,
-        value: false,
-        reflectToAttribute: true,
+        reflect: true,
       },
-
-      tabContentScrollOffset_: {
-        type: Number,
-        value: 0,
-      },
-
-      nonEmbeddingsResultClicked_: {
-        type: Boolean,
-        value: false,
-      },
-
-      numCharsTypedInSearch_: {
-        type: Number,
-        value: 0,
-      },
-
-      historyEmbeddingsDisclaimerLinkClicked_: {
-        type: Boolean,
-        value: false,
-      },
+      tabContentScrollOffset_: {type: Number},
+      nonEmbeddingsResultClicked_: {type: Boolean},
+      numCharsTypedInSearch_: {type: Number},
+      historyEmbeddingsDisclaimerLinkClicked_: {type: Boolean},
     };
   }
 
-  declare footerInfo: FooterInfo;
+  accessor footerInfo: FooterInfo = {
+    managed: loadTimeData.getBoolean('isManaged'),
+    otherFormsOfHistory: false,
+    geminiAppsActivity: loadTimeData.getBoolean('isGlicEnabled') &&
+        loadTimeData.getBoolean('enableBrowsingHistoryActorIntegrationM1'),
+  };
+  protected accessor enableHistoryEmbeddings_: boolean =
+      loadTimeData.getBoolean('enableHistoryEmbeddings');
+  // <if expr="not is_chromeos">
+  protected accessor unoPhase2FollowUpEnabled_: boolean =
+      loadTimeData.getBoolean('unoPhase2FollowUp');
+  protected accessor shouldShowHistorySyncPromo_: boolean = false;
+  // </if>
+  protected accessor hasDrawer_: boolean;
+  protected accessor historyClustersEnabled_: boolean =
+      loadTimeData.getBoolean('isHistoryClustersEnabled');
+  protected accessor historyClustersVisible_: boolean =
+      loadTimeData.getBoolean('isHistoryClustersVisible');
+  protected accessor identityState_: HistoryIdentityState = {
+    signIn: HistorySignInState.SIGNED_OUT,
+    tabsSync: TabsSyncState.TURNED_OFF,
+  };
+  protected accessor lastSelectedTab_: number =
+      loadTimeData.getInteger('lastSelectedTab');
+  protected accessor contentPage_: string = Page.HISTORY;
+  protected accessor tabsContentPage_: string = Page.HISTORY;
+  protected accessor pendingDelete_: boolean = false;
+  protected accessor queryResult_: QueryResult = {
+    info: null,
+    value: [],
+  };
+  protected accessor sessionList_: ForeignSession[] = [];
+  protected accessor queryState_: QueryState = {
+    incremental: false,
+    querying: false,
+    searchTerm: '',
+    after: null,
+  };
+  protected accessor selectedPage_: string = Page.HISTORY;
+  protected accessor selectedTab_: number =
+      loadTimeData.getInteger('lastSelectedTab') || 0;
+  protected accessor showTabs_: boolean = false;
+  protected accessor showHistoryClusters_: boolean = false;
+  protected accessor tabsIcons_: string[] =
+      ['images/list.svg', 'chrome://resources/images/icon_journeys.svg'];
+  protected accessor tabsNames_: string[] = [
+    loadTimeData.getString('historyListTabLabel'),
+    loadTimeData.getString('historyClustersTabLabel'),
+  ];
+  protected accessor scrollTarget_: HTMLElement = document.body;
+  protected accessor queryStateAfterDate_: Date|null = null;
+  private accessor hasHistoryEmbeddingsResults_: boolean = false;
+  protected accessor historyEmbeddingsDisclaimerLinkClicked_: boolean = false;
+  protected accessor tabContentScrollOffset_: number = 0;
+  protected accessor numCharsTypedInSearch_: number = 0;
+  protected accessor nonEmbeddingsResultClicked_: boolean = false;
+
   private browserService_: BrowserService = BrowserServiceImpl.getInstance();
-  private callbackRouter_: PageCallbackRouter;
-  declare private enableHistoryEmbeddings_: boolean;
+  private callbackRouter_: PageCallbackRouter =
+      BrowserServiceImpl.getInstance().callbackRouter;
+  private dataFromNativeBeforeInput_: string|null = null;
   private eventTracker_: EventTracker = new EventTracker();
-  declare private hasDrawer_: boolean;
-  declare private historyClustersEnabled_: boolean;
-  declare private historyClustersVisible_: boolean;
-  declare private isUserSignedIn_: boolean;
-  declare private lastSelectedTab_: number;
-  declare private contentPage_: string;
-  declare private tabsContentPage_: string;
-  private pageHandler_: PageHandlerRemote;
-  declare private pendingDelete_: boolean;
-  declare private queryResult_: QueryResult;
-  declare private queryState_: QueryState;
-  declare private selectedPage_: string;
-  declare private selectedTab_: number;
+  private historyClustersViewStartTime_: Date|null = null;
+  private historyEmbeddingsResizeObserver_: ResizeObserver|null = null;
   private lastRecordedSelectedPageHistogramValue_: HistoryPageViewHistogram =
       HistoryPageViewHistogram.END;
-  declare private showTabs_: boolean;
-  declare private showHistoryClusters_: boolean;
-  declare private tabsIcons_: string[];
-  declare private tabsNames_: string[];
-  declare private toolbarShadow_: boolean;
-  private historyClustersViewStartTime_: Date|null = null;
   private onHasOtherFormsChangedListenerId_: number|null = null;
-  declare private scrollTarget_: HTMLElement;
-  declare private queryStateAfterDate_?: Date;
-  declare private hasHistoryEmbeddingsResults_: boolean;
-  private historyEmbeddingsResizeObserver_?: ResizeObserver;
-  declare private historyEmbeddingsDisclaimerLinkClicked_: boolean;
-  declare private tabContentScrollOffset_: number;
-  private dataFromNativeBeforeInput_: string|null = null;
-  declare private numCharsTypedInSearch_: number;
-  declare private nonEmbeddingsResultClicked_: boolean;
-
-  constructor() {
-    super();
-    this.pageHandler_ = BrowserServiceImpl.getInstance().handler;
-    this.callbackRouter_ = BrowserServiceImpl.getInstance().callbackRouter;
-
-    this.queryResult_ = {
-      info: undefined,
-      value: [],
-      sessionList: [],
-    };
-
-    listenForPrivilegedLinkClicks();
-  }
+  private pageHandler_: PageHandlerRemote =
+      BrowserServiceImpl.getInstance().handler;
 
   override connectedCallback() {
     super.connectedCallback();
+    this.eventTracker_.add(document, 'click', onDocumentClick);
+    this.eventTracker_.add(document, 'auxclick', onDocumentClick);
     this.eventTracker_.add(
         document, 'keydown', (e: Event) => this.onKeyDown_(e as KeyboardEvent));
     this.eventTracker_.add(
@@ -369,15 +258,19 @@ export class HistoryAppElement extends HistoryAppElementBase {
         document, 'record-history-link-click',
         this.onRecordHistoryLinkClick_.bind(this));
     this.addWebUiListener(
-        'sign-in-state-changed',
-        (signedIn: boolean) => this.onSignInStateChanged_(signedIn));
+        'history-identity-state-changed',
+        (identityState: HistoryIdentityState) =>
+            this.onIdentityStateChanged_(identityState));
     this.addWebUiListener(
         'foreign-sessions-changed',
         (sessionList: ForeignSession[]) =>
             this.setForeignSessions_(sessionList));
-    this.shadowRoot!.querySelector('history-query-manager')!.initialize();
+    this.shadowRoot.querySelector('history-query-manager')!.initialize();
     this.browserService_.getForeignSessions().then(
         sessionList => this.setForeignSessions_(sessionList));
+    this.browserService_.getInitialIdentityState().then(
+        (identityState: HistoryIdentityState) =>
+            this.onIdentityStateChanged_(identityState));
 
     const mediaQuery = window.matchMedia('(max-width: 1023px)');
     this.hasDrawer_ = mediaQuery.matches;
@@ -389,13 +282,21 @@ export class HistoryAppElement extends HistoryAppElementBase {
         this.callbackRouter_.onHasOtherFormsChanged.addListener(
             (hasOtherForms: boolean) =>
                 this.onHasOtherFormsChanged_(hasOtherForms));
+    // <if expr="not is_chromeos">
+    BrowserServiceImpl.getInstance()
+        .handler.shouldShowHistoryPageHistorySyncPromo()
+        .then(
+            ({shouldShow}) =>
+                this.handleShouldShowHistoryPageHistorySyncPromoChanged_(
+                    shouldShow));
+    // </if>
   }
 
-  override ready() {
-    super.ready();
-
+  override firstUpdated(changedProperties: PropertyValues<this>) {
+    super.firstUpdated(changedProperties);
     this.addEventListener('cr-toolbar-menu-click', this.onCrToolbarMenuClick_);
     this.addEventListener('delete-selected', this.deleteSelected);
+    this.addEventListener('open-selected', this.openSelected);
     this.addEventListener('history-checkbox-select', this.checkboxSelected);
     this.addEventListener('history-close-drawer', this.closeDrawer_);
     this.addEventListener('history-view-changed', this.historyViewChanged_);
@@ -413,15 +314,81 @@ export class HistoryAppElement extends HistoryAppElementBase {
     }
   }
 
-  private getShowResultsByGroup_() {
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    super.willUpdate(changedProperties);
+    const changedPrivateProperties =
+        changedProperties as Map<PropertyKey, unknown>;
+    if (changedPrivateProperties.has('historyClustersEnabled_') ||
+        changedPrivateProperties.has('historyClustersVisible_')) {
+      this.showHistoryClusters_ =
+          this.historyClustersEnabled_ && this.historyClustersVisible_;
+    }
+
+    if (changedPrivateProperties.has('showHistoryClusters_') ||
+        changedPrivateProperties.has('enableHistoryEmbeddings_')) {
+      this.showTabs_ =
+          this.showHistoryClusters_ && !this.enableHistoryEmbeddings_;
+    }
+
+    if (changedPrivateProperties.has('selectedTab_')) {
+      this.lastSelectedTab_ = this.selectedTab_;
+      // Change in the currently selected tab requires change in the currently
+      // selected page.
+      if (!this.selectedPage_ || TABBED_PAGES.includes(this.selectedPage_)) {
+        this.selectedPage_ = TABBED_PAGES[this.selectedTab_];
+      }
+    }
+
+    if (changedPrivateProperties.has('queryState_')) {
+      if (this.queryState_.after) {
+        const afterDate = new Date(this.queryState_.after + 'T00:00:00');
+        // This compute function listens for any subproperty changes on the
+        // queryState_ so the `after` param may not have changed.
+        if (this.queryStateAfterDate_?.getTime() !== afterDate.getTime()) {
+          this.queryStateAfterDate_ = afterDate;
+        }
+      } else {
+        this.queryStateAfterDate_ = null;
+      }
+    }
+  }
+
+  override updated(changedProperties: PropertyValues<this>) {
+    super.updated(changedProperties);
+    const changedPrivateProperties =
+        changedProperties as Map<PropertyKey, unknown>;
+    if (changedPrivateProperties.has('selectedTab_')) {
+      this.pageHandler_.setLastSelectedTab(this.selectedTab_);
+    }
+
+    if (changedPrivateProperties.has('selectedPage_')) {
+      this.selectedPageChanged_(
+          changedPrivateProperties.get('selectedPage_') as string);
+    }
+
+    if (changedPrivateProperties.has('hasDrawer_')) {
+      this.hasDrawerChanged_();
+    }
+
+    if (changedPrivateProperties.has('enableHistoryEmbeddings_') &&
+        this.enableHistoryEmbeddings_) {
+      this.onHistoryEmbeddingsContainerShown_();
+    }
+  }
+
+  getScrollTargetForTesting(): HTMLElement {
+    return this.scrollTarget_;
+  }
+
+  protected getShowResultsByGroup_(): boolean {
     return this.selectedPage_ === Page.HISTORY_CLUSTERS;
   }
 
-  private getShowHistoryList_() {
+  protected getShowHistoryList_(): boolean {
     return this.selectedPage_ === Page.HISTORY;
   }
 
-  private onShowResultsByGroupChanged_(e: CustomEvent<{value: boolean}>) {
+  protected onShowResultsByGroupChanged_(e: CustomEvent<{value: boolean}>) {
     if (!this.selectedPage_) {
       return;
     }
@@ -438,7 +405,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.eventTracker_.removeAll();
     if (this.historyEmbeddingsResizeObserver_) {
       this.historyEmbeddingsResizeObserver_.disconnect();
-      this.historyEmbeddingsResizeObserver_ = undefined;
+      this.historyEmbeddingsResizeObserver_ = null;
     }
     assert(this.onHasOtherFormsChangedListenerId_);
     this.callbackRouter_.removeListener(this.onHasOtherFormsChangedListenerId_);
@@ -450,16 +417,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
         new CustomEvent(eventName, {bubbles: true, composed: true, detail}));
   }
 
-  private computeShowHistoryClusters_(): boolean {
-    return this.historyClustersEnabled_ && this.historyClustersVisible_;
-  }
-
-  private computeShowTabs_(): boolean {
-    return this.showHistoryClusters_ && !this.enableHistoryEmbeddings_;
-  }
-
-  private historyClustersSelected_(
-      _selectedPage: string, _showHistoryClusters: boolean): boolean {
+  protected historyClustersSelected_(): boolean {
     return this.selectedPage_ === Page.HISTORY_CLUSTERS &&
         this.showHistoryClusters_;
   }
@@ -472,25 +430,10 @@ export class HistoryAppElement extends HistoryAppElementBase {
       searchField.getSearchInput().focus();
     }
 
-    // Lazily load the remainder of the UI.
-    ensureLazyLoaded().then(function() {
-      requestIdleCallback(function() {
-        // https://github.com/microsoft/TypeScript/issues/13569
-        (document as any).fonts.load('bold 12px Roboto');
-      });
+    requestIdleCallback(function() {
+      // https://github.com/microsoft/TypeScript/issues/13569
+      (document as any).fonts.load('bold 12px Roboto');
     });
-  }
-
-  /** Overridden from IronScrollTargetBehavior */
-  /* eslint-disable-next-line @typescript-eslint/naming-convention */
-  override _scrollHandler() {
-    if (this.scrollTarget) {
-      // When the tabs are visible, show the toolbar shadow for the synced
-      // devices page.
-      this.toolbarShadow_ = this.scrollTarget.scrollTop !== 0 &&
-          (!this.showHistoryClusters_ ||
-           this.syncedTabsSelected_(this.selectedPage_));
-    }
   }
 
   private onCrToolbarMenuClick_() {
@@ -523,9 +466,13 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.$.history.deleteSelectedWithPrompt();
   }
 
-  private onQueryFinished_(e: CustomEvent<{result: QueryResult}>) {
+  openSelected() {
+    this.$.history.openSelected();
+  }
+
+  protected onQueryFinished_(e: CustomEvent<{result: QueryResult}>) {
     this.queryResult_ = e.detail.result;
-    this.$.history.historyResult(e.detail.result.info!, e.detail.result.value!);
+    this.$.history.historyResult(e.detail.result.info!, e.detail.result.value);
     if (document.body.classList.contains('loading')) {
       document.body.classList.remove('loading');
       this.onFirstRender_();
@@ -596,24 +543,25 @@ export class HistoryAppElement extends HistoryAppElementBase {
         'History.SearchResultClicked.Index', clampedIndex, maxIndex);
 
     switch (e.detail.resultType) {
-      case HistoryResultType.TRADITIONAL: {
+      case HistoryResultType.TRADITIONAL:
         this.browserService_.recordHistogram(
             'History.SearchResultClicked.Index.Traditional', clampedIndex,
             maxIndex);
         break;
-      }
-      case HistoryResultType.GROUPED: {
+      case HistoryResultType.GROUPED:
         this.browserService_.recordHistogram(
             'History.SearchResultClicked.Index.Grouped', clampedIndex,
             maxIndex);
         break;
-      }
-      case HistoryResultType.EMBEDDINGS: {
+      case HistoryResultType.EMBEDDINGS:
         this.browserService_.recordHistogram(
             'History.SearchResultClicked.Index.Embeddings', clampedIndex,
             maxIndex);
         break;
-      }
+      case HistoryResultType.END:
+        break;
+      default:
+        assertNotReachedCase(e.detail.resultType);
     }
   }
 
@@ -629,9 +577,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
    */
   private onSelectAllCommand_(): boolean {
     if (this.$.toolbar.searchField.isSearchFocused() ||
-        this.syncedTabsSelected_(this.selectedPage_) ||
-        this.historyClustersSelected_(
-            this.selectedPage_, this.showHistoryClusters_)) {
+        this.syncedTabsSelected_() || this.historyClustersSelected_()) {
       return false;
     }
     this.selectOrUnselectAll();
@@ -643,25 +589,22 @@ export class HistoryAppElement extends HistoryAppElementBase {
    *     devices.
    */
   private setForeignSessions_(sessionList: ForeignSession[]) {
-    this.set('queryResult_.sessionList', sessionList);
+    this.sessionList_ = sessionList;
   }
 
   /**
-   * Update sign in state of synced device manager after user logs in or out.
+   * Updates the sign-in state.
    */
-  private onSignInStateChanged_(isUserSignedIn: boolean) {
-    this.isUserSignedIn_ = isUserSignedIn;
+  private onIdentityStateChanged_(identityState: HistoryIdentityState) {
+    this.identityState_ = identityState;
   }
 
-  /**
-   * Update sign in state of synced device manager after user logs in or out.
-   */
   private onHasOtherFormsChanged_(hasOtherForms: boolean) {
     this.footerInfo = Object.assign(
         {}, this.footerInfo, {otherFormsOfHistory: hasOtherForms});
   }
 
-  private syncedTabsSelected_(_selectedPage: string): boolean {
+  protected syncedTabsSelected_(): boolean {
     return this.selectedPage_ === Page.SYNCED_TABS;
   }
 
@@ -669,9 +612,9 @@ export class HistoryAppElement extends HistoryAppElementBase {
    * @return Whether a loading spinner should be shown (implies the
    *     backend is querying a new search term).
    */
-  private shouldShowSpinner_(
-      querying: boolean, incremental: boolean, searchTerm: string): boolean {
-    return querying && !incremental && searchTerm !== '';
+  protected shouldShowSpinner_(): boolean {
+    return this.queryState_.querying && !this.queryState_.incremental &&
+        this.queryState_.searchTerm !== '';
   }
 
   private updateContentPage_() {
@@ -692,7 +635,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
         Page.HISTORY;
   }
 
-  private selectedPageChanged_(newPage: string, oldPage: string) {
+  private selectedPageChanged_(oldPage: string) {
     this.updateContentPage_();
     this.updateTabsContentPage_();
     this.unselectAll();
@@ -700,47 +643,28 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.maybeUpdateSelectedHistoryTab_();
 
     if (oldPage === Page.HISTORY_CLUSTERS &&
-        newPage !== Page.HISTORY_CLUSTERS) {
+        this.selectedPage_ !== Page.HISTORY_CLUSTERS) {
       this.recordHistoryClustersDuration_();
     }
-    if (newPage === Page.HISTORY_CLUSTERS) {
+    if (this.selectedPage_ === Page.HISTORY_CLUSTERS) {
       this.historyClustersViewStartTime_ = new Date();
     }
   }
 
-  private updateScrollTarget_() {
-    const topLevelIronPages = this.$['content'];
-    const topLevelHistoryPage = this.$['tabs-container'];
+  protected updateScrollTarget_() {
+    const topLevelIronPages = this.$.content;
+    const topLevelHistoryPage = this.$.tabsContainer;
     if (topLevelIronPages.selectedItem &&
         topLevelIronPages.selectedItem === topLevelHistoryPage) {
-      if (this.enableHistoryEmbeddings_) {
-        // The top-level History page has another inner IronPages element that
-        // can toggle between different pages.
-        this.scrollTarget = this.$.tabsScrollContainer;
+      this.scrollTarget_ = this.$.tabsScrollContainer;
 
-        // Scroll target won't change if history embeddings is enabled as
-        // the scroll target for both Date and Group view is
-        // this.$.tabsScrollContainer, which means history-list's callbacks
-        // to fill the viewport do not get triggered automatically.
-        this.$.history.fillCurrentViewport();
-      } else {
-        this.scrollTarget = this.$['tabs-content'].selectedItem as HTMLElement;
-      }
-    } else if (topLevelIronPages.selectedItem) {
-      this.scrollTarget = topLevelIronPages.selectedItem as HTMLElement;
+      // Scroll target won't change as the scroll target for both Date and Group
+      // view is this.$.tabsScrollContainer, which means history-list's
+      // callbacks to fill the viewport do not get triggered automatically.
+      this.$.history.fillCurrentViewport();
     } else {
-      this.scrollTarget = null;
+      this.scrollTarget_ = topLevelIronPages.selectedItem as HTMLElement;
     }
-  }
-
-  private selectedTabChanged_() {
-    this.lastSelectedTab_ = this.selectedTab_;
-    // Change in the currently selected tab requires change in the currently
-    // selected page.
-    if (!this.selectedPage_ || TABBED_PAGES.includes(this.selectedPage_)) {
-      this.selectedPage_ = TABBED_PAGES[this.selectedTab_];
-    }
-    this.pageHandler_.setLastSelectedTab(this.selectedTab_);
   }
 
   private maybeUpdateSelectedHistoryTab_() {
@@ -752,11 +676,6 @@ export class HistoryAppElement extends HistoryAppElementBase {
   }
 
   private historyViewChanged_() {
-    // This allows the synced-device-manager to render so that it can be set
-    // as the scroll target.
-    requestAnimationFrame(() => {
-      this._scrollHandler();
-    });
     this.recordHistoryPageView_();
   }
 
@@ -793,7 +712,9 @@ export class HistoryAppElement extends HistoryAppElementBase {
         histogramValue = HistoryPageViewHistogram.JOURNEYS;
         break;
       case Page.SYNCED_TABS:
-        histogramValue = this.isUserSignedIn_ ?
+        histogramValue =
+            this.identityState_.signIn === HistorySignInState.SIGNED_IN &&
+                this.identityState_.tabsSync === TabsSyncState.TURNED_ON ?
             HistoryPageViewHistogram.SYNCED_TABS :
             HistoryPageViewHistogram.SIGNIN_PROMO;
         break;
@@ -831,7 +752,19 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.hasDrawer_ = enabled;
   }
 
-  private shouldShowHistoryEmbeddings_(): boolean {
+  // <if expr="not is_chromeos">
+  // TODO(https://crbug.com/418144407): add more conditions e.g. sync disabled
+  protected shouldShowHistoryPageHistorySyncPromo_(): boolean {
+    return this.unoPhase2FollowUpEnabled_ && this.shouldShowHistorySyncPromo_;
+  }
+
+  private handleShouldShowHistoryPageHistorySyncPromoChanged_(
+      shouldShowHistorySyncPromo: boolean) {
+    this.shouldShowHistorySyncPromo_ = shouldShowHistorySyncPromo;
+  }
+  // </if>
+
+  protected shouldShowHistoryEmbeddings_(): boolean {
     if (!loadTimeData.getBoolean('enableHistoryEmbeddings')) {
       return false;
     }
@@ -846,7 +779,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
         loadTimeData.getInteger('historyEmbeddingsSearchMinimumWordCount');
   }
 
-  private onSelectedSuggestionChanged_(e: CustomEvent<{value: Suggestion}>) {
+  protected onSelectedSuggestionChanged_(e: CustomEvent<{value: Suggestion}>) {
     let afterString: string|undefined = undefined;
     if (e.detail.value?.timeRangeStart) {
       afterString = convertDateToQueryValue(e.detail.value.timeRangeStart);
@@ -858,28 +791,11 @@ export class HistoryAppElement extends HistoryAppElementBase {
     });
   }
 
-  private computeQueryStateAfterDate_(): Date|undefined {
-    const afterString = this.queryState_.after;
-    if (!afterString) {
-      return undefined;
-    }
-
-    const afterDate = new Date(afterString + 'T00:00:00');
-
-    // This compute function listens for any subproperty changes on the
-    // queryState_ so the `after` param may not have changed.
-    if (this.queryStateAfterDate_?.getTime() === afterDate.getTime()) {
-      return this.queryStateAfterDate_;
-    }
-
-    return afterDate;
-  }
-
-  private onHistoryEmbeddingsDisclaimerLinkClick_() {
+  protected onHistoryEmbeddingsDisclaimerLinkClick_() {
     this.historyEmbeddingsDisclaimerLinkClicked_ = true;
   }
 
-  private onHistoryEmbeddingsItemMoreFromSiteClick_(
+  protected onHistoryEmbeddingsItemMoreFromSiteClick_(
       e: HistoryEmbeddingsMoreActionsClickEvent) {
     const historyEmbeddingsItem = e.detail;
     this.fire_(
@@ -887,7 +803,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
         {search: 'host:' + new URL(historyEmbeddingsItem.url.url).hostname});
   }
 
-  private onHistoryEmbeddingsItemRemoveClick_(
+  protected onHistoryEmbeddingsItemRemoveClick_(
       e: HistoryEmbeddingsMoreActionsClickEvent) {
     const historyEmbeddingsItem = e.detail;
     this.pageHandler_.removeVisits([{
@@ -896,14 +812,15 @@ export class HistoryAppElement extends HistoryAppElementBase {
     }]);
   }
 
-  private onHistoryEmbeddingsIsEmptyChanged_(e: CustomEvent<{value: boolean}>) {
+  protected onHistoryEmbeddingsIsEmptyChanged_(
+      e: CustomEvent<{value: boolean}>) {
     this.hasHistoryEmbeddingsResults_ = !e.detail.value;
   }
 
-  private onHistoryEmbeddingsContainerShown_() {
+  protected onHistoryEmbeddingsContainerShown_() {
     assert(this.enableHistoryEmbeddings_);
     const historyEmbeddingsContainer =
-        this.shadowRoot!.querySelector('#historyEmbeddingsContainer');
+        this.shadowRoot.querySelector('#historyEmbeddingsContainer');
     assert(historyEmbeddingsContainer);
     this.historyEmbeddingsResizeObserver_ = new ResizeObserver((entries) => {
       assert(entries.length === 1);
@@ -912,19 +829,16 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.historyEmbeddingsResizeObserver_.observe(historyEmbeddingsContainer);
   }
 
-  private onQueryStateChanged_(e: CustomEvent<{value: QueryState}>) {
+  protected onQueryStateChanged_(e: CustomEvent<{value: QueryState}>) {
     this.nonEmbeddingsResultClicked_ = false;
     this.queryState_ = e.detail.value;
-    if (this.selectedPage_ && this.$.router) {
-      this.$.router.serializeUrl();
-    }
   }
 
-  private onSelectedPageChanged_(e: CustomEvent<{value: string}>) {
+  protected onSelectedPageChanged_(e: CustomEvent<{value: string}>) {
     this.selectedPage_ = e.detail.value;
   }
 
-  private onToolbarSearchInputNativeBeforeInput_(
+  protected onToolbarSearchInputNativeBeforeInput_(
       e: CustomEvent<{e: InputEvent}>) {
     // TODO(crbug.com/40673976): This needs to be cached on the `beforeinput`
     //   event since there is a bug where this data is not available in the
@@ -932,7 +846,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.dataFromNativeBeforeInput_ = e.detail.e.data;
   }
 
-  private onToolbarSearchInputNativeInput_(
+  protected onToolbarSearchInputNativeInput_(
       e: CustomEvent<{e: InputEvent, inputValue: string}>) {
     const insertedText = this.dataFromNativeBeforeInput_;
     this.dataFromNativeBeforeInput_ = null;
@@ -950,12 +864,20 @@ export class HistoryAppElement extends HistoryAppElementBase {
     }
   }
 
-  private onToolbarSearchCleared_() {
+  protected onToolbarSearchCleared_() {
     this.numCharsTypedInSearch_ = 0;
   }
 
-  private onListPendingDeleteChanged_(e: CustomEvent<{value: boolean}>) {
+  protected onListPendingDeleteChanged_(e: CustomEvent<{value: boolean}>) {
     this.pendingDelete_ = e.detail.value;
+  }
+
+  protected onSelectedTabChanged_(e: CustomEvent<{value: number}>) {
+    this.selectedTab_ = e.detail.value;
+  }
+
+  protected onHistoryClustersVisibleChanged_(e: CustomEvent<{value: boolean}>) {
+    this.historyClustersVisible_ = e.detail.value;
   }
 }
 

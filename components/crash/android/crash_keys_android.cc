@@ -56,11 +56,9 @@ void FlushAndroidCrashKeys() {
   Java_CrashKeys_flushToNative(env, jinstance);
 }
 
-static void JNI_CrashKeys_Set(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
-    jint key,
-    const base::android::JavaParamRef<jstring>& value) {
+static void JNI_CrashKeys_Set(JNIEnv* env,
+                              jint key,
+                              const base::android::JavaRef<jstring>& value) {
   if (value.is_null()) {
     if (key == static_cast<jint>(CrashKeyIndex::INSTALLED_MODULES)) {
       g_installed_modules_key.Clear();
@@ -76,3 +74,5 @@ static void JNI_CrashKeys_Set(
     }
   }
 }
+
+DEFINE_JNI(CrashKeys)

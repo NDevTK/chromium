@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.browserservices.verification;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.robolectric.Shadows.shadowOf;
 
 import android.os.Process;
@@ -105,8 +107,8 @@ public class ChromeOriginVerifierJunitTest {
                                 return false;
                             }
                             // Ensure parsing of signature works.
-                            assert fingerprints.length == 1;
-                            assert fingerprints[0] != null;
+                            assertThat(fingerprints.length).isEqualTo(1);
+                            assertThat(fingerprints[0]).isNotNull();
                             mChromeVerifier.onOriginVerificationResult(
                                     args.getArgument(4), RelationshipCheckResult.SUCCESS);
                             return true;
@@ -114,12 +116,11 @@ public class ChromeOriginVerifierJunitTest {
                 .when(mMockOriginVerifierJni)
                 .verifyOrigin(
                         ArgumentMatchers.anyLong(),
-                        Mockito.any(),
                         ArgumentMatchers.anyString(),
-                        Mockito.any(),
+                        ArgumentMatchers.any(),
                         ArgumentMatchers.anyString(),
                         ArgumentMatchers.anyString(),
-                        Mockito.any());
+                        ArgumentMatchers.any());
     }
 
     @Test

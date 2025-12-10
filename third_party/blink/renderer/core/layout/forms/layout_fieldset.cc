@@ -88,9 +88,9 @@ void LayoutFieldset::InsertedIntoTree() {
     case EDisplay::kInlineGrid:
       display = EDisplay::kGrid;
       break;
-    case EDisplay::kMasonry:
-    case EDisplay::kInlineMasonry:
-      display = EDisplay::kMasonry;
+    case EDisplay::kGridLanes:
+    case EDisplay::kInlineGridLanes:
+      display = EDisplay::kGridLanes;
       break;
     default:
       break;
@@ -170,8 +170,10 @@ void LayoutFieldset::UpdateAnonymousChildStyle(
   child_style_builder.SetGridRowStart(StyleRef().GridRowStart());
 
   // grid-template-columns, grid-template-rows, grid-template-areas
-  child_style_builder.SetGridTemplateColumns(StyleRef().GridTemplateColumns());
-  child_style_builder.SetGridTemplateRows(StyleRef().GridTemplateRows());
+  child_style_builder.SetGridTemplateColumns(
+      StyleRef().SpecifiedGridTemplateColumns());
+  child_style_builder.SetGridTemplateRows(
+      StyleRef().SpecifiedGridTemplateRows());
   child_style_builder.SetGridTemplateAreas(StyleRef().GridTemplateAreas());
 
   child_style_builder.SetRowGap(StyleRef().RowGap());
@@ -181,10 +183,6 @@ void LayoutFieldset::UpdateAnonymousChildStyle(
   child_style_builder.SetOverflowX(StyleRef().OverflowX());
   child_style_builder.SetOverflowY(StyleRef().OverflowY());
   child_style_builder.SetUnicodeBidi(StyleRef().GetUnicodeBidi());
-
-  // scroll-start
-  child_style_builder.SetScrollStartX(StyleRef().ScrollStartX());
-  child_style_builder.SetScrollStartY(StyleRef().ScrollStartY());
 }
 
 void LayoutFieldset::InvalidatePaint(

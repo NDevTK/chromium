@@ -21,6 +21,7 @@
 #import "components/feature_engagement/public/feature_constants.h"
 #import "components/feature_engagement/public/tracker.h"
 #import "components/keyed_service/core/service_access_type.h"
+#import "components/omnibox/browser/omnibox_pref_names.h"
 #import "components/password_manager/core/browser/manage_passwords_referrer.h"
 #import "components/password_manager/core/browser/ui/password_check_referrer.h"
 #import "components/password_manager/core/common/password_manager_pref_names.h"
@@ -39,6 +40,7 @@
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_account_item.h"
 #import "ios/chrome/browser/authentication/ui_bundled/change_profile/change_profile_settings_continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
@@ -54,10 +56,10 @@
 #import "ios/chrome/browser/discover_feed/model/discover_feed_visibility_observer.h"
 #import "ios/chrome/browser/discover_feed/model/feed_constants.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/language/model/language_model_manager_factory.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
-#import "ios/chrome/browser/passwords/model/features.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_password_check_manager.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_password_check_manager_factory.h"
 #import "ios/chrome/browser/passwords/model/password_check_observer_bridge.h"
@@ -66,6 +68,9 @@
 #import "ios/chrome/browser/photos/model/photos_service_factory.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_client_id.h"
 #import "ios/chrome/browser/push_notification/model/push_notification_settings_util.h"
+#import "ios/chrome/browser/safari_data_import/model/features.h"
+#import "ios/chrome/browser/safari_data_import/public/safari_data_import_entry_point.h"
+#import "ios/chrome/browser/safari_data_import/public/safari_data_import_ui_handler.h"
 #import "ios/chrome/browser/search_engines/model/search_engine_observer_bridge.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/settings/model/sync/utils/identity_error_util.h"
@@ -75,7 +80,8 @@
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_credit_card_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_profile_table_view_controller.h"
 #import "ios/chrome/browser/settings/ui_bundled/bandwidth/bandwidth_management_table_view_controller.h"
-#import "ios/chrome/browser/settings/ui_bundled/cells/account_sign_in_item.h"
+#import "ios/chrome/browser/settings/ui_bundled/button_catalog_view_controller.h"
+#import "ios/chrome/browser/settings/ui_bundled/bwg/coordinator/bwg_settings_coordinator.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/enhanced_safe_browsing_inline_promo_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_check_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_image_detail_text_item.h"
@@ -119,13 +125,11 @@
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
-#import "ios/chrome/browser/shared/ui/symbols/buildflags.h"
+#import "ios/chrome/browser/shared/ui/buildflags.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_detail_icon_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_image_item.h"
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_item.h"
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_item.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_model.h"
@@ -133,6 +137,7 @@
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/signin/model/avatar_provider.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
@@ -160,15 +165,24 @@ const NSInteger kMaxShowCountNewIPHBadge = 3;
 const base::TimeDelta kFreshInstallTimeDelta = base::Days(1);
 
 #if BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
-NSString* kDevViewSourceKey = @"DevViewSource";
+NSString* const kDevViewSourceKey = @"DevViewSource";
 #endif  // BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
 
 // Returns the branded version of the Google Services symbol.
 UIImage* GetBrandedGoogleServicesSymbol() {
-#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
+#if BUILDFLAG(IOS_USE_BRANDED_ASSETS)
   return CustomSettingsRootMulticolorSymbol(kGoogleIconSymbol);
 #else
-  return DefaultSettingsRootSymbol(@"gearshape.2");
+  return DefaultSettingsRootSymbol(kGearshape2Symbol);
+#endif
+}
+
+// Returns the branded version of the Gemini symbol.
+UIImage* GetBrandedGeminiSymbol() {
+#if BUILDFLAG(IOS_USE_BRANDED_ASSETS)
+  return CustomSettingsRootSymbol(kGeminiBrandedLogoSymbol);
+#else
+  return DefaultSettingsRootSymbol(kGeminiNonBrandedLogoSymbol);
 #endif
 }
 
@@ -191,6 +205,7 @@ struct EnhancedSafeBrowsingActivePromoData
 @interface SettingsTableViewController () <
     AddressBarPreferenceCoordinatorDelegate,
     BooleanObserver,
+    BWGSettingsCoordinatorDelegate,
     ContentSettingsCoordinatorDelegate,
     DiscoverFeedVisibilityObserver,
     DownloadsSettingsCoordinatorDelegate,
@@ -205,6 +220,7 @@ struct EnhancedSafeBrowsingActivePromoData
     PrefObserverDelegate,
     NotificationsCoordinatorDelegate,
     PrivacyCoordinatorDelegate,
+    SafariDataImportUIHandler,
     SafetyCheckCoordinatorDelegate,
     SearchEngineObserving,
     SyncObserverModelBridge,
@@ -237,6 +253,9 @@ struct EnhancedSafeBrowsingActivePromoData
   SettingsCheckItem* _safetyCheckItem;
   SigninCoordinator* _signinAndHistorySyncCoordinator;
 
+  // BWG settings coordinator.
+  BWGSettingsCoordinator* _BWGSettingsCoordinator;
+
   // Content settings coordinator.
   ContentSettingsCoordinator* _contentSettingsCoordinator;
 
@@ -256,7 +275,8 @@ struct EnhancedSafeBrowsingActivePromoData
   PasswordsCoordinator* _passwordsCoordinator;
 
   // Feature engagement tracker for the signin IPH.
-  raw_ptr<feature_engagement::Tracker> _featureEngagementTracker;
+  raw_ptr<feature_engagement::Tracker, DanglingUntriaged>
+      _featureEngagementTracker;
   // Presenter for the signin IPH.
   BubbleViewControllerPresenter* _bubblePresenter;
 
@@ -286,9 +306,13 @@ struct EnhancedSafeBrowsingActivePromoData
   TableViewDetailIconItem* _autoFillCreditCardDetailItem;
   TableViewDetailIconItem* _notificationsItem;
   TableViewDetailIconItem* _defaultBrowserCellItem;
+  TableViewDetailIconItem* _BWGDetailItem;
 
   // Whether Settings have been dismissed.
   BOOL _settingsAreDismissed;
+
+  // Whether Gemini user consented.
+  BOOL _geminiUserConsented;
 
   // Tabs settings coordinator.
   TabsSettingsCoordinator* _tabsCoordinator;
@@ -310,9 +334,6 @@ struct EnhancedSafeBrowsingActivePromoData
 // dot.
 @property(nonatomic, assign) BOOL showingDefaultBrowserNotificationDot;
 
-// YES if the sign-in is in progress.
-@property(nonatomic, assign) BOOL isSigninInProgress;
-
 // Account manager service to retrieve Chrome identities.
 @property(nonatomic, assign) ChromeAccountManagerService* accountManagerService;
 
@@ -331,8 +352,8 @@ struct EnhancedSafeBrowsingActivePromoData
 
 - (instancetype)initWithBrowser:(Browser*)browser
        hasDefaultBrowserBlueDot:(BOOL)hasDefaultBrowserBlueDot {
-  DCHECK(browser);
-  DCHECK(!browser->GetProfile()->IsOffTheRecord());
+  CHECK(browser, base::NotFatalUntil::M151);
+  CHECK_EQ(browser->type(), Browser::Type::kRegular, base::NotFatalUntil::M151);
 
   self = [super initWithStyle:ChromeTableViewStyle()];
   if (self) {
@@ -348,7 +369,7 @@ struct EnhancedSafeBrowsingActivePromoData
         ChromeAccountManagerServiceFactory::GetForProfile(_profile);
     // It is expected that `identityManager` should never be nil except in
     // tests. In that case, the tests should be fixed.
-    DCHECK(identityManager);
+    CHECK(identityManager, base::NotFatalUntil::M151);
     _identityObserverBridge.reset(
         new signin::IdentityManagerObserverBridge(identityManager, self));
     syncer::SyncService* syncService =
@@ -370,6 +391,8 @@ struct EnhancedSafeBrowsingActivePromoData
 
     PrefService* prefService = _profile->GetPrefs();
 
+    _geminiUserConsented = prefService->GetBoolean(prefs::kIOSBwgConsent);
+
     _passwordCheckManager =
         IOSChromePasswordCheckManagerFactory::GetForProfile(_profile);
     _passwordCheckObserver = std::make_unique<PasswordCheckObserverBridge>(
@@ -380,9 +403,9 @@ struct EnhancedSafeBrowsingActivePromoData
                                               prefName:prefs::kSigninAllowed];
     _allowChromeSigninPreference.observer = self;
 
-    _bottomOmniboxEnabled =
-        [[PrefBackedBoolean alloc] initWithPrefService:localState
-                                              prefName:prefs::kBottomOmnibox];
+    _bottomOmniboxEnabled = [[PrefBackedBoolean alloc]
+        initWithPrefService:localState
+                   prefName:omnibox::kIsOmniboxInBottomPosition];
     [_bottomOmniboxEnabled setObserver:self];
 
     _discoverFeedVisibilityBrowserAgent =
@@ -413,16 +436,12 @@ struct EnhancedSafeBrowsingActivePromoData
         [[NotificationsSettingsObserver alloc] initWithPrefService:prefService
                                                         localState:localState];
     _notificationsObserver.delegate = self;
-
-    // TODO(crbug.com/41344225): -loadModel should not be called from
-    // initializer. A possible fix is to move this call to -viewDidLoad.
-    [self loadModel];
   }
   return self;
 }
 
 - (void)dealloc {
-  DCHECK(_settingsAreDismissed)
+  CHECK(_settingsAreDismissed, base::NotFatalUntil::M151)
       << "-settingsWillBeDismissed must be called before -dealloc";
 }
 
@@ -430,6 +449,9 @@ struct EnhancedSafeBrowsingActivePromoData
 
 - (void)viewDidLoad {
   [super viewDidLoad];
+  if (_settingsAreDismissed) {
+    return;
+  }
 
   self.tableView.accessibilityIdentifier = kSettingsTableViewId;
 
@@ -440,16 +462,28 @@ struct EnhancedSafeBrowsingActivePromoData
 
   self.navigationItem.largeTitleDisplayMode =
       UINavigationItemLargeTitleDisplayModeAlways;
+
+  [self loadModel];
 }
 
-- (void)viewWillAppear:(BOOL)animated {
-  [super viewWillAppear:animated];
+- (void)viewIsAppearing:(BOOL)animated {
+  [super viewIsAppearing:animated];
   // Update the `_safetyCheckItem` icon when returning to this view controller.
   [self updateSafetyCheckItemTrailingIcon];
   if (IsBottomOmniboxAvailable()) {
     // Update the address bar new IPH badge here as it depends on the number of
     // time it's shown.
     [self updateAddressBarNewIPHBadge];
+  }
+
+  // Update the BWG new IPH badge here as it depends on the number of times it's
+  // shown.
+  if (IsPageActionMenuEnabled() && _geminiUserConsented) {
+    [self updateBWGNewIPHBadge];
+  }
+
+  if ([self shouldShowNotificationsSettings]) {
+    [self updateNotificationsDetailText];
   }
 }
 
@@ -497,9 +531,13 @@ struct EnhancedSafeBrowsingActivePromoData
 
   // Advanced Section
   [model addSectionWithIdentifier:SettingsSectionIdentifierAdvanced];
+
+  if (IsPageActionMenuEnabled() && _geminiUserConsented) {
+    [model addItem:[self BWGSettingsDetailItem]
+        toSectionWithIdentifier:SettingsSectionIdentifierAdvanced];
+  }
   if ([self shouldShowNotificationsSettings]) {
     _notificationsItem = [self notificationsItem];
-    [self updateNotificationsDetailText];
     [model addItem:_notificationsItem
         toSectionWithIdentifier:SettingsSectionIdentifierAdvanced];
   }
@@ -542,7 +580,7 @@ struct EnhancedSafeBrowsingActivePromoData
     [model addItem:[self downloadsSettingsDetailItem]
         toSectionWithIdentifier:SettingsSectionIdentifierInfo];
   }
-  if (base::FeatureList::IsEnabled(kImportPasswordsFromSafari)) {
+  if (ShouldShowSafariDataImportEntryPoint(_profile->GetPrefs())) {
     [model addItem:[self safariDataImportSettingsDetailItem]
         toSectionWithIdentifier:SettingsSectionIdentifierInfo];
   }
@@ -565,9 +603,14 @@ struct EnhancedSafeBrowsingActivePromoData
 #if BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
   [model addItem:[self viewSourceSwitchItem]
       toSectionWithIdentifier:SettingsSectionIdentifierDebug];
-  [model addItem:[self tableViewCatalogDetailItem]
-      toSectionWithIdentifier:SettingsSectionIdentifierDebug];
 #endif  // BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
+
+  if (experimental_flags::ShouldShowCatalogItems()) {
+    [model addItem:[self tableViewCatalogDetailItem]
+        toSectionWithIdentifier:SettingsSectionIdentifierDebug];
+    [model addItem:[self buttonCatalogDetailItem]
+        toSectionWithIdentifier:SettingsSectionIdentifierDebug];
+  }
 }
 
 - (void)updateSigninSection {
@@ -676,13 +719,19 @@ struct EnhancedSafeBrowsingActivePromoData
 #pragma mark - Model Items
 
 - (TableViewItem*)accountSignInItem {
-  AccountSignInItem* signInTextItem =
-      [[AccountSignInItem alloc] initWithType:SettingsItemTypeSignInButton];
+  SettingsImageDetailTextItem* signInTextItem =
+      [[SettingsImageDetailTextItem alloc]
+          initWithType:SettingsItemTypeSignInButton];
   signInTextItem.accessibilityIdentifier = kSettingsSignInCellId;
-  // TODO(crbug.com/40064662): Make detailText private when the feature is
-  // launched.
+  signInTextItem.accessibilityTraits |= UIAccessibilityTraitButton;
+  signInTextItem.text =
+      l10n_util::GetNSString(IDS_IOS_SIGNIN_PROMO_SIGNIN_WITH_UNO);
   signInTextItem.detailText =
       l10n_util::GetNSString(IDS_IOS_IDENTITY_DISC_SIGN_IN_PROMO_LABEL);
+  signInTextItem.image = DefaultSymbolTemplateWithPointSize(
+      kPersonCropCircleSymbol, kAccountProfilePhotoDimension);
+  signInTextItem.imageViewTintColor = [UIColor colorNamed:kBlue600Color];
+
   return signInTextItem;
 }
 
@@ -697,7 +746,8 @@ struct EnhancedSafeBrowsingActivePromoData
                 accessibilityHint:
                     l10n_util::GetNSString(
                         IDS_IOS_TOGGLE_SETTING_MANAGED_ACCESSIBILITY_HINT)
-          accessibilityIdentifier:kSettingsSignInDisabledCellId];
+          accessibilityIdentifier:kSettingsSignInDisabledCellId
+                         selector:@selector(didTapSigninDisabledInfoButton:)];
   signinDisabledItem.textColor = [UIColor colorNamed:kTextSecondaryColor];
   return signinDisabledItem;
 }
@@ -725,8 +775,6 @@ struct EnhancedSafeBrowsingActivePromoData
   _defaultBrowserCellItem.iconBackgroundColor =
       [UIColor colorNamed:kPurple500Color];
   _defaultBrowserCellItem.iconTintColor = UIColor.whiteColor;
-  _defaultBrowserCellItem.iconCornerRadius =
-      kColorfulBackgroundSymbolCornerRadius;
 
   [self updateDefaultBrowserSettingsBlueDot];
 
@@ -787,7 +835,8 @@ struct EnhancedSafeBrowsingActivePromoData
                 accessibilityHint:
                     l10n_util::GetNSString(
                         IDS_IOS_TOGGLE_SETTING_MANAGED_ACCESSIBILITY_HINT)
-          accessibilityIdentifier:kSettingsManagedSearchEngineCellId];
+          accessibilityIdentifier:kSettingsManagedSearchEngineCellId
+                         selector:@selector(didTapManagedUIInfoButton:)];
 
   return _managedSearchEngineItem;
 }
@@ -887,8 +936,6 @@ struct EnhancedSafeBrowsingActivePromoData
   _safetyCheckItem.leadingIconBackgroundColor =
       [UIColor colorNamed:kBlue500Color];
   _safetyCheckItem.leadingIconTintColor = UIColor.whiteColor;
-  _safetyCheckItem.leadingIconCornerRadius =
-      kColorfulBackgroundSymbolCornerRadius;
   _safetyCheckItem.accessibilityIdentifier = kSettingsSafetyCheckCellId;
   // Check if an issue state should be shown for updates.
   if (!IsAppUpToDate() && PreviousSafetyCheckIssueFound()) {
@@ -931,6 +978,8 @@ struct EnhancedSafeBrowsingActivePromoData
               symbolBackgroundColor:[UIColor colorNamed:kOrange500Color]
             accessibilityIdentifier:kSettingsArticleSuggestionsCellId];
     _feedSettingsItem.on = _discoverFeedVisibilityBrowserAgent->IsEnabled();
+    _feedSettingsItem.target = self;
+    _feedSettingsItem.selector = @selector(articlesForYouSwitchToggled:);
   }
   return _feedSettingsItem;
 }
@@ -946,7 +995,8 @@ struct EnhancedSafeBrowsingActivePromoData
                   accessibilityHint:
                       l10n_util::GetNSString(
                           IDS_IOS_TOGGLE_SETTING_MANAGED_ACCESSIBILITY_HINT)
-            accessibilityIdentifier:kSettingsArticleSuggestionsCellId];
+            accessibilityIdentifier:kSettingsArticleSuggestionsCellId
+                           selector:@selector(didTapManagedUIInfoButton:)];
   }
 
   return _managedFeedSettingsItem;
@@ -995,9 +1045,12 @@ struct EnhancedSafeBrowsingActivePromoData
 }
 
 - (TableViewItem*)tabsSettingsDetailItem {
+  NSString* title = l10n_util::GetNSString(
+      IsAutoOpenRemoteTabGroupsSettingsFeatureEnabled()
+          ? IDS_IOS_TABS_AND_TAB_GROUPS_MANAGEMENT_SETTINGS
+          : IDS_IOS_TABS_MANAGEMENT_SETTINGS);
   return [self detailItemWithType:SettingsItemTypeTabs
-                             text:l10n_util::GetNSString(
-                                      IDS_IOS_TABS_MANAGEMENT_SETTINGS)
+                             text:title
                        detailText:nil
                            symbol:DefaultSettingsRootSymbol(kTabsSymbol)
             symbolBackgroundColor:[UIColor colorNamed:kOrange500Color]
@@ -1031,7 +1084,8 @@ struct EnhancedSafeBrowsingActivePromoData
             symbolBackgroundColor:[UIColor colorNamed:kGrey400Color]
           accessibilityIdentifier:nil];
   showMemoryDebugSwitchItem.on = [_showMemoryDebugToolsEnabled value];
-
+  showMemoryDebugSwitchItem.target = self;
+  showMemoryDebugSwitchItem.selector = @selector(memorySwitchToggled:);
   return showMemoryDebugSwitchItem;
 }
 
@@ -1041,6 +1095,19 @@ struct EnhancedSafeBrowsingActivePromoData
           initWithType:SettingsItemTypeESBPromo];
   item.delegate = self;
   return item;
+}
+
+- (TableViewItem*)BWGSettingsDetailItem {
+  UIImage* geminiLogo = [self createGeminiLogo];
+  _BWGDetailItem = [self
+           detailItemWithType:SettingsItemTypeBWGSettings
+                         text:l10n_util::GetNSString(IDS_IOS_BWG_SETTINGS_TITLE)
+                   detailText:nil
+                       symbol:geminiLogo
+        symbolBackgroundColor:nil
+      accessibilityIdentifier:kSettingsBWGSettingsCellId];
+
+  return _BWGDetailItem;
 }
 
 #if BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
@@ -1057,8 +1124,12 @@ struct EnhancedSafeBrowsingActivePromoData
 
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
   viewSourceItem.on = [defaults boolForKey:kDevViewSourceKey];
+  viewSourceItem.target = self;
+  viewSourceItem.selector = @selector(viewSourceSwitchToggled:);
   return viewSourceItem;
 }
+
+#endif  // BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
 
 - (TableViewDetailIconItem*)tableViewCatalogDetailItem {
   return [self detailItemWithType:SettingsItemTypeTableCellCatalog
@@ -1068,7 +1139,15 @@ struct EnhancedSafeBrowsingActivePromoData
             symbolBackgroundColor:[UIColor colorNamed:kGrey400Color]
           accessibilityIdentifier:nil];
 }
-#endif  // BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
+
+- (TableViewDetailIconItem*)buttonCatalogDetailItem {
+  return [self detailItemWithType:SettingsItemTypeButtonCatalog
+                             text:@"Button Catalog"
+                       detailText:nil
+                           symbol:DefaultSettingsRootSymbol(kCartSymbol)
+            symbolBackgroundColor:[UIColor colorNamed:kGrey400Color]
+          accessibilityIdentifier:nil];
+}
 
 #pragma mark Item Constructors
 
@@ -1091,7 +1170,6 @@ struct EnhancedSafeBrowsingActivePromoData
     detailItem.iconBackgroundColor = backgroundColor;
     detailItem.iconTintColor = UIColor.whiteColor;
   }
-  detailItem.iconCornerRadius = kColorfulBackgroundSymbolCornerRadius;
   return detailItem;
 }
 
@@ -1106,7 +1184,6 @@ struct EnhancedSafeBrowsingActivePromoData
   switchItem.iconImage = symbol;
   switchItem.iconTintColor = UIColor.whiteColor;
   switchItem.iconBackgroundColor = backgroundColor;
-  switchItem.iconCornerRadius = kColorfulBackgroundSymbolCornerRadius;
   switchItem.accessibilityIdentifier = accessibilityIdentifier;
 
   return switchItem;
@@ -1119,97 +1196,23 @@ struct EnhancedSafeBrowsingActivePromoData
                                imageBackground:(UIColor*)imageBackground
                              accessibilityHint:(NSString*)accessibilityHint
                        accessibilityIdentifier:
-                           (NSString*)accessibilityIdentifier {
+                           (NSString*)accessibilityIdentifier
+                                      selector:(SEL)selector {
   TableViewInfoButtonItem* infoButton =
       [[TableViewInfoButtonItem alloc] initWithType:type];
   infoButton.text = text;
   infoButton.statusText = status;
   if (image) {
     infoButton.iconImage = image;
-    DCHECK(imageBackground);
+    CHECK(imageBackground, base::NotFatalUntil::M151);
     infoButton.iconBackgroundColor = imageBackground;
     infoButton.iconTintColor = UIColor.whiteColor;
-    infoButton.iconCornerRadius = kColorfulBackgroundSymbolCornerRadius;
   }
   infoButton.accessibilityHint = accessibilityHint;
   infoButton.accessibilityIdentifier = accessibilityIdentifier;
+  infoButton.target = self;
+  infoButton.selector = selector;
   return infoButton;
-}
-
-#pragma mark - UITableViewDataSource
-
-- (UITableViewCell*)tableView:(UITableView*)tableView
-        cellForRowAtIndexPath:(NSIndexPath*)indexPath {
-  UITableViewCell* cell = [super tableView:tableView
-                     cellForRowAtIndexPath:indexPath];
-  if (_settingsAreDismissed) {
-    return cell;
-  }
-  NSInteger itemType = [self.tableViewModel itemTypeForIndexPath:indexPath];
-
-  switch (itemType) {
-    case SettingsItemTypeMemoryDebugging: {
-      TableViewSwitchCell* switchCell =
-          base::apple::ObjCCastStrict<TableViewSwitchCell>(cell);
-      [switchCell.switchView addTarget:self
-                                action:@selector(memorySwitchToggled:)
-                      forControlEvents:UIControlEventValueChanged];
-      break;
-    }
-    case SettingsItemTypeArticlesForYou: {
-      TableViewSwitchCell* switchCell =
-          base::apple::ObjCCastStrict<TableViewSwitchCell>(cell);
-      [switchCell.switchView addTarget:self
-                                action:@selector(articlesForYouSwitchToggled:)
-                      forControlEvents:UIControlEventValueChanged];
-      break;
-    }
-    case SettingsItemTypeViewSource: {
-#if BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
-      TableViewSwitchCell* switchCell =
-          base::apple::ObjCCastStrict<TableViewSwitchCell>(cell);
-      [switchCell.switchView addTarget:self
-                                action:@selector(viewSourceSwitchToggled:)
-                      forControlEvents:UIControlEventValueChanged];
-      break;
-#else
-      NOTREACHED();
-#endif  // BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
-    }
-    case SettingsItemTypeManagedDefaultSearchEngine: {
-      TableViewInfoButtonCell* managedCell =
-          base::apple::ObjCCastStrict<TableViewInfoButtonCell>(cell);
-      [managedCell.trailingButton
-                 addTarget:self
-                    action:@selector(didTapManagedUIInfoButton:)
-          forControlEvents:UIControlEventTouchUpInside];
-      break;
-    }
-    case SettingsItemTypeSigninDisabled: {
-      // Adds a trailing button with more information when the sign-in policy
-      // has been enabled by the organization.
-      TableViewInfoButtonCell* managedCell =
-          base::apple::ObjCCastStrict<TableViewInfoButtonCell>(cell);
-      [managedCell.trailingButton
-                 addTarget:self
-                    action:@selector(didTapSigninDisabledInfoButton:)
-          forControlEvents:UIControlEventTouchUpInside];
-      break;
-    }
-    case SettingsItemTypeManagedArticlesForYou: {
-      TableViewInfoButtonCell* managedCell =
-          base::apple::ObjCCastStrict<TableViewInfoButtonCell>(cell);
-      [managedCell.trailingButton
-                 addTarget:self
-                    action:@selector(didTapManagedUIInfoButton:)
-          forControlEvents:UIControlEventTouchUpInside];
-      break;
-    }
-    default:
-      break;
-  }
-
-  return cell;
 }
 
 #pragma mark - UITableViewDelegate
@@ -1344,11 +1347,13 @@ struct EnhancedSafeBrowsingActivePromoData
       [self showTabsSettings];
       break;
     case SettingsItemTypeSafariDataImport: {
-      CHECK(base::FeatureList::IsEnabled(kImportPasswordsFromSafari));
+      CHECK(ShouldShowSafariDataImportEntryPoint(_profile->GetPrefs()));
       base::RecordAction(base::UserMetricsAction("Settings.SafariImport"));
       id<ApplicationCommands> handler = HandlerForProtocol(
           _browser->GetCommandDispatcher(), ApplicationCommands);
-      [handler displaySafariDataImportEntryPointWithUIHandler:nil];
+      [handler displaySafariDataImportFromEntryPoint:
+                   SafariDataImportEntryPoint::kSetting
+                                       withUIHandler:self];
       break;
     }
     case SettingsItemTypeBandwidth:
@@ -1370,8 +1375,21 @@ struct EnhancedSafeBrowsingActivePromoData
       break;
     case SettingsItemTypeTableCellCatalog:
       [self.navigationController
-          pushViewController:[[TableCellCatalogViewController alloc] init]
+          pushViewController:[[TableCellCatalogViewController alloc]
+                                 initWithBrowser:_browser]
                     animated:YES];
+      break;
+    case SettingsItemTypeButtonCatalog:
+      [self.navigationController
+          pushViewController:[[ButtonCatalogViewController alloc] init]
+                    animated:YES];
+      break;
+    case SettingsItemTypeBWGSettings:
+      base::RecordAction(base::UserMetricsAction("Settings.BWGSettings"));
+      [self showBWGSettings];
+      // Sets the "new" IPH badge shown count to max so it's not shown again.
+      GetApplicationContext()->GetLocalState()->SetInteger(
+          prefs::kBWGSettingsNewBadgeShownCount, INT_MAX);
       break;
     default:
       break;
@@ -1495,6 +1513,17 @@ struct EnhancedSafeBrowsingActivePromoData
   [_tabsCoordinator stop];
   _tabsCoordinator.delegate = nil;
   _tabsCoordinator = nil;
+}
+
+// Show BWG settings.
+- (void)showBWGSettings {
+  // Stop the coordinator before restarting it, if it exists.
+  [_BWGSettingsCoordinator stop];
+  _BWGSettingsCoordinator = [[BWGSettingsCoordinator alloc]
+      initWithBaseNavigationController:self.navigationController
+                               browser:_browser];
+  _BWGSettingsCoordinator.delegate = self;
+  [_BWGSettingsCoordinator start];
 }
 
 - (void)showContentSettings {
@@ -1698,10 +1727,8 @@ struct EnhancedSafeBrowsingActivePromoData
 #if BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
   return YES;
 #else
-  if (experimental_flags::IsMemoryDebuggingEnabled()) {
-    return YES;
-  }
-  return NO;
+  return experimental_flags::IsMemoryDebuggingEnabled() ||
+         experimental_flags::ShouldShowCatalogItems();
 #endif  // BUILDFLAG(CHROMIUM_BRANDING) && !defined(NDEBUG)
 }
 
@@ -1716,14 +1743,14 @@ struct EnhancedSafeBrowsingActivePromoData
     return;
   }
   identityAccountItem.image =
-      self.accountManagerService->GetIdentityAvatarWithIdentity(
+      GetApplicationContext()->GetIdentityAvatarProvider()->GetIdentityAvatar(
           _identity, IdentityAvatarSize::TableViewIcon);
   identityAccountItem.text = _identity.userFullName;
   identityAccountItem.detailText = _identity.userEmail;
 
   syncer::SyncService* syncService =
       SyncServiceFactory::GetForProfile(_profile);
-  DCHECK(syncService);
+  CHECK(syncService, base::NotFatalUntil::M151);
   identityAccountItem.shouldDisplayError =
       GetAccountErrorUIInfo(syncService) != nil;
 }
@@ -1839,13 +1866,7 @@ struct EnhancedSafeBrowsingActivePromoData
 
 // Returns the appropriate text to update the title for the feed item.
 - (NSString*)feedItemTitle {
-  AuthenticationService* authService =
-      AuthenticationServiceFactory::GetForProfile(_browser->GetProfile());
-  BOOL isSignedIn =
-      authService->HasPrimaryIdentity(signin::ConsentLevel::kSignin);
-  return (isSignedIn && IsWebChannelsEnabled())
-             ? l10n_util::GetNSString(IDS_IOS_DISCOVER_AND_FOLLOWING_FEED_TITLE)
-             : l10n_util::GetNSString(IDS_IOS_DISCOVER_FEED_TITLE);
+  return l10n_util::GetNSString(IDS_IOS_DISCOVER_FEED_TITLE);
 }
 
 // Decides whether the default browser blue dot promo should be active, and adds
@@ -1884,6 +1905,31 @@ struct EnhancedSafeBrowsingActivePromoData
   }
 }
 
+// Add or remove the "new" IPH badge from the BWG settings row. The
+// badge is shown a maximum of `kMaxShowCountNewIPHBadge` times.
+- (void)updateBWGNewIPHBadge {
+  CHECK(_BWGDetailItem);
+
+  PrefService* prefService = GetApplicationContext()->GetLocalState();
+  NSInteger showCount =
+      prefService->GetInteger(prefs::kBWGSettingsNewBadgeShownCount);
+
+  BadgeType badgeType = BadgeType::kNone;
+
+  const BOOL isFreshInstall = IsFirstRunRecent(kFreshInstallTimeDelta);
+
+  if (!isFreshInstall && showCount < kMaxShowCountNewIPHBadge) {
+    badgeType = BadgeType::kNew;
+    prefService->SetInteger(prefs::kBWGSettingsNewBadgeShownCount,
+                            showCount + 1);
+  }
+
+  if (badgeType != _BWGDetailItem.badgeType) {
+    _BWGDetailItem.badgeType = badgeType;
+    [self reconfigureCellsForItems:@[ _BWGDetailItem ]];
+  }
+}
+
 // Updates the state of the Safety Check notifications button based on whether
 // the user has Safety Check notifications enabled.
 - (void)updateSafetyCheckNotificationsButtonState {
@@ -1901,7 +1947,7 @@ struct EnhancedSafeBrowsingActivePromoData
 
 // Updates the string indicating the push notification state.
 - (void)updateNotificationsDetailText {
-  if (!_notificationsItem) {
+  if (!_notificationsItem || !self.tableView.window) {
     return;
   }
 
@@ -1911,10 +1957,9 @@ struct EnhancedSafeBrowsingActivePromoData
   id<SystemIdentity> identity =
       authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
   PrefService* prefService = _profile->GetPrefs();
-  const GaiaId gaiaID(identity.gaiaID);
   push_notification_settings::ClientPermissionState permission_state =
-      push_notification_settings::GetNotificationPermissionState(gaiaID,
-                                                                 prefService);
+      push_notification_settings::GetNotificationPermissionState(
+          identity.gaiaId, prefService);
   if (permission_state ==
       push_notification_settings::ClientPermissionState::ENABLED) {
     detailText = l10n_util::GetNSString(IDS_IOS_SETTING_ON);
@@ -2044,16 +2089,51 @@ struct EnhancedSafeBrowsingActivePromoData
   }
 }
 
+// Creates a gradient gemini logo.
+- (UIImage*)createGeminiLogo {
+  UITraitCollection* lightTraitCollection = [UITraitCollection
+      traitCollectionWithUserInterfaceStyle:UIUserInterfaceStyleLight];
+  NSArray<UIColor*>* colors = @[
+    [[UIColor colorNamed:kBlue700Color]
+        resolvedColorWithTraitCollection:lightTraitCollection],
+    [[UIColor colorNamed:kBlue300Color]
+        resolvedColorWithTraitCollection:lightTraitCollection]
+  ];
+
+  NSMutableArray<id>* gradientColorArray = [[NSMutableArray alloc] init];
+  for (UIColor* color in colors) {
+    [gradientColorArray addObject:static_cast<id>(color.CGColor)];
+  }
+
+  UIImage* geminiIcon = GetBrandedGeminiSymbol();
+  CGSize iconSize = [geminiIcon size];
+  CGRect iconFrame = CGRectMake(0, 0, iconSize.width, iconSize.height);
+
+  CAGradientLayer* gradientLayer = [CAGradientLayer layer];
+  gradientLayer.colors = gradientColorArray;
+  gradientLayer.startPoint = CGPointMake(0, 0.5);
+  gradientLayer.endPoint = CGPointMake(0.5, 0.0);
+  gradientLayer.frame = iconFrame;
+
+  UIGraphicsImageRenderer* renderer =
+      [[UIGraphicsImageRenderer alloc] initWithSize:iconSize];
+  UIImage* gradientImage = [renderer
+      imageWithActions:^(UIGraphicsImageRendererContext* rendererContext) {
+        CGContextClipToMask(rendererContext.CGContext, iconFrame,
+                            geminiIcon.CGImage);
+        [gradientLayer renderInContext:rendererContext.CGContext];
+      }];
+
+  return gradientImage;
+}
+
 #pragma mark - Sign in
 
 - (void)showSignIn {
-  if (self.isSigninInProgress) {
-    // According to crbug.com/1498153, it is possible for the user to tap twice
-    // on the sign-in cell from the settings to open the sign-in dialog.
-    // If this happens, the second tap should ignored.
+  if (_signinAndHistorySyncCoordinator.viewWillPersist) {
     return;
   }
-  self.isSigninInProgress = YES;
+  [_signinAndHistorySyncCoordinator stop];
   __weak __typeof(self) weakSelf = self;
   ChangeProfileContinuationProvider provider =
       base::BindRepeating(&CreateChangeProfileSettingsContinuation);
@@ -2073,13 +2153,16 @@ struct EnhancedSafeBrowsingActivePromoData
                                             fullscreenPromo:NO
                                        continuationProvider:provider];
   _signinAndHistorySyncCoordinator.signinCompletion =
-      ^(SigninCoordinatorResult result, id<SystemIdentity> identity) {
-        [weakSelf didFinishSignin];
+      ^(SigninCoordinator* coordinator, SigninCoordinatorResult result,
+        id<SystemIdentity> identity) {
+        [weakSelf didFinishSigninWithCoordinator:coordinator];
       };
   [_signinAndHistorySyncCoordinator start];
 }
 
-- (void)didFinishSignin {
+- (void)didFinishSigninWithCoordinator:(SigninCoordinator*)coordinator {
+  CHECK_EQ(_signinAndHistorySyncCoordinator, coordinator,
+           base::NotFatalUntil::M151);
   [self stopSigninCoordinator];
   if (_settingsAreDismissed) {
     return;
@@ -2087,8 +2170,6 @@ struct EnhancedSafeBrowsingActivePromoData
 
   // The sign-in is done. The sign-in promo cell or account cell can be
   // reloaded.
-  DCHECK(self.isSigninInProgress);
-  self.isSigninInProgress = NO;
   [self reloadData];
 
   // Post the task to show signin IPH so that the UI has had time to refresh
@@ -2112,12 +2193,15 @@ struct EnhancedSafeBrowsingActivePromoData
 }
 
 - (void)settingsWillBeDismissed {
-  DCHECK(!_settingsAreDismissed);
+  CHECK(!_settingsAreDismissed, base::NotFatalUntil::M151);
 
   // Remove Enhanced Safe Browsing Promo.
   [self removeEnhancedSafeBrowsingPromoFETDataIfNeeded];
 
   // Stop children coordinators.
+  [_BWGSettingsCoordinator stop];
+  _BWGSettingsCoordinator = nil;
+
   [_contentSettingsCoordinator stop];
   _contentSettingsCoordinator = nil;
 
@@ -2331,6 +2415,10 @@ struct EnhancedSafeBrowsingActivePromoData
 #pragma mark - PrefObserverDelegate
 
 - (void)onPreferenceChanged:(const std::string&)preferenceName {
+  // If the model hasn't been created yet, no need to update anything.
+  if (!self.tableViewModel) {
+    return;
+  }
   if (preferenceName == prefs::kVoiceSearchLocale) {
     voice::SpeechInputLocaleConfig* localeConfig =
         voice::SpeechInputLocaleConfig::GetInstance();
@@ -2380,11 +2468,20 @@ struct EnhancedSafeBrowsingActivePromoData
   }
 }
 
+#pragma mark - BWGSettingsCoordinatorDelegate
+
+- (void)BWGSettingsCoordinatorViewControllerWasRemoved:
+    (BWGSettingsCoordinator*)coordinator {
+  CHECK_EQ(_BWGSettingsCoordinator, coordinator, base::NotFatalUntil::M151);
+  [_BWGSettingsCoordinator stop];
+  _BWGSettingsCoordinator = nil;
+}
+
 #pragma mark - ContentSettingsCoordinatorDelegate
 
 - (void)contentSettingsCoordinatorViewControllerWasRemoved:
     (ContentSettingsCoordinator*)coordinator {
-  DCHECK_EQ(_contentSettingsCoordinator, coordinator);
+  CHECK_EQ(_contentSettingsCoordinator, coordinator, base::NotFatalUntil::M151);
   [_contentSettingsCoordinator stop];
   _contentSettingsCoordinator = nil;
 }
@@ -2393,16 +2490,27 @@ struct EnhancedSafeBrowsingActivePromoData
 
 - (void)googleServicesSettingsCoordinatorDidRemove:
     (GoogleServicesSettingsCoordinator*)coordinator {
-  DCHECK_EQ(_googleServicesSettingsCoordinator, coordinator);
+  CHECK_EQ(_googleServicesSettingsCoordinator, coordinator,
+           base::NotFatalUntil::M151);
   [_googleServicesSettingsCoordinator stop];
   _googleServicesSettingsCoordinator.delegate = nil;
   _googleServicesSettingsCoordinator = nil;
 }
 
+#pragma mark - SafariDataImportUIHandler
+
+- (void)safariDataImportDidDismiss {
+  NSIndexPath* indexPath = [self.tableView indexPathForSelectedRow];
+  if (indexPath && [self.tableViewModel itemTypeForIndexPath:indexPath] ==
+                       SettingsItemTypeSafariDataImport) {
+    [self.tableView deselectRowAtIndexPath:indexPath animated:YES];
+  }
+}
+
 #pragma mark - SafetyCheckCoordinatorDelegate
 
 - (void)safetyCheckCoordinatorDidRemove:(SafetyCheckCoordinator*)coordinator {
-  DCHECK_EQ(_safetyCheckCoordinator, coordinator);
+  CHECK_EQ(_safetyCheckCoordinator, coordinator, base::NotFatalUntil::M151);
   [_safetyCheckCoordinator stop];
   _safetyCheckCoordinator.delegate = nil;
   _safetyCheckCoordinator = nil;
@@ -2411,7 +2519,7 @@ struct EnhancedSafeBrowsingActivePromoData
 #pragma mark - PasswordsCoordinatorDelegate
 
 - (void)passwordsCoordinatorDidRemove:(PasswordsCoordinator*)coordinator {
-  DCHECK_EQ(_passwordsCoordinator, coordinator);
+  CHECK_EQ(_passwordsCoordinator, coordinator, base::NotFatalUntil::M151);
   [_passwordsCoordinator stop];
   _passwordsCoordinator.delegate = nil;
   _passwordsCoordinator = nil;
@@ -2442,7 +2550,7 @@ struct EnhancedSafeBrowsingActivePromoData
 
 - (void)notificationsCoordinatorDidRemove:
     (NotificationsCoordinator*)coordinator {
-  DCHECK_EQ(_notificationsCoordinator, coordinator);
+  CHECK_EQ(_notificationsCoordinator, coordinator, base::NotFatalUntil::M151);
   [_notificationsCoordinator stop];
   _notificationsCoordinator = nil;
 }
@@ -2451,7 +2559,7 @@ struct EnhancedSafeBrowsingActivePromoData
 
 - (void)privacyCoordinatorViewControllerWasRemoved:
     (PrivacyCoordinator*)coordinator {
-  DCHECK_EQ(_privacyCoordinator, coordinator);
+  CHECK_EQ(_privacyCoordinator, coordinator, base::NotFatalUntil::M151);
   [_privacyCoordinator stop];
   _privacyCoordinator = nil;
 }
@@ -2465,7 +2573,7 @@ struct EnhancedSafeBrowsingActivePromoData
   // in UI is appearing or disappearing. The TableView will be reloaded once
   // the animation is finished.
   // See: -[SettingsTableViewController didFinishSignin].
-  if (self.isSigninInProgress) {
+  if (_signinAndHistorySyncCoordinator) {
     return;
   }
   // Sign in state changes are rare. Just reload the entire table when
@@ -2503,14 +2611,15 @@ struct EnhancedSafeBrowsingActivePromoData
 
 - (void)manageSyncSettingsCoordinatorWasRemoved:
     (ManageSyncSettingsCoordinator*)coordinator {
-  DCHECK_EQ(_manageSyncSettingsCoordinator, coordinator);
+  CHECK_EQ(_manageSyncSettingsCoordinator, coordinator,
+           base::NotFatalUntil::M151);
   [self stopManageSyncSettingsCoordinator];
 }
 
 #pragma mark - TabsSettingsCoordinatorDelegate
 
 - (void)tabsSettingsCoordinatorDidRemove:(TabsSettingsCoordinator*)coordinator {
-  DCHECK_EQ(coordinator, _tabsCoordinator);
+  CHECK_EQ(coordinator, _tabsCoordinator, base::NotFatalUntil::M151);
   [self stopTabsCoordinator];
 }
 

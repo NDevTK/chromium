@@ -15,12 +15,15 @@ import android.app.Activity;
 import android.view.View;
 import android.view.WindowManager;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.components.embedder_support.view.ContentView;
 
+@NullMarked
 public class FullscreenHtmlApiHandlerLegacy extends FullscreenHtmlApiHandlerBase
         implements View.OnSystemUiVisibilityChangeListener {
 
@@ -58,7 +61,7 @@ public class FullscreenHtmlApiHandlerLegacy extends FullscreenHtmlApiHandlerBase
     // FullscreenHtmlApiHandlerBase
 
     @Override
-    protected void setContentView(ContentView contentView) {
+    protected void setContentView(@Nullable ContentView contentView) {
         ContentView oldContentView = getContentView();
         if (contentView == oldContentView) return;
         if (oldContentView != null) {
@@ -180,7 +183,7 @@ public class FullscreenHtmlApiHandlerLegacy extends FullscreenHtmlApiHandlerBase
     }
 
     private void setSystemUiVisibility(View contentView, int systemUiVisibility) {
-        if (!BuildInfo.getInstance().isAutomotive) {
+        if (!DeviceInfo.isAutomotive()) {
             contentView.setSystemUiVisibility(systemUiVisibility);
         }
     }

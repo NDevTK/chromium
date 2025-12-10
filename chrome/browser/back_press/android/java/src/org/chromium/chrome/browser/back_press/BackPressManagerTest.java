@@ -13,7 +13,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.base.supplier.ObservableSuppliers;
+import org.chromium.base.supplier.SettableNonNullObservableSupplier;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
@@ -28,7 +29,8 @@ import java.util.concurrent.TimeoutException;
 public class BackPressManagerTest {
 
     private static class EmptyBackPressHandler implements BackPressHandler {
-        private final ObservableSupplierImpl<Boolean> mSupplier = new ObservableSupplierImpl<>();
+        private final SettableNonNullObservableSupplier<Boolean> mSupplier =
+                ObservableSuppliers.createNonNull(false);
         protected final CallbackHelper mCallbackHelper = new CallbackHelper();
 
         public CallbackHelper getCallbackHelper() {
@@ -42,7 +44,7 @@ public class BackPressManagerTest {
         }
 
         @Override
-        public ObservableSupplierImpl<Boolean> getHandleBackPressChangedSupplier() {
+        public SettableNonNullObservableSupplier<Boolean> getHandleBackPressChangedSupplier() {
             return mSupplier;
         }
     }
@@ -365,7 +367,7 @@ public class BackPressManagerTest {
         BackPressManager manager = new BackPressManager();
         EscModifyingBackPressHandler h1 =
                 ThreadUtils.runOnUiThreadBlocking(
-                        () -> new EscModifyingBackPressHandler(Boolean.TRUE));
+                        () -> new EscModifyingBackPressHandler(true));
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -391,7 +393,7 @@ public class BackPressManagerTest {
         BackPressManager manager = new BackPressManager();
         EscModifyingBackPressHandler h1 =
                 ThreadUtils.runOnUiThreadBlocking(
-                        () -> new EscModifyingBackPressHandler(Boolean.FALSE));
+                        () -> new EscModifyingBackPressHandler(false));
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -418,12 +420,12 @@ public class BackPressManagerTest {
 
         EscModifyingBackPressHandler h1 =
                 ThreadUtils.runOnUiThreadBlocking(
-                        () -> new EscModifyingBackPressHandler(Boolean.FALSE));
+                        () -> new EscModifyingBackPressHandler(false));
         FailedBackPressHandler h2 = ThreadUtils.runOnUiThreadBlocking(FailedBackPressHandler::new);
         EmptyBackPressHandler h3 = ThreadUtils.runOnUiThreadBlocking(EmptyBackPressHandler::new);
         EscModifyingBackPressHandler h4 =
                 ThreadUtils.runOnUiThreadBlocking(
-                        () -> new EscModifyingBackPressHandler(Boolean.TRUE));
+                        () -> new EscModifyingBackPressHandler(true));
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -442,7 +444,7 @@ public class BackPressManagerTest {
                     Assert.assertEquals(
                             "Handler should have fallen through failures to success and consumed"
                                     + " event.",
-                            Boolean.TRUE,
+                            true,
                             manager.processEscapeKeyEvent());
                     Assert.assertEquals(
                             "Handler did not execute custom esc key code even though it will fail.",
@@ -471,15 +473,15 @@ public class BackPressManagerTest {
 
         EscModifyingBackPressHandler h1 =
                 ThreadUtils.runOnUiThreadBlocking(
-                        () -> new EscModifyingBackPressHandler(Boolean.FALSE));
+                        () -> new EscModifyingBackPressHandler(false));
         EscModifyingBackPressHandler h2 =
                 ThreadUtils.runOnUiThreadBlocking(() -> new EscModifyingBackPressHandler(null));
 
         // Fail if the BackPressManager calls the fallback method, which it shouldn't.
         manager.setFallbackOnBackPressed(
                 () -> {
-                    assert false
-                            : "BackPressManager should not call fallback on escape key presses.";
+                    throw new AssertionError(
+                            "BackPressManager should not call fallback on escape key presses.");
                 });
 
         ThreadUtils.runOnUiThreadBlocking(

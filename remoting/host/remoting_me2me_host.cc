@@ -24,7 +24,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/message_loop/message_pump_type.h"
-#include "base/metrics/field_trial.h"
 #include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -123,6 +122,7 @@
 #include "remoting/signaling/signal_strategy.h"
 #include "remoting/signaling/signaling_id_util.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
+#include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/rtc_base/event_tracer.h"
 
 #if BUILDFLAG(IS_POSIX)
@@ -144,6 +144,8 @@
 #if defined(REMOTING_USE_X11)
 #include <gtk/gtk.h>
 
+#include "remoting/host/linux/gnome_remote_desktop_session.h"
+#include "remoting/host/linux/portal_remote_desktop_session.h"
 #include "ui/events/platform/x11/x11_event_source.h"
 #include "ui/gfx/x/connection.h"
 #include "ui/gfx/x/xlib_support.h"
@@ -278,7 +280,6 @@ class HostProcess : public ConfigWatcher::Delegate,
   void OnConfigWatcherError() override;
 
   // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
   void OnChannelError() override;
   void OnAssociatedInterfaceRequest(
       const std::string& interface_name,
@@ -487,9 +488,6 @@ class HostProcess : public ConfigWatcher::Delegate,
   DesktopEnvironmentOptions desktop_environment_options_;
   bool security_key_auth_policy_enabled_ = false;
   bool security_key_extension_supported_ = true;
-
-  // Allows us to override field trials which are causing issues for chromoting.
-  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   // Used to specify which window to stream, if enabled.
   webrtc::WindowId window_id_ = 0;
@@ -968,10 +966,6 @@ void HostProcess::CreateAuthenticatorFactory() {
 }
 
 // IPC::Listener implementation.
-bool HostProcess::OnMessageReceived(const IPC::Message& message) {
-  NOTREACHED() << "Received unexpected IPC type: " << message.type();
-}
-
 void HostProcess::OnChannelError() {
   DCHECK(context_->ui_task_runner()->BelongsToCurrentThread());
 
@@ -1714,7 +1708,6 @@ std::optional<ErrorCode> HostProcess::OnSessionPoliciesReceived(
 
   std::string username = GetUsername();
   LOG(INFO) << "Current local username is '" << username << "'";
-  std::set<std::string> allowed_emails;
   for (const std::string& owner_email : host_owner_emails_) {
     auto email_parts = base::SplitStringOnce(owner_email, '@');
     if (!email_parts.has_value()) {
@@ -1724,19 +1717,14 @@ std::optional<ErrorCode> HostProcess::OnSessionPoliciesReceived(
     auto owner_username = email_parts->first;
     if (base::EqualsCaseInsensitiveASCII(username, owner_username)) {
       LOG(INFO) << owner_email << " matches the local username";
-      allowed_emails.emplace(owner_email);
-    } else {
-      LOG(WARNING) << owner_email << " does not match the local username";
+      return std::nullopt;
     }
+    LOG(WARNING) << owner_email << " does not match the local username";
   }
 
-  if (allowed_emails.empty()) {
-    LOG(ERROR) << "No owner emails are allowed based on match username policy.";
-    // TODO: crbug.com/359977809 - Add a new error code for mismatched username.
-    return ErrorCode::DISALLOWED_BY_POLICY;
-  }
-
-  return std::nullopt;
+  LOG(ERROR) << "No owner emails are allowed based on match username policy.";
+  // TODO: crbug.com/359977809 - Add a new error code for mismatched username.
+  return ErrorCode::DISALLOWED_BY_POLICY;
 
 #endif  // BUILDFLAG(IS_WIN) #else
 }
@@ -1759,6 +1747,14 @@ void HostProcess::InitializeSignaling() {
 
   zombie_host_detector_ = std::make_unique<ZombieHostDetector>(base::BindOnce(
       &HostProcess::OnZombieStateDetected, base::Unretained(this)));
+
+#if BUILDFLAG(IS_LINUX)
+  // TODO: joedow - Remove Linux scope after this codepath has been stabilized.
+  const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+  if (is_corp_host_ && cmd_line->HasSwitch(kEnableCorpMessaging)) {
+    // TODO: joedow - Create CorpSignalStrategy instance here.
+  }
+#endif
 
   auto ftl_signal_strategy = std::make_unique<FtlSignalStrategy>(
       std::make_unique<OAuthTokenGetterProxy>(
@@ -1840,19 +1836,37 @@ void HostProcess::StartHost() {
   // This thread is used as a network thread in WebRTC.
   webrtc::ThreadWrapper::EnsureForCurrentMessageLoop();
 
-  // Initialize global field trials. In case this code runs a second time,
-  // check for any previous instance - see crbug.com/349062464.
-  if (!field_trial_list_) {
-    field_trial_list_ = std::make_unique<base::FieldTrialList>();
-
-    // Override LossBasedBweV2 trial.
-    // TODO(b/266103942): Remove this override once we figure out why the BWE is
-    // crashing for some users and have a fix available.
-    base::FieldTrialList::CreateTrialsFromString(
-        "WebRTC-Bwe-LossBasedBweV2/Enabled:false/");
-  }
-
   SetState(HOST_STARTED);
+
+#if BUILDFLAG(IS_LINUX) && defined(REMOTING_USE_X11)
+  if (webrtc::DesktopCapturer::IsRunningUnderWayland()) {
+    if (GnomeRemoteDesktopSession::IsRunningUnderGnome()) {
+      GnomeRemoteDesktopSession::GetInstance()->Init(
+          base::BindOnce([](base::expected<void, std::string> result) {
+            if (result.has_value()) {
+              LOG(INFO)
+                  << "Gnome remote desktop session initialization succeeded.";
+            } else {
+              LOG(ERROR)
+                  << "Gnome remote desktop session initialization failed: "
+                  << result.error();
+            }
+          }));
+    } else {
+      PortalRemoteDesktopSession::GetInstance()->Init(
+          base::BindOnce([](base::expected<void, std::string> result) {
+            if (result.has_value()) {
+              LOG(INFO)
+                  << "Portal remote desktop session initialization succeeded.";
+            } else {
+              LOG(ERROR)
+                  << "Portal remote desktop session initialization failed: "
+                  << result.error();
+            }
+          }));
+    }
+  }
+#endif
 
   InitializeSignaling();
 
@@ -1938,8 +1952,7 @@ void HostProcess::StartHost() {
 #endif
 
   power_save_blocker_ = std::make_unique<HostPowerSaveBlocker>(
-      host_->status_monitor(), context_->ui_task_runner(),
-      context_->file_task_runner());
+      host_->status_monitor(), context_->ui_task_runner());
 
   ftl_host_change_notification_listener_ =
       std::make_unique<FtlHostChangeNotificationListener>(

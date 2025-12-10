@@ -5,6 +5,7 @@
 #include "content/browser/renderer_host/render_view_host_impl.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -23,6 +24,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -79,6 +81,7 @@
 #include "content/public/common/result_codes.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/url_utils.h"
+#include "ipc/constants.mojom.h"
 #include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/base/url_util.h"
@@ -101,7 +104,6 @@
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/native_widget_types.h"
 #include "ui/native_theme/features/native_theme_features.h"
 #include "url/url_constants.h"
 
@@ -126,8 +128,10 @@ using perfetto::protos::pbzero::ChromeTrackEvent;
 using RenderViewHostID = std::pair<int32_t, int32_t>;
 using RoutingIDViewMap =
     absl::flat_hash_map<RenderViewHostID, RenderViewHostImpl*>;
-base::LazyInstance<RoutingIDViewMap>::Leaky g_routing_id_view_map =
-    LAZY_INSTANCE_INITIALIZER;
+RoutingIDViewMap& GetRoutingIDViewMap() {
+  static base::NoDestructor<RoutingIDViewMap> routing_id_view_map;
+  return *routing_id_view_map;
+}
 
 #if BUILDFLAG(IS_WIN)
 // Fetches the name and font size of a particular Windows system font.
@@ -227,9 +231,9 @@ RenderViewHost* RenderViewHost::From(RenderWidgetHost* rwh) {
 // static
 RenderViewHostImpl* RenderViewHostImpl::FromID(int process_id, int routing_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  RoutingIDViewMap* views = g_routing_id_view_map.Pointer();
-  auto it = views->find(RenderViewHostID(process_id, routing_id));
-  return it == views->end() ? nullptr : it->second;
+  RoutingIDViewMap& views = GetRoutingIDViewMap();
+  auto it = views.find(RenderViewHostID(process_id, routing_id));
+  return it == views.end() ? nullptr : it->second;
 }
 
 // static
@@ -338,7 +342,7 @@ RenderViewHostImpl::RenderViewHostImpl(
       ->Insert(this);
 
   std::pair<RoutingIDViewMap::iterator, bool> result =
-      g_routing_id_view_map.Get().emplace(
+      GetRoutingIDViewMap().emplace(
           RenderViewHostID(GetProcess()->GetDeprecatedID(), routing_id_), this);
   CHECK(result.second) << "Inserting a duplicate item!";
   GetAgentSchedulingGroup().AddRoute(routing_id_, this);
@@ -377,7 +381,7 @@ RenderViewHostImpl::~RenderViewHostImpl() {
 
   // Detach the routing ID as the object is going away.
   GetAgentSchedulingGroup().RemoveRoute(GetRoutingID());
-  g_routing_id_view_map.Get().erase(
+  GetRoutingIDViewMap().erase(
       RenderViewHostID(GetProcess()->GetDeprecatedID(), GetRoutingID()));
 
   delegate_->RenderViewDeleted(this);
@@ -426,14 +430,14 @@ bool RenderViewHostImpl::CreateRenderView(
   DCHECK(GetProcess()->GetBrowserContext());
 
   // Exactly one of main_frame_routing_id_ or proxy_route_id should be set.
-  CHECK(!(main_frame_routing_id_ != MSG_ROUTING_NONE &&
-          proxy_route_id != MSG_ROUTING_NONE));
-  CHECK(!(main_frame_routing_id_ == MSG_ROUTING_NONE &&
-          proxy_route_id == MSG_ROUTING_NONE));
+  CHECK(!(main_frame_routing_id_ != IPC::mojom::kRoutingIdNone &&
+          proxy_route_id != IPC::mojom::kRoutingIdNone));
+  CHECK(!(main_frame_routing_id_ == IPC::mojom::kRoutingIdNone &&
+          proxy_route_id == IPC::mojom::kRoutingIdNone));
 
   RenderFrameHostImpl* main_rfh = nullptr;
   RenderFrameProxyHost* main_rfph = nullptr;
-  if (main_frame_routing_id_ != MSG_ROUTING_NONE) {
+  if (main_frame_routing_id_ != IPC::mojom::kRoutingIdNone) {
     main_rfh = RenderFrameHostImpl::FromID(GetProcess()->GetDeprecatedID(),
                                            main_frame_routing_id_);
     DCHECK(main_rfh);
@@ -462,19 +466,19 @@ bool RenderViewHostImpl::CreateRenderView(
       frame_tree_->page_delegate()->IsPageInPreviewMode()) {
     auto prerender_param = blink::mojom::PrerenderParam::New();
     if (frame_tree_->is_prerendering()) {
-      auto* prerender_host =
-          static_cast<PrerenderHost*>(frame_tree_->delegate());
-      CHECK(prerender_host);
-      prerender_param->page_metric_suffix =
-          prerender_host->GetHistogramSuffix();
+      auto& prerender_host = PrerenderHost::GetFromFrameTree(frame_tree_);
+      prerender_param->page_metric_suffix = prerender_host.GetHistogramSuffix();
       prerender_param->should_warm_up_compositor =
-          prerender_host->should_warm_up_compositor();
+          prerender_host.should_warm_up_compositor();
       prerender_param->should_prepare_paint_tree =
-          prerender_host->should_prepare_paint_tree();
+          prerender_host.should_prepare_paint_tree();
+      prerender_param->should_pause_javascript_execution =
+          prerender_host.should_pause_javascript_execution();
     } else {
       prerender_param->page_metric_suffix = ".Preview";
       prerender_param->should_warm_up_compositor = false;
       prerender_param->should_prepare_paint_tree = false;
+      prerender_param->should_pause_javascript_execution = false;
     }
     params->prerender_param = std::move(prerender_param);
   }
@@ -528,12 +532,6 @@ bool RenderViewHostImpl::CreateRenderView(
         frame_tree_node->current_frame_host()->IsRenderFrameLive() &&
         frame_tree_node->current_frame_host()->GetSiteInstance()->group() ==
             site_instance_group_.get()) {
-      local_frame_params->widget_params->reuse_compositor =
-          frame_tree_node->current_frame_host()->ShouldReuseCompositing(
-              *main_rfh->GetSiteInstance());
-      if (local_frame_params->widget_params->reuse_compositor) {
-        main_rfh->NotifyWillCreateRenderWidgetOnCommit();
-      }
 
       params->main_frame =
           mojom::CreateMainFrameUnion::NewProvisionalLocalParams(
@@ -613,15 +611,10 @@ bool RenderViewHostImpl::CreateRenderView(
   params->blink_page_broadcast =
       page_broadcast_.BindNewEndpointAndPassReceiver();
 
-  // We must send access information relative to the popin opener in order for
-  // the renderer to properly conduct checks.
-  // See https://explainers-by-googlers.github.io/partitioned-popins/
-  if (frame_tree_->GetMainFrame()->ShouldPartitionAsPopin()) {
-    params->partitioned_popin_params =
-        frame_tree_->GetMainFrame()
-            ->delegate()
-            ->GetPartitionedPopinOpenerProperties()
-            .AsMojom();
+  if (base::FeatureList::IsEnabled(features::kSetHistoryInfoOnViewCreation)) {
+    params->history_index =
+        frame_tree()->controller().GetLastCommittedEntryIndex();
+    params->history_length = frame_tree()->controller().GetEntryCount();
   }
 
   // The renderer process's `blink::WebView` is owned by this lifecycle of
@@ -641,6 +634,9 @@ bool RenderViewHostImpl::CreateRenderView(
 void RenderViewHostImpl::SetMainFrameRoutingId(int routing_id) {
   main_frame_routing_id_ = routing_id;
   render_widget_host_->ClearVisualProperties();
+  // RenderWidgetHostImpl changes its contribution to the process priority based
+  // on whether the main frame is active. UpdatePriority() to reflect the
+  // change.
   GetWidget()->UpdatePriority();
   // TODO(crbug.com/40387047): If a local main frame is no longer attached to
   // this `blink::WebView` then the RenderWidgetHostImpl owned by this class
@@ -658,7 +654,8 @@ void RenderViewHostImpl::SetFrameTree(FrameTree& frame_tree) {
   render_widget_host_->SetFrameTree(frame_tree);
 }
 
-void RenderViewHostImpl::EnterBackForwardCache() {
+void RenderViewHostImpl::EnterBackForwardCache(
+    const base::optional_ref<const GURL> navigation_request_url) {
   if (!will_enter_back_forward_cache_callback_for_testing_.is_null())
     will_enter_back_forward_cache_callback_for_testing_.Run();
 
@@ -674,7 +671,8 @@ void RenderViewHostImpl::EnterBackForwardCache() {
   }
   is_in_back_forward_cache_ = true;
   page_lifecycle_state_manager_->SetIsInBackForwardCache(
-      is_in_back_forward_cache_, /*page_restore_params=*/nullptr);
+      is_in_back_forward_cache_, /*page_restore_params=*/nullptr,
+      navigation_request_url);
 }
 
 void RenderViewHostImpl::PrepareToLeaveBackForwardCache(
@@ -700,7 +698,8 @@ void RenderViewHostImpl::LeaveBackForwardCache(
   }
   is_in_back_forward_cache_ = false;
   page_lifecycle_state_manager_->SetIsInBackForwardCache(
-      is_in_back_forward_cache_, std::move(page_restore_params));
+      is_in_back_forward_cache_, std::move(page_restore_params),
+      /*navigation_request_url=*/std::nullopt);
 }
 
 void RenderViewHostImpl::ActivatePrerenderedPage(
@@ -849,10 +848,6 @@ void RenderViewHostImpl::AnimateDoubleTapZoom(const gfx::Point& point,
 
 ///////////////////////////////////////////////////////////////////////////////
 // RenderViewHostImpl, IPC message handlers:
-
-bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
-  return false;
-}
 
 std::string RenderViewHostImpl::ToDebugString() {
   return "RVHI:" + delegate_->GetCreatorLocation().ToString();

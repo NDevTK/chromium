@@ -28,14 +28,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/wtf/decimal.h"
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 
 #include "base/notreached.h"
@@ -156,13 +152,13 @@ UInt128& UInt128::operator/=(const uint32_t divisor) {
     return *this;
   }
 
-  uint32_t dividend[4];
+  std::array<uint32_t, 4> dividend;
   dividend[0] = LowUInt32(low_);
   dividend[1] = HighUInt32(low_);
   dividend[2] = LowUInt32(high_);
   dividend[3] = HighUInt32(high_);
 
-  uint32_t quotient[4];
+  std::array<uint32_t, 4> quotient;
   uint32_t remainder = 0;
   for (int i = 3; i >= 0; --i) {
     const uint64_t work = MakeUInt64(dividend[i], remainder);

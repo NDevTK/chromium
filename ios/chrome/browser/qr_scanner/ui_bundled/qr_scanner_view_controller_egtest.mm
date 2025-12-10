@@ -12,6 +12,7 @@
 #import "ios/chrome/browser/qr_scanner/ui_bundled/qr_scanner_app_interface.h"
 #import "ios/chrome/browser/scanner/ui_bundled/camera_state.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_app_interface.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
@@ -130,16 +131,28 @@ id<GREYMatcher> DialogCancelButton() {
 
 // Opens the QR Scanner view.
 void ShowQRScanner() {
-  // Tap the omnibox to get the keyboard accessory view to show up.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
-      performAction:grey_tap()];
-  [ChromeEarlGrey
-      waitForSufficientlyVisibleElementWithMatcher:chrome_test_util::Omnibox()];
+  if ([ChromeEarlGrey isCompactWidth]) {
+    // Long-press the New Tab button to show the options.
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabButton()]
+        performAction:grey_longPress()];
 
-  // Tap the QR Code scanner button in the keyboard accessory view.
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityLabel(@"QR code search")]
-      performAction:grey_tap()];
+    // Tap the QR Code scanner option in the context menu.
+    [[EarlGrey selectElementWithMatcher:
+                   chrome_test_util::ContextMenuItemWithAccessibilityLabelId(
+                       IDS_IOS_TOOLS_MENU_QR_SCANNER)]
+        performAction:grey_tap()];
+  } else {
+    // Tap the omnibox to get the keyboard accessory view to show up.
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::NewTabPageOmnibox()]
+        performAction:grey_tap()];
+    [ChromeEarlGrey waitForSufficientlyVisibleElementWithMatcher:
+                        chrome_test_util::Omnibox()];
+
+    // Tap the QR Code scanner button in the keyboard accessory view.
+    [[EarlGrey
+        selectElementWithMatcher:grey_accessibilityLabel(@"QR code search")]
+        performAction:grey_tap()];
+  }
 }
 
 // Taps the `button`.

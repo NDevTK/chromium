@@ -142,7 +142,7 @@ void TestServiceWorkerContextObserver::OnRegistrationStored(
   }
 }
 
-void TestServiceWorkerContextObserver::OnStartWorkerMessageSent(
+void TestServiceWorkerContextObserver::OnStartWorkerMessageSentSync(
     int64_t version_id,
     const GURL& scope) {
   if (extension_scope_ && extension_scope_ != scope) {
@@ -231,7 +231,7 @@ void TestServiceWorkerTaskQueueObserver::WaitForWorkerStarted(
   }
 
   base::RunLoop run_loop;
-  quit_closure_ = run_loop.QuitClosure();
+  started_quit_closure_ = run_loop.QuitClosure();
   run_loop.Run();
 }
 
@@ -329,8 +329,8 @@ int TestServiceWorkerTaskQueueObserver::GetRequestedWorkerStartedCount(
 void TestServiceWorkerTaskQueueObserver::DidStartWorker(
     const ExtensionId& extension_id) {
   started_set_.insert(extension_id);
-  if (quit_closure_) {
-    std::move(quit_closure_).Run();
+  if (started_quit_closure_) {
+    std::move(started_quit_closure_).Run();
   }
 }
 
@@ -346,8 +346,8 @@ void TestServiceWorkerTaskQueueObserver::DidStartWorkerFail(
   }
 }
 
-void TestServiceWorkerTaskQueueObserver::DidInitializeServiceWorkerContext(
-    const ExtensionId& extension_id) {
+void TestServiceWorkerTaskQueueObserver::
+    RendererDidInitializeServiceWorkerContext(const ExtensionId& extension_id) {
   inited_set_.insert(extension_id);
   if (quit_closure_) {
     std::move(quit_closure_).Run();
@@ -377,7 +377,7 @@ void TestServiceWorkerTaskQueueObserver::RequestedWorkerStart(
   ++requested_worker_started_map_[extension_id];
 }
 
-void TestServiceWorkerTaskQueueObserver::DidStopServiceWorkerContext(
+void TestServiceWorkerTaskQueueObserver::RendererDidStopServiceWorkerContext(
     const ExtensionId& extension_id) {
   stopped_set_.insert(extension_id);
   if (quit_closure_) {

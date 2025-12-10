@@ -2,19 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 
 #include <numeric>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest-death-test.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/numeric/int128.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_internals.h"
@@ -387,6 +384,14 @@ TEST(NativeValueTraitsImplTest, IDLBigint) {
         scope.GetIsolate(), v8_string, exception_state);
     EXPECT_TRUE(exception_state.HadException());
   }
+  {
+    // Construction from uint128 works
+    const absl::uint128 bigint_absl = absl::Uint128Max();
+    const auto bigint_absl_converted_around =
+        blink::BigInt(bigint_absl).ToUInt128();
+    EXPECT_TRUE(bigint_absl_converted_around.has_value());
+    EXPECT_EQ(bigint_absl, bigint_absl_converted_around.value());
+  }
 }
 
 template <typename Arr>
@@ -596,7 +601,7 @@ TEST(NativeValueTraitsImplTest, TypedPassAsSpanSubarray) {
 
   auto v8_arraybuffer =
       MakeArray<v8::ArrayBuffer>(scope.GetIsolate(), sizeof kRawData);
-  memcpy(v8_arraybuffer->Data(), kRawData, sizeof kRawData);
+  UNSAFE_TODO(memcpy(v8_arraybuffer->Data(), kRawData, sizeof kRawData));
   v8::Local<v8::Int32Array> int32_array = v8::Int32Array::New(
       v8_arraybuffer, /* byte_offset=*/1 * sizeof(int32_t), /* length=*/2);
 
@@ -614,7 +619,7 @@ TEST(NativeValueTraitsImplTest, TypedPassAsSpanBadType) {
 
   auto v8_arraybuffer =
       MakeArray<v8::ArrayBuffer>(scope.GetIsolate(), sizeof kRawData);
-  memcpy(v8_arraybuffer->Data(), kRawData, sizeof kRawData);
+  UNSAFE_TODO(memcpy(v8_arraybuffer->Data(), kRawData, sizeof kRawData));
 
   {
     DummyExceptionStateForTesting exception_state;

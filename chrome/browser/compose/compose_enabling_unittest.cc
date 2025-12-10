@@ -15,6 +15,8 @@
 #include "base/types/expected.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/common/pref_names.h"
@@ -26,6 +28,7 @@
 #include "components/compose/core/browser/compose_features.h"
 #include "components/compose/core/browser/config.h"
 #include "components/language/core/browser/language_model.h"
+#include "components/optimization_guide/core/optimization_guide_proto_util.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/supervised_user/core/common/pref_names.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
@@ -93,7 +96,6 @@ class CustomMockOptimizationGuideKeyedService
 
 void RegisterMockOptimizationGuideKeyedServiceFactory(
     content::BrowserContext* context) {
-  MockOptimizationGuideKeyedService::InitializeWithExistingTestLocalState();
   OptimizationGuideKeyedServiceFactory::GetInstance()->SetTestingFactory(
       context, base::BindRepeating([](content::BrowserContext* context)
                                        -> std::unique_ptr<KeyedService> {
@@ -161,7 +163,8 @@ class ComposeEnablingTest : public BrowserWithTestWindowTest {
               compose::ComposeHintMetadata compose_hint_metadata;
               compose_hint_metadata.set_decision(
                   compose::ComposeHintDecision::COMPOSE_HINT_DECISION_ENABLED);
-              metadata->SetAnyMetadataForTesting(compose_hint_metadata);
+              metadata->set_any_metadata(
+                  optimization_guide::AnyWrapProto(compose_hint_metadata));
               return optimization_guide::OptimizationGuideDecision::kTrue;
             });
 
@@ -188,7 +191,6 @@ class ComposeEnablingTest : public BrowserWithTestWindowTest {
     scoped_feature_list_.Reset();
     compose::ResetConfigForTesting();
     BrowserWithTestWindowTest::TearDown();
-    MockOptimizationGuideKeyedService::ResetForTesting();
   }
 
   void SetProactiveNudgePref(bool pref_value) {
@@ -202,8 +204,9 @@ class ComposeEnablingTest : public BrowserWithTestWindowTest {
     update->Set(GetOrigin().Serialize(), base::TimeToValue(base::Time::Now()));
   }
 
-  void SignIn(signin::ConsentLevel consent_level) {
-    identity_test_env_.MakePrimaryAccountAvailable(kEmail, consent_level);
+  void SignIn() {
+    identity_test_env_.MakePrimaryAccountAvailable(
+        kEmail, signin::ConsentLevel::kSignin);
     identity_test_env_.SetAutomaticIssueOfAccessTokens(true);
   }
 
@@ -274,8 +277,7 @@ TEST_F(ComposeEnablingTest, EverythingDisabledTest) {
 
 TEST_F(ComposeEnablingTest, FeatureNotEnabledTest) {
   ResetFeaturesAndConfig({}, {compose::features::kEnableCompose});
-  // Sign in, with sync turned on.
-  SignIn(signin::ConsentLevel::kSync);
+  SignIn();
 
   CheckIsEnabledError(compose_enabling_.get(),
                       compose::ComposeShowStatus::kComposeFeatureFlagDisabled);
@@ -300,7 +302,7 @@ TEST_F(ComposeEnablingTest, NotSignedInTest) {
 TEST_F(ComposeEnablingTest, SignedInErrorTest) {
   // Sign in, with error.
   AccountInfo account_info = identity_test_env_.MakePrimaryAccountAvailable(
-      kEmail, signin::ConsentLevel::kSync);
+      kEmail, signin::ConsentLevel::kSignin);
   identity_test_env_.UpdatePersistentErrorOfRefreshTokenForAccount(
       account_info.account_id,
       GoogleServiceAuthError(
@@ -315,8 +317,7 @@ TEST_F(ComposeEnablingTest, ComposeEligibleTest) {
   // Turn on the enable switch and off the eligible switch.
   scoped_feature_list_.InitWithFeatures({compose::features::kEnableCompose},
                                         {compose::features::kComposeEligible});
-  // Sign in, with sync turned on.
-  SignIn(signin::ConsentLevel::kSync);
+  SignIn();
 
   // The ComposeEligible switch should win, and disable the feature.
   CheckIsEnabledError(compose_enabling_.get(),
@@ -324,14 +325,12 @@ TEST_F(ComposeEnablingTest, ComposeEligibleTest) {
 }
 
 TEST_F(ComposeEnablingTest, EverythingEnabledTest) {
-  // Sign in, with sync turned on.
-  SignIn(signin::ConsentLevel::kSync);
+  SignIn();
   EXPECT_EQ(compose_enabling_->IsEnabled(), base::ok());
 }
 
 TEST_F(ComposeEnablingTest, UserNotAllowedTest) {
-  // Sign in, with sync turned on.
-  SignIn(signin::ConsentLevel::kSync);
+  SignIn();
   // Cause per-user check to fail.
   scoped_skip_user_check_.reset();
 
@@ -774,7 +773,8 @@ TEST_F(ComposeEnablingTest, GetOptimizationGuidanceShowNudgeTest) {
   compose::ComposeHintMetadata compose_hint_metadata;
   compose_hint_metadata.set_decision(
       compose::ComposeHintDecision::COMPOSE_HINT_DECISION_ENABLED);
-  test_metadata.SetAnyMetadataForTesting(compose_hint_metadata);
+  test_metadata.set_any_metadata(
+      optimization_guide::AnyWrapProto(compose_hint_metadata));
 
   EXPECT_CALL(opt_guide(),
               CanApplyOptimization(
@@ -801,7 +801,8 @@ TEST_F(ComposeEnablingTest, GetOptimizationGuidanceNoFeedbackTest) {
   compose::ComposeHintMetadata compose_hint_metadata;
   compose_hint_metadata.set_decision(
       compose::ComposeHintDecision::COMPOSE_HINT_DECISION_ENABLED);
-  test_metadata.SetAnyMetadataForTesting(compose_hint_metadata);
+  test_metadata.set_any_metadata(
+      optimization_guide::AnyWrapProto(compose_hint_metadata));
 
   EXPECT_CALL(opt_guide(),
               CanApplyOptimization(
@@ -826,7 +827,8 @@ TEST_F(ComposeEnablingTest, GetOptimizationGuidanceNoComposeMetadataTest) {
   // Set up a fake metadata to return from the mock.
   optimization_guide::OptimizationMetadata test_metadata;
   compose::ComposeHintMetadata compose_hint_metadata;
-  test_metadata.SetAnyMetadataForTesting(compose_hint_metadata);
+  test_metadata.set_any_metadata(
+      optimization_guide::AnyWrapProto(compose_hint_metadata));
 
   EXPECT_CALL(opt_guide(),
               CanApplyOptimization(
@@ -866,7 +868,8 @@ TEST_F(ComposeEnablingTest, ShouldTriggerDisableComposeByPolicyTest) {
   compose::ComposeHintMetadata compose_hint_metadata;
   compose_hint_metadata.set_decision(
       compose::ComposeHintDecision::COMPOSE_HINT_DECISION_COMPOSE_DISABLED);
-  test_metadata.SetAnyMetadataForTesting(compose_hint_metadata);
+  test_metadata.set_any_metadata(
+      optimization_guide::AnyWrapProto(compose_hint_metadata));
 
   EXPECT_CALL(opt_guide(),
               CanApplyOptimization(
@@ -921,7 +924,8 @@ TEST_F(ComposeEnablingTest, ShouldTriggerDisableNudgeByPolicy) {
   compose::ComposeHintMetadata compose_hint_metadata;
   compose_hint_metadata.set_decision(
       compose::ComposeHintDecision::COMPOSE_HINT_DECISION_DISABLE_NUDGE);
-  test_metadata.SetAnyMetadataForTesting(compose_hint_metadata);
+  test_metadata.set_any_metadata(
+      optimization_guide::AnyWrapProto(compose_hint_metadata));
 
   EXPECT_CALL(opt_guide(),
               CanApplyOptimization(

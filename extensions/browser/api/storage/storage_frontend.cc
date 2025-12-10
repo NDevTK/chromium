@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "extensions/browser/api/storage/storage_frontend.h"
 
 #include <memory>
@@ -254,7 +249,9 @@ void StorageFrontend::OnWriteFinished(
 
   if (success && !result.changes().empty()) {
     OnSettingsChanged(
-        extension_id, storage_area, std::nullopt,
+        extension_id, storage_area,
+        storage_utils::GetAccessLevelForArea(extension_id, *browser_context_,
+                                             storage_area),
         value_store::ValueStoreChange::ToValue(result.PassChanges()));
   }
 
@@ -401,8 +398,8 @@ void StorageFrontend::Set(scoped_refptr<const Extension> extension,
 
     if (success && !changes.empty()) {
       OnSettingsChanged(extension->id(), storage_area,
-                        storage_utils::GetSessionAccessLevel(extension->id(),
-                                                             *browser_context_),
+                        storage_utils::GetAccessLevelForArea(
+                            extension->id(), *browser_context_, storage_area),
                         storage_utils::ValueChangeToValue(std::move(changes)));
     }
 
@@ -445,8 +442,8 @@ void StorageFrontend::Remove(scoped_refptr<const Extension> extension,
 
     if (!changes.empty()) {
       OnSettingsChanged(extension->id(), storage_area,
-                        storage_utils::GetSessionAccessLevel(extension->id(),
-                                                             *browser_context_),
+                        storage_utils::GetAccessLevelForArea(
+                            extension->id(), *browser_context_, storage_area),
                         storage_utils::ValueChangeToValue(std::move(changes)));
     }
 
@@ -486,8 +483,8 @@ void StorageFrontend::Clear(
 
     if (!changes.empty()) {
       OnSettingsChanged(extension->id(), storage_area,
-                        storage_utils::GetSessionAccessLevel(extension->id(),
-                                                             *browser_context_),
+                        storage_utils::GetAccessLevelForArea(
+                            extension->id(), *browser_context_, storage_area),
                         storage_utils::ValueChangeToValue(std::move(changes)));
     }
 
@@ -587,7 +584,7 @@ void StorageFrontend::DisableStorageForTesting(
 void StorageFrontend::OnSettingsChanged(
     const ExtensionId& extension_id,
     StorageAreaNamespace storage_area,
-    std::optional<api::storage::AccessLevel> session_access_level,
+    std::optional<api::storage::AccessLevel> access_level,
     base::Value changes) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   TRACE_EVENT1("browser", "SettingsObserver:OnSettingsChanged", "extension_id",
@@ -613,15 +610,12 @@ void StorageFrontend::OnSettingsChanged(
   bool has_area_changed_event_listener =
       event_router->ExtensionHasEventListener(extension_id, area_event_name);
 
-  // Restrict event to privileged context if session access level is set only to
-  // trusted contexts.
+  // Restrict event to privileged context if access level is set only to trusted
+  // contexts.
   std::optional<mojom::ContextType> restrict_to_context_type = std::nullopt;
-  if (storage_area == StorageAreaNamespace::kSession) {
-    CHECK(session_access_level.has_value());
-    if (session_access_level.value() ==
-        api::storage::AccessLevel::kTrustedContexts) {
-      restrict_to_context_type = mojom::ContextType::kPrivilegedExtension;
-    }
+  if (access_level.has_value() &&
+      access_level.value() == api::storage::AccessLevel::kTrustedContexts) {
+    restrict_to_context_type = mojom::ContextType::kPrivilegedExtension;
   }
 
   auto make_changed_event = [&namespace_string,

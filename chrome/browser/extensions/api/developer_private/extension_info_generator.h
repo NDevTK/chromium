@@ -19,9 +19,12 @@
 #include "extensions/browser/blocklist_state.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace content {
 class BrowserContext;
@@ -91,12 +94,6 @@ class ExtensionInfoGenerator : public ProfileObserver {
   // Callback for the asynchronous image loading.
   void OnImageLoaded(api::developer_private::ExtensionInfo info,
                      const gfx::Image& image);
-
-  // Returns the icon url for the default icon to use.
-  std::string GetDefaultIconUrl(const std::string& name);
-
-  // Returns an icon url from the given image.
-  std::string GetIconUrlFromImage(const gfx::Image& image);
 
   // Construct the needed information for the Extension Safety Check and
   // populate the relevant `extension_info` fields.

@@ -28,19 +28,16 @@ class MostVisitedSitesBridge {
   MostVisitedSitesBridge(const MostVisitedSitesBridge&) = delete;
   MostVisitedSitesBridge& operator=(const MostVisitedSitesBridge&) = delete;
 
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
 
-  void OnHomepageStateChanged(JNIEnv* env,
-                              const base::android::JavaParamRef<jobject>& obj);
+  void OnHomepageStateChanged(JNIEnv* env);
 
   void SetObserver(JNIEnv* env,
-                   const base::android::JavaParamRef<jobject>& obj,
-                   const base::android::JavaParamRef<jobject>& j_observer,
+                   const base::android::JavaRef<jobject>& j_observer,
                    jint num_sites);
 
   void SetHomepageClient(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& obj,
-                         const base::android::JavaParamRef<jobject>& j_client);
+                         const base::android::JavaRef<jobject>& j_client);
 
   jboolean AddCustomLinkTo(JNIEnv* env,
                            const std::u16string& name,
@@ -63,27 +60,25 @@ class MostVisitedSitesBridge {
   jboolean ReorderCustomLink(JNIEnv* env, const GURL& key_url, jint new_pos);
 
   void AddOrRemoveBlockedUrl(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj,
-                             const base::android::JavaParamRef<jobject>& j_url,
+                             const base::android::JavaRef<jobject>& j_url,
                              jboolean add_url);
   void RecordPageImpression(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj,
                             jint jtiles_count);
   void RecordTileImpression(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj,
                             jint jindex,
                             jint jvisual_type,
                             jint jicon_type,
                             jint jtitle_source,
                             jint jsource,
-                            const base::android::JavaParamRef<jobject>& jurl);
+                            const base::android::JavaRef<jobject>& jurl);
   void RecordOpenedMostVisitedItem(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
       jint index,
       jint tile_type,
       jint title_source,
       jint source);
+
+  jdouble GetSuggestionScore(JNIEnv* env, const GURL& url);
 
  private:
   ~MostVisitedSitesBridge();

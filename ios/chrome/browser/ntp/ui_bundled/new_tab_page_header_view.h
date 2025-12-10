@@ -11,6 +11,7 @@
 @class TabGroupIndicatorView;
 @protocol NewTabPageShortcutsHandler;
 @class OmniboxContainerView;
+@class NewTabPageColorPalette;
 
 // Header view for the NTP. The header view contains all views that are
 // displayed above the list of most visited sites, which includes the
@@ -51,7 +52,7 @@
     NSLayoutConstraint* fakeLocationBarLeadingConstraint;
 @property(nonatomic, strong)
     NSLayoutConstraint* fakeLocationBarTrailingConstraint;
-@property(nonatomic, strong) GradientView* fakeLocationBar;
+@property(nonatomic, strong) UIView* fakeLocationBar;
 @property(nonatomic, strong) UILabel* searchHintLabel;
 
 // View that contains tab group information.
@@ -94,9 +95,6 @@
                    screenWidth:(CGFloat)screenWidth
                 safeAreaInsets:(UIEdgeInsets)safeAreaInsets;
 
-// Update buttons for the user interface style.
-- (void)updateButtonsForUserInterfaceStyle:(UIUserInterfaceStyle)style;
-
 // Adds views necessary to customize the NTP search box.
 - (void)addViewsToSearchField:(UIView*)searchField;
 
@@ -127,6 +125,9 @@
 // Returns a snapshot view of the fakebox's buttons to be used during focus
 // and defocus animations.
 - (UIView*)fakeboxButtonsSnapshot;
+
+// Whether AIM is allowed.
+- (void)setAIMAllowed:(BOOL)allowed;
 
 @end
 

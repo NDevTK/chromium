@@ -10,28 +10,27 @@
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/modules/clipboard/clipboard_change_event_controller.h"
 #include "third_party/blink/renderer/modules/clipboard/clipboard_item.h"
-#include "third_party/blink/renderer/platform/supplementable.h"
 
 namespace blink {
 
 class ExceptionState;
 class Navigator;
 class ScriptState;
-class ClipboardUnsanitizedFormats;
+class ClipboardReadOptions;
 
-class Clipboard : public EventTarget, public Supplement<Navigator> {
+class Clipboard : public EventTarget, public GarbageCollectedMixin {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static const char kSupplementName[];
   static Clipboard* clipboard(Navigator&);
   explicit Clipboard(Navigator&);
 
   Clipboard(const Clipboard&) = delete;
   Clipboard& operator=(const Clipboard&) = delete;
 
-  ScriptPromise<IDLSequence<ClipboardItem>>
-  read(ScriptState*, ClipboardUnsanitizedFormats* formats, ExceptionState&);
+  ScriptPromise<IDLSequence<ClipboardItem>> read(ScriptState*,
+                                                 ClipboardReadOptions* options,
+                                                 ExceptionState&);
   ScriptPromise<IDLSequence<ClipboardItem>> read(
       ScriptState* script_state,
       ExceptionState& exception_state) {
@@ -65,6 +64,7 @@ class Clipboard : public EventTarget, public Supplement<Navigator> {
                             const RegisteredEventListener&) override;
 
  private:
+  Member<Navigator> navigator_;
   Member<ClipboardChangeEventController> clipboard_change_event_controller_;
 };
 

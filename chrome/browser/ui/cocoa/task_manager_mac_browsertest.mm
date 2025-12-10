@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/ui/cocoa/task_manager_mac.h"
 
@@ -33,6 +29,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/sessions/content/session_tab_helper.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/test/browser_test.h"
@@ -43,7 +40,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest_mac.h"
 #include "ui/base/test/ui_controls.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "url/gurl.h"
 
 namespace task_manager {
@@ -114,11 +111,14 @@ class TaskManagerMacTest : public InProcessBrowserTest {
 
   // Looks up a tab based on its tab ID.
   content::WebContents* FindWebContentsByTabId(SessionID tab_id) {
-    auto& all_tabs = AllTabContentses();
-    auto it = std::ranges::find(all_tabs, tab_id,
-                                &sessions::SessionTabHelper::IdForTab);
-
-    return (it == all_tabs.end()) ? nullptr : *it;
+    content::WebContents* found = nullptr;
+    tabs::ForEachTabInterface([tab_id, &found](tabs::TabInterface* tab) {
+      if (sessions::SessionTabHelper::IdForTab(tab->GetContents()) == tab_id) {
+        found = tab->GetContents();
+      }
+      return !found;
+    });
+    return found;
   }
 
   // Returns the current TaskManagerTableModel index for a particular tab. Don't

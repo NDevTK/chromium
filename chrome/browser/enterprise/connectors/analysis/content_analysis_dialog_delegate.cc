@@ -4,8 +4,11 @@
 
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_dialog_delegate.h"
 
+#include <string>
+
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/enterprise/connectors/core/common.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -40,15 +43,32 @@ ContentAnalysisDialogDelegate::ContentAnalysisDialogDelegate(
     ContentAnalysisDelegateBase* delegate,
     content::WebContents::Getter web_contents_getter,
     bool is_cloud,
-    safe_browsing::DeepScanAccessPoint access_point,
-    int files_count)
-    : delegate_base_(delegate),
+    DeepScanAccessPoint access_point,
+    int files_count,
+    FinalContentAnalysisResult final_result)
+    : final_result_(final_result),
+      delegate_base_(delegate),
       web_contents_getter_(web_contents_getter),
       is_cloud_(is_cloud),
       access_point_(access_point),
-      files_count_(files_count) {}
+      files_count_(files_count) {
+  set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
+      views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
 
-ContentAnalysisDialogDelegate::~ContentAnalysisDialogDelegate() = default;
+  SetupButtons();
+
+  if (is_warning() && bypass_requires_justification()) {
+    bypass_justification_text_length_->SetEnabledColor(
+        bypass_justification_text_length_->GetColorProvider()->GetColor(
+            ui::kColorAlertHighSeverity));
+  }
+}
+
+ContentAnalysisDialogDelegate::~ContentAnalysisDialogDelegate() {
+  if (bypass_justification_) {
+    bypass_justification_->SetController(nullptr);
+  }
+}
 
 std::u16string ContentAnalysisDialogDelegate::GetWindowTitle() const {
   return std::u16string();
@@ -56,14 +76,6 @@ std::u16string ContentAnalysisDialogDelegate::GetWindowTitle() const {
 
 bool ContentAnalysisDialogDelegate::ShouldShowCloseButton() const {
   return false;
-}
-
-views::Widget* ContentAnalysisDialogDelegate::GetWidget() {
-  return contents_view_->GetWidget();
-}
-
-const views::Widget* ContentAnalysisDialogDelegate::GetWidget() const {
-  return contents_view_->GetWidget();
 }
 
 ui::mojom::ModalType ContentAnalysisDialogDelegate::GetModalType() const {
@@ -146,6 +158,7 @@ int ContentAnalysisDialogDelegate::GetTopImageId() const {
       case State::SUCCESS:
         return IDR_UPLOAD_SUCCESS_DARK;
       case State::FAILURE:
+      case State::FORCE_SAVE_TO_CLOUD:
         return IDR_UPLOAD_VIOLATION_DARK;
       case State::WARNING:
         return IDR_UPLOAD_WARNING_DARK;
@@ -157,6 +170,7 @@ int ContentAnalysisDialogDelegate::GetTopImageId() const {
       case State::SUCCESS:
         return IDR_UPLOAD_SUCCESS;
       case State::FAILURE:
+      case State::FORCE_SAVE_TO_CLOUD:
         return IDR_UPLOAD_VIOLATION;
       case State::WARNING:
         return IDR_UPLOAD_WARNING;
@@ -175,6 +189,7 @@ ui::ColorId ContentAnalysisDialogDelegate::GetSideImageLogoColor() const {
     case State::SUCCESS:
     case State::FAILURE:
     case State::WARNING:
+    case State::FORCE_SAVE_TO_CLOUD:
       // In a result state, the side image is a circle colored with the result's
       // color and an enterprise logo in front of it, so the logo should have
       // the same color as the dialog's overall background.
@@ -192,6 +207,7 @@ ui::ColorId ContentAnalysisDialogDelegate::GetSideImageBackgroundColor() const {
     case State::SUCCESS:
       return ui::kColorAccent;
     case State::FAILURE:
+    case State::FORCE_SAVE_TO_CLOUD:
       return ui::kColorAlertHighSeverity;
     case State::WARNING:
       return ui::kColorAlertMediumSeverityIcon;
@@ -245,6 +261,9 @@ void ContentAnalysisDialogDelegate::UpdateStateFromFinalResult(
     case FinalContentAnalysisResult::WARNING:
       dialog_state_ = State::WARNING;
       break;
+    case FinalContentAnalysisResult::FORCE_SAVE_TO_CLOUD:
+      dialog_state_ = State::FORCE_SAVE_TO_CLOUD;
+      break;
   }
 }
 
@@ -267,6 +286,29 @@ void ContentAnalysisDialogDelegate::UpdateDialogAppearance() {
   // Update the dialog.
   DialogDelegate::DialogModelChanged();
   contents_view_->InvalidateLayout();
+}
+
+void ContentAnalysisDialogDelegate::Shutdown() {
+  contents_view_ = nullptr;
+  image_ = nullptr;
+  side_icon_image_ = nullptr;
+  side_icon_spinner_ = nullptr;
+  message_ = nullptr;
+  learn_more_link_ = nullptr;
+  justification_text_label_ = nullptr;
+  bypass_justification_ = nullptr;
+  bypass_justification_text_length_ = nullptr;
+  contents_layout_ = nullptr;
+  bounds_animator_.reset();
+  delegate_base_ = nullptr;
+}
+
+std::optional<std::u16string>
+ContentAnalysisDialogDelegate::GetJustification() {
+  if (delegate_base_->BypassRequiresJustification() && bypass_justification_) {
+    return std::u16string(bypass_justification_->GetText());
+  }
+  return std::nullopt;
 }
 
 void ContentAnalysisDialogDelegate::SetupButtons() {
@@ -297,6 +339,21 @@ void ContentAnalysisDialogDelegate::SetupButtons() {
 
     DialogDelegate::SetButtonLabel(ui::mojom::DialogButton::kCancel,
                                    GetCancelButtonText());
+  } else if (is_force_save_to_cloud()) {
+    DialogDelegate::SetButtons(
+        static_cast<int>(ui::mojom::DialogButton::kCancel) |
+        static_cast<int>(ui::mojom::DialogButton::kOk));
+    DialogDelegate::SetDefaultButton(
+        static_cast<int>(ui::mojom::DialogButton::kCancel));
+
+    // Do not allow overrides, since this option only applies to downloads.
+    SetButtonLabel(ui::mojom::DialogButton::kCancel,
+                   l10n_util::GetStringUTF16(
+                       IDS_DEEP_SCANNING_DIALOG_DOWNLOADS_DISCARD_FILE_BUTTON));
+
+    SetButtonLabel(ui::mojom::DialogButton::kOk,
+                   l10n_util::GetStringUTF16(
+                       IDS_DEEP_SCANNING_DIALOG_SAVE_TO_CLOUD_STORAGE_LABEL));
   } else {
     // Include no buttons otherwise.
     DialogDelegate::SetButtons(
@@ -305,18 +362,19 @@ void ContentAnalysisDialogDelegate::SetupButtons() {
 }
 
 std::u16string ContentAnalysisDialogDelegate::GetCancelButtonText() const {
-  int text_id;
   auto overriden_text = delegate_base_->OverrideCancelButtonText();
   if (overriden_text) {
     return overriden_text.value();
   }
 
+  int text_id;
   switch (dialog_state_) {
     case State::SUCCESS:
       NOTREACHED();
     case State::PENDING:
       text_id = IDS_DEEP_SCANNING_DIALOG_CANCEL_UPLOAD_BUTTON;
       break;
+    case State::FORCE_SAVE_TO_CLOUD:
     case State::FAILURE:
       text_id = IDS_CLOSE;
       break;
@@ -331,6 +389,8 @@ std::u16string ContentAnalysisDialogDelegate::GetDialogMessage() const {
   switch (dialog_state_) {
     case State::PENDING:
       return GetPendingMessage();
+    case State::FORCE_SAVE_TO_CLOUD:
+      return GetForceSaveToCloudMessage();
     case State::FAILURE:
       return GetFailureMessage();
     case State::SUCCESS:
@@ -349,6 +409,14 @@ std::u16string ContentAnalysisDialogDelegate::GetPendingMessage() const {
 
   return l10n_util::GetPluralStringFUTF16(
       IDS_DEEP_SCANNING_DIALOG_UPLOAD_PENDING_MESSAGE, files_count_);
+}
+
+std::u16string ContentAnalysisDialogDelegate::GetForceSaveToCloudMessage()
+    const {
+  DCHECK(is_force_save_to_cloud());
+
+  return l10n_util::GetStringUTF16(
+      IDS_DEEP_SCANNING_DIALOG_SAVE_TO_CLOUD_STORAGE_MESSAGE);
 }
 
 std::u16string ContentAnalysisDialogDelegate::GetFailureMessage() const {
@@ -424,7 +492,7 @@ std::u16string ContentAnalysisDialogDelegate::GetCustomMessage() const {
 }
 
 bool ContentAnalysisDialogDelegate::is_print_scan() const {
-  return access_point_ == safe_browsing::DeepScanAccessPoint::PRINT;
+  return access_point_ == DeepScanAccessPoint::PRINT;
 }
 
 bool ContentAnalysisDialogDelegate::has_custom_message() const {
@@ -441,6 +509,53 @@ bool ContentAnalysisDialogDelegate::has_custom_message_ranges() const {
 
 bool ContentAnalysisDialogDelegate::bypass_requires_justification() const {
   return delegate_base_->BypassRequiresJustification();
+}
+
+bool ContentAnalysisDialogDelegate::is_cloud() const {
+  return is_cloud_;
+}
+
+FinalContentAnalysisResult ContentAnalysisDialogDelegate::final_result() const {
+  return final_result_;
+}
+
+base::WeakPtr<ContentAnalysisDialogDelegate>
+ContentAnalysisDialogDelegate::GetWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
+views::ImageView* ContentAnalysisDialogDelegate::GetTopImageForTesting() const {
+  return image_;
+}
+
+views::Throbber* ContentAnalysisDialogDelegate::GetSideIconSpinnerForTesting()
+    const {
+  return side_icon_spinner_;
+}
+
+views::StyledLabel* ContentAnalysisDialogDelegate::GetMessageForTesting()
+    const {
+  return message_;
+}
+
+views::Link* ContentAnalysisDialogDelegate::GetLearnMoreLinkForTesting() const {
+  return learn_more_link_;
+}
+
+views::Label*
+ContentAnalysisDialogDelegate::GetBypassJustificationLabelForTesting() const {
+  return justification_text_label_;
+}
+
+views::Textarea*
+ContentAnalysisDialogDelegate::GetBypassJustificationTextareaForTesting()
+    const {
+  return bypass_justification_;
+}
+
+views::Label*
+ContentAnalysisDialogDelegate::GetJustificationTextLengthForTesting() const {
+  return bypass_justification_text_length_;
 }
 
 void ContentAnalysisDialogDelegate::UpdateViews() {

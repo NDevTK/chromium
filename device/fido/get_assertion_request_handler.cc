@@ -16,7 +16,6 @@
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
@@ -26,16 +25,16 @@
 #include "device/fido/authenticator_get_assertion_response.h"
 #include "device/fido/ctap_get_assertion_request.h"
 #include "device/fido/discoverable_credential_metadata.h"
-#include "device/fido/features.h"
 #include "device/fido/fido_authenticator.h"
-#include "device/fido/fido_constants.h"
 #include "device/fido/fido_discovery_factory.h"
-#include "device/fido/fido_transport_protocol.h"
-#include "device/fido/fido_types.h"
 #include "device/fido/filter.h"
 #include "device/fido/pin.h"
-#include "device/fido/public_key_credential_descriptor.h"
-#include "device/fido/public_key_credential_user_entity.h"
+#include "device/fido/public/features.h"
+#include "device/fido/public/fido_constants.h"
+#include "device/fido/public/fido_transport_protocol.h"
+#include "device/fido/public/fido_types.h"
+#include "device/fido/public/public_key_credential_descriptor.h"
+#include "device/fido/public/public_key_credential_user_entity.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "device/fido/mac/authenticator.h"
@@ -173,33 +172,6 @@ bool ResponseValid(
   return true;
 }
 
-base::flat_set<FidoTransportProtocol> GetTransportsAllowedByRP(
-    const CtapGetAssertionRequest& request) {
-  const base::flat_set<FidoTransportProtocol> kAllTransports = {
-      FidoTransportProtocol::kInternal,
-      FidoTransportProtocol::kNearFieldCommunication,
-      FidoTransportProtocol::kUsbHumanInterfaceDevice,
-      FidoTransportProtocol::kBluetoothLowEnergy,
-      FidoTransportProtocol::kHybrid,
-  };
-
-  const auto& allowed_list = request.allow_list;
-  if (allowed_list.empty()) {
-    return kAllTransports;
-  }
-
-  base::flat_set<FidoTransportProtocol> transports;
-  for (const auto& credential : allowed_list) {
-    if (credential.transports.empty()) {
-      return kAllTransports;
-    }
-    transports.insert(credential.transports.begin(),
-                      credential.transports.end());
-  }
-
-  return transports;
-}
-
 void ReportGetAssertionRequestTransport(FidoAuthenticator* authenticator) {
   if (authenticator->AuthenticatorTransport()) {
     base::UmaHistogramEnumeration(
@@ -290,21 +262,6 @@ CtapGetAssertionOptions SpecializeOptionsForAuthenticator(
   return specialized_options;
 }
 
-bool IsOnlyHybridOrInternal(const PublicKeyCredentialDescriptor& credential) {
-  if (credential.transports.empty()) {
-    return false;
-  }
-  return std::ranges::all_of(credential.transports, [](const auto& transport) {
-    return transport == FidoTransportProtocol::kHybrid ||
-           transport == FidoTransportProtocol::kInternal;
-  });
-}
-
-bool AllowListOnlyHybridOrInternal(const CtapGetAssertionRequest& request) {
-  return !request.allow_list.empty() &&
-         std::ranges::all_of(request.allow_list, &IsOnlyHybridOrInternal);
-}
-
 bool AllowListIncludedTransport(const CtapGetAssertionRequest& request,
                                 FidoTransportProtocol transport) {
   return std::ranges::any_of(
@@ -325,12 +282,9 @@ GetAssertionRequestHandler::GetAssertionRequestHandler(
     CtapGetAssertionOptions options,
     bool allow_skipping_pin_touch,
     CompletionCallback completion_callback)
-    : FidoRequestHandlerBase(
-          fido_discovery_factory,
-          std::move(additional_discoveries),
-          base::STLSetIntersection<base::flat_set<FidoTransportProtocol>>(
-              supported_transports,
-              GetTransportsAllowedByRP(request))),
+    : FidoRequestHandlerBase(fido_discovery_factory,
+                             std::move(additional_discoveries),
+                             supported_transports),
       completion_callback_(std::move(completion_callback)),
       request_(std::move(request)),
       options_(std::move(options)),
@@ -340,10 +294,6 @@ GetAssertionRequestHandler::GetAssertionRequestHandler(
       request_.user_verification;
   transport_availability_info().has_empty_allow_list =
       request_.allow_list.empty();
-  transport_availability_info().is_only_hybrid_or_internal =
-      AllowListOnlyHybridOrInternal(request_);
-  transport_availability_info().is_off_the_record_context =
-      options_.is_off_the_record_context;
   transport_availability_info().transport_list_did_include_internal =
       AllowListIncludedTransport(request_, FidoTransportProtocol::kInternal);
   transport_availability_info().transport_list_did_include_hybrid =

@@ -28,6 +28,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/types/expected.h"
 #include "build/branding_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/os_crypt/app_bound_encryption_provider_win.h"
@@ -83,16 +84,21 @@ os_crypt_async::Encryptor GetInstanceSync(
 
 }  // namespace
 
-class AppBoundEncryptionWinTest : public InProcessBrowserTest {
+class AppBoundEncryptionWinTestBase : public InProcessBrowserTest {
  public:
-  AppBoundEncryptionWinTest()
-      : scoped_install_details_(std::make_unique<FakeInstallDetails>()) {}
+  explicit AppBoundEncryptionWinTestBase(bool use_old_elevator_interface)
+      : scoped_install_details_(
+            std::make_unique<FakeInstallDetails>(use_old_elevator_interface)) {}
 
  protected:
   void SetUp() override {
     if (base::GetCurrentProcessIntegrityLevel() != base::HIGH_INTEGRITY) {
       GTEST_SKIP() << "Elevation is required for this test.";
     }
+#if defined(ARCH_CPU_32_BITS)
+    // Flaky on 32-bit win-rel-ready bot. See crbug.com/430106357.
+    GTEST_SKIP() << "Temporarily disabled on 32-bit. See crbug.com/430106357.";
+#else
     if (should_install_service_) {
       maybe_uninstall_service_ = InstallService(log_grabber_);
       EXPECT_TRUE(maybe_uninstall_service_.has_value());
@@ -106,6 +112,7 @@ class AppBoundEncryptionWinTest : public InProcessBrowserTest {
     chrome::SetUsingDefaultUserDataDirectoryForTesting(
         set_default_user_data_dir_);
     InProcessBrowserTest::SetUp();
+#endif  // defined(ARCH_CPU_32_BITS)
   }
 
   void TearDown() override { maybe_uninstall_service_.reset(); }
@@ -141,14 +148,30 @@ class AppBoundEncryptionWinTest : public InProcessBrowserTest {
   install_static::ScopedInstallDetails scoped_install_details_;
 };
 
+// App-Bound tests are expensive to run so only run the basic EncryptDecrypt
+// test with both elevator interface variants.
+class AppBoundEncryptionWinTest : public AppBoundEncryptionWinTestBase {
+ public:
+  AppBoundEncryptionWinTest()
+      : AppBoundEncryptionWinTestBase(/*use_old_elevator_interface=*/false) {}
+};
+
 // Test App-Bound is supported for tests.
 IN_PROC_BROWSER_TEST_F(AppBoundEncryptionWinTest, Supported) {
   EXPECT_EQ(SupportLevel::kSupported, GetAppBoundEncryptionSupportLevel(
                                           g_browser_process->local_state()));
 }
 
+class AppBoundEncryptionWinTestWithLegacy
+    : public AppBoundEncryptionWinTestBase,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  AppBoundEncryptionWinTestWithLegacy()
+      : AppBoundEncryptionWinTestBase(GetParam()) {}
+};
+
 // Test the basic interface to Encrypt and Decrypt data.
-IN_PROC_BROWSER_TEST_F(AppBoundEncryptionWinTest, EncryptDecrypt) {
+IN_PROC_BROWSER_TEST_P(AppBoundEncryptionWinTestWithLegacy, EncryptDecrypt) {
   ASSERT_TRUE(install_static::IsSystemInstall());
   const std::string plaintext("plaintext");
   std::string ciphertext;
@@ -169,6 +192,13 @@ IN_PROC_BROWSER_TEST_F(AppBoundEncryptionWinTest, EncryptDecrypt) {
   ASSERT_HRESULT_SUCCEEDED(hr);
   EXPECT_EQ(plaintext, returned_plaintext);
 }
+
+INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+                         AppBoundEncryptionWinTestWithLegacy,
+                         ::testing::Bool(),
+                         [](const auto& info) {
+                           return info.param ? "IElevator" : "IElevator2";
+                         });
 
 // Test the basic interface to Encrypt and Decrypt data.
 IN_PROC_BROWSER_TEST_F(AppBoundEncryptionWinTest, EncryptDecryptWithFlags) {
@@ -500,23 +530,16 @@ class AppBoundEncryptionWinReencryptTest
 };
 
 // Test the basic interface to Encrypt and Decrypt data.
-// TODO(crbug.com/417904984, crbug.com/419245842): fails flakily on
-// win-rel-ready.
-#if BUILDFLAG(IS_WIN)
-#define MAYBE_EncryptDecrypt DISABLED_EncryptDecrypt
-#else
-#define MAYBE_EncryptDecrypt EncryptDecrypt
-#endif
-IN_PROC_BROWSER_TEST_P(AppBoundEncryptionWinReencryptTest,
-                       MAYBE_EncryptDecrypt) {
+IN_PROC_BROWSER_TEST_P(AppBoundEncryptionWinReencryptTest, EncryptDecrypt) {
   ASSERT_TRUE(install_static::IsSystemInstall());
   const std::string plaintext("plaintext");
   std::string ciphertext;
   DWORD last_error;
   base::HistogramTester histograms;
+  elevation_service::EncryptFlags flags{.use_latest_key = true};
   HRESULT hr =
       EncryptAppBoundString(ProtectionLevel::PROTECTION_PATH_VALIDATION,
-                            plaintext, ciphertext, last_error);
+                            plaintext, ciphertext, last_error, &flags);
 
   ASSERT_HRESULT_SUCCEEDED(hr);
 

@@ -73,6 +73,7 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/content_uri_utils.h"
+#include "base/android/virtual_document_path.h"
 #include "base/os_compat_android.h"
 #endif
 
@@ -126,8 +127,9 @@ bool VerifySpecificPathControlledByUser(const FilePath& path,
 }
 #endif
 
-base::FilePath GetTempTemplate() {
-  return FormatTemporaryFileName("XXXXXX");
+base::FilePath GetTempTemplate(FilePath::StringViewType prefix, bool hidden) {
+  return FormatTemporaryFileName(
+      StrCat({prefix, prefix.empty() ? "" : ".", "XXXXXX"}), hidden);
 }
 
 bool AdvanceEnumeratorWithStat(FileEnumerator* traversal,
@@ -467,6 +469,11 @@ bool IsVisibleToUser(const FilePath& path) {
 }  // namespace
 
 FilePath MakeAbsoluteFilePath(const FilePath& input) {
+#if BUILDFLAG(IS_ANDROID)
+  if (input.IsContentUri() || input.IsVirtualDocumentPath()) {
+    return input;
+  }
+#endif
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   char full_path[PATH_MAX];
   if (realpath(input.value().c_str(), full_path) == nullptr) {
@@ -632,8 +639,9 @@ bool RemoveCloseOnExec(int fd) {
 bool PathExists(const FilePath& path) {
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 #if BUILDFLAG(IS_ANDROID)
-  if (path.IsContentUri()) {
-    return internal::ContentUriExists(path);
+  if (path.IsContentUri() || path.IsVirtualDocumentPath()) {
+    std::optional<FilePath> content_uri = base::ResolveToContentUri(path);
+    return content_uri && internal::ContentUriExists(*content_uri);
   }
 #endif
   return access(path.value().c_str(), F_OK) == 0;
@@ -675,7 +683,7 @@ ScopedFD CreateAndOpenFdForTemporaryFileInDir(const FilePath& directory,
   ScopedBlockingCall scoped_blocking_call(
       FROM_HERE,
       BlockingType::MAY_BLOCK);  // For call to mkstemp().
-  *path = directory.Append(GetTempTemplate());
+  *path = directory.Append(GetTempTemplate("", true));
   const std::string& tmpdir_string = path->value();
   // this should be OK since mkstemp just replaces characters in place
   char* buffer = const_cast<char*>(tmpdir_string.c_str());
@@ -864,7 +872,8 @@ bool CreateTemporaryFileInDir(const FilePath& dir, FilePath* temp_file) {
   return fd.is_valid();
 }
 
-FilePath FormatTemporaryFileName(FilePath::StringViewType identifier) {
+FilePath FormatTemporaryFileName(FilePath::StringViewType identifier,
+                                 bool hidden) {
 #if BUILDFLAG(IS_APPLE)
   std::string_view prefix = base::apple::BaseBundleID();
 #elif BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -872,7 +881,7 @@ FilePath FormatTemporaryFileName(FilePath::StringViewType identifier) {
 #else
   std::string_view prefix = "org.chromium.Chromium";
 #endif
-  return FilePath(StrCat({".", prefix, ".", identifier}));
+  return FilePath(StrCat({hidden ? "." : "", prefix, ".", identifier}));
 }
 
 ScopedFILE CreateAndOpenTemporaryStreamInDir(const FilePath& dir,
@@ -921,14 +930,15 @@ bool CreateTemporaryDirInDir(const FilePath& base_dir,
                                      new_dir);
 }
 
-bool CreateNewTempDirectory(const FilePath::StringType& prefix,
+bool CreateNewTempDirectory(FilePath::StringViewType prefix,
                             FilePath* new_temp_path) {
   FilePath tmpdir;
   if (!GetTempDir(&tmpdir)) {
     return false;
   }
 
-  return CreateTemporaryDirInDirImpl(tmpdir, GetTempTemplate(), new_temp_path);
+  return CreateTemporaryDirInDirImpl(tmpdir, GetTempTemplate(prefix, false),
+                                     new_temp_path);
 }
 
 bool CreateDirectoryAndGetError(const FilePath& full_path, File::Error* error) {
@@ -962,7 +972,7 @@ bool CreateDirectoryAndGetError(const FilePath& full_path, File::Error* error) {
     }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-    if (mkdir(subpath.value().c_str(), mode) == 0) {
+    if (File::Mkdir(subpath, mode) == 0) {
       continue;
     }
     // Mkdir failed, but it might have failed with EEXIST, or some other error
@@ -1053,6 +1063,21 @@ FILE* OpenFile(const FilePath& filename, const char* mode) {
       (strchr(mode, ',') != nullptr && strchr(mode, 'e') > strchr(mode, ',')));
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   FILE* result = nullptr;
+#if BUILDFLAG(IS_ANDROID)
+  if (filename.IsContentUri() || filename.IsVirtualDocumentPath()) {
+    std::optional<FilePath> content_uri = base::ResolveToContentUri(filename);
+    if (!content_uri) {
+      return nullptr;
+    }
+    // TODO(crbug.com/428129200): use mode.
+    int fd = internal::ContentUriGetFd(internal::OpenContentUri(
+        *content_uri, File::FLAG_OPEN | File::FLAG_READ));
+    if (fd < 0) {
+      return nullptr;
+    }
+    return fdopen(fd, mode);
+  }
+#endif
 #if BUILDFLAG(IS_APPLE)
   // macOS does not provide a mode character to set O_CLOEXEC; see
   // https://developer.apple.com/legacy/library/documentation/Darwin/Reference/ManPages/man3/fopen.3.html.
@@ -1122,6 +1147,18 @@ std::optional<uint64_t> ReadFile(const FilePath& filename, span<char> buffer) {
 
 bool WriteFile(const FilePath& filename, span<const uint8_t> data) {
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+#if BUILDFLAG(IS_ANDROID)
+  if (filename.IsVirtualDocumentPath()) {
+    std::optional<files_internal::VirtualDocumentPath> vp =
+        files_internal::VirtualDocumentPath::Parse(filename.value());
+    return vp && vp->WriteFile(data);
+  } else if (filename.IsContentUri()) {
+    File file(filename,
+              File::Flags::FLAG_WRITE | File::Flags::FLAG_CREATE_ALWAYS);
+    return file.Write(0, data).has_value();
+  }
+#endif
+
   int fd = HANDLE_EINTR(creat(filename.value().c_str(), 0666));
   if (fd < 0) {
     return false;

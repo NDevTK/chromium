@@ -14,17 +14,14 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/child_process_host.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/reload_type.h"
-#include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/site_instance.h"
 #include "content/public/common/referrer.h"
-#include "ipc/ipc_message.h"
-#include "services/network/public/cpp/resource_request_body.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "ipc/constants.mojom.h"
 #include "third_party/blink/public/common/navigation/impression.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/frame/triggering_event_info.mojom-shared.h"
@@ -32,9 +29,15 @@
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 
+namespace network {
+class ResourceRequestBody;
+class SharedURLLoaderFactory;
+}
+
 namespace content {
 
 class NavigationHandle;
+class SiteInstance;
 class WebContents;
 
 struct CONTENT_EXPORT OpenURLParams {
@@ -113,7 +116,7 @@ struct CONTENT_EXPORT OpenURLParams {
   FrameTreeNodeId frame_tree_node_id;
 
   // Routing id of the source RenderFrameHost.
-  int source_render_frame_id = MSG_ROUTING_NONE;
+  int source_render_frame_id = IPC::mojom::kRoutingIdNone;
 
   // Process id of the source RenderFrameHost.
   int source_render_process_id = ChildProcessHost::kInvalidUniqueID;

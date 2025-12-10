@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/timing/image_element_timing.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
 namespace blink {
@@ -82,10 +83,12 @@ void GetImageSizeChangeTracingData(perfetto::TracedValue context,
   dict.Add("frameId", IdentifiersFactory::FrameId(frame));
 }
 
-void LayoutImage::StyleDidChange(StyleDifference diff,
-                                 const ComputedStyle* old_style) {
+void LayoutImage::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutReplaced::StyleDidChange(diff, old_style);
+  LayoutReplaced::StyleDidChange(diff, old_style, style_change_context);
 
   RespectImageOrientationEnum old_orientation =
       old_style ? old_style->ImageOrientation()
@@ -185,12 +188,24 @@ void LayoutImage::ImageChanged(WrappedImagePtr new_image,
   }
 }
 
+namespace {
+
+bool CanQueryNaturalSize(const LayoutImageResource& image_resource) {
+  if (RuntimeEnabledFeatures::
+          LayoutImageEmptyNaturalSizeBeforeSizeAvailableEnabled()) {
+    return image_resource.IsSizeAvailable();
+  }
+  return image_resource.HasImage();
+}
+
+}  // namespace
+
 bool LayoutImage::UpdateNaturalSizeIfNeeded() {
   NOT_DESTROYED();
   PhysicalNaturalSizingInfo new_natural_dimensions;
   // If the image resource is not associated with an image then we set natural
   // dimensions of 0x0 ("represents nothing" per HTML spec).
-  if (image_resource_->HasImage()) {
+  if (CanQueryNaturalSize(*image_resource_)) {
     new_natural_dimensions = PhysicalNaturalSizingInfo::FromSizingInfo(
         image_resource_->GetNaturalDimensions(StyleRef().EffectiveZoom()));
   }
@@ -219,12 +234,12 @@ bool LayoutImage::NeedsLayoutOnNaturalSizeChange() const {
 }
 
 ResourcePriority LayoutImage::ComputeResourcePriority() const {
-  speculative_decode_parameters_.cached_resource_priority =
-      LayoutReplaced::ComputeResourcePriority();
-  return speculative_decode_parameters_.cached_resource_priority;
+  speculative_decode_parameters_.cached_resource_priority.emplace(
+      LayoutReplaced::ComputeResourcePriority());
+  return speculative_decode_parameters_.cached_resource_priority.value();
 }
 
-ResourcePriority LayoutImage::CachedResourcePriority() const {
+std::optional<ResourcePriority> LayoutImage::CachedResourcePriority() const {
   return speculative_decode_parameters_.cached_resource_priority;
 }
 
@@ -281,6 +296,16 @@ void LayoutImage::PaintReplaced(const PaintInfo& paint_info,
 void LayoutImage::Paint(const PaintInfo& paint_info) const {
   NOT_DESTROYED();
   ImagePainter(*this).Paint(paint_info);
+
+  if (image_resource_ && image_resource_->MaybeAnimated()) {
+    if (const auto* cached_image = image_resource_->CachedImage();
+        cached_image && (cached_image->NumberOfObservers() > 2)) {
+      // Images have 2 observers HTMLImageLoader and LayoutImage, when they're
+      // repeated in the same document they'll have more than 2.
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kAnimatedImageUsedMoreThanOnce);
+    }
+  }
 }
 
 void LayoutImage::AreaElementFocusChanged(HTMLAreaElement* area_element) {

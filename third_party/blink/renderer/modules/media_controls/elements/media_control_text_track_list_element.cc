@@ -86,7 +86,7 @@ void MediaControlTextTrackListElement::DefaultEventHandler(Event& event) {
     event.SetDefaultHandled();
   } else if (event.type() == event_type_names::kChange) {
     // Identify which input element was selected and set track to showing
-    Node* target = event.target()->ToNode();
+    Node* target = event.RawTarget()->ToNode();
     if (!target || !target->IsElementNode())
       return;
 
@@ -160,16 +160,16 @@ Element* MediaControlTextTrackListElement::CreateTextTrackListItem(
   if (track && (track->label().empty() || HasDuplicateLabel(track))) {
     auto* track_kind_marker =
         MakeGarbageCollected<HTMLSpanElement>(GetDocument());
-    if (track->kind() == track->CaptionsKeyword()) {
+    if (track->kind() == V8TextTrackKind::Enum::kCaptions) {
       track_kind_marker->SetShadowPseudoId(AtomicString(
           "-internal-media-controls-text-track-list-kind-captions"));
-    } else if (track->kind() == track->DescriptionsKeyword()) {
+    } else if (track->kind() == V8TextTrackKind::Enum::kDescriptions) {
       track_kind_marker->SetShadowPseudoId(AtomicString(
           "-internal-media-controls-text-track-list-kind-descriptions"));
     } else {
       // Aside from Captions and Descriptions, Subtitles is the only other
       // supported keyword.
-      DCHECK_EQ(track->kind(), track->SubtitlesKeyword());
+      DCHECK_EQ(track->kind(), V8TextTrackKind::Enum::kSubtitles);
       track_kind_marker->SetShadowPseudoId(AtomicString(
           "-internal-media-controls-text-track-list-kind-subtitles"));
     }

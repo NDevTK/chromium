@@ -5,8 +5,11 @@
 package org.chromium.chrome.browser.hub;
 
 import static org.chromium.build.NullUtil.assumeNonNull;
-import static org.chromium.chrome.browser.hub.HubToolbarProperties.ACTION_BUTTON_DATA;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.BACK_BUTTON_ENABLED;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.BACK_BUTTON_LISTENER;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.BACK_BUTTON_VISIBLE;
+import static org.chromium.chrome.browser.hub.HubToolbarProperties.HAIRLINE_VISIBILITY;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.HUB_SEARCH_ENABLED_STATE;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.IS_INCOGNITO;
 import static org.chromium.chrome.browser.hub.HubToolbarProperties.MENU_BUTTON_VISIBLE;
@@ -23,21 +26,21 @@ import android.content.res.Configuration;
 import android.view.View;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.VisibleForTesting;
 import androidx.core.util.Pair;
 
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.supplier.NullableObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.TransitiveObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.hub.HubToolbarProperties.PaneButtonLookup;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityClient;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.ResolutionType;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.feature_engagement.Tracker;
-import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 
@@ -56,6 +59,8 @@ public class HubToolbarMediator {
         HubSearchEntrypoint.INCOGNITO_SEARCHBOX,
         HubSearchEntrypoint.REGULAR_LOUPE,
         HubSearchEntrypoint.INCOGNITO_LOUPE,
+        HubSearchEntrypoint.TAB_GROUPS_SEARCHBOX,
+        HubSearchEntrypoint.TAB_GROUPS_LOUPE,
         HubSearchEntrypoint.NUM_ENTRIES
     })
     public @interface HubSearchEntrypoint {
@@ -63,9 +68,11 @@ public class HubToolbarMediator {
         int INCOGNITO_SEARCHBOX = 1;
         int REGULAR_LOUPE = 2;
         int INCOGNITO_LOUPE = 3;
+        int TAB_GROUPS_SEARCHBOX = 4;
+        int TAB_GROUPS_LOUPE = 5;
 
         // Be sure to also update enums.xml when updating these values.
-        int NUM_ENTRIES = 4;
+        int NUM_ENTRIES = 6;
     }
 
     // LINT.ThenChange(/tools/metrics/histograms/metadata/android/enums.xml:HubSearchEntrypoint)
@@ -76,24 +83,25 @@ public class HubToolbarMediator {
             new ComponentCallbacks() {
                 @Override
                 public void onConfigurationChanged(Configuration configuration) {
+                    int screenWidthDp = configuration.screenWidthDp;
+                    boolean isTablet = HubUtils.isScreenWidthTablet(screenWidthDp);
+                    mPropertyModel.set(BACK_BUTTON_VISIBLE, isTablet);
+
                     Pane pane = mPaneManager.getFocusedPaneSupplier().get();
                     if (pane == null) return;
 
-                    // Only show the search box visuals in the tab switcher and incognito panes.
+                    // Only show the search box visuals in the tab switcher, incognito and
+                    // potentially tab groups panes.
                     @PaneId int focusedPaneId = pane.getPaneId();
-                    if (focusedPaneId != PaneId.TAB_SWITCHER
-                            && focusedPaneId != PaneId.INCOGNITO_TAB_SWITCHER) {
+                    if (shouldOmitFocusedPaneForHubSearch(focusedPaneId)) {
                         mPropertyModel.set(APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION, true);
                         mPropertyModel.set(SEARCH_BOX_VISIBLE, false);
                         mPropertyModel.set(SEARCH_LOUPE_VISIBLE, false);
-                        return;
+                    } else {
+                        mPropertyModel.set(APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION, false);
+                        mPropertyModel.set(SEARCH_BOX_VISIBLE, !isTablet);
+                        mPropertyModel.set(SEARCH_LOUPE_VISIBLE, isTablet);
                     }
-
-                    int screenWidthDp = mContext.getResources().getConfiguration().screenWidthDp;
-                    boolean showLoupe = isScreenWidthTablet(screenWidthDp);
-                    mPropertyModel.set(APPLY_DELAY_FOR_SEARCH_BOX_ANIMATION, false);
-                    mPropertyModel.set(SEARCH_BOX_VISIBLE, !showLoupe);
-                    mPropertyModel.set(SEARCH_LOUPE_VISIBLE, showLoupe);
                 }
 
                 @Override
@@ -102,14 +110,11 @@ public class HubToolbarMediator {
 
     private final PropertyModel mPropertyModel;
 
-    private final Callback<FullButtonData> mOnActionButtonChangeCallback =
-            this::onActionButtonChange;
-    private @Nullable TransitiveObservableSupplier<Pane, FullButtonData> mActionButtonDataSupplier;
-
     private final Context mContext;
     private final PaneManager mPaneManager;
     private final Tracker mTracker;
     private final SearchActivityClient mSearchActivityClient;
+    private final NullableObservableSupplier<Tab> mCurrentTabSupplier;
     // The order of entries in this map are the order the buttons should appear to the user. A null
     // value should not be shown to the user.
     private final ArrayList<Pair<Integer, @Nullable DisplayButtonData>>
@@ -121,6 +126,12 @@ public class HubToolbarMediator {
     private final Callback<Pane> mOnFocusedPaneChange = this::onFocusedPaneChange;
     private final Callback<Boolean> mOnHubSearchEnabledStateChange =
             this::onHubSearchEnabledStateChange;
+    private final Callback<Boolean> mOnSearchBoxVisibilityChange =
+            this::onSearchBoxVisibilityChange;
+    private final ObservableSupplier<Boolean> mHairlineVisibilitySupplier;
+
+    private final Callback<Boolean> mOnHairlineVisibilityChange = this::onHairlineVisibilityChange;
+    private final Callback<@Nullable Tab> mOnCurrentTabChange = this::onCurrentTabChange;
 
     private @Nullable PaneButtonLookup mPaneButtonLookup;
 
@@ -130,18 +141,21 @@ public class HubToolbarMediator {
             PropertyModel propertyModel,
             PaneManager paneManager,
             Tracker tracker,
-            SearchActivityClient searchActivityClient) {
+            SearchActivityClient searchActivityClient,
+            NullableObservableSupplier<Tab> currentTabSupplier,
+            Runnable exitHubRunnable) {
         mContext = context;
         mPropertyModel = propertyModel;
         mPaneManager = paneManager;
         mTracker = tracker;
         mSearchActivityClient = searchActivityClient;
+        mCurrentTabSupplier = currentTabSupplier;
 
         for (@PaneId int paneId : paneManager.getPaneOrderController().getPaneOrder()) {
             Pane pane = paneManager.getPaneForId(paneId);
             if (pane == null) continue;
 
-            ObservableSupplier<@Nullable DisplayButtonData> supplier =
+            NullableObservableSupplier<DisplayButtonData> supplier =
                     pane.getReferenceButtonDataSupplier();
             Callback<@Nullable DisplayButtonData> observer =
                     (data) -> onReferenceButtonChange(paneId, data);
@@ -155,20 +169,25 @@ public class HubToolbarMediator {
 
             mRemoveReferenceButtonObservers.add(() -> supplier.removeObserver(observer));
 
-            pane.getHubSearchEnabledStateSupplier().addObserver(mOnHubSearchEnabledStateChange);
+            pane.getHubSearchEnabledStateSupplier().addSyncObserver(mOnHubSearchEnabledStateChange);
+            pane.getHubSearchBoxVisibilitySupplier().addSyncObserver(mOnSearchBoxVisibilityChange);
         }
+        mHairlineVisibilitySupplier =
+                paneManager
+                        .getFocusedPaneSupplier()
+                        .createTransitiveNonNull(false, Pane::getHairlineVisibilitySupplier);
+        mHairlineVisibilitySupplier.addObserver(mOnHairlineVisibilityChange);
         ObservableSupplier<Pane> focusedPaneSupplier = paneManager.getFocusedPaneSupplier();
         focusedPaneSupplier.addObserver(mOnFocusedPaneChange);
         rebuildPaneSwitcherButtonData();
 
-        mActionButtonDataSupplier =
-                new TransitiveObservableSupplier<>(
-                        focusedPaneSupplier, p -> p.getActionButtonDataSupplier());
-        mActionButtonDataSupplier.addObserver(mOnActionButtonChangeCallback);
-
         mPropertyModel.set(PANE_BUTTON_LOOKUP_CALLBACK, this::consumeButtonLookup);
 
         mPropertyModel.set(SEARCH_LISTENER, this::onSearchClicked);
+        mPropertyModel.set(BACK_BUTTON_LISTENER, exitHubRunnable);
+        mPropertyModel.set(BACK_BUTTON_ENABLED, mCurrentTabSupplier.get() != null);
+        mCurrentTabSupplier.addObserver(mOnCurrentTabChange);
+
         // Fire an event for the original setup.
         mComponentCallbacks.onConfigurationChanged(mContext.getResources().getConfiguration());
         mContext.registerComponentCallbacks(mComponentCallbacks);
@@ -176,20 +195,19 @@ public class HubToolbarMediator {
 
     /** Cleans up observers. */
     public void destroy() {
-        if (mActionButtonDataSupplier != null) {
-            mActionButtonDataSupplier.removeObserver(mOnActionButtonChangeCallback);
-            mActionButtonDataSupplier = null;
-        }
         mRemoveReferenceButtonObservers.forEach(Runnable::run);
         mRemoveReferenceButtonObservers.clear();
         mPaneManager.getFocusedPaneSupplier().removeObserver(mOnFocusedPaneChange);
         mContext.unregisterComponentCallbacks(mComponentCallbacks);
+        mCurrentTabSupplier.removeObserver(mOnCurrentTabChange);
 
         for (@PaneId int paneId : mPaneManager.getPaneOrderController().getPaneOrder()) {
             @Nullable Pane pane = mPaneManager.getPaneForId(paneId);
             if (pane == null) continue;
             pane.getHubSearchEnabledStateSupplier().removeObserver(mOnHubSearchEnabledStateChange);
+            pane.getHubSearchBoxVisibilitySupplier().removeObserver(mOnSearchBoxVisibilityChange);
         }
+        mHairlineVisibilitySupplier.removeObserver(mOnHairlineVisibilityChange);
     }
 
     /** Returns the button view for a given pane if present. */
@@ -210,10 +228,6 @@ public class HubToolbarMediator {
         return null;
     }
 
-    private void onActionButtonChange(@Nullable FullButtonData actionButtonData) {
-        mPropertyModel.set(ACTION_BUTTON_DATA, actionButtonData);
-    }
-
     private int findCachedPaneSwitcherIndex(@PaneId int paneId) {
         int size = mCachedPaneSwitcherButtonData.size();
         for (int i = 0; i < size; ++i) {
@@ -223,6 +237,14 @@ public class HubToolbarMediator {
             }
         }
         return INVALID_PANE_SWITCHER_INDEX;
+    }
+
+    private void onSearchBoxVisibilityChange(Boolean shouldShow) {
+        int screenWidthDp = mContext.getResources().getConfiguration().screenWidthDp;
+        boolean isTablet = HubUtils.isScreenWidthTablet(screenWidthDp);
+        shouldShow = !isTablet && shouldShow;
+
+        mPropertyModel.set(SEARCH_BOX_VISIBLE, shouldShow);
     }
 
     private void onReferenceButtonChange(@PaneId int paneId, @Nullable DisplayButtonData current) {
@@ -290,8 +312,7 @@ public class HubToolbarMediator {
 
         // Reset the enabled state of hub search to the supplier value or true if uninitialized
         // when toggling panes to account for a potential disabled state from incognito reauth.
-        Boolean hubSearchEnabledState = focusedPane.getHubSearchEnabledStateSupplier().get();
-        boolean enabled = hubSearchEnabledState == null ? true : hubSearchEnabledState;
+        boolean enabled = focusedPane.getHubSearchEnabledStateSupplier().get();
         mPropertyModel.set(HUB_SEARCH_ENABLED_STATE, enabled);
 
         mPropertyModel.set(MENU_BUTTON_VISIBLE, focusedPane.getMenuButtonVisible());
@@ -315,11 +336,21 @@ public class HubToolbarMediator {
         mPropertyModel.set(HUB_SEARCH_ENABLED_STATE, enabled);
     }
 
+    private void onHairlineVisibilityChange(@Nullable Boolean visible) {
+        mPropertyModel.set(HAIRLINE_VISIBILITY, Boolean.TRUE.equals(visible));
+    }
+
     private void consumeButtonLookup(PaneButtonLookup paneButtonLookup) {
         mPaneButtonLookup = paneButtonLookup;
     }
 
     private void onSearchClicked() {
+        @PaneId int focusedPaneId = mPaneManager.getFocusedPaneSupplier().get().getPaneId();
+        // Due to animations when switching between focused panes, there is exists a possibility for
+        // race conditions which can cause clicks to register or allows them to be registered when
+        // toggling panes. This logic filters out clicks unless the pane is hub search eligible.
+        if (shouldOmitFocusedPaneForHubSearch(focusedPaneId)) return;
+
         mSearchActivityClient.requestOmniboxForResult(
                 mSearchActivityClient
                         .newIntentBuilder()
@@ -327,34 +358,64 @@ public class HubToolbarMediator {
                         .setIncognito(mPropertyModel.get(IS_INCOGNITO))
                         .setResolutionType(ResolutionType.OPEN_IN_CHROME)
                         .build());
-        recordHubSearchEntrypointHistogram(
-                mPropertyModel.get(SEARCH_BOX_VISIBLE), mPropertyModel.get(IS_INCOGNITO));
+        recordHubSearchEntrypointHistogram(mPropertyModel.get(SEARCH_BOX_VISIBLE));
     }
 
-    /** Utility to determine which UI variants to show based on device width. */
-    @VisibleForTesting
-    public static boolean isScreenWidthTablet(int screenWidthDp) {
-        return screenWidthDp >= DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP;
+    private void onCurrentTabChange(@Nullable Tab tab) {
+        mPropertyModel.set(BACK_BUTTON_ENABLED, tab != null);
     }
 
-    private void recordHubSearchEntrypointHistogram(boolean isSearchBox, boolean isIncognito) {
+    private void recordHubSearchEntrypointHistogram(boolean isSearchBox) {
         // Based on the ComponentCallback#onConfigurationChanged logic for hub search, it is implied
         // that the search box and search loupe visibilities have opposite behaviors at any time.
         @HubSearchEntrypoint int action;
+        @PaneId int focusedPaneId = mPaneManager.getFocusedPaneSupplier().get().getPaneId();
 
-        if (isIncognito) {
-            action =
-                    isSearchBox
-                            ? HubSearchEntrypoint.INCOGNITO_SEARCHBOX
-                            : HubSearchEntrypoint.INCOGNITO_LOUPE;
-        } else {
-            action =
-                    isSearchBox
-                            ? HubSearchEntrypoint.REGULAR_SEARCHBOX
-                            : HubSearchEntrypoint.REGULAR_LOUPE;
+        switch (focusedPaneId) {
+            case PaneId.INCOGNITO_TAB_SWITCHER:
+                action =
+                        isSearchBox
+                                ? HubSearchEntrypoint.INCOGNITO_SEARCHBOX
+                                : HubSearchEntrypoint.INCOGNITO_LOUPE;
+                break;
+            case PaneId.TAB_SWITCHER:
+                action =
+                        isSearchBox
+                                ? HubSearchEntrypoint.REGULAR_SEARCHBOX
+                                : HubSearchEntrypoint.REGULAR_LOUPE;
+                break;
+            case PaneId.TAB_GROUPS:
+                action =
+                        isSearchBox
+                                ? HubSearchEntrypoint.TAB_GROUPS_SEARCHBOX
+                                : HubSearchEntrypoint.TAB_GROUPS_LOUPE;
+                break;
+            default:
+                assert false : "Invalid focused pane id " + focusedPaneId;
+                action = HubSearchEntrypoint.REGULAR_SEARCHBOX;
         }
 
         RecordHistogram.recordEnumeratedHistogram(
                 "Android.HubSearch.SearchBoxEntrypointV2", action, HubSearchEntrypoint.NUM_ENTRIES);
+    }
+
+    private boolean shouldOmitFocusedPaneForHubSearch(@PaneId int focusedPaneId) {
+        return focusedPaneId != PaneId.TAB_SWITCHER
+                && focusedPaneId != PaneId.INCOGNITO_TAB_SWITCHER
+                && maybeExcludeHubSearchForTabGroupsPane(focusedPaneId);
+    }
+
+    private boolean maybeExcludeHubSearchForTabGroupsPane(@PaneId int focusedPaneId) {
+        if (!OmniboxFeatures.sAndroidHubSearchTabGroups.isEnabled()
+                || !OmniboxFeatures.sAndroidHubSearchEnableOnTabGroupsPane.getValue()) {
+            return true;
+        }
+
+        return focusedPaneId != PaneId.TAB_GROUPS;
+    }
+
+    /** Test-only method to trigger configuration change for testing purposes. */
+    void triggerConfigurationChangeForTesting(Configuration configuration) {
+        mComponentCallbacks.onConfigurationChanged(configuration);
     }
 }

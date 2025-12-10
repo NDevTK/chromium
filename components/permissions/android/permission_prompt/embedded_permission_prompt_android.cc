@@ -4,7 +4,6 @@
 
 #include "components/permissions/android/permission_prompt/embedded_permission_prompt_android.h"
 
-#include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/memory/weak_ptr.h"
 #include "components/permissions/android/permission_prompt/permission_dialog_delegate.h"
@@ -32,8 +31,13 @@ EmbeddedPermissionPromptAndroid::EmbeddedPermissionPromptAndroid(
       web_contents, delegate);
   prompt_model_->CalculateCurrentVariant();
   CreatePermissionDialogDelegate();
-
   const auto& current_prompt_variant = prompt_model_->prompt_variant();
+  // TODO(crbug.com/442793180): Plumb precise/approximate values when
+  // <geolocation> prompts support it. Hardcoding to precise now to avoid double
+  // prompting.
+  if (current_prompt_variant == Variant::kAsk) {
+    SetPromptOptions(GeolocationPromptOptions{GeolocationAccuracy::kPrecise});
+  }
   prompt_model_->RecordElementAnchoredBubbleVariantUMA(current_prompt_variant);
   if (current_prompt_variant == Variant::kOsPrompt ||
       current_prompt_variant == Variant::kOsSystemSettings) {
@@ -289,12 +293,6 @@ EmbeddedPermissionPromptAndroid::GetPositiveEphemeralButtonText(
 
   return ConvertUTF16ToJavaString(
       env, l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW_THIS_TIME));
-}
-
-base::android::ScopedJavaLocalRef<jobjectArray>
-EmbeddedPermissionPromptAndroid::GetRadioButtonTexts(JNIEnv* env,
-                                                     bool is_one_time) const {
-  return base::android::ToJavaArrayOfStrings(env, base::span<std::string>());
 }
 
 bool EmbeddedPermissionPromptAndroid::ShouldUseRequestingOriginFavicon() const {

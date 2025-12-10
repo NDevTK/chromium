@@ -15,6 +15,7 @@ import android.widget.TextView.BufferType;
 
 import com.google.android.material.textfield.TextInputEditText;
 
+import org.chromium.base.ui.KeyboardUtils;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -24,7 +25,6 @@ import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileE
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.MediatorToView;
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.UrlErrorCode;
 import org.chromium.chrome.browser.suggestions.tile.tile_edit_dialog.CustomTileEditDelegates.ViewToMediator;
-import org.chromium.ui.KeyboardUtils;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.text.EmptyTextWatcher;
@@ -104,10 +104,10 @@ class CustomTileEditView extends FrameLayout
     @Override
     public void onClick(PropertyModel modelDialogModel, int buttonType) {
         if (buttonType == ModalDialogProperties.ButtonType.POSITIVE) {
-            @Nullable Editable title = mNameField.getText();
+            @Nullable Editable name = mNameField.getText();
             @Nullable Editable urlText = mUrlField.getText();
             mMediatorDelegate.onSave(
-                    (title == null) ? "" : title.toString(),
+                    (name == null) ? "" : name.toString(),
                     (urlText == null) ? "" : urlText.toString());
         } else {
             mMediatorDelegate.onCancel();
@@ -157,6 +157,8 @@ class CustomTileEditView extends FrameLayout
     @Override
     public void focusOnName() {
         mNameField.requestFocus();
+        @Nullable Editable name = mNameField.getText();
+        mNameField.setSelection((name == null) ? 0 : name.length());
         KeyboardUtils.showKeyboard(mNameField);
     }
 

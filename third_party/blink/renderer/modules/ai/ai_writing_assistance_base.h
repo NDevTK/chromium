@@ -113,9 +113,9 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
 
     if (create_abort_signal_) {
       CHECK(!create_abort_signal_->aborted());
-      create_abort_handle_ = create_abort_signal_->AddAlgorithm(WTF::BindOnce(
-          &AIWritingAssistanceBase::OnCreateAbortSignalAborted,
-          WrapWeakPersistent(this), WrapWeakPersistent(script_state)));
+      create_abort_handle_ = create_abort_signal_->AddAlgorithm(
+          BindOnce(&AIWritingAssistanceBase::OnCreateAbortSignalAborted,
+                   WrapWeakPersistent(this), WrapWeakPersistent(script_state)));
     }
   }
 
@@ -164,7 +164,7 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
     RecordCreateOptionMetrics(*options, "availability");
     RemoteCanCreate(
         ai_manager_remote, options,
-        WTF::BindOnce(
+        BindOnce(
             [](ScriptPromiseResolver<V8Availability>* resolver,
                ExecutionContext* execution_context,
                mojom::blink::ModelAvailabilityCheckResult result) {
@@ -227,8 +227,7 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
   ScriptPromise<IDLString> execute(ScriptState* script_state,
                                    const String& input,
                                    const ExecuteOptions* options,
-                                   ExceptionState& exception_state,
-                                   AIMetrics::AIAPI metric_api_name) {
+                                   ExceptionState& exception_state) {
     if (!script_state->ContextIsValid()) {
       ThrowInvalidContextException(exception_state);
       return ScriptPromise<IDLString>();
@@ -246,9 +245,6 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
       return ScriptPromise<IDLString>();
     }
 
-    base::UmaHistogramEnumeration(
-        AIMetrics::GetAIAPIUsageMetricName(metric_session_type_),
-        metric_api_name);
     base::UmaHistogramCounts1M(
         AIMetrics::GetAISessionRequestSizeMetricName(metric_session_type_),
         static_cast<int>(input.CharactersSizeInBytes()));
@@ -267,11 +263,14 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
         options->getContextOr(g_empty_string).StripWhiteSpace();
     // Pass persistent refs to keep this instance alive during the response.
     auto pending_remote = CreateModelExecutionResponder(
-        script_state, composite_signal, resolver, task_runner_,
-        metric_session_type_,
+        script_state, composite_signal, task_runner_, metric_session_type_,
+        BindOnce(&ResolvePromiseOnCompletion<IDLString>,
+                 WrapPersistent(resolver)),
         base::DoNothingWithBoundArgs(WrapPersistent(this)),
-        base::DoNothingWithBoundArgs(WrapPersistent(this)),
-        /*resolve_override_callback=*/base::NullCallback());
+        BindOnce(&RejectPromiseOnError<IDLString>, WrapPersistent(resolver)),
+        BindOnce(&RejectPromiseOnAbort<IDLString>, WrapPersistent(resolver),
+                 WrapPersistent(composite_signal),
+                 WrapPersistent(script_state)));
     remoteExecute(trimmed_input, trimmed_context, std::move(pending_remote));
     return promise;
   }
@@ -281,8 +280,7 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
   ReadableStream* executeStreaming(ScriptState* script_state,
                                    const String& input,
                                    const ExecuteOptions* options,
-                                   ExceptionState& exception_state,
-                                   AIMetrics::AIAPI metric_api_name) {
+                                   ExceptionState& exception_state) {
     if (!script_state->ContextIsValid()) {
       ThrowInvalidContextException(exception_state);
       return nullptr;
@@ -300,9 +298,6 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
       return nullptr;
     }
 
-    base::UmaHistogramEnumeration(
-        AIMetrics::GetAIAPIUsageMetricName(metric_session_type_),
-        metric_api_name);
     base::UmaHistogramCounts1M(
         AIMetrics::GetAISessionRequestSizeMetricName(metric_session_type_),
         static_cast<int>(input.CharactersSizeInBytes()));
@@ -352,7 +347,7 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
 
     remote_->MeasureUsage(
         input, options->getContextOr(g_empty_string),
-        WTF::BindOnce(
+        BindOnce(
             [](ScriptPromiseResolver<IDLDouble>* resolver, AbortSignal* signal,
                std::optional<uint32_t> usage) {
               ExecutionContext* context = resolver->GetExecutionContext();
@@ -383,10 +378,6 @@ class AIWritingAssistanceBase : public ExecutionContextClient {
       ThrowInvalidContextException(exception_state);
       return;
     }
-
-    base::UmaHistogramEnumeration(
-        AIMetrics::GetAIAPIUsageMetricName(metric_session_type_),
-        AIMetrics::AIAPI::kSessionDestroy);
 
     destruction_abort_controller_->abort(script_state);
     DestroyImpl();

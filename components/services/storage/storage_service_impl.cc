@@ -134,21 +134,16 @@ void StorageServiceImpl::BindLocalStorageControl(
       return;
     }
 
-    auto iter = persistent_local_storage_map_.find(*path);
-    bool found = iter != persistent_local_storage_map_.end();
-    // The map shouldn't contain an entry for this path. We should only bind a
-    // LocalStorage mojom::Receiver once.
-    CHECK(!found, base::NotFatalUntil::M140);
     // TODO(crbug.com/396030877): Remove this workaround to remove the
     // pre-existing LocalStorage once the issue is resolved.
-    if (found) {
+    auto iter = persistent_local_storage_map_.find(*path);
+    if (iter != persistent_local_storage_map_.end()) {
       ShutDownAndRemoveLocalStorage(iter->second);
     }
   }
 
   auto new_local_storage = std::make_unique<LocalStorageImpl>(
       path.value_or(base::FilePath()),
-      base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(&StorageServiceImpl::ShutDownAndRemoveLocalStorage,
                      weak_ptr_factory_.GetWeakPtr()),
       std::move(receiver));
@@ -167,24 +162,16 @@ void StorageServiceImpl::BindSessionStorageControl(
       return;
     }
 
-    auto iter = persistent_session_storage_map_.find(*path);
-    bool found = iter != persistent_session_storage_map_.end();
-    // The map shouldn't contain an entry for this path. We should only bind a
-    // SessionStorage mojom::Receiver once.
-    CHECK(!found, base::NotFatalUntil::M140);
     // TODO(crbug.com/396030877): Remove this workaround to remove the
     // pre-existing SessionStorage once the issue is resolved.
-    if (found) {
+    auto iter = persistent_session_storage_map_.find(*path);
+    if (iter != persistent_session_storage_map_.end()) {
       ShutDownAndRemoveSessionStorage(iter->second);
     }
   }
 
   auto new_session_storage = std::make_unique<SessionStorageImpl>(
       path.value_or(base::FilePath()),
-      base::ThreadPool::CreateSequencedTaskRunner(
-          {base::MayBlock(), base::WithBaseSyncPrimitives(),
-           base::TaskShutdownBehavior::BLOCK_SHUTDOWN}),
-      base::SequencedTaskRunner::GetCurrentDefault(),
 #if BUILDFLAG(IS_ANDROID)
       // On Android there is no support for session storage restoring, and since
       // the restoring code is responsible for database cleanup, we must

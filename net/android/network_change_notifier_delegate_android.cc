@@ -4,7 +4,6 @@
 
 #include "net/android/network_change_notifier_delegate_android.h"
 
-#include "base/android/build_info.h"
 #include "base/android/jni_array.h"
 #include "base/check.h"
 #include "base/notreached.h"
@@ -15,7 +14,6 @@
 #include "net/net_jni_headers/NetworkActiveNotifier_jni.h"
 #include "net/net_jni_headers/NetworkChangeNotifier_jni.h"
 
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -197,7 +195,6 @@ bool NetworkChangeNotifierDelegateAndroid::IsDefaultNetworkActive() {
 
 void NetworkChangeNotifierDelegateAndroid::NotifyConnectionCostChanged(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jint new_connection_cost) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   const ConnectionCost actual_connection_cost =
@@ -210,7 +207,6 @@ void NetworkChangeNotifierDelegateAndroid::NotifyConnectionCostChanged(
 
 void NetworkChangeNotifierDelegateAndroid::NotifyConnectionTypeChanged(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jint new_connection_type,
     jlong default_netid) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -258,7 +254,6 @@ jint NetworkChangeNotifierDelegateAndroid::GetConnectionCost(JNIEnv*, jobject) {
 
 void NetworkChangeNotifierDelegateAndroid::NotifyConnectionSubtypeChanged(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jint subtype) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   double new_max_bandwidth =
@@ -275,7 +270,6 @@ void NetworkChangeNotifierDelegateAndroid::NotifyConnectionSubtypeChanged(
 
 void NetworkChangeNotifierDelegateAndroid::NotifyOfNetworkConnect(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jlong net_id,
     jint connection_type) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -303,7 +297,6 @@ void NetworkChangeNotifierDelegateAndroid::NotifyOfNetworkConnect(
 
 void NetworkChangeNotifierDelegateAndroid::NotifyOfNetworkSoonToDisconnect(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jlong net_id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   handles::NetworkHandle network = net_id;
@@ -319,7 +312,6 @@ void NetworkChangeNotifierDelegateAndroid::NotifyOfNetworkSoonToDisconnect(
 
 void NetworkChangeNotifierDelegateAndroid::NotifyOfNetworkDisconnect(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jlong net_id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   handles::NetworkHandle network = net_id;
@@ -337,8 +329,7 @@ void NetworkChangeNotifierDelegateAndroid::NotifyOfNetworkDisconnect(
 
 void NetworkChangeNotifierDelegateAndroid::NotifyPurgeActiveNetworkList(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jlongArray>& active_networks) {
+    const JavaRef<jlongArray>& active_networks) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   NetworkList active_network_list;
   base::android::JavaLongArrayToInt64Vector(env, active_networks,
@@ -360,7 +351,7 @@ void NetworkChangeNotifierDelegateAndroid::NotifyPurgeActiveNetworkList(
     }
   }
   for (auto disconnected_network : disconnected_networks)
-    NotifyOfNetworkDisconnect(env, obj, disconnected_network);
+    NotifyOfNetworkDisconnect(env, disconnected_network);
 }
 
 void NetworkChangeNotifierDelegateAndroid::NotifyOfDefaultNetworkActive(
@@ -513,3 +504,6 @@ void NetworkChangeNotifierDelegateAndroid::
 }
 
 }  // namespace net
+
+DEFINE_JNI(NetworkActiveNotifier)
+DEFINE_JNI(NetworkChangeNotifier)

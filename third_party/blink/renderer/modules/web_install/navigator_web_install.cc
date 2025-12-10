@@ -6,6 +6,7 @@
 
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/common/scheme_registry.h"
 #include "third_party/blink/public/mojom/web_install/web_install.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
@@ -22,7 +23,6 @@
 
 namespace blink {
 
-const char NavigatorWebInstall::kSupplementName[] = "NavigatorWebInstall";
 const char kInvalidInstallUrlErrorDetails[] = "Invalid install url";
 const char kInvalidManifestIdErrorDetails[] = "Invalid manifest id";
 
@@ -47,8 +47,7 @@ void OnInstallResponse(ScriptPromiseResolver<WebInstallResult>* resolver,
 }
 
 NavigatorWebInstall::NavigatorWebInstall(Navigator& navigator)
-    : Supplement<Navigator>(navigator),
-      service_(navigator.GetExecutionContext()) {}
+    : navigator_(navigator), service_(navigator.GetExecutionContext()) {}
 
 // static:
 ScriptPromise<WebInstallResult> NavigatorWebInstall::install(
@@ -93,7 +92,7 @@ ScriptPromise<WebInstallResult> NavigatorWebInstall::InstallImpl(
     return ScriptPromise<WebInstallResult>();
   }
 
-  auto* frame = GetSupplementable()->DomWindow()->GetFrame();
+  auto* frame = navigator_->DomWindow()->GetFrame();
   if (!LocalFrame::ConsumeTransientUserActivation(frame)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotAllowedError,
@@ -114,7 +113,7 @@ ScriptPromise<WebInstallResult> NavigatorWebInstall::InstallImpl(
   if (!manifest_id && !install_url) {
     GetService()->Install(
         /*options=*/nullptr,
-        WTF::BindOnce(&blink::OnInstallResponse, WrapPersistent(resolver)));
+        BindOnce(&blink::OnInstallResponse, WrapPersistent(resolver)));
     return promise;
   }
 
@@ -140,24 +139,23 @@ ScriptPromise<WebInstallResult> NavigatorWebInstall::InstallImpl(
     options->manifest_id = resolved_id;
   }
 
-  GetService()->Install(
-      std::move(options),
-      WTF::BindOnce(&blink::OnInstallResponse, WrapPersistent(resolver)));
+  GetService()->Install(std::move(options), BindOnce(&blink::OnInstallResponse,
+                                                     WrapPersistent(resolver)));
   return promise;
 }
 
 void NavigatorWebInstall::Trace(Visitor* visitor) const {
   visitor->Trace(service_);
-  Supplement<Navigator>::Trace(visitor);
+  visitor->Trace(navigator_);
 }
 
 NavigatorWebInstall& NavigatorWebInstall::From(Navigator& navigator) {
   NavigatorWebInstall* navigator_web_install =
-      Supplement<Navigator>::From<NavigatorWebInstall>(navigator);
+      navigator.GetNavigatorWebInstall();
   if (!navigator_web_install) {
     navigator_web_install =
         MakeGarbageCollected<NavigatorWebInstall>(navigator);
-    ProvideTo(navigator, navigator_web_install);
+    navigator.SetNavigatorWebInstall(navigator_web_install);
   }
   return *navigator_web_install;
 }
@@ -165,13 +163,13 @@ NavigatorWebInstall& NavigatorWebInstall::From(Navigator& navigator) {
 HeapMojoRemote<mojom::blink::WebInstallService>&
 NavigatorWebInstall::GetService() {
   if (!service_.is_bound()) {
-    auto* context = GetSupplementable()->GetExecutionContext();
+    auto* context = navigator_->GetExecutionContext();
     context->GetBrowserInterfaceBroker().GetInterface(
         service_.BindNewPipeAndPassReceiver(
             context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
     // In case the other endpoint gets disconnected, we want to reset our end of
     // the pipe as well so that we don't remain connected to a half-open pipe.
-    service_.set_disconnect_handler(WTF::BindOnce(
+    service_.set_disconnect_handler(BindOnce(
         &NavigatorWebInstall::OnConnectionError, WrapWeakPersistent(this)));
   }
   return service_;
@@ -184,6 +182,8 @@ void NavigatorWebInstall::OnConnectionError() {
 bool NavigatorWebInstall::CheckPreconditionsMaybeThrow(
     ScriptState* script_state,
     ExceptionState& exception_state) {
+  CHECK(base::FeatureList::IsEnabled(blink::features::kWebAppInstallation));
+
   if (!ExecutionContext::From(script_state)
            ->IsFeatureEnabled(
                network::mojom::PermissionsPolicyFeature::kWebAppInstallation)) {
@@ -193,7 +193,7 @@ bool NavigatorWebInstall::CheckPreconditionsMaybeThrow(
     return false;
   }
 
-  Navigator* const navigator = GetSupplementable();
+  Navigator* const navigator = navigator_;
 
   if (!navigator->DomWindow()) {
     exception_state.ThrowDOMException(
@@ -245,8 +245,7 @@ KURL NavigatorWebInstall::ValidateAndResolveManifestId(
     return resolved;
   }
 
-  KURL document_url =
-      GetSupplementable()->DomWindow()->GetFrame()->GetDocument()->Url();
+  KURL document_url = navigator_->DomWindow()->GetFrame()->GetDocument()->Url();
   KURL origin = KURL(SecurityOrigin::Create(document_url)->ToString());
 
   resolved = KURL(origin, manifest_id);

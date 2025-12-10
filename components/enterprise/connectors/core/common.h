@@ -20,7 +20,6 @@
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/common/proto/synced_from_google3/chrome_reporting_entity.pb.h"
 #include "components/enterprise/connectors/core/reporting_constants.h"
-#include "ui/gfx/range/range.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(USE_BLINK)
@@ -30,6 +29,10 @@ namespace download {
 class DownloadItem;
 }  // namespace download
 #endif  // BUILDFLAG(USE_BLINK)
+
+namespace gfx {
+class Range;
+}  // namespace gfx
 
 namespace signin {
 class IdentityManager;
@@ -215,6 +218,9 @@ enum class FinalContentAnalysisResult {
 
   // Show that no issue was found and that the user may proceed.
   SUCCESS = 5,
+
+  // Show that the download is blocked and may proceed to cloud storage.
+  FORCE_SAVE_TO_CLOUD = 6,
 };
 
 // Result for a single request of the RequestHandler classes.
@@ -303,6 +309,10 @@ enum class EventResult {
   // The user has chosen to use the data even though it violated enterprise
   // rules.
   BYPASSED,
+
+  // The user was not allowed to download the file locally. Download will
+  // proceed directly to cloud storage, if the user is logged in.
+  FORCED_SAVE_TO_CLOUD,
 };
 
 // Helper function to convert a EventResult to a string that.  The format of
@@ -321,6 +331,40 @@ std::string GetSuccessfulUploadDurationUmaMetricName(
 // Returns the UMA metrics for tracking the failed-to-upload event duration.
 std::string GetFailedUploadDurationUmaMetricName(
     EnterpriseReportingEventType event_type);
+
+// Access points used to record UMA metrics and specify which code location is
+// initiating a deep scan. Any new caller of
+// ContentAnalysisDelegate::CreateForWebContents should add an access point
+// here instead of reusing an existing value. histograms.xml should also be
+// updated by adding histograms with names
+//   "SafeBrowsing.DeepScan.<access-point>.BytesPerSeconds"
+//   "SafeBrowsing.DeepScan.<access-point>.Duration"
+//   "SafeBrowsing.DeepScan.<access-point>.<result>.Duration"
+// for the new access point and every possible result.
+// LINT.IfChange(DeepScanAccessPoint)
+enum class DeepScanAccessPoint {
+  // A deep scan was initiated from downloading 1+ file(s).
+  DOWNLOAD,
+
+  // A deep scan was initiated from uploading 1+ file(s) via a system dialog.
+  UPLOAD,
+
+  // A deep scan was initiated from drag-and-dropping text or 1+ file(s).
+  DRAG_AND_DROP,
+
+  // A deep scan was initiated from pasting text.
+  PASTE,
+
+  // A deep scan was initiated from printing a page.
+  PRINT,
+
+  // A deep scan was initiated from transferring 1+ file(s) within ChromeOS.
+  FILE_TRANSFER,
+
+  kMaxValue = FILE_TRANSFER,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:DeepScanAccessPoint)
+std::string DeepScanAccessPointToString(DeepScanAccessPoint access_point);
 
 }  // namespace enterprise_connectors
 

@@ -31,9 +31,6 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
   r.SECURITY = r.PRIVACY.createChild('/security');
 
   r.COOKIES = r.PRIVACY.createChild('/cookies');
-  if (loadTimeData.getBoolean('enableIncognitoTrackingProtections') ) {
-    r.INCOGNITO_TRACKING_PROTECTIONS = r.PRIVACY.createChild('/incognito');
-  }
 
   if (!loadTimeData.getBoolean('isPrivacySandboxRestricted')) {
     r.PRIVACY_SANDBOX = r.PRIVACY.createChild('/adPrivacy');
@@ -70,11 +67,9 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
   r.SITE_SETTINGS_AR = r.SITE_SETTINGS.createChild('ar');
   r.SITE_SETTINGS_AUTOMATIC_DOWNLOADS =
       r.SITE_SETTINGS.createChild('automaticDownloads');
-  if (loadTimeData.getBoolean('autoPictureInPictureEnabled')) {
-    r.SITE_SETTINGS_AUTO_PICTURE_IN_PICTURE =
-        r.SITE_SETTINGS.createChild('autoPictureInPicture');
-  }
-  if (loadTimeData.getBoolean('capturedSurfaceControlEnabled')) {
+  r.SITE_SETTINGS_AUTO_PICTURE_IN_PICTURE =
+      r.SITE_SETTINGS.createChild('autoPictureInPicture');
+  if (loadTimeData.getBoolean('enableCapturedSurfaceControl')) {
     r.SITE_SETTINGS_CAPTURED_SURFACE_CONTROL =
         r.SITE_SETTINGS.createChild('capturedSurfaceControl');
   }
@@ -139,15 +134,14 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
   r.SITE_SETTINGS_WINDOW_MANAGEMENT =
       r.SITE_SETTINGS.createChild('windowManagement');
   r.SITE_SETTINGS_FILE_SYSTEM_WRITE = r.SITE_SETTINGS.createChild('filesystem');
-  r.SITE_SETTINGS_FILE_SYSTEM_WRITE_DETAILS =
-      r.SITE_SETTINGS_FILE_SYSTEM_WRITE.createChild('siteDetails');
+  if (loadTimeData.getBoolean('enablePersistentPermissions')) {
+    r.SITE_SETTINGS_FILE_SYSTEM_WRITE_DETAILS =
+        r.SITE_SETTINGS_FILE_SYSTEM_WRITE.createChild('siteDetails');
+  }
   r.SITE_SETTINGS_LOCAL_FONTS = r.SITE_SETTINGS.createChild('localFonts');
   r.SITE_SETTINGS_STORAGE_ACCESS = r.SITE_SETTINGS.createChild('storageAccess');
-
-  if (loadTimeData.getBoolean('enableAutomaticFullscreenContentSetting')) {
-    r.SITE_SETTINGS_AUTOMATIC_FULLSCREEN =
-        r.SITE_SETTINGS.createChild('automaticFullScreen');
-  }
+  r.SITE_SETTINGS_AUTOMATIC_FULLSCREEN =
+      r.SITE_SETTINGS.createChild('automaticFullScreen');
   if (loadTimeData.getBoolean('enableWebAppInstallation')) {
     r.SITE_SETTINGS_WEB_APP_INSTALLATION =
         r.SITE_SETTINGS.createChild('webApplications');
@@ -164,28 +158,37 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
 function createRoutes(): SettingsRoutes {
   const r: Partial<SettingsRoutes> = {};
 
-  // Root pages.
+  // Root page.
   r.BASIC = new Route('/');
-  r.ABOUT = new Route('/help', loadTimeData.getString('aboutPageTitle'));
 
+  r.ABOUT = r.BASIC.createSection(
+      '/help', 'about', loadTimeData.getString('aboutPageTitle'));
+
+  // Search page.
   r.SEARCH = r.BASIC.createSection(
       '/search', 'search', loadTimeData.getString('searchPageTitle'));
+  r.SEARCH_ENGINES = r.SEARCH.createChild('/searchEngines');
 
-  if (!loadTimeData.getBoolean('isGuest')) {
+  const visibility = pageVisibility || {};
+
+  if (visibility.people !== false) {
     r.PEOPLE = r.BASIC.createSection(
         '/people', 'people', loadTimeData.getString('peoplePageTitle'));
-    // <if expr="not chromeos_ash">
+    // <if expr="not is_chromeos">
     r.SIGN_OUT = r.PEOPLE.createChild('/signOut');
     r.SIGN_OUT.isNavigableDialog = true;
     r.IMPORT_DATA = r.PEOPLE.createChild('/importData');
     r.IMPORT_DATA.isNavigableDialog = true;
+    if (loadTimeData.getBoolean('replaceSyncPromosWithSignInPromos')) {
+      r.ACCOUNT = r.PEOPLE.createChild('/account');
+      r.GOOGLE_SERVICES = r.PEOPLE.createChild('/googleServices');
+    }
+    r.MANAGE_PROFILE = r.PEOPLE.createChild('/manageProfile');
     // </if>
 
     r.SYNC = r.PEOPLE.createChild('/syncSetup');
     r.SYNC_ADVANCED = r.SYNC.createChild('/syncSetup/advanced');
   }
-
-  const visibility = pageVisibility || {};
 
   if (visibility.ai !== false && loadTimeData.getBoolean('showAiPage')) {
     r.AI = r.BASIC.createSection(
@@ -204,20 +207,10 @@ function createRoutes(): SettingsRoutes {
     }
     // <if expr="enable_glic">
     if (loadTimeData.getBoolean('showGlicSettings')) {
-      r.GLIC_SECTION = r.AI.createSection(
-          '/ai/glicSection', 'glicSection',
-          loadTimeData.getString('glicPageTitle'));
-      r.GEMINI = r.GLIC_SECTION.createChild('/ai/gemini');
+      r.GEMINI = r.AI.createChild('/ai/gemini');
     }
     // </if>
   }
-
-  // <if expr="not chromeos_ash">
-  if (visibility.people !== false) {
-    assert(r.PEOPLE);
-    r.MANAGE_PROFILE = r.PEOPLE.createChild('/manageProfile');
-  }
-  // </if>
 
   if (visibility.appearance !== false) {
     r.APPEARANCE = r.BASIC.createSection(
@@ -226,14 +219,31 @@ function createRoutes(): SettingsRoutes {
     r.FONTS = r.APPEARANCE.createChild('/fonts');
   }
 
-  if (visibility.autofill !== false) {
+  if (loadTimeData.getBoolean('enableYourSavedInfoSettingsPage')) {
+    if (visibility.yourSavedInfo !== false) {
+      r.YOUR_SAVED_INFO = r.BASIC.createSection(
+          '/yourSavedInfo', 'yourSavedInfo',
+          loadTimeData.getString('yourSavedInfoPageTitle'));
+
+      r.PAYMENTS = r.YOUR_SAVED_INFO.createChild('/payments');
+      r.YOUR_SAVED_INFO_CONTACT_INFO =
+          r.YOUR_SAVED_INFO.createChild('/contactInfo');
+      r.YOUR_SAVED_INFO_IDENTITY_DOCS =
+          r.YOUR_SAVED_INFO.createChild('/identityDocs');
+      r.YOUR_SAVED_INFO_TRAVEL = r.YOUR_SAVED_INFO.createChild('/travel');
+
+      // <if expr="is_win or is_macosx">
+      r.PASSKEYS = r.YOUR_SAVED_INFO.createChild('/passkeys');
+      // </if>
+    }
+  } else if (visibility.autofill !== false) {
     r.AUTOFILL = r.BASIC.createSection(
         '/autofill', 'autofill', loadTimeData.getString('autofillPageTitle'));
     r.PAYMENTS = r.AUTOFILL.createChild('/payments');
     r.ADDRESSES = r.AUTOFILL.createChild('/addresses');
 
     if (loadTimeData.getBoolean('showAutofillAiControl')) {
-      r.AUTOFILL_AI = r.AUTOFILL.createChild('/autofillAi');
+      r.AUTOFILL_AI = r.AUTOFILL.createChild('/enhancedAutofill');
     }
 
     // <if expr="is_win or is_macosx">
@@ -255,59 +265,62 @@ function createRoutes(): SettingsRoutes {
   }
   // </if>
 
-  r.SEARCH_ENGINES = r.SEARCH.createChild('/searchEngines');
-
   if (visibility.onStartup !== false) {
     r.ON_STARTUP = r.BASIC.createSection(
         '/onStartup', 'onStartup', loadTimeData.getString('onStartup'));
   }
 
   // Advanced Routes
-  if (visibility.advancedSettings !== false) {
-    r.ADVANCED = new Route('/advanced');
+  r.ADVANCED = new Route('/advanced');
 
+  if (visibility.languages !== false) {
     r.LANGUAGES = r.ADVANCED.createSection(
         '/languages', 'languages',
         loadTimeData.getString('languagesPageTitle'));
-    r.SPELL_CHECK = r.LANGUAGES.createSection('/spellCheck', 'spellCheck');
-    // <if expr="not chromeos_ash and not is_macosx">
+    r.SPELL_CHECK = r.LANGUAGES.createSection('/spellCheck', 'languages');
+    // <if expr="not is_chromeos and not is_macosx">
     r.EDIT_DICTIONARY = r.SPELL_CHECK.createChild('/editDictionary');
     // </if>
+  }
 
-    if (visibility.downloads !== false) {
-      r.DOWNLOADS = r.ADVANCED.createSection(
-          '/downloads', 'downloads',
-          loadTimeData.getString('downloadsPageTitle'));
-    }
+  if (visibility.downloads !== false) {
+    r.DOWNLOADS = r.ADVANCED.createSection(
+        '/downloads', 'downloads',
+        loadTimeData.getString('downloadsPageTitle'));
+  }
 
+  if (visibility.a11y !== false) {
     r.ACCESSIBILITY = r.ADVANCED.createSection(
         '/accessibility', 'a11y', loadTimeData.getString('a11yPageTitle'));
 
     // <if expr="is_linux">
     r.CAPTIONS = r.ACCESSIBILITY.createChild('/captions');
     // </if>
+  }
 
-    // <if expr="not chromeos_ash">
+  // <if expr="not is_chromeos">
+  if (visibility.system !== false) {
     r.SYSTEM = r.ADVANCED.createSection(
         '/system', 'system', loadTimeData.getString('systemPageTitle'));
-    // </if>
-
-    if (visibility.reset !== false) {
-      r.RESET = r.ADVANCED.createSection(
-          '/reset', 'reset', loadTimeData.getString('resetPageTitle'));
-      r.RESET_DIALOG = r.RESET.createChild('/resetProfileSettings');
-      r.RESET_DIALOG.isNavigableDialog = true;
-      r.TRIGGERED_RESET_DIALOG =
-          r.RESET.createChild('/triggeredResetProfileSettings');
-      r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
-    }
-
-    if (visibility.performance !== false) {
-      r.PERFORMANCE = r.BASIC.createSection(
-          '/performance', 'performance',
-          loadTimeData.getString('performancePageTitle'));
-    }
   }
+  // </if>
+
+  if (visibility.reset !== false) {
+    r.RESET = r.ADVANCED.createSection(
+        '/reset', 'reset', loadTimeData.getString('resetPageTitle'));
+    r.RESET_DIALOG = r.RESET.createChild('/resetProfileSettings');
+    r.RESET_DIALOG.isNavigableDialog = true;
+    r.TRIGGERED_RESET_DIALOG =
+        r.RESET.createChild('/triggeredResetProfileSettings');
+    r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
+  }
+
+  if (visibility.performance !== false) {
+    r.PERFORMANCE = r.BASIC.createSection(
+        '/performance', 'performance',
+        loadTimeData.getString('performancePageTitle'));
+  }
+
   return r as unknown as SettingsRoutes;
 }
 
@@ -337,3 +350,17 @@ window.addEventListener('popstate', function() {
 });
 
 export let routes: SettingsRoutes = Router.getInstance().getRoutes();
+
+// Returns the "effective" route when at chrome://settings/.
+export function getTopLevelRoute(): Route {
+  if (!loadTimeData.getBoolean('isGuest')) {
+    return routes.PEOPLE;
+  }
+
+  let guestTopLevelRoute = routes.SEARCH;
+  // <if expr="is_chromeos">
+  guestTopLevelRoute = routes.PRIVACY;
+  // </if>
+
+  return guestTopLevelRoute;
+}

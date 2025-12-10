@@ -47,23 +47,71 @@ namespace blink {
 class DOMWrapperWorld;
 class ScriptWrappable;
 
-static constexpr v8::CppHeapPointerTag kDOMWrappersTag =
-    v8::CppHeapPointerTag::kDefaultTag;
-
 // LINT.IfChange(ScriptWrappableStartTag)
 constexpr std::underlying_type_t<v8::CppHeapPointerTag>
     kScriptWrappableStartTag = 256;
 // LINT.ThenChange(third_party/blink/renderer/bindings/scripts/web_idl/idl_compiler.py:ScriptWrappableStartTag)
 
+static constexpr std::underlying_type_t<v8::CppHeapPointerTag>
+    kLastGeneratedScriptWrappableTag = 1500;
+
+enum class ScriptWrappableArrayTag : std::underlying_type_t<
+    v8::CppHeapPointerTag> {
+  kFirst = kLastGeneratedScriptWrappableTag,
+  kDOMArrayBufferTag,
+  // Start of DOMArrayBufferView subclasses
+  kDOMArrayBufferViewTag,
+  kDOMDataViewTag,
+  kDOMBigInt64ArrayTag,
+  kDOMBigUint64ArrayTag,
+  kDOMInt8ArrayTag,
+  kDOMInt16ArrayTag,
+  kDOMInt32ArrayTag,
+  kDOMUint8ArrayTag,
+  kDOMUint8ClampedArrayTag,
+  kDOMUint16ArrayTag,
+  kDOMUint32ArrayTag,
+  kDOMFloat16ArrayTag,
+  kDOMFloat32ArrayTag,
+  kDOMFloat64ArrayTag,
+  // End of DOMArrayBufferView subclasses
+  kDOMSharedArrayBufferTag,
+  kFrozenArrayTag,
+  kScriptFunctionHolderTag,
+  // Start of ObservableArrayExoticObject subclasses
+  kObservableArrayExoticObjectTag,
+  kV8ObservableArrayCSSStyleSheetTag,
+  kV8ObservableArraySpeechRecognitionPhraseTag,
+  // End of ObservableArrayExoticObject subclasses
+  kLastTag,
+};
+
+// `kLastScriptWrappableTag` is an upper bound on the number of ScriptWrappable
+// sub-types. If more sub-types are added, the number can be increased
+// accordingly. Ideally this upper bound would be generated automatically, but
+// that may be difficult.
+static constexpr v8::CppHeapPointerTag kLastScriptWrappableTag =
+    static_cast<v8::CppHeapPointerTag>(ScriptWrappableArrayTag::kLastTag);
+
+static_assert(static_cast<uint16_t>(kLastScriptWrappableTag) <
+                  static_cast<uint16_t>(gin::kFirstPointerTag),
+              "The tag range of ScriptWrappable and gin::Wrappable should be "
+              "disjoint. If they overlap, then the gin:Wrappable range should "
+              "be moved backwards");
+
 constexpr v8::CppHeapPointerTagRange kScriptWrappableTagRange(
     static_cast<v8::CppHeapPointerTag>(kScriptWrappableStartTag),
     v8::CppHeapPointerTag::kLastTag);
 
+constexpr v8::CppHeapPointerTagRange kScriptWrappableOrGinWrappableTagRange(
+    static_cast<v8::CppHeapPointerTag>(kScriptWrappableStartTag),
+    static_cast<v8::CppHeapPointerTag>(gin::kLastPointerTag));
+
 enum class CppHeapExternalTag : std::underlying_type_t<v8::CppHeapPointerTag> {
   kFirst = 1,
-  kWrappableTaskStateTag = kFirst,
+  kTaskAttributionTaskStateTag = kFirst,
 
-  kLastTag = kWrappableTaskStateTag
+  kLastTag = kTaskAttributionTaskStateTag
 };
 
 static_assert(static_cast<std::underlying_type_t<v8::CppHeapPointerTag>>(
@@ -142,7 +190,7 @@ struct PLATFORM_EXPORT WrapperTypeInfo final
 
   static bool HasLegacyInternalFieldsSet(v8::Local<v8::Object> object) {
     for (int i = 0, n = object->InternalFieldCount(); i < n; ++i) {
-      if (object->GetAlignedPointerFromInternalField(i)) {
+      if (object->GetAlignedPointerFromInternalField(i, gin::kDeprecatedData)) {
         return true;
       }
     }
@@ -187,6 +235,12 @@ inline ScriptWrappable* ToAnyScriptWrappable(
     const v8::TracedReference<v8::Object>& wrapper) {
   return v8::Object::Unwrap<ScriptWrappable>(isolate, wrapper,
                                              kScriptWrappableTagRange);
+}
+
+inline v8::Object::Wrappable* ToAnyWrappable(v8::Isolate* isolate,
+                                             v8::Local<v8::Object> wrapper) {
+  return v8::Object::Unwrap<v8::Object::Wrappable>(
+      isolate, wrapper, kScriptWrappableOrGinWrappableTagRange);
 }
 
 inline ScriptWrappable* ToAnyScriptWrappable(v8::Isolate* isolate,

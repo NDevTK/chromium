@@ -353,6 +353,13 @@ int MacOSVersion() {
   return macos_version;
 }
 
+bool IsVirtualMachine() {
+  int ret;
+  size_t size = sizeof(ret);
+  PCHECK(sysctlbyname("kern.hv_vmm_present", &ret, &size, nullptr, 0) != -1);
+  return ret;
+}
+
 namespace {
 
 #if defined(ARCH_CPU_X86_64)
@@ -574,6 +581,12 @@ void OpenSystemSettingsPane(SystemSettingsPane pane,
       } else {
         pane_file = @"/System/Library/PreferencePanes/Trackpad.prefPane";
       }
+      break;
+    case SystemSettingsPane::kPrivacySecurity_Pasteboard:
+      // Pasteboard permissions were added in macOS 15.
+      DCHECK_GE(MacOSMajorVersion(), 15);
+      url = @"x-apple.systempreferences:com.apple.settings.PrivacySecurity."
+            @"extension?Privacy_Pasteboard";
       break;
   }
 

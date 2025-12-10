@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -25,7 +24,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/read_only_shared_memory_region.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/process/process_handle.h"
@@ -55,8 +54,7 @@
 #include "content/renderer/content_security_policy_util.h"
 #include "content/renderer/local_resource_url_loader_factory.h"
 #include "content/renderer/media/media_factory.h"
-#include "ipc/ipc_message.h"
-#include "ipc/ipc_platform_file.h"
+#include "content/renderer/navigation_client.h"
 #include "media/base/routing_token_callback.h"
 #include "media/base/speech_recognition_client.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
@@ -147,7 +145,6 @@ class WebString;
 class WebURL;
 struct FramePolicy;
 struct JavaScriptFrameworkDetectionResult;
-struct SoftNavigationMetrics;
 }  // namespace blink
 
 namespace gfx {
@@ -172,6 +169,7 @@ class DocumentState;
 class MediaPermissionDispatcher;
 class MHTMLPartsGenerationDelegateImpl;
 class NavigationClient;
+class NavigationState;
 class RenderAccessibilityManager;
 class RenderFrameObserver;
 
@@ -204,23 +202,22 @@ class CONTENT_EXPORT RenderFrameImpl
   // Creates a new RenderFrame with |routing_id|. If |previous_frame_token| is
   // not provided, it creates the Blink WebLocalFrame and inserts it into
   // the frame tree after the frame identified by |previous_sibling_routing_id|,
-  // or as the first child if |previous_sibling_routing_id| is MSG_ROUTING_NONE.
-  // Otherwise, the frame is semi-orphaned until it commits, at which point it
-  // replaces the previous object identified by |previous_frame_token|. The
-  // previous object can either be a RenderFrame or a RenderFrameProxy.
-  // The frame's opener is set to the frame identified by |opener_routing_id|.
-  // The frame is created as a child of the RenderFrame identified by
-  // |parent_routing_id| or as the top-level frame if
-  // the latter is MSG_ROUTING_NONE.
-  // |devtools_frame_token| is passed from the browser and corresponds to the
-  // owner FrameTreeNode. It can only be used for tagging requests and calls
-  // for context frame attribution. It should never be passed back to the
-  // browser as a frame identifier in the control flows calls.
-  // The |widget_params| is not null if the frame is to be a local root, which
-  // means it will own a RenderWidget, in which case the |widget_params| hold
-  // the routing id and initialization properties for the RenderWidget.
-  // The |web_view| param will only be set when the frame to be created will use
-  // new WebView, instead of using the previous Frame's WebView. This is only
+  // or as the first child if |previous_sibling_routing_id| is
+  // IPC::mojom::kRoutingIdNone. Otherwise, the frame is semi-orphaned until it
+  // commits, at which point it replaces the previous object identified by
+  // |previous_frame_token|. The previous object can either be a RenderFrame or
+  // a RenderFrameProxy. The frame's opener is set to the frame identified by
+  // |opener_routing_id|. The frame is created as a child of the RenderFrame
+  // identified by |parent_routing_id| or as the top-level frame if the latter
+  // is IPC::mojom::kRoutingIdNone. |devtools_frame_token| is passed from the
+  // browser and corresponds to the owner FrameTreeNode. It can only be used for
+  // tagging requests and calls for context frame attribution. It should never
+  // be passed back to the browser as a frame identifier in the control flows
+  // calls. The |widget_params| is not null if the frame is to be a local root,
+  // which means it will own a RenderWidget, in which case the |widget_params|
+  // hold the routing id and initialization properties for the RenderWidget. The
+  // |web_view| param will only be set when the frame to be created will use new
+  // WebView, instead of using the previous Frame's WebView. This is only
   // possible for provisional main RenderFrames that will do a local main
   // RenderFrame swap later on with the frame that has the token
   // |previous_frame_token|.
@@ -252,11 +249,6 @@ class CONTENT_EXPORT RenderFrameImpl
       const blink::DocumentToken& document_token,
       blink::mojom::PolicyContainerPtr policy_container,
       bool is_for_nested_main_frame);
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // Returns the RenderFrameImpl for the given routing ID.
-  static RenderFrameImpl* FromRoutingID(int routing_id);
-#endif
 
   // Just like RenderFrame::FromWebFrame but returns the implementation.
   static RenderFrameImpl* FromWebFrame(blink::WebFrame* web_frame);
@@ -340,32 +332,14 @@ class CONTENT_EXPORT RenderFrameImpl
   // gone, and clean up code that depends on it.
   bool in_frame_tree() { return in_frame_tree_; }
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // IPC::Sender
-  bool Send(IPC::Message* msg) override;
-
-  // IPC::Listener
-  bool OnMessageReceived(const IPC::Message& msg) override;
-
-#define LEGACY_IPC_OVERRIDE override
-#else
-#define LEGACY_IPC_OVERRIDE
-#endif
-
   void OnAssociatedInterfaceRequest(const std::string& interface_name,
-                                    mojo::ScopedInterfaceEndpointHandle handle)
-      LEGACY_IPC_OVERRIDE;
-
-#undef LEGACY_IPC_OVERRIDE
+                                    mojo::ScopedInterfaceEndpointHandle handle);
 
   // RenderFrame implementation:
   RenderFrame* GetMainRenderFrame() override;
   RenderAccessibility* GetRenderAccessibility() override;
   std::unique_ptr<AXTreeSnapshotter> CreateAXTreeSnapshotter(
       ui::AXMode ax_mode) override;
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  int GetRoutingID() override;
-#endif
   blink::WebLocalFrame* GetWebFrame() override;
   const blink::WebLocalFrame* GetWebFrame() const override;
   blink::WebView* GetWebView() override;
@@ -485,6 +459,7 @@ class CONTENT_EXPORT RenderFrameImpl
       std::unique_ptr<blink::PendingURLLoaderFactoryBundle>
           subresource_loader_factories,
       const blink::DocumentToken& document_token,
+      const base::UnguessableToken& devtools_navigation_token,
       blink::mojom::PolicyContainerPtr policy_container,
       mojom::AlternativeErrorPageOverrideInfoPtr alternative_error_page_info,
       mojom::NavigationClient::CommitFailedNavigationCallback
@@ -577,11 +552,13 @@ class CONTENT_EXPORT RenderFrameImpl
       blink::mojom::SameDocumentNavigationType same_document_navigation_type,
       bool is_client_redirect,
       const std::optional<blink::SameDocNavigationScreenshotDestinationToken>&
-          screenshot_destination) override;
+          screenshot_destination,
+      base::UnguessableToken same_document_metrics_token) override;
   void DidFailAsyncSameDocumentCommit() override;
   void WillFreezePage() override;
   void DidOpenDocumentInputStream(const blink::WebURL& url) override;
-  void DidSetPageLifecycleState(bool restoring_from_bfcache) override;
+  void DidSetPageLifecycleState(
+      blink::BFCacheStateChange bfcache_change) override;
   void NotifyCurrentHistoryItemChanged() override;
   void DidUpdateCurrentHistoryItem() override;
   base::UnguessableToken GetDevToolsFrameToken() override;
@@ -593,9 +570,8 @@ class CONTENT_EXPORT RenderFrameImpl
       const gfx::Rect& main_frame_intersection_rect) override;
   void OnMainFrameViewportRectangleChanged(
       const gfx::Rect& main_frame_viewport_rect) override;
-  void OnMainFrameImageAdRectangleChanged(
-      int element_id,
-      const gfx::Rect& image_ad_rect) override;
+  void OnMainFrameAdRectangleChanged(int element_id,
+                                     const gfx::Rect& ad_rect) override;
   void FinalizeRequest(blink::WebURLRequest& request) override;
   std::optional<blink::WebURL> WillSendRequest(
       const blink::WebURL& target,
@@ -622,7 +598,8 @@ class CONTENT_EXPORT RenderFrameImpl
       const blink::SubresourceLoadMetrics& subresource_load_metrics) override;
   void DidObserveNewFeatureUsage(
       const blink::UseCounterFeature& feature) override;
-  void DidObserveSoftNavigation(blink::SoftNavigationMetrics metrics) override;
+  void DidObserveSoftNavigation(
+      blink::SoftNavigationMetricsForReporting metrics) override;
   void DidObserveLayoutShift(double score, bool after_input_or_scroll) override;
   void DidCreateScriptContext(v8::Local<v8::Context> context,
                               int world_id) override;
@@ -665,6 +642,8 @@ class CONTENT_EXPORT RenderFrameImpl
       override;
 
   base::ScopedClosureRunner CreateScopedClientNavigationThrottler() override;
+
+  bool IsForInitialWebUI() const override;
 
   // Dispatches the current state of selection on the webpage to the browser if
   // it has changed or if the forced flag is passed. The forced flag is used
@@ -798,6 +777,24 @@ class CONTENT_EXPORT RenderFrameImpl
   // committing a navigation, but in some cases (about:srcdoc, initial empty
   // document) it may be inherited from the parent or opener.
   blink::ChildURLLoaderFactoryBundle* GetLoaderFactoryBundle() override;
+
+  void SetNewFeatureUsageCallback(NewFeatureUsageCallback callback) override;
+  void SetSubresourceLoadCallback(SubresourceLoadCallback callback) override;
+  void SetLoadFromMemoryCacheCallback(
+      LoadFromMemoryCacheCallback callback) override;
+  void SetDidStartResponseCallback(DidStartResponseCallback callback) override;
+  void SetDidCompleteResponseCallback(
+      DidCompleteResponseCallback callback) override;
+  void SetDidCancelResponseCallback(
+      DidCancelResponseCallback callback) override;
+
+  std::unique_ptr<NavigationClient> TakeNavigationClient() {
+    return std::move(navigation_client_impl_);
+  }
+
+  void set_navigation_client_impl(std::unique_ptr<NavigationClient> client) {
+    navigation_client_impl_ = std::move(client);
+  }
 
  protected:
   explicit RenderFrameImpl(CreateParams params);
@@ -959,21 +956,8 @@ class CONTENT_EXPORT RenderFrameImpl
 
   void InitializeMediaStreamDeviceObserver();
 
-  // Called when the RenderFrameImpl is created. This either:
-  // - creates and initializes the WebFrameWidget with a new compositor, i.e.
-  //   the "typical" case or
-  // - stashes the creation params for later use. Experimental mode used only
-  //   for local -> local RenderFrame swaps. Widget creation will be deferred
-  //   until commit; when created, the widget will reuse the previous
-  //   RenderFrame's compositor.
-  void MaybeInitializeWidget(mojom::CreateFrameWidgetParamsPtr widget_params);
-
-  // Called during a LocalFrame<->LocalFrame swap. This creates and initializes
-  // the WebFrameWidget if it was deferred when the RenderFrameImpl was created,
-  // see `MaybeInitializeWidget()` above.
-  void InitializeWidgetAtSwap(blink::WebLocalFrame& previous_frame);
-
-  // Sends a FrameHostMsg_BeginNavigation to the browser
+  // Sends a `BeginNavigation()` mojo IPC via the mojom::FrameHost interface to
+  // the browser.
   void BeginNavigationInternal(std::unique_ptr<blink::WebNavigationInfo> info,
                                bool is_history_navigation_in_new_child_frame,
                                base::TimeTicks renderer_before_unload_start,
@@ -1068,15 +1052,18 @@ class CONTENT_EXPORT RenderFrameImpl
   mojom::DidCommitProvisionalLoadParamsPtr MakeDidCommitProvisionalLoadParams(
       blink::WebHistoryCommitType commit_type,
       ui::PageTransition transition,
+      NavigationState* navigation_state,
       const network::ParsedPermissionsPolicy& permissions_policy_header,
       const blink::DocumentPolicyFeatureState& document_policy_header,
-      const std::optional<base::UnguessableToken>& embedding_token);
+      const std::optional<base::UnguessableToken>& embedding_token,
+      std::optional<blink::PageState> previous_page_state);
 
   // Updates the navigation history depending on the passed parameters.
   // This could result either in the creation of a new entry or a modification
   // of the current entry or nothing. If a new entry was created,
   // returns true, false otherwise.
-  void UpdateNavigationHistory(blink::WebHistoryCommitType commit_type);
+  void UpdateNavigationHistory(blink::WebHistoryCommitType commit_type,
+                               NavigationState* navigation_state);
 
   // Notify render_view_ observers that a commit happened.
   void NotifyObserversOfNavigationCommit(ui::PageTransition transition);
@@ -1084,7 +1071,8 @@ class CONTENT_EXPORT RenderFrameImpl
   // Updates the internal state following a navigation commit. This should be
   // called before notifying the FrameHost of the commit.
   void UpdateStateForCommit(blink::WebHistoryCommitType commit_type,
-                            ui::PageTransition transition);
+                            ui::PageTransition transition,
+                            NavigationState* navigation_state);
 
   // Internal function used by same document navigation as well as cross
   // document navigation that updates the state of the RenderFrameImpl and sends
@@ -1092,6 +1080,7 @@ class CONTENT_EXPORT RenderFrameImpl
   void DidCommitNavigationInternal(
       blink::WebHistoryCommitType commit_type,
       ui::PageTransition transition,
+      NavigationState* navigation_state,
       const network::ParsedPermissionsPolicy& permissions_policy_header,
       const blink::DocumentPolicyFeatureState& document_policy_header,
       mojom::DidCommitProvisionalLoadInterfaceParamsPtr interface_params,
@@ -1248,10 +1237,6 @@ class CONTENT_EXPORT RenderFrameImpl
 
   blink::LocalFrameToken frame_token_;
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  const int routing_id_;
-#endif
-
   const int process_label_id_;
 
   // Keeps track of which future subframes the browser process has history items
@@ -1270,6 +1255,21 @@ class CONTENT_EXPORT RenderFrameImpl
 
   // All the registered observers.
   base::ObserverList<RenderFrameObserver>::Unchecked observers_;
+
+  // The callback to send the feature usage to the browser process through
+  // PageLoadMetrics.
+  NewFeatureUsageCallback new_feature_usage_callback_;
+  // The callback to send the loaded subresource info to the browser process
+  // through PageLoadMetrics.
+  SubresourceLoadCallback subresource_load_callback_;
+  // The callback to send the loaded resource info from memory cache to the
+  // browser process through PageLoadMetrics.
+  LoadFromMemoryCacheCallback load_from_memory_cache_callback_;
+  // The callback to handle response. These are used in `DidStartResponse()`,
+  // `DidCompleteResponse()`, and `DidCancelResponse()`, respectively.
+  DidStartResponseCallback did_start_response_callback_;
+  DidCompleteResponseCallback did_complete_response_callback_;
+  DidCancelResponseCallback did_cancel_response_callback_;
 
   // The text selection the last time DidChangeSelection got called. May contain
   // additional characters before and after the selected text, for IMEs. The
@@ -1586,29 +1586,6 @@ class CONTENT_EXPORT RenderFrameImpl
   // contents) should be sent to the browser immediately. This is normally
   // false, but set to true by some tests.
   bool send_content_state_immediately_ = false;
-
-  // The RenderFrameImpl can be created in 2 modes.
-  //
-  // 1. The associated WebFrameWidget and its compositor is initialized at
-  //    creation time. This is default mode.
-  //
-  // 2. The associated WebFrameWidget and its compositor is initialized at
-  //    commit time. This is done for local RF->local RF navigations to reuse
-  //    the compositor from the previous RFH. This is purely a performance
-  //    optimization.
-  //
-  // When in mode 2, the parameters to create the WebFrameWidget (which are
-  // part of the IPC that created this frame) are cached until commit to lazily
-  // create the WebFrameWidget.
-  mojom::CreateFrameWidgetParamsPtr widget_params_for_lazy_widget_creation_;
-
-  // Set when this RenderFrame is being swapped for
-  // `provisional_frame_for_local_root_swap_`.
-  base::WeakPtr<RenderFrameImpl> provisional_frame_for_local_root_swap_ =
-      nullptr;
-
-  // Set if this RenderFrameImpl is for a main frame which is not top-level.
-  const bool is_for_nested_main_frame_;
 
   // Used by DevTools to defer async client navigations for the duration of
   // handling a CDP command.

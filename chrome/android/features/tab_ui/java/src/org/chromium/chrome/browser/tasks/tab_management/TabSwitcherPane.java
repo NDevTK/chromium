@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.chrome.browser.data_sharing.ui.versioning.VersionUpdateIphHandler.maybeShowVersioningIph;
+
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener;
@@ -19,9 +21,7 @@ import org.chromium.base.Token;
 import org.chromium.base.ValueChangedCallback;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.build.annotations.NullMarked;
@@ -30,8 +30,6 @@ import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.hub.DelegateButtonData;
-import org.chromium.chrome.browser.hub.HubColorScheme;
-import org.chromium.chrome.browser.hub.Pane;
 import org.chromium.chrome.browser.hub.PaneHubController;
 import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.browser.hub.ResourceButtonData;
@@ -63,6 +61,7 @@ import org.chromium.components.tab_group_sync.TabGroupSyncService;
 
 import java.util.List;
 import java.util.function.DoubleConsumer;
+import java.util.function.Supplier;
 
 /** A {@link Pane} representing the regular tab switcher. */
 @NullMarked
@@ -98,17 +97,18 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
                 }
             };
 
+    private final Callback<TabSwitcherPaneCoordinator> mOnPaneCoordinatorChanged =
+            new ValueChangedCallback<>(this::onTabSwitcherPaneCoordinatorChanged);
     private final Callback<Boolean> mScrollingObserver = this::onScrollingChanged;
     private final Callback<Boolean> mVisibilityObserver = this::onVisibilityChanged;
     private final SharedPreferences mSharedPreferences;
     private final Supplier<TabGroupModelFilter> mTabGroupModelFilterSupplier;
     private final TabSwitcherPaneDrawableCoordinator mTabSwitcherPaneDrawableCoordinator;
-    private final ObservableSupplierImpl<Boolean> mHubSearchEnabledStateSupplier =
-            new ObservableSupplierImpl<>();
     private @Nullable OnSharedPreferenceChangeListener mPriceAnnotationsPrefListener;
     private @Nullable TabGroupSyncService mTabGroupSyncService;
     private final TabSwitcherDrawable mTabSwitcherDrawable;
     private final @Nullable ArchivedTabsAutoDeletePromoManager mArchivedTabsAutoDeletePromoManager;
+    private @Nullable ProfileProvider mProfileProvider;
 
     /**
      * @param context The activity context.
@@ -143,6 +143,7 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
             @Nullable ArchivedTabsAutoDeletePromoManager archivedTabsAutoDeletePromoManager,
             @Nullable ObservableSupplier<Boolean> xrSpaceModeObservableSupplier) {
         super(
+                PaneId.TAB_SWITCHER,
                 context,
                 factory,
                 /* isIncognito= */ false,
@@ -174,24 +175,14 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
 
         profileProviderSupplier.onAvailable(this::onProfileProviderAvailable);
         getIsVisibleSupplier().addObserver(mVisibilityObserver);
-        getTabSwitcherPaneCoordinatorSupplier()
-                .addObserver(new ValueChangedCallback<>(this::onTabSwitcherPaneCoordinatorChanged));
-    }
-
-    @Override
-    public @PaneId int getPaneId() {
-        return PaneId.TAB_SWITCHER;
-    }
-
-    @Override
-    public @HubColorScheme int getColorScheme() {
-        return HubColorScheme.DEFAULT;
+        getTabSwitcherPaneCoordinatorSupplier().addObserver(mOnPaneCoordinatorChanged);
     }
 
     @Override
     public void destroy() {
         // Do this before super.destroy() since the visibility supplier is owned by the base class.
         getIsVisibleSupplier().removeObserver(mVisibilityObserver);
+        getTabSwitcherPaneCoordinatorSupplier().removeObserver(mOnPaneCoordinatorChanged);
         super.destroy();
         mTabSwitcherPaneDrawableCoordinator.destroy();
         if (mPriceAnnotationsPrefListener != null) {
@@ -278,26 +269,25 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
     }
 
     private void onTabSwitcherPaneCoordinatorChanged(
-            @Nullable TabSwitcherPaneCoordinator newValue,
-            @Nullable TabSwitcherPaneCoordinator oldValue) {
+            TabSwitcherPaneCoordinator newValue, @Nullable TabSwitcherPaneCoordinator oldValue) {
         if (oldValue != null) {
             OneshotSupplier<ObservableSupplier<Boolean>> wrappedSupplier =
                     oldValue.getIsScrollingSupplier();
-            if (wrappedSupplier.hasValue()) {
-                wrappedSupplier.get().removeObserver(mScrollingObserver);
+            var wrapped = wrappedSupplier.get();
+            if (wrapped != null) {
+                wrapped.removeObserver(mScrollingObserver);
             }
         }
-        if (newValue != null) {
-            OneshotSupplier<ObservableSupplier<Boolean>> wrappedSupplier =
-                    newValue.getIsScrollingSupplier();
-            wrappedSupplier.onAvailable(
-                    supplier -> {
-                        supplier.addObserver(mScrollingObserver);
-                    });
-        }
+        OneshotSupplier<ObservableSupplier<Boolean>> wrappedSupplier =
+                newValue.getIsScrollingSupplier();
+        wrappedSupplier.onAvailable(
+                supplier -> {
+                    supplier.addObserver(mScrollingObserver);
+                });
     }
 
     private void onProfileProviderAvailable(ProfileProvider profileProvider) {
+        mProfileProvider = profileProvider;
         Profile profile = profileProvider.getOriginalProfile();
         mTabGroupSyncService = TabGroupSyncServiceFactory.getForProfile(profile);
 
@@ -351,6 +341,14 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
         if (mTabGroupSyncService.getAllGroupIds().length == 0) return;
 
         if (getIsAnimatingSupplier().get()) return;
+
+        if (mProfileProvider != null) {
+            maybeShowVersioningIph(
+                    mUserEducationHelper,
+                    anchorView,
+                    mProfileProvider.getOriginalProfile(),
+                    /* requiresAutoOpenSettingEnabled= */ false);
+        }
 
         IphCommand command =
                 new IphCommandBuilder(
@@ -482,10 +480,5 @@ public class TabSwitcherPane extends TabSwitcherPaneBase implements TabSwitcherD
             drawableDescRes = R.plurals.accessibility_tab_switcher_standard_stack_with_notification;
         }
         return drawableDescRes;
-    }
-
-    @Override
-    public ObservableSupplier<Boolean> getHubSearchEnabledStateSupplier() {
-        return mHubSearchEnabledStateSupplier;
     }
 }

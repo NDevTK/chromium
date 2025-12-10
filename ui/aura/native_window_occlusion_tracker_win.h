@@ -21,6 +21,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "third_party/skia/include/core/SkRegion.h"
@@ -230,10 +231,6 @@ class AURA_EXPORT NativeWindowOcclusionTrackerWin
     // Task runner for the thread that created |this|.  UpdateOcclusionState
     // task is posted to this task runner.
     const scoped_refptr<base::SequencedTaskRunner> ui_thread_task_runner_;
-
-    // True if the occluded region should be tracked. This caches the value of
-    // the feature `kApplyNativeOccludedRegionToWindowTracker`.
-    const bool calculate_occluded_region_;
 
     // Callback used to update occlusion state on UI thread.
     UpdateOcclusionStateCallback update_occlusion_state_callback_;

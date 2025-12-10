@@ -15,6 +15,7 @@
 #include "base/clang_profiling_buildflags.h"
 #include "base/containers/heap_array.h"
 #include "base/containers/id_map.h"
+#include "base/functional/callback_helpers.h"
 #include "base/functional/function_ref.h"
 #include "base/memory/safety_checks.h"
 #include "base/process/kill.h"
@@ -26,7 +27,6 @@
 #include "content/public/browser/child_process_id.h"
 #include "content/public/browser/web_exposed_isolation_level.h"
 #include "ipc/ipc_listener.h"
-#include "ipc/ipc_sender.h"
 #include "media/media_buildflags.h"
 #include "media/mojo/mojom/video_decode_perf_history.mojom-forward.h"
 #include "mojo/public/cpp/bindings/generic_pending_receiver.h"
@@ -120,9 +120,6 @@ struct GlobalRenderFrameHostId;
 #if BUILDFLAG(IS_ANDROID)
 enum class ChildProcessImportance;
 #endif
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-class BrowserMessageFilter;
-#endif
 
 namespace mojom {
 class Renderer;
@@ -131,8 +128,7 @@ class Renderer;
 // Interface that represents the browser side of the browser <-> renderer
 // communication channel. There will generally be one RenderProcessHost per
 // renderer process.
-class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
-                                         public IPC::Listener,
+class CONTENT_EXPORT RenderProcessHost : public IPC::Listener,
                                          public base::SupportsUserData {
   // Do not remove this macro!
   // The macro is maintained by the memory safety team.
@@ -233,6 +229,11 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // rendering and may be backgrounded unnecessarily without this call.
   virtual void OnImmersiveXrSessionStarted() = 0;
   virtual void OnImmersiveXrSessionStopped() = 0;
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Returns true if the process is for an initial WebUI.
+  virtual bool IsForInitialWebUI() const = 0;
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   // Indicates whether the current RenderProcessHost is exclusively hosting
   // guest RenderFrames. Not all guest RenderFrames are created equal.  A guest,
@@ -360,11 +361,6 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // Returns the renderer channel.
   virtual IPC::ChannelProxy* GetChannel() = 0;
 
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  // Adds a message filter to the IPC channel.
-  virtual void AddFilter(BrowserMessageFilter* filter) = 0;
-#endif
-
   // Sets whether this render process is blocked. This means that input events
   // should not be sent to it, nor other timely signs of life expected from it.
   virtual void SetBlocked(bool blocked) = 0;
@@ -399,6 +395,7 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void ClearPriorityOverride() = 0;
 #endif
 
+#if BUILDFLAG(IS_ANDROID)
   // Sets whether to consider the process as a spare renderer when
   // calculating the priority. Note that this is not exactly the same
   // as IsSpare(). The value will be kept true after the spare renderer
@@ -406,10 +403,14 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   // correctly sets the priority.
   // The function is exported only for supporting MockRenderProcessHost
   // and should not be called outside of content/.
-  virtual void SetHasSpareRendererPriority(
-      bool has_spare_renderer_priority) = 0;
+  virtual void GraduateSpareToNormalRendererPriority() = 0;
 
-#if BUILDFLAG(IS_ANDROID)
+  // Returns if the renderer is still of the lowest priority on Android.
+  // Since the spare renderer priority update is asynchronous on Android,
+  // the function will return true until it gets the update complete
+  // callback for GraduateSpareToNormalRendererPriority.
+  virtual bool ShouldThrottleNavigationForSpareRendererGraduation() = 0;
+
   // Return the highest importance of all widgets in this process.
   virtual ChildProcessImportance GetEffectiveImportance() = 0;
 
@@ -425,11 +426,8 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
   virtual void ResumeSocketManagerForRenderFrameHost(
       const GlobalRenderFrameHostId& render_frame_host_id) = 0;
 
-  // Sets a flag indicating that the process can be abnormally terminated.
+  // Sets a flag indicating that the process can be fast shutdown.
   virtual void SetSuddenTerminationAllowed(bool allowed) = 0;
-  // Returns true if the process can be abnormally terminated.
-  virtual bool SuddenTerminationAllowed() = 0;
-
   // Returns how long the child has been idle. The definition of idle
   // depends on when a derived class calls mark_child_process_activity_time().
   // This is a rough indicator and its resolution should not be better than
@@ -641,7 +639,7 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
 
   // The following several methods are for internal use only, and are only
   // exposed here to support MockRenderProcessHost usage in tests.
-  virtual void DelayProcessShutdown(
+  [[nodiscard]] virtual base::ScopedClosureRunner DelayProcessShutdown(
       const base::TimeDelta& subframe_shutdown_timeout,
       const base::TimeDelta& unload_handler_timeout,
       const SiteInfo& site_info) = 0;
@@ -714,9 +712,6 @@ class CONTENT_EXPORT RenderProcessHost : public IPC::Sender,
       NotificationServiceCreatorType creator_type,
       const blink::StorageKey& storage_key,
       mojo::PendingReceiver<blink::mojom::NotificationService> receiver) = 0;
-  virtual void CreateWebSocketConnector(
-      const blink::StorageKey& storage_key,
-      mojo::PendingReceiver<blink::mojom::WebSocketConnector> receiver) = 0;
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
   virtual void CreateOOPVideoDecoder(

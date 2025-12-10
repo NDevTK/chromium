@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
@@ -90,6 +91,12 @@ class OpticalCharacterRecognizer
       const SkBitmap& image,
       base::OnceCallback<void(const ui::AXTreeUpdate& tree_update)> callback);
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+  // Sets the OCR to light or normal mode.
+  virtual void SetOCRLightMode(bool enabled);
+
+  // Tells if OCR is busy (has another connected client) or not.
+  virtual void IsOCRBusy(mojom::ScreenAIAnnotator::IsOCRBusyCallback callback);
 
   // Ensures all posted tasks are completed in tests.
   virtual void FlushForTesting() {}

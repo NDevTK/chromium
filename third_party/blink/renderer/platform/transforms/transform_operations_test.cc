@@ -22,15 +22,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/transforms/transform_operations.h"
 
 #include <array>
 
+#include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/transforms/interpolated_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/matrix_3d_transform_operation.h"
@@ -118,9 +114,11 @@ TEST(TransformOperationsTest, AbsoluteAnimatedTranslatedBoundsTest) {
 }
 
 TEST(TransformOperationsTest, EmpiricalAnimatedTranslatedBoundsTest) {
-  float test_transforms[][2][3] = {{{0, 0, 0}, {10, 10, 0}},
-                                   {{-100, 202.5, -32.6}, {43.2, 56.1, 89.75}},
-                                   {{43.2, 56.1, 89.75}, {-100, 202.5, -32.6}}};
+  std::array<std::array<std::array<float, 3>, 2>, 3> test_transforms = {{
+      {{{0, 0, 0}, {10, 10, 0}}},
+      {{{-100, 202.5, -32.6}, {43.2, 56.1, 89.75}}},
+      {{{43.2, 56.1, 89.75}, {-100, 202.5, -32.6}}},
+  }};
 
   // All progressions for animations start and end at 0, 1 respectively,
   // we can go outside of these bounds, but will always at least contain
@@ -177,10 +175,12 @@ TEST(TransformOperationsTest, AbsoluteAnimatedScaleBoundsTest) {
 }
 
 TEST(TransformOperationsTest, EmpiricalAnimatedScaleBoundsTest) {
-  float test_transforms[][2][3] = {{{1, 1, 1}, {10, 10, -32}},
-                                   {{1, 2, 5}, {-1, -2, -4}},
-                                   {{0, 0, 0}, {1, 2, 3}},
-                                   {{0, 0, 0}, {0, 0, 0}}};
+  std::array<std::array<std::array<float, 3>, 2>, 4> test_transforms = {{
+      {{{1, 1, 1}, {10, 10, -32}}},
+      {{{1, 2, 5}, {-1, -2, -4}}},
+      {{{0, 0, 0}, {1, 2, 3}}},
+      {{{0, 0, 0}, {0, 0, 0}}},
+  }};
 
   // All progressions for animations start and end at 0, 1 respectively,
   // we can go outside of these bounds, but will always at least contain

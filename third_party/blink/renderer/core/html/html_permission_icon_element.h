@@ -23,10 +23,29 @@ class HTMLPermissionIconElement final : public HTMLSpanElement {
                bool is_precise_location);
 
  private:
-  // Guard used to prevent re-setting the icon on the permission element. The
-  // state of the element can change, and the text changes with it, but the icon
-  // is always the same. There is no need to set it again.
-  bool is_icon_set_ = false;
+  void SetIconImpl(mojom::blink::PermissionName permission_type,
+                   bool is_precise_location);
+  // blink::Element overrides.
+  void AdjustStyle(ComputedStyleBuilder& builder) override;
+
+  // A wrapper method which keeps track of logging console messages before
+  // calling the HTMLPermissionElementUtils::AdjustedBoundedLength method.
+  Length AdjustedBoundedLengthWrapper(const Length& length,
+                                      std::optional<float> lower_bound,
+                                      std::optional<float> upper_bound,
+                                      bool should_multiply_by_content_size);
+
+  // A bool that tracks whether a specific console message was sent already to
+  // ensure it's not sent again.
+  bool length_console_error_sent_ = false;
+
+  // A bool that tracks whether a specific console message was sent already to
+  // ensure it's not sent again.
+  bool width_console_error_sent_ = false;
+
+  // Guard used to prevent re-setting the icon on the permission element for
+  // static icons.
+  bool is_static_icon_set_ = false;
 };
 }  // namespace blink
 

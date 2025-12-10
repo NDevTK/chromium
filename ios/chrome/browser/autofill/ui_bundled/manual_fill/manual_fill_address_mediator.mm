@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_address_mediator.h"
 
+#import "base/functional/callback_helpers.h"
 #import "base/i18n/message_formatter.h"
 #import "base/metrics/user_metrics.h"
 #import "base/strings/sys_string_conversions.h"
@@ -20,7 +21,6 @@
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_content_injector.h"
 #import "ios/chrome/browser/menu/ui_bundled/browser_action_factory.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/list_model/list_model.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_model.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
@@ -139,9 +139,7 @@ std::vector<AutofillProfile> FetchAddresses(
         [[ManualFillAddress alloc] initWithProfile:_addresses[i]];
 
     NSArray<UIAction*>* menuActions =
-        IsKeyboardAccessoryUpgradeEnabled()
-            ? @[ [self createMenuEditActionForAddress:_addresses[i]] ]
-            : @[];
+        @[ [self createMenuEditActionForAddress:_addresses[i]] ];
 
     NSString* cellIndexAccessibilityLabel = base::SysUTF16ToNSString(
         base::i18n::MessageFormatter::FormatWithNamedArgs(
@@ -213,9 +211,7 @@ std::vector<AutofillProfile> FetchAddresses(
 // Evaluates whether or not the option to move the address to the account should
 // be available when navigating to the details page of the given address.
 - (BOOL)offerMigrateToAccountForAddress:(const AutofillProfile&)address {
-  BOOL addressIsLocalOrSyncable = !address.IsAccountProfile();
   BOOL addressIsEligibleForAccountMigration =
-      addressIsLocalOrSyncable &&
       IsEligibleForMigrationToAccount(
           _personalDataManager->address_data_manager(), address);
   BOOL userEmailIsValid = [self userEmail] != nil;

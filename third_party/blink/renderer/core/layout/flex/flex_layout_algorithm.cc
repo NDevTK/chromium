@@ -16,12 +16,13 @@
 #include "third_party/blink/renderer/core/layout/disable_layout_side_effects_scope.h"
 #include "third_party/blink/renderer/core/layout/flex/devtools_flex_info.h"
 #include "third_party/blink/renderer/core/layout/flex/flex_child_iterator.h"
+#include "third_party/blink/renderer/core/layout/flex/flex_gap_accumulator.h"
 #include "third_party/blink/renderer/core/layout/flex/flex_item_iterator.h"
-#include "third_party/blink/renderer/core/layout/flex/flex_line.h"
 #include "third_party/blink/renderer/core/layout/flex/flex_line_breaker.h"
 #include "third_party/blink/renderer/core/layout/flex/layout_flexible_box.h"
 #include "third_party/blink/renderer/core/layout/flex/line_flexer.h"
 #include "third_party/blink/renderer/core/layout/geometry/box_strut.h"
+#include "third_party/blink/renderer/core/layout/geometry/layout_unit_diffuser.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_size.h"
 #include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_input_node.h"
@@ -35,7 +36,6 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
-#include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/clear_collection_scope.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/writing_mode.h"
@@ -164,532 +164,6 @@ LayoutUnit ColumnGap(const ComputedStyle& style,
   return ResolveColumnGapLength(style, percentage_resolution_size.inline_size)
       .value_or(LayoutUnit());
 }
-
-// We build and populate the gap intersections within the flex container in an
-// item by item basis. The intersections that correspond to each item are
-// defined as follows:
-// 1. For the first item in a line, the intersections corresponding to it will
-// be:
-//  - The main axis (or row) intersection (X1) of the main axis gap after the
-//  item's line, with the beginning of the flex line.
-// +---------------------------------------------------------------+
-// | +---------+        Gap        +---------+                     |
-// | |  Item   |                   |         |                     |
-// | +---------+                   +---------+                     |
-// |                                                               |
-// X1         Row Gap                                              |
-// |                                                               |
-// | +---------+        Gap        +---------+                     |
-// | |         |                   |         |                     |
-// | +---------+                   +---------+                     |
-// +---------------------------------------------------------------+
-// 2. For an item in the first line (and not the first item), the
-// intersections corresponding to it will be:
-//  - The cross axis intersection of the cross gap before the item, with the
-//  edge of the flex line (X1).
-//  - The main axis intersection of the cross gap with the main gap after the
-//  item's line (X2)
-//  - The cross axis intersection of the cross gap with the main gap after the
-//  item's line (X2).
-// +-----------------------X1--------------------------------------+
-// | +---------+        Gap        +---------+                     |
-// | |         |                   |  Item   |           ...       |
-// | +---------+                   +---------+                     |
-// |                                                               |
-// |         Row Gap      X2                                       |
-// |                                                               |
-// | +---------+        Gap        +---------+                     |
-// | |         |                   |         |                     |
-// | +---------+                   +---------+                     |
-// +---------------------------------------------------------------+
-// 3. For the last item in any line, the intersections corresponding to it
-// will be:
-//  - The main axis intersection of the main axis gap after the item with the
-//  edge of the flex line (X1).
-// +--------------------------------------------------+
-// | +---------+        Gap        +---------+        |
-// | |         |                   |  Item   |        |
-// | +---------+                   +---------+        |
-// |                                                  |
-// |         Row Gap                                  X1
-// |    ...                              ...          |
-// +---------------------------------------------------+
-// 4. For items that lie in "middle" flex lines such as
-//  `Item` in the example below, the intersections corresponding to it will
-//  be:
-//  - The main axis intersection of the cross gap before the item with the
-//  main gap before the item's line (X1).
-//  - The cross axis intersection of the cross gap before the item with the
-//  main gap before the item's line (X1).
-//  - The cross axis intersection of the cross gap before the item with the
-//  main gap after the item's line (X2).
-//  - The main axis intersection of the cross gap before the item with the
-//  main gap after the item's line (X2).
-// +----------------------------------------------------------------------+
-// |        +---------+        Gap        +---------+                     |
-// |   ...  |         |                   |         |          ...        |
-// |        +---------+                   +---------+                     |
-// |                                                                      |
-// |                Row Gap     X1                                        |
-// |                                                                      |
-// |        +---------+        Gap        +---------+                     |
-// |   ...  |         |                   |  Item   |          ...        |
-// |        +---------+                   +---------+                     |
-// |            .                             .                           |
-// |            .   Row Gap     X2            .                           |
-// |            .                             .                           |
-// |            .                             .                           |
-// +----------------------------------------------------------------------+
-// 2. For an item (not the first or last) in the last line, the intersections
-// corresponding to it will be:
-//  - The cross (or column) intersection of the cross axis gap before the
-//  item, with the main axis gap before the item's line (X1).
-//  - The main (or row) intersection of the cross axis gap before the item,
-//  with the main axis gap before the item's line (X1).
-//  - The cross axis intersection of the cross gap before the item, with the
-//  edge of the flex line (X2).
-// +---------------------------------------------------------------+
-// | +---------+        Gap        +---------+                     |
-// | |         |                   |         |                     |
-// | +---------+                   +---------+                     |
-// |                                                               |
-// |         Row Gap     X1                                        |
-// |                                                               |
-// | +---------+        Gap        +---------+                     |
-// | |         |                   |  Item   |                     |
-// | +---------+                   +---------+                     |
-// +---------------------X2----------------------------------------+
-// More information on gap intersections can be found in the spec:
-// https://drafts.csswg.org/css-gaps-1/#layout-painting
-// TODO(javiercon): Consider refactoring this code to be able to be reused for
-// masonry, by abstracting away the flex-specific logic.
-class GapAccumulator {
-  STACK_ALLOCATED();
-
- public:
-  explicit GapAccumulator(LayoutUnit gap_between_items,
-                          LayoutUnit gap_between_lines,
-                          wtf_size_t num_lines,
-                          wtf_size_t num_flex_items,
-                          const BoxFragmentBuilder* container_builder,
-                          bool is_column)
-      : gap_between_items_(gap_between_items),
-        gap_between_lines_(gap_between_lines),
-        container_builder_(container_builder),
-        is_column_(is_column) {
-    CHECK(container_builder_);
-
-    main_axis_gaps_.ReserveInitialCapacity(num_lines);
-    cross_axis_gaps_.ReserveInitialCapacity(num_flex_items);
-  }
-
-  const GapGeometry* BuildGapGeometry() {
-    const bool has_valid_main_axis_gaps =
-        !main_axis_gaps_.empty() && gap_between_lines_ > LayoutUnit();
-    const bool has_valid_cross_axis_gaps =
-        !cross_axis_gaps_.empty() && gap_between_items_ > LayoutUnit();
-    if (!has_valid_main_axis_gaps && !has_valid_cross_axis_gaps) {
-      // `GapGeometry` requires at least one axis to be valid.
-      return nullptr;
-    }
-
-    GapGeometry* gap_geometry =
-        MakeGarbageCollected<GapGeometry>(GapGeometry::ContainerType::kFlex);
-
-    if (is_column_) {
-      // In a column flex container, the main axis gaps become the "columns" and
-      // the cross axis gaps become the "rows".
-      if (gap_between_lines_ > LayoutUnit()) {
-        gap_geometry->SetInlineGapSize(gap_between_lines_);
-        gap_geometry->SetGapIntersections(kForColumns,
-                                          std::move(main_axis_gaps_));
-      }
-      if (gap_between_items_ > LayoutUnit()) {
-        gap_geometry->SetBlockGapSize(gap_between_items_);
-        gap_geometry->SetGapIntersections(kForRows,
-                                          std::move(cross_axis_gaps_));
-      }
-    } else {
-      if (gap_between_lines_ > LayoutUnit()) {
-        gap_geometry->SetBlockGapSize(gap_between_lines_);
-        gap_geometry->SetGapIntersections(kForRows, std::move(main_axis_gaps_));
-      }
-      if (gap_between_items_ > LayoutUnit()) {
-        gap_geometry->SetInlineGapSize(gap_between_items_);
-        gap_geometry->SetGapIntersections(kForColumns,
-                                          std::move(cross_axis_gaps_));
-      }
-    }
-
-    return gap_geometry;
-  }
-
-  // This adds a GapIntersection with the given main and cross offset to the
-  // `destination_intersections` vector, which could be the vector for main gap
-  // intersections or cross gap intersections.
-  void AddGapIntersectionToResults(
-      LayoutUnit main_offset,
-      LayoutUnit cross_offset,
-      Vector<GapIntersection>& intersection_results,
-      bool is_at_edge_of_container = false) {
-    LayoutUnit inline_offset = is_column_ ? cross_offset : main_offset;
-    LayoutUnit block_offset = is_column_ ? main_offset : cross_offset;
-
-    intersection_results.emplace_back(inline_offset, block_offset,
-                                      is_at_edge_of_container);
-  }
-
-  // For these functions, the out parameters are:
-  // - `item_cross_intersections_list` is the list of cross axis gap
-  //   intersection points for the cross gap before the item.
-  // - `main_intersection_offset` is the  main axis offset of cross axis gap
-  //    intersection point being computed for the current item. It will be the
-  //    same for all items in the line.
-  // - `cross_intersection_offset` is the cross axis offset of the main axis gap
-  //    intersection point being computed for the current item.
-  void BuildGapIntersectionPointsForCurrentItem(
-      const FlexLineVector& flex_lines,
-      size_t flex_line_index,
-      wtf_size_t item_index_in_line,
-      LogicalOffset item_offset) {
-    const FlexLine& flex_line = flex_lines[flex_line_index];
-
-    main_intersections_after_current_line_.reserve(
-        flex_line.item_indices.size());
-    main_intersections_before_current_line_.reserve(
-        flex_line.item_indices.size());
-
-    // "last" here refers to last in the block direction.
-    bool is_last_edge_intersection = flex_line_index == flex_lines.size() - 1;
-    // "last" here refers to last in the inline direction.
-    bool is_last_item_in_line =
-        item_index_in_line == flex_line.item_indices.size() - 1;
-
-    if (item_index_in_line == 0) {
-      // For the first item in each line, the intersection associated with
-      // them would be the intersection of the main gap after the item's line
-      // with the edge of the container associated with it.
-      if (!is_last_edge_intersection) {
-        PopulateMainAxisGapIntersectionsForFirstItem(flex_line,
-                                                     flex_lines.size());
-      }
-    } else {
-      Vector<GapIntersection> item_cross_intersections_list;
-      item_cross_intersections_list.ReserveInitialCapacity(2);
-
-      // Gap offsets for the gap before the current item.
-      LayoutUnit main_offset =
-          is_column_ ? item_offset.block_offset : item_offset.inline_offset;
-      LayoutUnit cross_axis_gap_start = main_offset - gap_between_items_;
-      LayoutUnit cross_axis_gap_end = main_offset;
-      LayoutUnit main_intersection_offset =
-          (cross_axis_gap_start + cross_axis_gap_end) / 2;
-
-      // "first" here refers to first in the block direction.
-      bool is_first_edge_intersection = flex_line_index == 0;
-      if (is_first_edge_intersection) {
-        PopulateGapIntersectionsForFirstLine(
-            flex_line, flex_lines.size(),
-            main_intersection_offset, item_cross_intersections_list);
-      } else if (is_last_edge_intersection) {
-        PopulateGapIntersectionsForLastLine(flex_line, main_intersection_offset,
-                                            item_cross_intersections_list);
-      } else {
-        PopulateGapIntersectionsForMiddleItem(flex_lines, flex_line_index,
-                                              main_intersection_offset,
-                                              item_cross_intersections_list);
-      }
-
-      cross_axis_gaps_.push_back(std::move(item_cross_intersections_list));
-    }
-
-    if (is_last_item_in_line && flex_lines.size() > 1 &&
-        !is_last_edge_intersection) {
-      // If we are the last item in any line except the last, we add the
-      // intersection of the next main gap with the edge of the container to the
-      // main axis gap intersections.
-      LayoutUnit next_main_axis_gap_start = flex_line.LineCrossEnd();
-      LayoutUnit next_main_axis_gap_end =
-          flex_line.LineCrossEnd() + gap_between_lines_;
-      LayoutUnit cross_intersection_offset =
-          (next_main_axis_gap_start + next_main_axis_gap_end) / 2;
-      PopulateNextMainAxisGapIntersectionsForLastItem(
-          cross_intersection_offset);
-    }
-  }
-
-  void PopulateGapIntersectionsForFirstLine(
-      const FlexLine& flex_line,
-      wtf_size_t num_lines,
-      LayoutUnit main_intersection_offset,
-      Vector<GapIntersection>& item_cross_intersections_list) {
-    // This method assumes that the inline offset of the
-    // `item_cross_intersection` is already set. If we are in the first flex
-    // line, our items will be associated with two potential cross axis gap
-    // intersections:
-    // 1. The cross axis offset of the line.
-    LayoutUnit cross_intersection_offset = flex_line.cross_axis_offset;
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                item_cross_intersections_list,
-                                /*is_at_edge_of_container=*/true);
-
-    // 2. The main and cross intersections of the cross gap with the main
-    // gap after the current line.
-    LayoutUnit next_main_axis_gap_start = flex_line.LineCrossEnd();
-    LayoutUnit next_main_axis_gap_end =
-        flex_line.LineCrossEnd() + gap_between_lines_;
-    cross_intersection_offset =
-        num_lines > 1 ? (next_main_axis_gap_start + next_main_axis_gap_end) / 2
-                      : flex_line.LineCrossEnd();
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                item_cross_intersections_list);
-
-    if (num_lines > 1) {
-      AddGapIntersectionToResults(main_intersection_offset,
-                                  cross_intersection_offset,
-                                  main_intersections_after_current_line_);
-    }
-  }
-
-  void PopulateMainAxisGapIntersectionsForFirstItem(const FlexLine& flex_line,
-                                                    wtf_size_t num_lines) {
-    CHECK(container_builder_);
-    if (num_lines < 1) {
-      return;
-    }
-
-    LayoutUnit next_main_axis_gap_start = flex_line.LineCrossEnd();
-    LayoutUnit next_main_axis_gap_end =
-        next_main_axis_gap_start + gap_between_lines_;
-
-    LayoutUnit main_gap_main_intersection_offset =
-        is_column_ ? container_builder_->BorderScrollbarPadding().block_start
-                   : container_builder_->BorderScrollbarPadding().inline_start;
-    LayoutUnit main_gap_cross_intersection_offset =
-        (next_main_axis_gap_start + next_main_axis_gap_end) / 2;
-    CHECK(main_intersections_after_current_line_.empty());
-
-    GapIntersection main_gap_intersection(main_gap_main_intersection_offset,
-                                          main_gap_cross_intersection_offset);
-    AddGapIntersectionToResults(main_gap_main_intersection_offset,
-                                main_gap_cross_intersection_offset,
-                                main_intersections_after_current_line_,
-                                /*is_at_edge_of_container=*/true);
-  }
-
-  void FinishedProcessingLine(wtf_size_t flex_line_idx) {
-    // Because we add main axis gap intersections line by line and item by
-    // item, after we add the intersections for the main axis gap after line
-    // N, for the item's on line N + 1 we also have intersections for that
-    // same gap which we'll want in the same ordered list. We don't have a
-    // guarantee that when adding the intersections on line N+1 they will
-    // strictly be after the intersections we added for the previous line, so
-    // we keep a list of the intersections we added for the gap above the
-    // current line, and then we merge them, sort of like MergeSort.
-    // See the comment above the definition for `MergeGapIntersections` for an
-    // example of why this is needed.
-    if (flex_line_idx > 0) {
-      Vector<GapIntersection> merged_intersections;
-      MergeGapIntersections(
-          !is_column_, main_intersections_before_current_line_,
-          main_axis_gaps_[flex_line_idx - 1], merged_intersections);
-      if (!merged_intersections.empty()) {
-        main_axis_gaps_[flex_line_idx - 1] = std::move(merged_intersections);
-      }
-    }
-
-    if (!main_intersections_after_current_line_.empty()) {
-      main_axis_gaps_.push_back(
-          std::move(main_intersections_after_current_line_));
-    }
-
-    main_intersections_after_current_line_.clear();
-    main_intersections_before_current_line_.clear();
-  }
-
-  void PopulateNextMainAxisGapIntersectionsForLastItem(
-      LayoutUnit cross_intersection_offset) {
-    CHECK(container_builder_);
-    // If we are the last item on the line, we add the intersection
-    // of the next main gap with the edge of the container to the main axis
-    // gap intersections.
-    LayoutUnit border_scrollbar_padding =
-        is_column_ ? container_builder_->BorderScrollbarPadding().block_end
-                   : container_builder_->BorderScrollbarPadding().inline_end;
-    LayoutUnit main_offset =
-        is_column_
-            ? container_builder_->InitialBorderBoxSize().block_size -
-                  border_scrollbar_padding
-            : container_builder_->InlineSize() - border_scrollbar_padding;
-    AddGapIntersectionToResults(main_offset, cross_intersection_offset,
-                                main_intersections_after_current_line_,
-                                /*is_at_edge_of_container=*/true);
-  }
-
-  void PopulateGapIntersectionsForMiddleItem(
-      const FlexLineVector& flex_lines,
-      size_t flex_line_index,
-      LayoutUnit main_intersection_offset,
-      Vector<GapIntersection>& item_cross_intersections_list) {
-    const FlexLine& flex_line = flex_lines[flex_line_index];
-    // If we are in "middle" lines, our items will be associated with two
-    // potential cross gap intersections:
-    // 1. The main and cross intersections of the cross gap with the main
-    // gap before the current line.
-    LayoutUnit previous_main_gap_end = flex_line.cross_axis_offset;
-    LayoutUnit previous_main_gap_start =
-        previous_main_gap_end - gap_between_lines_;
-    LayoutUnit cross_intersection_offset =
-        (previous_main_gap_start + previous_main_gap_end) / 2;
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                item_cross_intersections_list);
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                main_intersections_before_current_line_);
-
-    // 2. The cross and main intersections of the cross gap with the main
-    // gap after the current line.
-    LayoutUnit next_main_axis_gap_start = flex_line.LineCrossEnd();
-    LayoutUnit next_main_axis_gap_end =
-        next_main_axis_gap_start + gap_between_lines_;
-    cross_intersection_offset =
-        (next_main_axis_gap_start + next_main_axis_gap_end) / 2;
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                main_intersections_after_current_line_);
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                item_cross_intersections_list);
-  }
-
-  void PopulateGapIntersectionsForLastLine(
-      const FlexLine& flex_line,
-      LayoutUnit main_intersection_offset,
-      Vector<GapIntersection>& item_cross_intersections_list) {
-    // If we are in the last line, our items will be associated with two
-    // potential cross gap intersections:
-    // 1. The cross and main intersections of the cross gap with the
-    // main gap before the current line.
-
-    LayoutUnit previous_main_gap_start =
-        flex_line.cross_axis_offset - gap_between_lines_;
-    LayoutUnit previous_main_gap_end = flex_line.cross_axis_offset;
-    LayoutUnit cross_intersection_offset =
-        (previous_main_gap_start + previous_main_gap_end) / 2;
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                main_intersections_before_current_line_);
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                item_cross_intersections_list);
-
-    // 2. The cross end of the line.
-    cross_intersection_offset = flex_line.LineCrossEnd();
-    AddGapIntersectionToResults(main_intersection_offset,
-                                cross_intersection_offset,
-                                item_cross_intersections_list,
-                                /*is_at_edge_of_container=*/true);
-  }
-
-  // Utility function to merge two sorted lists of GapIntersections,
-  // de-duplicating. Takes in two already sorted lists of GapIntersections, and
-  // writes out the sorted merged list to `merged_intersections`. The final
-  // GapIntersections list of a given gap is a combination of intersections of
-  // items at the flex line before and flex line after that gap.
-  // This is needed for a scenario such as the following:
-  // +---------------------------------------------------------------+
-  // | +---------+        Gap        +---------+                     |
-  // | |   One   |                   |    Two  |                     |
-  // | +---------+                   +---------+                     |
-  // |                                                               |
-  // |         Row Gap     X1   X3                                  X2
-  // |                                                               |
-  // | +---------------+                  +---------+                |
-  // | |         Three |       Gap        |  Four   |                |
-  // | +---------------+                  +---------+                |
-  // +---------------------------------------------------------------+
-  // If we are currently processing the main intersections for `Four`.
-  // So, currently the main intersections Vector already has [X1, X2].
-  // However, we also need to add X3 to the main intersections Vector,
-  // but since it needs to be sorted, we can't add it to the end.
-  // To solve this common issue, we merge the two already sorted lists of
-  // GapIntersections, and write out the merged list to `merged_intersections`.
-  // In this case this would mean merging [X1, X2] and [X3] to get [X1, X3, X2].
-  void MergeGapIntersections(bool is_inline,
-                             const Vector<GapIntersection>& first_list,
-                             const Vector<GapIntersection>& second_list,
-                             Vector<GapIntersection>& merged_intersections) {
-    merged_intersections.reserve(first_list.size() + second_list.size());
-    wtf_size_t first_index = 0;
-    wtf_size_t second_index = 0;
-
-    while (first_index < first_list.size() &&
-           second_index < second_list.size()) {
-      if (is_inline) {
-        if (first_list[first_index].inline_offset ==
-            second_list[second_index].inline_offset) {
-          merged_intersections.push_back(first_list[first_index]);
-          ++first_index;
-          ++second_index;
-        } else if (first_list[first_index].inline_offset <
-                   second_list[second_index].inline_offset) {
-          merged_intersections.push_back(first_list[first_index]);
-          ++first_index;
-        } else {
-          merged_intersections.push_back(second_list[second_index]);
-          ++second_index;
-        }
-      } else {
-        if (first_list[first_index].block_offset ==
-            second_list[second_index].block_offset) {
-          merged_intersections.push_back(first_list[first_index]);
-          ++first_index;
-          ++second_index;
-        } else if (first_list[first_index].block_offset <
-                   second_list[second_index].block_offset) {
-          merged_intersections.push_back(first_list[first_index]);
-          ++first_index;
-        } else {
-          merged_intersections.push_back(second_list[second_index]);
-          ++second_index;
-        }
-      }
-
-      if (first_index == first_list.size() &&
-          second_index < second_list.size()) {
-        while (second_index < second_list.size()) {
-          merged_intersections.push_back(second_list[second_index]);
-          ++second_index;
-        }
-      } else if (second_index == second_list.size() &&
-                 first_index < first_list.size()) {
-        while (first_index < first_list.size()) {
-          merged_intersections.push_back(first_list[first_index]);
-          ++first_index;
-        }
-      }
-    }
-  }
-
- private:
-  LayoutUnit gap_between_items_;
-  LayoutUnit gap_between_lines_;
-  const BoxFragmentBuilder* container_builder_ = nullptr;
-  bool is_column_ = false;
-  Vector<GapIntersectionList> cross_axis_gaps_;
-  Vector<GapIntersectionList> main_axis_gaps_;
-
-  // These are intermediary vectors that should be reset after processing each
-  // line.
-  //
-  // The main axis gap intersection points for the main gap after the item.
-  Vector<GapIntersection> main_intersections_after_current_line_;
-  // The main axis gap intersection points for the main gap before the item.
-  Vector<GapIntersection> main_intersections_before_current_line_;
-};
 
 }  // anonymous namespace
 
@@ -861,21 +335,36 @@ ItemPosition FlexLayoutAlgorithm::ResolvedAlignSelf(
 LayoutUnit FlexLayoutAlgorithm::MainAxisContentExtent(
     LayoutUnit sum_hypothetical_main_size) const {
   if (is_column_) {
-    // Even though we only pass border_padding in the third parameter, the
-    // return value includes scrollbar, so subtract scrollbar to get content
-    // size.
-    // We add |border_scrollbar_padding| to the fourth parameter because
-    // |content_size| needs to be the size of the border box. We've overloaded
-    // the term "content".
     const LayoutUnit border_scrollbar_padding =
         BorderScrollbarPadding().BlockSum();
-    return ComputeBlockSizeForFragment(
-               GetConstraintSpace(), Node(), BorderPadding(),
-               sum_hypothetical_main_size.ClampNegativeToZero() +
-                   border_scrollbar_padding,
-               container_builder_.InlineSize()) -
-           border_scrollbar_padding;
+
+    // Ensure the intrinsic-size include the border/scrollbar/padding.
+    const LayoutUnit intrinsic_size =
+        sum_hypothetical_main_size == kIndefiniteSize
+            ? kIndefiniteSize
+            : sum_hypothetical_main_size + border_scrollbar_padding;
+
+    // First attempt to resolve the block-size using the (potentially
+    // indefinite) intrinsic-size.
+    const LayoutUnit block_size = ComputeBlockSizeForFragment(
+        GetConstraintSpace(), Node(), BorderPadding(), intrinsic_size,
+        container_builder_.InlineSize());
+    if (block_size != kIndefiniteSize) {
+      return (block_size - border_scrollbar_padding).ClampNegativeToZero();
+    }
+
+    // The block-size was indefinite, use the max block-size instead.
+    const LayoutUnit max_block_size =
+        ComputeInitialMinMaxBlockSizes(GetConstraintSpace(), Node(),
+                                       BorderPadding())
+            .max_size;
+    if (max_block_size != LayoutUnit::Max()) {
+      return (max_block_size - border_scrollbar_padding).ClampNegativeToZero();
+    }
+
+    return LayoutUnit::Max();
   }
+
   return ChildAvailableSize().inline_size;
 }
 
@@ -1058,49 +547,47 @@ void FlexLayoutAlgorithm::HandleOutOfFlowPositionedItems(
     AxisEdge inline_axis_edge = is_column_ ? cross_axis_edge : main_axis_edge;
     AxisEdge block_axis_edge = is_column_ ? main_axis_edge : cross_axis_edge;
 
-    InlineEdge inline_edge;
-    BlockEdge block_edge;
-    LogicalOffset offset = border_scrollbar_padding.StartOffset();
+    LogicalStaticPosition static_pos;
+    static_pos.offset = border_scrollbar_padding.StartOffset();
 
     // Determine the static-position based off the axis-edge.
     if (block_axis_edge == AxisEdge::kStart) {
       DCHECK(!IsBreakInside(GetBreakToken()));
-      block_edge = BlockEdge::kBlockStart;
+      static_pos.block_edge = BlockEdge::kBlockStart;
     } else if (block_axis_edge == AxisEdge::kCenter) {
       if (!should_process_block_center) {
         oof_children.emplace_back(oof_child);
         continue;
       }
-      block_edge = BlockEdge::kBlockCenter;
-      offset.block_offset += total_fragment_size.block_size / 2;
+      static_pos.block_edge = BlockEdge::kBlockCenter;
+      static_pos.offset.block_offset += total_fragment_size.block_size / 2;
     } else {
       if (!should_process_block_end) {
         oof_children.emplace_back(oof_child);
         continue;
       }
-      block_edge = BlockEdge::kBlockEnd;
-      offset.block_offset += total_fragment_size.block_size;
+      static_pos.block_edge = BlockEdge::kBlockEnd;
+      static_pos.offset.block_offset += total_fragment_size.block_size;
     }
 
     if (inline_axis_edge == AxisEdge::kStart) {
-      inline_edge = InlineEdge::kInlineStart;
+      static_pos.inline_edge = InlineEdge::kInlineStart;
     } else if (inline_axis_edge == AxisEdge::kCenter) {
-      inline_edge = InlineEdge::kInlineCenter;
-      offset.inline_offset += total_fragment_size.inline_size / 2;
+      static_pos.inline_edge = InlineEdge::kInlineCenter;
+      static_pos.offset.inline_offset += total_fragment_size.inline_size / 2;
     } else {
-      inline_edge = InlineEdge::kInlineEnd;
-      offset.inline_offset += total_fragment_size.inline_size;
+      static_pos.inline_edge = InlineEdge::kInlineEnd;
+      static_pos.offset.inline_offset += total_fragment_size.inline_size;
     }
 
     // Make the child offset relative to our fragment.
-    offset.block_offset -= previous_consumed_block_size;
+    static_pos.offset.block_offset -= previous_consumed_block_size;
 
-    LogicalAlignmentDirection align_self_direction =
-        is_column_ ? LogicalAlignmentDirection::kInline
-                   : LogicalAlignmentDirection::kBlock;
+    static_pos.align_self_direction = is_column_
+                                          ? LogicalAlignmentDirection::kInline
+                                          : LogicalAlignmentDirection::kBlock;
 
-    container_builder_.AddOutOfFlowChildCandidate(
-        child, offset, inline_edge, block_edge, align_self_direction);
+    container_builder_.AddOutOfFlowChildCandidate(child, static_pos);
   }
 }
 
@@ -1184,60 +671,10 @@ ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForIntrinsicInlineSize(
                                        /* is_new_fc */ true);
   builder.SetAvailableBlockSize(ChildAvailableSize().block_size);
   builder.SetPercentageResolutionBlockSize(child_percentage_size_.block_size);
-  const bool is_stretch =
-      RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()
-          ? !is_column_ && !is_multi_line_ &&
-                alignment == ItemPosition::kStretch
-          : !is_column_ &&
-                WillChildCrossSizeBeContainerCrossSize(child, alignment);
-  if (is_stretch) {
+  if (!is_column_ && !is_multi_line_ && alignment == ItemPosition::kStretch) {
     builder.SetBlockAutoBehavior(AutoSizeBehavior::kStretchExplicit);
   }
   return builder.ToConstraintSpace();
-}
-
-ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForIntrinsicBlockSizeDeprecated(
-    const BlockNode& flex_item,
-    ItemPosition alignment,
-    std::optional<LayoutUnit> override_inline_size) const {
-  DCHECK(!RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled());
-  const ComputedStyle& child_style = flex_item.Style();
-  ConstraintSpaceBuilder space_builder(GetConstraintSpace(),
-                                       child_style.GetWritingDirection(),
-                                       /* is_new_fc */ true);
-  SetOrthogonalFallbackInlineSizeIfNeeded(Style(), flex_item, &space_builder);
-  space_builder.SetCacheSlot(LayoutResultCacheSlot::kMeasure);
-  space_builder.SetIsPaintedAtomically(true);
-
-  // For determining the intrinsic block-size we make %-block-sizes resolve
-  // against an indefinite size.
-  LogicalSize child_percentage_size = child_percentage_size_;
-  if (is_column_) {
-    child_percentage_size.block_size = kIndefiniteSize;
-    space_builder.SetIsInitialBlockSizeIndefinite(true);
-  }
-
-  LogicalSize available_size = ChildAvailableSize();
-  if (is_column_) {
-    if (override_inline_size) {
-      available_size.inline_size = *override_inline_size;
-      space_builder.SetIsFixedInlineSize(true);
-    }
-  } else {
-    DCHECK(!override_inline_size);
-  }
-
-  if (WillChildCrossSizeBeContainerCrossSize(flex_item, alignment)) {
-    if (is_column_) {
-      space_builder.SetInlineAutoBehavior(AutoSizeBehavior::kStretchExplicit);
-    } else {
-      space_builder.SetBlockAutoBehavior(AutoSizeBehavior::kStretchExplicit);
-    }
-  }
-
-  space_builder.SetAvailableSize(available_size);
-  space_builder.SetPercentageResolutionSize(child_percentage_size);
-  return space_builder.ToConstraintSpace();
 }
 
 ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForFlexBasis(
@@ -1254,85 +691,6 @@ ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForFlexBasis(
   return space_builder.ToConstraintSpace();
 }
 
-ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForLayoutDeprecated(
-    const BlockNode& flex_item_node,
-    ItemPosition alignment,
-    LayoutUnit item_main_axis_final_size,
-    bool is_initial_block_size_indefinite,
-    std::optional<LayoutUnit> override_inline_size,
-    std::optional<LayoutUnit> line_cross_size_for_stretch,
-    std::optional<LayoutUnit> block_offset_for_fragmentation,
-    bool min_block_size_should_encompass_intrinsic_size) const {
-  DCHECK(!RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled());
-  const ComputedStyle& child_style = flex_item_node.Style();
-  ConstraintSpaceBuilder space_builder(GetConstraintSpace(),
-                                       child_style.GetWritingDirection(),
-                                       /* is_new_fc */ true);
-  SetOrthogonalFallbackInlineSizeIfNeeded(Style(), flex_item_node,
-                                          &space_builder);
-  space_builder.SetIsPaintedAtomically(true);
-
-  LogicalSize available_size = ChildAvailableSize();
-  if (is_column_) {
-    if (override_inline_size) {
-      DCHECK(!line_cross_size_for_stretch)
-          << "We only override inline size when we are calculating intrinsic "
-             "width of multiline column flexboxes, and we don't do any "
-             "stretching during the intrinsic width calculation.";
-      available_size.inline_size = *override_inline_size;
-      space_builder.SetIsFixedInlineSize(true);
-    } else if (line_cross_size_for_stretch) {
-      available_size.inline_size = *line_cross_size_for_stretch;
-    }
-    available_size.block_size = item_main_axis_final_size;
-    space_builder.SetIsFixedBlockSize(true);
-  } else {
-    DCHECK(!override_inline_size);
-    if (line_cross_size_for_stretch) {
-      available_size.block_size = *line_cross_size_for_stretch;
-    }
-    available_size.inline_size = item_main_axis_final_size;
-    space_builder.SetIsFixedInlineSize(true);
-  }
-  if (is_initial_block_size_indefinite) {
-    space_builder.SetIsInitialBlockSizeIndefinite(true);
-  }
-
-  if (line_cross_size_for_stretch ||
-      WillChildCrossSizeBeContainerCrossSize(flex_item_node, alignment)) {
-    if (is_column_) {
-      space_builder.SetInlineAutoBehavior(AutoSizeBehavior::kStretchExplicit);
-    } else {
-      space_builder.SetBlockAutoBehavior(AutoSizeBehavior::kStretchExplicit);
-    }
-  }
-
-  if (!line_cross_size_for_stretch &&
-      DoesItemStretch(flex_item_node, alignment)) {
-    // For the first layout pass of stretched items, the goal is to determine
-    // the post-flexed, pre-stretched cross-axis size. Stretched items will
-    // later get a final layout with a potentially different cross size so use
-    // the "measure" slot for this layout. We will use the "layout" cache slot
-    // for the item's final layout.
-    //
-    // Setting the "measure" cache slot on the space writes the result
-    // into both the "measure" and "layout" cache slots. So the stretch
-    // layout will reuse this "measure" result if it can.
-    space_builder.SetCacheSlot(LayoutResultCacheSlot::kMeasure);
-  } else if (block_offset_for_fragmentation &&
-             GetConstraintSpace().HasBlockFragmentation()) {
-    if (min_block_size_should_encompass_intrinsic_size)
-      space_builder.SetMinBlockSizeShouldEncompassIntrinsicSize();
-    SetupSpaceBuilderForFragmentation(container_builder_, flex_item_node,
-                                      *block_offset_for_fragmentation,
-                                      &space_builder);
-  }
-
-  space_builder.SetAvailableSize(available_size);
-  space_builder.SetPercentageResolutionSize(child_percentage_size_);
-  return space_builder.ToConstraintSpace();
-}
-
 const ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForLayout(
     const BlockNode& node,
     ItemPosition alignment,
@@ -1342,8 +700,6 @@ const ConstraintSpace FlexLayoutAlgorithm::BuildSpaceForLayout(
     std::optional<LayoutUnit> line_cross_size,
     std::optional<LayoutUnit> block_offset_for_fragmentation,
     bool min_block_size_should_encompass_intrinsic_size) const {
-  DCHECK(RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled());
-
   ConstraintSpaceBuilder builder(GetConstraintSpace(),
                                  node.Style().GetWritingDirection(),
                                  /* is_new_fc */ true);
@@ -1461,6 +817,8 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
     }
 
     const ComputedStyle& child_style = child.Style();
+    const float flex_grow = child_style.ResolvedFlexGrow(Style());
+    const float flex_shrink = child_style.ResolvedFlexShrink(Style());
     const ItemPosition alignment = ResolvedAlignSelf(child_style);
 
     std::optional<LayoutUnit> max_content_contribution;
@@ -1504,14 +862,10 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
         is_horizontal_flow_ ? physical_border_padding.HorizontalSum()
                             : physical_border_padding.VerticalSum();
     const auto child_space =
-        RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()
-            ? BuildSpaceForLayout(
-                  child, alignment,
-                  /* is_initial_block_size_indefinite */ is_column_ &&
-                      !is_main_axis_inline_axis,
-                  max_content_contribution)
-            : BuildSpaceForIntrinsicBlockSizeDeprecated(
-                  child, alignment, max_content_contribution);
+        BuildSpaceForLayout(child, alignment,
+                            /* is_initial_block_size_indefinite */ is_column_ &&
+                                !is_main_axis_inline_axis,
+                            max_content_contribution);
 
     bool depends_on_min_max_sizes = false;
     auto MinMaxSizesFunc = [&](SizeType type) -> MinMaxSizesResult {
@@ -1560,13 +914,7 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
       if (intrinsic_size == kIndefiniteSize) {
         if (!layout_result) {
           std::optional<DisableLayoutSideEffectsScope> disable_side_effects;
-          const bool disable =
-              RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()
-                  ? phase != Phase::kLayout &&
-                        !child.GetLayoutBox()->NeedsLayout()
-                  : phase != Phase::kLayout &&
-                        Node().GetLayoutBox()->NeedsLayout();
-          if (disable) {
+          if (phase != Phase::kLayout && !child.GetLayoutBox()->NeedsLayout()) {
             disable_side_effects.emplace();
           }
           layout_result = child.Layout(child_space);
@@ -1633,7 +981,7 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
           });
     };
 
-    const LayoutUnit flex_base_border_box = ([&]() -> LayoutUnit {
+    const LayoutUnit base_border_size = ([&]() -> LayoutUnit {
       std::optional<Length> auto_flex_basis_length;
 
       if (flex_basis.HasAuto()) {
@@ -1679,32 +1027,12 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
     // https://www.w3.org/TR/css-flexbox-1/#algo-main-item
     // Blink's FlexibleBoxAlgorithm expects it to be content + scrollbar widths,
     // but no padding or border.
-    DCHECK_GE(flex_base_border_box, main_axis_border_padding);
+    DCHECK_GE(base_border_size, main_axis_border_padding);
     const LayoutUnit base_content_size =
-        flex_base_border_box - main_axis_border_padding;
+        base_border_size - main_axis_border_padding;
 
     std::optional<Length> auto_min_length;
     if (ShouldApplyAutoMinSize(child)) {
-      const LayoutUnit content_size_suggestion = ([&]() -> LayoutUnit {
-        const LayoutUnit content_size =
-            is_main_axis_inline_axis
-                ? MinMaxSizesFunc(SizeType::kContent).sizes.min_size
-                : BlockSizeFunc(SizeType::kContent);
-
-        // For non-replaced elements with an aspect-ratio ensure the size
-        // provided by the aspect-ratio encompasses the min-intrinsic size.
-        if (!child.IsReplaced() && !child_style.AspectRatio().IsAuto()) {
-          return std::max(
-              content_size,
-              is_main_axis_inline_axis
-                  ? MinMaxSizesFunc(SizeType::kIntrinsic).sizes.min_size
-                  : BlockSizeFunc(SizeType::kIntrinsic));
-        }
-
-        return content_size;
-      })();
-      DCHECK_GE(content_size_suggestion, main_axis_border_padding);
-
       const LayoutUnit specified_size_suggestion = ([&]() -> LayoutUnit {
         const Length& specified_length_in_main_axis =
             is_horizontal_flow_ ? child_style.Width() : child_style.Height();
@@ -1727,6 +1055,83 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
         return resolved_size == kIndefiniteSize ? LayoutUnit::Max()
                                                 : resolved_size;
       })();
+
+      const LayoutUnit content_size_suggestion = ([&]() -> LayoutUnit {
+        const Length& min_length_in_main_axis = is_horizontal_flow_
+                                                    ? child_style.MinWidth()
+                                                    : child_style.MinHeight();
+
+        // This is an extremely subtle optimization.
+        //
+        // If our specified-size suggestion is smaller than our base-size, then
+        // we can skip determining the content-size in certain scenarios.
+        //
+        // Below we always take the min of the specified-size, and the
+        // content-size. This means that we'll only ever use the auto min-size
+        // if the flex-item has to *shrink*.
+        //
+        // We can't use this optimization with calc-size() as something like:
+        // "min-height: calc-size(auto, size * 2)" may result in the min-size
+        // being greater than the specified-size.
+        //
+        // We'll never shrink a flex-item under the conditions specified below.
+        if (RuntimeEnabledFeatures::LayoutFlexCacheFixEnabled() &&
+            min_length_in_main_axis.IsAuto() &&
+            specified_size_suggestion <= base_border_size) {
+          // If flex-shrink is zero we can't shrink.
+          if (flex_shrink == 0.f) {
+            return LayoutUnit::Max();
+          }
+
+          // Determine if our main-axis content-size is definite. We can't
+          // apply this optimization if its indefinite, as a calc-size() on the
+          // flexbox may cause items to shrink.
+          const LayoutUnit main_axis_content_size = MainAxisContentExtent();
+          if (main_axis_content_size != LayoutUnit::Max()) {
+            const LayoutUnit main_axis_margins =
+                is_horizontal_flow_ ? physical_child_margins.HorizontalSum()
+                                    : physical_child_margins.VerticalSum();
+
+            // If our margin-size is smaller than the (definite) main-axis
+            // content-size we can't shrink if:
+            //  - We are a wrapping flexbox.
+            //  - We are a single flex-item.
+            // E.g. we are the only flex-item on a line.
+            //
+            // NOTE: This optimization could potentially expanded to determine
+            // if there is any (positive) free-space on a line, however this
+            // would mean an additional pass of the items, and re-computing a
+            // bunch of objects needed. It likely isn't worth it.
+            if (specified_size_suggestion + main_axis_margins <=
+                main_axis_content_size) {
+              if (is_multi_line_) {
+                return LayoutUnit::Max();
+              }
+              if (iterator.size() == 1u) {
+                return LayoutUnit::Max();
+              }
+            }
+          }
+        }
+
+        const LayoutUnit content_size =
+            is_main_axis_inline_axis
+                ? MinMaxSizesFunc(SizeType::kContent).sizes.min_size
+                : BlockSizeFunc(SizeType::kContent);
+
+        // For non-replaced elements with an aspect-ratio ensure the size
+        // provided by the aspect-ratio encompasses the min-intrinsic size.
+        if (!child.IsReplaced() && !child_style.AspectRatio().IsAuto()) {
+          return std::max(
+              content_size,
+              is_main_axis_inline_axis
+                  ? MinMaxSizesFunc(SizeType::kIntrinsic).sizes.min_size
+                  : BlockSizeFunc(SizeType::kIntrinsic));
+        }
+
+        return content_size;
+      })();
+      DCHECK_GE(content_size_suggestion, main_axis_border_padding);
 
       LayoutUnit auto_min_size =
           std::min(specified_size_suggestion, content_size_suggestion);
@@ -1776,9 +1181,6 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
         ChildAvailableSize().block_size == kIndefiniteSize &&
         is_used_flex_basis_indefinite && !AspectRatioProvidesBlockMainSize();
 
-    const float flex_grow = child_style.ResolvedFlexGrow(Style());
-    const float flex_shrink = child_style.ResolvedFlexShrink(Style());
-
     const auto container_writing_direction =
         GetConstraintSpace().GetWritingDirection();
     const auto baseline_writing_mode = DetermineBaselineWritingMode(
@@ -1798,12 +1200,6 @@ void FlexLayoutAlgorithm::ConstructAndAppendFlexItems(
         baseline_group, is_initial_block_size_indefinite,
         is_used_flex_basis_indefinite, depends_on_min_max_sizes,
         is_horizontal_flow_);
-    if (!RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()) {
-      // Save the layout result so that we can maybe reuse it later.
-      if (layout_result && !is_main_axis_inline_axis) {
-        flex_items_.back().layout_result = layout_result;
-      }
-    }
   }
 }
 
@@ -1866,10 +1262,20 @@ const LayoutResult* FlexLayoutAlgorithm::LayoutInternal() {
       GetConstraintSpace(), Node(), BorderPadding(), total_intrinsic_block_size,
       container_builder_.InlineSize());
 
+  std::optional<FlexGapAccumulator> gap_accumulator = std::nullopt;
+  if (RuntimeEnabledFeatures::CSSGapDecorationEnabled() &&
+      Style().HasGapRule() && !flex_lines.empty()) {
+    gap_accumulator = FlexGapAccumulator(
+        gap_between_items_, gap_between_lines_, flex_lines.size(),
+        flex_items_.size(), is_column_,
+        container_builder_.BorderScrollbarPadding().block_start,
+        container_builder_.BorderScrollbarPadding().inline_start);
+  }
+
   if (!IsBreakInside(GetBreakToken())) {
     ApplyReversals(&flex_lines);
-    LayoutResult::EStatus status =
-        GiveItemsFinalPositionAndSize(&flex_lines, &row_break_between_outputs);
+    LayoutResult::EStatus status = GiveItemsFinalPositionAndSize(
+        &flex_lines, &row_break_between_outputs, gap_accumulator);
     if (status != LayoutResult::kSuccess) {
       return container_builder_.Abort(status);
     }
@@ -1895,7 +1301,7 @@ const LayoutResult* FlexLayoutAlgorithm::LayoutInternal() {
     LayoutResult::EStatus status =
         GiveItemsFinalPositionAndSizeForFragmentation(
             &flex_lines, &row_break_between_outputs, &break_before_row,
-            &total_intrinsic_block_size);
+            &total_intrinsic_block_size, gap_accumulator);
     if (status != LayoutResult::kSuccess) {
       return container_builder_.Abort(status);
     }
@@ -1957,15 +1363,19 @@ const LayoutResult* FlexLayoutAlgorithm::LayoutInternal() {
   if (GetConstraintSpace().HasBlockFragmentation()) {
     container_builder_.SetBreakTokenData(
         MakeGarbageCollected<FlexBreakTokenData>(
-            container_builder_.GetBreakTokenData(), flex_lines,
-            row_break_between_outputs, oof_children, total_intrinsic_block_size,
-            break_before_row));
+            flex_lines, row_break_between_outputs, oof_children,
+            total_intrinsic_block_size, break_before_row));
   }
 
   // Un-freeze descendant scrollbars before we run the OOF layout part.
   freeze_scrollbars.reset();
 
   container_builder_.HandleOofsAndSpecialDescendants();
+
+  if (gap_accumulator) {
+    container_builder_.SetGapGeometry(
+        gap_accumulator->BuildGapGeometry(container_builder_));
+  }
 
   return container_builder_.ToBoxFragment();
 }
@@ -1978,7 +1388,7 @@ void FlexLayoutAlgorithm::PlaceFlexItems(
   DCHECK(oof_children || phase != Phase::kLayout);
   ConstructAndAppendFlexItems(phase, oof_children);
 
-  const LayoutUnit line_break_size = MainAxisContentExtent(LayoutUnit::Max());
+  const LayoutUnit line_break_size = MainAxisContentExtent();
   const FlexLineBreakerResult result = BreakFlexItemsIntoLines(
       base::span(flex_items_), line_break_size, gap_between_items_,
       is_multi_line_, balance_min_line_count_);
@@ -2023,21 +1433,22 @@ void FlexLayoutAlgorithm::PlaceFlexItems(
         return cross_available_size;
       })();
 
+  base::span<FlexItem> items = base::span(flex_items_);
   LayoutUnit sum_line_cross_size;
 
   flex_lines->reserve(result.flex_lines.size());
   for (auto& line : result.flex_lines) {
     // Flex the items.
-    LineFlexer(base::span(line.line_items), line.sum_hypothetical_main_size,
-               line.sum_flex_base_size, main_axis_inner_size)
+    auto line_items = items.take_first(line.count);
+    LineFlexer(line_items, main_axis_inner_size,
+               line.sum_hypothetical_main_size, gap_between_items_)
         .Run();
 
     Vector<wtf_size_t> item_indices;
-    item_indices.ReserveInitialCapacity(line.line_items.size());
+    item_indices.ReserveInitialCapacity(line.count);
 
     LayoutUnit main_axis_free_space =
-        main_axis_inner_size -
-        (line.line_items.size() - 1) * gap_between_items_;
+        main_axis_inner_size - (line.count - 1u) * gap_between_items_;
     LayoutUnit line_cross_size;
     LayoutUnit max_major_ascent = LayoutUnit::Min();
     LayoutUnit max_minor_ascent = LayoutUnit::Min();
@@ -2045,9 +1456,7 @@ void FlexLayoutAlgorithm::PlaceFlexItems(
     LayoutUnit max_minor_descent = LayoutUnit::Min();
     unsigned main_axis_auto_margin_count = 0;
 
-    for (wtf_size_t i = 0; i < line.line_items.size(); ++i) {
-      FlexItem& flex_item = line.line_items[i];
-
+    for (const FlexItem& flex_item : line_items) {
       item_indices.push_back(flex_item.item_index);
       main_axis_free_space -= flex_item.FlexedMarginBoxSize();
       main_axis_auto_margin_count += flex_item.main_axis_auto_margin_count;
@@ -2056,131 +1465,48 @@ void FlexLayoutAlgorithm::PlaceFlexItems(
           flex_item.alignment == ItemPosition::kBaseline ||
           flex_item.alignment == ItemPosition::kLastBaseline;
 
-      if (RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()) {
-        // If we don't need to compute the line cross-size or don't have
-        // anything baseline aligned - we can skip the rest of this loop.
-        if (!has_baseline_alignment && definite_line_cross_size) {
-          continue;
-        }
-
-        const BlockNode& node = flex_item.block_node;
-        const ConstraintSpace space =
-            BuildSpaceForLayout(node, flex_item.alignment,
-                                flex_item.is_initial_block_size_indefinite,
-                                flex_item.max_content_contribution,
-                                flex_item.FlexedBorderBoxSize());
-
-        const LayoutResult* layout_result = nullptr;
-
-        const LayoutUnit cross_axis_size = ([&]() {
-          const auto& item_style = node.Style();
-          const BoxStrut border_padding =
-              ComputeBorders(space, node) + ComputePadding(space, item_style);
-          const bool is_main_axis_inline_axis =
-              IsHorizontalWritingMode(item_style.GetWritingMode()) ==
-              is_horizontal_flow_;
-
-          if (node.IsReplaced()) {
-            const LogicalSize replaced_size =
-                ComputeReplacedSize(node, space, border_padding);
-            return is_main_axis_inline_axis ? replaced_size.block_size
-                                            : replaced_size.inline_size;
-          }
-
-          if (!is_main_axis_inline_axis) {
-            return ComputeInlineSizeForFragment(space, node, border_padding);
-          }
-
-          if (phase == Phase::kColumnWrapIntrinsicSize) {
-            return *flex_item.max_content_contribution;
-          }
-
-          std::optional<DisableLayoutSideEffectsScope> disable_side_effects;
-          if (phase != Phase::kLayout && !node.GetLayoutBox()->NeedsLayout()) {
-            disable_side_effects.emplace();
-          }
-          layout_result = node.Layout(space);
-          const PhysicalSize size = layout_result->GetPhysicalFragment().Size();
-          return is_horizontal_flow_ ? size.height : size.width;
-        })();
-
-        // Calculate the size used to determine the line cross-axis size.
-        //
-        // Typically this is just the cross-axis size, however if we are
-        // baseline aligned we need to track the baseline(s) max
-        // ascent/descent, and use the "baseline" size instead.
-        LayoutUnit cross_axis_margin_size =
-            cross_axis_size + flex_item.CrossAxisMarginExtent();
-
-        if (has_baseline_alignment) {
-          // When computing `cross_axis_size` we'll run layout when the
-          // flex-item's cross-size is its block-size, and we'll have a
-          // layout-result here to pull the baseline from. In all other cases
-          // we can avoid layout and just synthesize the baseline.
-          const LayoutUnit ascent =
-              layout_result
-                  ? BaselineAscent(flex_item,
-                                   To<PhysicalBoxFragment>(
-                                       layout_result->GetPhysicalFragment()))
-                  : SynthesizedBaselineAscent(flex_item, cross_axis_size);
-          const LayoutUnit descent = cross_axis_margin_size - ascent;
-          if (flex_item.baseline_group == BaselineGroup::kMajor) {
-            max_major_ascent = std::max(max_major_ascent, ascent);
-            max_major_descent = std::max(max_major_descent, descent);
-            cross_axis_margin_size = max_major_ascent + max_major_descent;
-          } else {
-            max_minor_ascent = std::max(max_minor_ascent, ascent);
-            max_minor_descent = std::max(max_minor_descent, descent);
-            cross_axis_margin_size = max_minor_ascent + max_minor_descent;
-          }
-        }
-        line_cross_size = std::max(line_cross_size, cross_axis_margin_size);
+      // If we don't need to compute the line cross-size or don't have anything
+      // baseline aligned - we can skip the rest of this loop.
+      if (!has_baseline_alignment && definite_line_cross_size) {
         continue;
       }
 
-      const LayoutUnit cross_axis_size = ([&]() {
-        const ConstraintSpace space = BuildSpaceForLayoutDeprecated(
-            flex_item.block_node, flex_item.alignment,
-            flex_item.FlexedBorderBoxSize(),
-            flex_item.is_initial_block_size_indefinite,
-            flex_item.max_content_contribution);
+      const BlockNode& node = flex_item.block_node;
+      const ConstraintSpace space = BuildSpaceForLayout(
+          node, flex_item.alignment, flex_item.is_initial_block_size_indefinite,
+          flex_item.max_content_contribution, flex_item.FlexedBorderBoxSize());
 
-        // We need to get the item's cross-axis size given its new main size.
-        //
-        // If the new main size is the item's inline-size, then we have to do a
-        // layout to get its new block-size.
-        // But if the new main size is the item's block-size, we can skip
-        // layout in some cases and just calculate the inline-size directly.
-        //
-        // Even when we only need inline-size, we have to lay out the item if:
-        //  * This is the item's last chance to layout (i.e. doesn't stretch).
-        //  * The item has not yet been laid out.
-        if (DoesItemStretch(flex_item.block_node, flex_item.alignment) &&
-            flex_item.layout_result) {
-          const auto& item_style = flex_item.block_node.Style();
-          DCHECK_NE(is_horizontal_flow_, item_style.IsHorizontalWritingMode());
-          const BoxStrut border_padding =
-              ComputeBorders(space, flex_item.block_node) +
-              ComputePadding(space, item_style);
-          if (flex_item.block_node.IsReplaced()) {
-            return ComputeReplacedSize(flex_item.block_node, space,
-                                       border_padding)
-                .inline_size;
-          }
-          return ComputeInlineSizeForFragment(space, flex_item.block_node,
-                                              border_padding);
+      const LayoutResult* layout_result = nullptr;
+
+      const LayoutUnit cross_axis_size = ([&]() {
+        const auto& item_style = node.Style();
+        const BoxStrut border_padding =
+            ComputeBorders(space, node) + ComputePadding(space, item_style);
+        const bool is_main_axis_inline_axis =
+            IsHorizontalWritingMode(item_style.GetWritingMode()) ==
+            is_horizontal_flow_;
+
+        if (node.IsReplaced()) {
+          const LogicalSize replaced_size =
+              ComputeReplacedSize(node, space, border_padding);
+          return is_main_axis_inline_axis ? replaced_size.block_size
+                                          : replaced_size.inline_size;
+        }
+
+        if (!is_main_axis_inline_axis) {
+          return ComputeInlineSizeForFragment(space, node, border_padding);
         }
 
         if (phase == Phase::kColumnWrapIntrinsicSize) {
           return *flex_item.max_content_contribution;
         }
 
-        DCHECK((space.CacheSlot() == LayoutResultCacheSlot::kLayout) ||
-               !flex_item.layout_result);
-        flex_item.layout_result = flex_item.block_node.Layout(space);
-        DCHECK_EQ(flex_item.layout_result->Status(), LayoutResult::kSuccess);
-        const PhysicalSize size =
-            flex_item.layout_result->GetPhysicalFragment().Size();
+        std::optional<DisableLayoutSideEffectsScope> disable_side_effects;
+        if (phase != Phase::kLayout && !node.GetLayoutBox()->NeedsLayout()) {
+          disable_side_effects.emplace();
+        }
+        layout_result = node.Layout(space);
+        const PhysicalSize size = layout_result->GetPhysicalFragment().Size();
         return is_horizontal_flow_ ? size.height : size.width;
       })();
 
@@ -2192,13 +1518,17 @@ void FlexLayoutAlgorithm::PlaceFlexItems(
       LayoutUnit cross_axis_margin_size =
           cross_axis_size + flex_item.CrossAxisMarginExtent();
 
-      // TODO(crbug.com/1272533): We may not have a layout-result during
-      // min/max calculations. This is incorrect, and we should produce a
-      // layout-result when baseline aligned.
-      if (flex_item.layout_result && has_baseline_alignment) {
-        const LayoutUnit ascent = BaselineAscent(
-            flex_item, To<PhysicalBoxFragment>(
-                           flex_item.layout_result->GetPhysicalFragment()));
+      if (has_baseline_alignment) {
+        // When computing `cross_axis_size` we'll run layout when the
+        // flex-item's cross-size is its block-size, and we'll have a
+        // layout-result here to pull the baseline from. In all other
+        // cases we can avoid layout and just synthesize the baseline.
+        const LayoutUnit ascent =
+            layout_result
+                ? BaselineAscent(flex_item,
+                                 To<PhysicalBoxFragment>(
+                                     layout_result->GetPhysicalFragment()))
+                : SynthesizedBaselineAscent(flex_item, cross_axis_size);
         const LayoutUnit descent = cross_axis_margin_size - ascent;
         if (flex_item.baseline_group == BaselineGroup::kMajor) {
           max_major_ascent = std::max(max_major_ascent, ascent);
@@ -2317,22 +1647,23 @@ LayoutUnit InitialContentPositionOffset(const StyleContentAlignmentData& data,
   }
 }
 
-LayoutUnit ContentDistributionSpace(const StyleContentAlignmentData& data,
-                                    LayoutUnit free_space,
-                                    unsigned number_of_items) {
+LayoutUnitDiffuser ContentDistributionSpace(
+    const StyleContentAlignmentData& data,
+    LayoutUnit free_space,
+    unsigned number_of_items) {
   if (free_space <= LayoutUnit() || number_of_items <= 1) {
-    return LayoutUnit();
+    return LayoutUnitDiffuser();
   }
   switch (data.Distribution()) {
     case ContentDistributionType::kDefault:
     case ContentDistributionType::kStretch:
-      return LayoutUnit();
+      return LayoutUnitDiffuser();
     case ContentDistributionType::kSpaceBetween:
-      return free_space / (number_of_items - 1);
+      return LayoutUnitDiffuser(free_space, number_of_items - 1);
     case ContentDistributionType::kSpaceEvenly:
-      return free_space / (number_of_items + 1);
+      return LayoutUnitDiffuser(free_space, number_of_items + 1);
     case ContentDistributionType::kSpaceAround:
-      return free_space / number_of_items;
+      return LayoutUnitDiffuser(free_space, number_of_items);
   }
 }
 
@@ -2340,7 +1671,8 @@ LayoutUnit ContentDistributionSpace(const StyleContentAlignmentData& data,
 
 LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
     FlexLineVector* flex_lines,
-    Vector<EBreakBetween>* row_break_between_outputs) {
+    Vector<EBreakBetween>* row_break_between_outputs,
+    std::optional<FlexGapAccumulator>& gap_accumulator) {
   DCHECK(!IsBreakInside(GetBreakToken()));
 
   const bool should_propagate_row_break_values =
@@ -2404,7 +1736,7 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
     cross_axis_free_space = LayoutUnit();
   }
 
-  const LayoutUnit space_between_lines =
+  LayoutUnitDiffuser space_between_lines =
       ContentDistributionSpace(align_content, cross_axis_free_space, num_lines);
   LayoutUnit line_cross_axis_offset =
       (is_column_ ? BorderScrollbarPadding().inline_start
@@ -2414,14 +1746,6 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
 
   BaselineAccumulator baseline_accumulator(style);
   LayoutResult::EStatus status = LayoutResult::kSuccess;
-
-  std::optional<GapAccumulator> gap_accumulator = std::nullopt;
-  if (RuntimeEnabledFeatures::CSSGapDecorationEnabled() &&
-      Style().HasGapRule()) {
-    gap_accumulator = GapAccumulator(gap_between_items_, gap_between_lines_,
-                                     flex_lines->size(), flex_items_.size(),
-                                     &container_builder_, is_column_);
-  }
 
   for (wtf_size_t flex_line_idx = 0; flex_line_idx < flex_lines->size();
        ++flex_line_idx) {
@@ -2446,14 +1770,14 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
     const LayoutUnit main_axis_free_space =
         should_apply_main_axis_auto_margin ? LayoutUnit()
                                            : flex_line.main_axis_free_space;
-    const LayoutUnit main_axis_auto_margin =
+    LayoutUnitDiffuser main_axis_auto_margin =
         should_apply_main_axis_auto_margin
-            ? flex_line.main_axis_free_space /
-                  flex_line.main_axis_auto_margin_count
-            : LayoutUnit();
+            ? LayoutUnitDiffuser(flex_line.main_axis_free_space,
+                                 flex_line.main_axis_auto_margin_count)
+            : LayoutUnitDiffuser();
 
     const wtf_size_t line_items_size = flex_line.item_indices.size();
-    const LayoutUnit space_between_items = ContentDistributionSpace(
+    LayoutUnitDiffuser space_between_items = ContentDistributionSpace(
         justify_content, main_axis_free_space, line_items_size);
     LayoutUnit main_axis_offset =
         (is_column_ ? BorderScrollbarPadding().block_start
@@ -2462,30 +1786,23 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
                                      line_items_size, is_reverse_direction_);
 
     wtf_size_t item_index_in_line = 0;
+    LayoutUnit border_scrollbar_padding =
+        is_column_ ? container_builder_.BorderScrollbarPadding().block_end
+                   : container_builder_.BorderScrollbarPadding().inline_end;
+    LayoutUnit container_main_end =
+        is_column_ ? container_builder_.InitialBorderBoxSize().block_size -
+                         border_scrollbar_padding
+                   : container_builder_.InlineSize() - border_scrollbar_padding;
 
     for (wtf_size_t item_index : flex_line.item_indices) {
       const FlexItem& item = flex_items_[item_index];
 
-      const LayoutResult* layout_result = nullptr;
-      if (RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()) {
-        const ConstraintSpace child_space = BuildSpaceForLayout(
-            item.block_node, item.alignment,
-            item.is_initial_block_size_indefinite,
-            /* override_inline_size */ std::nullopt, item.FlexedBorderBoxSize(),
-            flex_line.line_cross_size);
-        layout_result = item.block_node.Layout(child_space);
-      } else {
-        if (DoesItemStretch(item.block_node, item.alignment)) {
-          ConstraintSpace child_space = BuildSpaceForLayoutDeprecated(
-              item.block_node, item.alignment, item.FlexedBorderBoxSize(),
-              item.is_initial_block_size_indefinite,
-              /* override_inline_size */ std::nullopt,
-              flex_line.line_cross_size);
-          layout_result = item.block_node.Layout(child_space);
-        } else {
-          layout_result = item.layout_result;
-        }
-      }
+      const ConstraintSpace child_space = BuildSpaceForLayout(
+          item.block_node, item.alignment,
+          item.is_initial_block_size_indefinite,
+          /* override_inline_size */ std::nullopt, item.FlexedBorderBoxSize(),
+          flex_line.line_cross_size);
+      const LayoutResult* layout_result = item.block_node.Layout(child_space);
 
       const auto& item_style = item.block_node.Style();
 
@@ -2562,10 +1879,10 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
 
         // Main-axis margins are distributed to evenly across the whole line.
         if (is_margin_auto.MainStart()) {
-          margin.MainStart() = main_axis_auto_margin;
+          margin.MainStart() = main_axis_auto_margin.Next();
         }
         if (is_margin_auto.MainEnd()) {
-          margin.MainEnd() = main_axis_auto_margin;
+          margin.MainEnd() = main_axis_auto_margin.Next();
         }
       }
 
@@ -2618,7 +1935,7 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
                      : LogicalOffset(main_axis_offset, cross_axis_offset);
 
       main_axis_offset += item.FlexedBorderBoxSize() + margin.MainEnd() +
-                          space_between_items + gap_between_items_;
+                          space_between_items.Next() + gap_between_items_;
 
       const BoxStrut logical_margins =
           physical_margins.ConvertToLogical(writing_direction);
@@ -2643,20 +1960,24 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
         status = LayoutResult::kNeedsRelayoutWithNoChildScrollbarChanges;
       }
 
-      if (gap_accumulator) {
-        gap_accumulator->BuildGapIntersectionPointsForCurrentItem(
-            *flex_lines, flex_line_idx, item_index_in_line, offset);
+      if (gap_accumulator &&
+          !InvolvedInBlockFragmentation(container_builder_)) {
+        // These are relative to the current flex line.
+        const bool is_first_item = item_index_in_line == 0;
+        const bool is_last_item =
+            item_index_in_line == flex_line.item_indices.size() - 1;
+
+        gap_accumulator->BuildGapsForCurrentItem(
+            (*flex_lines)[flex_line_idx], flex_line_idx, offset, is_first_item,
+            is_last_item, is_last_line, flex_line.cross_axis_offset,
+            flex_line.LineCrossEnd(), container_main_end);
       }
 
       item_index_in_line++;
     }
 
-    line_cross_axis_offset +=
-        flex_line.line_cross_size + space_between_lines + gap_between_lines_;
-
-    if (gap_accumulator) {
-      gap_accumulator->FinishedProcessingLine(flex_line_idx);
-    }
+    line_cross_axis_offset += flex_line.line_cross_size +
+                              space_between_lines.Next() + gap_between_lines_;
   }
 
   if (auto first_baseline = baseline_accumulator.FirstBaseline())
@@ -2670,10 +1991,6 @@ LayoutResult::EStatus FlexLayoutAlgorithm::GiveItemsFinalPositionAndSize(
     container_builder_.ClearBaselines();
   }
 
-  if (gap_accumulator) {
-    container_builder_.SetGapGeometry(gap_accumulator->BuildGapGeometry());
-  }
-
   // Signal if we need to relayout with new child scrollbar information.
   return status;
 }
@@ -2683,7 +2000,8 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
     FlexLineVector* flex_lines,
     Vector<EBreakBetween>* row_break_between_outputs,
     FlexBreakTokenData::FlexBreakBeforeRow* break_before_row,
-    LayoutUnit* total_intrinsic_block_size) {
+    LayoutUnit* total_intrinsic_block_size,
+    std::optional<FlexGapAccumulator>& gap_accumulator) {
   DCHECK(InvolvedInBlockFragmentation(container_builder_));
   DCHECK(flex_lines);
   DCHECK(row_break_between_outputs);
@@ -2729,18 +2047,34 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
   BaselineAccumulator baseline_accumulator(Style());
   bool broke_before_row =
       *break_before_row != FlexBreakTokenData::kNotBreakBeforeRow;
+
+  LayoutUnit border_scrollbar_padding =
+      is_column_ ? container_builder_.BorderScrollbarPadding().block_end
+                 : container_builder_.BorderScrollbarPadding().inline_end;
+
   for (auto entry = item_iterator.NextItem(broke_before_row);
        FlexItemData* flex_item = entry.flex_item;
        entry = item_iterator.NextItem(broke_before_row)) {
     wtf_size_t flex_item_idx = entry.flex_item_idx;
     wtf_size_t flex_line_idx = entry.flex_line_idx;
+
     FlexLine& flex_line = (*flex_lines)[flex_line_idx];
     const auto* item_break_token = To<BlockBreakToken>(entry.token);
-    bool last_item_in_line =
+    bool is_last_item_in_line =
         flex_item_idx == flex_line.line_items_data.size() - 1;
 
     bool is_first_line = flex_line_idx == 0;
     bool is_last_line = flex_line_idx == flex_lines->size() - 1;
+
+    // `GapAccumulator` builds the gaps mainly by knowing whether the
+    // item/line currently being processed is the first or last
+    // item/line, but it does this relative to the current fragment.
+    // As such, we need to determine whether the current item/line is the last
+    // one in the fragment, because an item/line could be the first in the
+    // current fragment, but not when all of the fragments are considered.
+    bool is_first_item_in_line = !is_column_
+                                     ? flex_item_idx == 0
+                                     : item_break_token || flex_item_idx == 0;
 
     // A child break in a parallel flow doesn't affect whether we should
     // break here or not. But if the break happened in the same flow, we'll now
@@ -2761,8 +2095,9 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
         early_break_ = nullptr;
 
       if (has_inflow_child_break_inside_line[flex_line_idx]) {
-        if (!last_item_in_line)
+        if (!is_last_item_in_line) {
           item_iterator.NextLine();
+        }
         continue;
       }
     }
@@ -2881,9 +2216,10 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
         // continue until we've processed all items in the current row.
         has_inflow_child_break_inside_line[flex_line_idx] = true;
         if (is_column_) {
-          if (!last_item_in_line)
+          if (!is_last_item_in_line) {
             item_iterator.NextLine();
-        } else if (last_item_in_line) {
+          }
+        } else if (is_last_item_in_line) {
           DCHECK_EQ(status, LayoutResult::kSuccess);
           break;
         }
@@ -2930,31 +2266,14 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
 
     const bool min_block_size_should_encompass_intrinsic_size =
         MinBlockSizeShouldEncompassIntrinsicSize(*flex_item);
-
-    const LayoutResult* layout_result = nullptr;
-    if (RuntimeEnabledFeatures::LayoutFlexNewStretchEnabled()) {
-      const ConstraintSpace child_space = BuildSpaceForLayout(
-          flex_item->block_node, flex_item->alignment,
-          flex_item->is_initial_block_size_indefinite,
-          /* override_inline_size */ std::nullopt,
-          flex_item->main_axis_final_size, line_cross_size, offset.block_offset,
-          min_block_size_should_encompass_intrinsic_size);
-      layout_result = flex_item->block_node.Layout(
-          child_space, item_break_token, early_break_in_child);
-    } else {
-      const std::optional<LayoutUnit> line_cross_size_for_stretch =
-          DoesItemStretch(flex_item->block_node, flex_item->alignment)
-              ? std::optional<LayoutUnit>(line_cross_size)
-              : std::nullopt;
-      const ConstraintSpace child_space = BuildSpaceForLayoutDeprecated(
-          flex_item->block_node, flex_item->alignment,
-          flex_item->main_axis_final_size,
-          flex_item->is_initial_block_size_indefinite,
-          /* override_inline_size */ std::nullopt, line_cross_size_for_stretch,
-          offset.block_offset, min_block_size_should_encompass_intrinsic_size);
-      layout_result = flex_item->block_node.Layout(
-          child_space, item_break_token, early_break_in_child);
-    }
+    const ConstraintSpace child_space = BuildSpaceForLayout(
+        flex_item->block_node, flex_item->alignment,
+        flex_item->is_initial_block_size_indefinite,
+        /* override_inline_size */ std::nullopt,
+        flex_item->main_axis_final_size, line_cross_size, offset.block_offset,
+        min_block_size_should_encompass_intrinsic_size);
+    const LayoutResult* layout_result = flex_item->block_node.Layout(
+        child_space, item_break_token, early_break_in_child);
 
     BreakStatus break_status = BreakStatus::kContinue;
     FlexColumnBreakInfo* current_column_break_info = nullptr;
@@ -2982,8 +2301,25 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
           if (row_break_status == BreakStatus::kBrokeBefore) {
             // If a gap overlaps a break, or is the last content before a break,
             // suppress it.
-            UpdateOffsetAdjustmentForSuppressedRowGap(flex_line_idx,
-                                                      flex_lines);
+            if (gap_accumulator) {
+              // Since we are suppressing the row gap, we must remove the last
+              // `MainGap` that was added for the row, since we don't want to
+              // paint it.
+              gap_accumulator->SuppressLastMainGap();
+            }
+            if (flex_line_idx > 0) {
+              // The available space should be dependent on previous row's block
+              // end relative to this fragmentainer. This allows us to determine
+              // the actual available space and how much of the gap is actually
+              // consumed in this fragmentainer.
+              LayoutUnit prev_flex_line_end =
+                  (*flex_lines)[flex_line_idx - 1].LineCrossEnd() -
+                  offset_in_stitched_container;
+              UpdateOffsetAdjustmentForSuppressedRowGap(
+                  gap_between_lines_,
+                  /*previous_content_block_end=*/prev_flex_line_end,
+                  &flex_line);
+            }
 
             ConsumeRemainingFragmentainerSpace(offset_in_stitched_container,
                                                &flex_line);
@@ -3041,8 +2377,9 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
         // Keep track of the early breaks for each column.
         AddColumnEarlyBreak(current_column_break_info->early_break,
                             flex_line_idx);
-        if (!last_item_in_line)
+        if (!is_last_item_in_line) {
           item_iterator.NextLine();
+        }
         continue;
       }
       status = LayoutResult::kNeedsEarlierBreak;
@@ -3050,15 +2387,23 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
     }
 
     if (break_status == BreakStatus::kBrokeBefore) {
+      // For column flex containers, suppress the row gap (i.e.
+      // `gap_between_items_`) that may be split across fragmentainer breaks.
+      if (is_column_ && flex_item_idx > 0) {
+        UpdateOffsetAdjustmentForSuppressedRowGap(
+            gap_between_items_,
+            /*previous_content_block_end=*/intrinsic_block_size_, &flex_line);
+      }
       ConsumeRemainingFragmentainerSpace(offset_in_stitched_container,
                                          &flex_line, current_column_break_info);
       // For column flex containers, continue to the next column. For rows,
       // continue until we've processed all items in the current row.
       has_inflow_child_break_inside_line[flex_line_idx] = true;
       if (is_column_) {
-        if (!last_item_in_line)
+        if (!is_last_item_in_line) {
           item_iterator.NextLine();
-      } else if (last_item_in_line) {
+        }
+      } else if (is_last_item_in_line) {
         DCHECK_EQ(status, LayoutResult::kSuccess);
         break;
       }
@@ -3172,13 +2517,42 @@ FlexLayoutAlgorithm::GiveItemsFinalPositionAndSizeForFragmentation(
 
     intrinsic_block_size_ = std::max(item_block_end, intrinsic_block_size_);
     container_builder_.AddResult(*layout_result, offset);
+    if (gap_accumulator) {
+      LayoutUnit container_main_end =
+          is_column_
+              ? fragmentainer_space
+              : container_builder_.InlineSize() - border_scrollbar_padding;
+
+      if (is_column_ && is_last_item_in_line) {
+        container_main_end = std::max(fragmentainer_space, item_block_end);
+      }
+
+      LayoutUnit line_cross_start =
+          !is_column_ ? offset.block_offset : offset.inline_offset;
+      LayoutUnit line_cross_end =
+          !is_column_ ? item_block_end
+                      : offset.inline_offset + flex_line.line_cross_size;
+
+      gap_accumulator->BuildGapsForCurrentItem(
+          (*flex_lines)[flex_line_idx], flex_line_idx, offset,
+          is_first_item_in_line, is_last_item_in_line, is_last_line,
+          line_cross_start, line_cross_end, container_main_end);
+
+      if (!is_column_ && is_last_item_in_line &&
+          has_inflow_child_break_inside_line[flex_line_idx] && !is_last_line) {
+        // If there was a break inside the line, we may have added a main gap in
+        // cases where we shouldn't have, for example if the first item in a
+        // line did not break but a subsequent one did in the same row.
+        gap_accumulator->SuppressLastMainGap(line_cross_end);
+      }
+    }
     if (current_column_break_info) {
       current_column_break_info->break_after =
           container_builder_.PreviousBreakAfter();
     }
     baseline_accumulator.AccumulateItem(fragment, offset.block_offset,
                                         is_first_line, is_last_line);
-    if (last_item_in_line) {
+    if (is_last_item_in_line) {
       if (!has_inflow_child_break_inside_line[flex_line_idx])
         flex_line.has_seen_all_children = true;
       if (!has_processed_first_line_)
@@ -3279,12 +2653,17 @@ LayoutResult::EStatus FlexLayoutAlgorithm::PropagateFlexItemInfo(
 }
 
 void FlexLayoutAlgorithm::UpdateOffsetAdjustmentForSuppressedRowGap(
-    wtf_size_t flex_line_idx,
-    FlexLineVector* flex_lines) const {
-  CHECK(!is_column_);
-  // Return early if this is the first row or there are no row gaps specified
-  // since there will be no gaps to suppress.
-  if (flex_line_idx == 0 || gap_between_lines_ == LayoutUnit()) {
+    LayoutUnit gap,
+    LayoutUnit previous_content_block_end,
+    FlexLine* flex_line) const {
+  // Return early if there are no gaps specified since there will be nothing to
+  // suppress.
+  if (gap == LayoutUnit()) {
+    return;
+  }
+
+  // Return early if we're in a fragmentainer with an unknown block size.
+  if (!GetConstraintSpace().HasKnownFragmentainerBlockSize()) {
     return;
   }
 
@@ -3292,25 +2671,39 @@ void FlexLayoutAlgorithm::UpdateOffsetAdjustmentForSuppressedRowGap(
       To<BlockBreakToken>(container_builder_.LastChildBreakToken())
           ->IsForcedBreak();
 
-  // Here, the current row could not fit in this fragmentainer, so we want to
-  // suppress the gap that would appear at the start of the subsequent
-  // fragmentainer. We'll factor this gap into the flex line's item
-  // offset adjustment, allowing it to be applied during layout in the
-  // subsequent fragmentainer.
+  // Here, the current row or item could not fit in this fragmentainer, so we
+  // want to suppress the gap that would appear at the start of the subsequent
+  // fragmentainer. We'll factor this gap into the flex line's item offset
+  // adjustment, allowing it to be applied during layout in the subsequent
+  // fragmentainer.
   if (is_forced_break) {
-    // For a forced break, the entire row gap is deferred to the next
-    // fragmentainer, so we subtract the full gap from the item offset
-    // adjustment.
-    (*flex_lines)[flex_line_idx].item_offset_adjustment -= gap_between_lines_;
-  } else {
-    // If the break isn't forced, part of the row gap may have already been
-    // consumed in this fragmentainer. We only suppress the unconsumed portion.
-    CHECK_GE(gap_between_lines_,
-             FragmentainerSpaceAvailable(intrinsic_block_size_));
-    (*flex_lines)[flex_line_idx].item_offset_adjustment -=
-        (gap_between_lines_ -
-         FragmentainerSpaceAvailable(intrinsic_block_size_));
+    // For a forced break, the entire gap is deferred to the next fragmentainer,
+    // so we subtract the full gap from the item offset adjustment.
+    flex_line->item_offset_adjustment -= gap;
+    return;
   }
+
+  LayoutUnit available_space =
+      FragmentainerSpaceAvailable(previous_content_block_end);
+  // If the break isn't forced, part of the gap may have already been consumed
+  // in this fragmentainer. We only suppress the unconsumed portion.
+  if (gap > available_space) {
+    // If the gap is larger than the available space, we need to adjust the
+    // item offset adjustment to account for the unconsumed portion of the gap.
+    // For row flex containers, the gap will always be greater than or equal to
+    // the available space in a non-forced break scenario. This is because the
+    // available space is based on the previous row's end.
+    flex_line->item_offset_adjustment -= (gap - available_space);
+  }
+
+  // In column flex containers, we may encounter a case where the available
+  // space is larger than the gap, yet an item still doesn't fit. In such
+  // cases, the entire gap has already been consumed in this fragmentainer, so
+  // no adjustment is needed. Adjustments should only be made when the gap
+  // exceeds the available space which means that part of the gap may appear
+  // in the next fragmentainer.
+  // TODO(crbug.com/434735271): Determine if we can accurately CHECK that this
+  // won't occur in a row-based flex container.
 }
 
 MinMaxSizesResult

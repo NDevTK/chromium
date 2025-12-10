@@ -161,13 +161,14 @@ TEST_F(WebStateTest, Snapshot) {
         EXPECT_GT(snapshot.size.height, 0);
         int red_pixel_x = (snapshot.size.width / 2) - 10;
         int white_pixel_x = (snapshot.size.width / 2) + 10;
+        int pixel_y = (snapshot.size.height / 2);
         // Test a pixel on the left (red) side.
         gfx::test::CheckColors(
-            gfx::test::GetPlatformImageColor(snapshot, red_pixel_x, 50),
+            gfx::test::GetPlatformImageColor(snapshot, red_pixel_x, pixel_y),
             SK_ColorRED);
         // Test a pixel on the right (white) side.
         gfx::test::CheckColors(
-            gfx::test::GetPlatformImageColor(snapshot, white_pixel_x, 50),
+            gfx::test::GetPlatformImageColor(snapshot, white_pixel_x, pixel_y),
             SK_ColorWHITE);
         snapshot_complete = true;
       }));
@@ -177,7 +178,13 @@ TEST_F(WebStateTest, Snapshot) {
 }
 
 // Tests that the create PDF method returns a PDF of a rendered html page.
-TEST_F(WebStateTest, CreateFullPagePdf_ValidURL) {
+// TODO(crbug.com/433740395): Re-enable tests
+#if TARGET_OS_SIMULATOR
+#define MAYBE_CreateFullPagePdf_ValidURL CreateFullPagePdf_ValidURL
+#else
+#define MAYBE_CreateFullPagePdf_ValidURL DISABLED_CreateFullPagePdf_ValidURL
+#endif
+TEST_F(WebStateTest, MAYBE_CreateFullPagePdf_ValidURL) {
   [GetAnyKeyWindow() addSubview:web_state()->GetView()];
 
   // Load a URL and some HTML in the WebState.
@@ -237,6 +244,7 @@ TEST_F(WebStateTest, CreateFullPagePdf_InvalidURLs) {
                           @"text/html", url);
 
     NavigationManager::WebLoadParams load_params(url);
+    load_params.transition_type = ui::PAGE_TRANSITION_TYPED;
     web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
     ASSERT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
         base::test::ios::kWaitForPageLoadTimeout, ^bool {
@@ -272,14 +280,6 @@ TEST_F(WebStateTest, CreateFullPagePdfWebStatePdfContent) {
       }];
 
   GURL test_url("https://www.chromium.org/somePDF.pdf");
-  NavigationManager::WebLoadParams load_params(test_url);
-  web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
-  ASSERT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
-      base::test::ios::kWaitForPageLoadTimeout, ^bool {
-        return web_state()->GetLastCommittedURL() == test_url &&
-               !web_state()->IsLoading();
-      }));
-
   std::string mime_type = "application/pdf";
   web_state()->LoadData(
       pdf_data, [NSString stringWithUTF8String:mime_type.c_str()], test_url);
@@ -312,7 +312,13 @@ TEST_F(WebStateTest, SetHasOpener) {
 
 // Verifies that large session can be restored with max session size limit
 // equals to `wk_navigation_util::kMaxSessionSize`.
-TEST_F(WebStateTest, RestoreLargeSession) {
+// TODO(crbug.com/433740395): Re-enable tests
+#if TARGET_OS_SIMULATOR
+#define MAYBE_RestoreLargeSession RestoreLargeSession
+#else
+#define MAYBE_RestoreLargeSession DISABLED_RestoreLargeSession
+#endif
+TEST_F(WebStateTest, MAYBE_RestoreLargeSession) {
   // Create session storage with large number of items.
   const int kItemCount = 150;
   std::unique_ptr<WebState> web_state =
@@ -416,7 +422,13 @@ TEST_F(WebStateTest, RestoreLargeSession) {
 // Verifies that calling WebState::Stop() does not stop the session restoration.
 // Session restoration should be opaque to the user and embedder, so calling
 // Stop() is no-op.
-TEST_F(WebStateTest, CallStopDuringSessionRestore) {
+// TODO(crbug.com/433740395): Re-enable tests
+#if TARGET_OS_SIMULATOR
+#define MAYBE_CallStopDuringSessionRestore CallStopDuringSessionRestore
+#else
+#define MAYBE_CallStopDuringSessionRestore DISABLED_CallStopDuringSessionRestore
+#endif
+TEST_F(WebStateTest, MAYBE_CallStopDuringSessionRestore) {
   // Create session storage with large number of items.
   const int kItemCount = 10;
   std::unique_ptr<WebState> web_state =
@@ -497,7 +509,14 @@ TEST_F(WebStateTest, CallLoadURLWithParamsDuringSessionRestore) {
 // Verifies that calling NavigationManager::Reload() does not stop the session
 // restoration. Session restoration should be opaque to the user and embedder,
 // so calling Reload() is no-op.
-TEST_F(WebStateTest, CallReloadDuringSessionRestore) {
+// TODO(crbug.com/433740395): Re-enable tests
+#if TARGET_OS_SIMULATOR
+#define MAYBE_CallReloadDuringSessionRestore CallReloadDuringSessionRestore
+#else
+#define MAYBE_CallReloadDuringSessionRestore \
+  DISABLED_CallReloadDuringSessionRestore
+#endif
+TEST_F(WebStateTest, MAYBE_CallReloadDuringSessionRestore) {
   // Create session storage with large number of items.
   const int kItemCount = 10;
   std::unique_ptr<WebState> web_state =
@@ -567,6 +586,7 @@ TEST_F(WebStateTest, LoadChromeThenHTML) {
   GURL app_specific_url(
       base::StringPrintf("%s://app_specific_url", kTestAppSpecificScheme));
   web::NavigationManager::WebLoadParams load_params(app_specific_url);
+  load_params.transition_type = ui::PAGE_TRANSITION_TYPED;
   web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
     return !web_state()->IsLoading();
@@ -603,6 +623,7 @@ TEST_F(WebStateTest, LoadChromeThenWaitThenHTMLThenReload) {
   GURL app_specific_url(
       base::StringPrintf("%s://app_specific_url", kTestAppSpecificScheme));
   web::NavigationManager::WebLoadParams load_params(app_specific_url);
+  load_params.transition_type = ui::PAGE_TRANSITION_TYPED;
   web_state()->GetNavigationManager()->LoadURLWithParams(load_params);
   // Wait for the error loading.
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{

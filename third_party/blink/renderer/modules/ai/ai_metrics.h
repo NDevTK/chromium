@@ -29,46 +29,14 @@ class AIMetrics {
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/ai/histograms.xml:SessionType)
 
-  // This class contains all the model execution API supported.
-  // These values are persisted to logs. Entries should not be renumbered and
-  // numeric values should never be reused.
-  // TODO(crbug.com/355967885): update the enums when adding metrics for
-  // language model API.
-  // LINT.IfChange(AIAPI)
-  enum class AIAPI {
-    kCanCreateSession = 0,
-    kCreateSession = 1,
-    kSessionPrompt = 2,
-    kSessionPromptStreaming = 3,
-    kDefaultTextSessionOptions = 4,
-    kSessionDestroy = 5,
-    kSessionClone = 6,
-    kTextModelInfo = 7,
-    kSessionSummarize = 8,
-    kSessionSummarizeStreaming = 9,
-    kWriterWrite = 10,
-    kWriterWriteStreaming = 11,
-    kRewriterRewrite = 12,
-    kRewriterRewriteStreaming = 13,
-    kSummarizerSummarize = 14,
-    kSummarizerSummarizeStreaming = 15,
-    kSummarizerCreate = 16,
-    kSummarizerDestroy = 17,
-    kSessionCountPromptTokens = 18,
-    kProofreaderProofread = 19,
-    kProofreaderCreate = 20,
-    kProofreaderDestroy = 21,
-
-    kMaxValue = kProofreaderDestroy,
-  };
-  // LINT.ThenChange(//tools/metrics/histograms/metadata/ai/enums.xml:AIAPI)
-
   // LINT.IfChange(LanguageModelInputType)
   enum class LanguageModelInputType {
     kText = 0,
     kImage = 1,
     kAudio = 2,
-    kMaxValue = kAudio,
+    kToolCall = 3,
+    kToolResponse = 4,
+    kMaxValue = kToolResponse,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/ai/enums.xml:LanguageModelInputType)
 
@@ -77,7 +45,9 @@ class AIMetrics {
     kSystem = 0,
     kUser = 1,
     kAssistant = 2,
-    kMaxValue = kAssistant,
+    kToolCall = 3,
+    kToolResponse = 4,
+    kMaxValue = kToolResponse,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/ai/enums.xml:LanguageModelInputRole)
 

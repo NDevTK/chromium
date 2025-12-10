@@ -12,17 +12,20 @@
 #import "base/time/time.h"
 #import "components/omnibox/browser/omnibox_popup_selection.h"
 #import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_result_wrapper_delegate.h"
+#import "ios/chrome/browser/omnibox/public/omnibox_presentation_context.h"
 #import "ui/base/window_open_disposition.h"
 
 @protocol AutocompleteSuggestion;
 struct AutocompleteMatch;
+class AutocompleteController;
+class AutocompleteInput;
 class AutocompleteResult;
 @class AutocompleteResultWrapper;
+class GURL;
 @protocol OmniboxAutocompleteControllerDelegate;
 @protocol OmniboxAutocompleteControllerDebuggerDelegate;
+@protocol OmniboxLensDelegate;
 class OmniboxClient;
-class OmniboxControllerIOS;
-class OmniboxEditModelIOS;
 @class OmniboxMetricsRecorder;
 @class OmniboxTextController;
 struct OmniboxTextModel;
@@ -39,6 +42,9 @@ struct OmniboxTextModel;
 @property(nonatomic, weak) id<OmniboxAutocompleteControllerDebuggerDelegate>
     debuggerDelegate;
 
+/// Handler for Lens interactions.
+@property(nonatomic, weak) id<OmniboxLensDelegate> lensHander;
+
 /// Autcomplete result wrapper.
 @property(nonatomic, strong)
     AutocompleteResultWrapper* autocompleteResultWrapper;
@@ -52,14 +58,22 @@ struct OmniboxTextModel;
 // Whether or not the popup has suggestions.
 @property(nonatomic, assign, readonly) BOOL hasSuggestions;
 
-/// Initializes with an OmniboxController.
-- (instancetype)initWithOmniboxController:
-                    (OmniboxControllerIOS*)omniboxController
-                            omniboxClient:(OmniboxClient*)omniboxClient
-                         omniboxEditModel:(OmniboxEditModelIOS*)omniboxEditModel
-                         omniboxTextModel:(OmniboxTextModel*)omniboxTextModel
+// Returns the autocomplete provider client that's used by the internal
+// autocomplete controller.
+@property(nonatomic, assign, readonly)
+    AutocompleteProviderClient* autocompleteProviderClient;
+
+- (instancetype)
+     initWithOmniboxClient:(OmniboxClient*)omniboxClient
+    autocompleteController:(AutocompleteController*)autocompleteController
+          omniboxTextModel:(OmniboxTextModel*)omniboxTextModel
+       presentationContext:(OmniboxPresentationContext)presentationContext
     NS_DESIGNATED_INITIALIZER;
+
 - (instancetype)init NS_UNAVAILABLE;
+
+/// Returns the underlying autocomplete controller.
+- (AutocompleteController*)autocompleteController;
 
 /// Removes all C++ references.
 - (void)disconnect;
@@ -72,11 +86,20 @@ struct OmniboxTextModel;
 - (void)stopAutocompleteWithClearSuggestions:(BOOL)clearSuggestions;
 
 /// Opens given selection. Most kinds of selection invoke an action or
-/// otherwise call `OpenMatch`, but some may `acceptInputWithDisposition` which
+/// otherwise call `openMatch`, but some may `acceptInputWithDisposition` which
 /// is not guaranteed to open a match or commit the omnibox.
 - (void)openSelection:(OmniboxPopupSelection)selection
             timestamp:(base::TimeTicks)timestamp
           disposition:(WindowOpenDisposition)disposition;
+
+/// Opens the provided autocomplete `match` using a `customDestinationURL`.
+/// This method handles the logic for navigating to the specified URL.
+/// It is used when the user explicitly chooses to open a match with a URL
+/// different from its default destination.
+- (void)selectMatchForOpening:(AutocompleteMatch&)match
+     withCustomDestinationURL:(GURL)destinationURL
+                        inRow:(NSUInteger)row
+                       openIn:(WindowOpenDisposition)disposition;
 
 /// A simplified version of OpenSelection that opens the model's current
 /// selection.
@@ -112,6 +135,10 @@ struct OmniboxTextModel;
 
 #pragma mark - OmniboxText events
 
+/// Clears the omnibox suggestions and starts autocomplete with the current
+/// input text.
+- (void)clearAndRestartAutocomplete;
+
 /// Starts autocomplete with `text`.
 - (void)startAutocompleteWithText:(const std::u16string&)text
                    cursorPosition:(size_t)cursorPosition
@@ -123,6 +150,20 @@ struct OmniboxTextModel;
 /// `text` should either be empty or the pre-edit text.
 - (void)startZeroSuggestRequestWithText:(const std::u16string&)text
                           userClobbered:(BOOL)userClobberedPermanentText;
+
+/// Called when a new omnibox session starts.
+- (void)resetSession;
+
+/// If a query is active or the popup is visible, find the best match item
+/// (default or selected). This will update `match` and, if found,
+/// `alternateNavigationURL`. Returns whether a match has been found.
+- (BOOL)findMatchForInput:(const AutocompleteInput&)input
+                     match:(AutocompleteMatch*)match
+    alternateNavigationURL:(GURL*)alternateNavigationURL;
+
+/// Computes the alternate navigation URL for `input` and `match`.
+- (GURL)computeAlternateNavURLForInput:(const AutocompleteInput&)input
+                                 match:(const AutocompleteMatch&)match;
 
 /// Closes the omnibox popup.
 - (void)closeOmniboxPopup;
@@ -136,6 +177,10 @@ struct OmniboxTextModel;
 
 /// Notifies thumbnail update.
 - (void)setHasThumbnail:(BOOL)hasThumbnail;
+
+/// Returns the autocomplete result. This is used to forward the result to the
+/// client. TODO(crbug.com/432215477): Remove after refactor.
+- (const AutocompleteResult*)autocompleteResult;
 
 #pragma mark - Prefetch events
 

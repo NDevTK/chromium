@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.components.browser_ui.widget.ListItemBuilder.buildSimpleMenuItem;
+
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.drawable.GradientDrawable;
@@ -27,7 +29,6 @@ import org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils;
 import org.chromium.chrome.browser.tasks.tab_management.TabGroupFaviconCluster.ClusterData;
 import org.chromium.chrome.tab_ui.R;
 import org.chromium.components.browser_ui.widget.BrowserUiListMenuUtils;
-import org.chromium.components.browser_ui.widget.ListItemBuilder;
 import org.chromium.components.tab_groups.TabGroupColorId;
 import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
 import org.chromium.ui.listmenu.ListMenu;
@@ -107,11 +108,12 @@ public class TabGroupRowView extends LinearLayout {
         ViewGroup.LayoutParams params = getLayoutParams();
         params.height = res.getDimensionPixelSize(R.dimen.tab_group_row_height_containment);
         setLayoutParams(params);
-        FrameLayout.MarginLayoutParams clusterParams =
-                (FrameLayout.MarginLayoutParams) mTabGroupFaviconCluster.getLayoutParams();
+        MarginLayoutParams clusterParams =
+                (MarginLayoutParams) mTabGroupFaviconCluster.getLayoutParams();
         clusterParams.setMarginStart(
                 res.getDimensionPixelSize(R.dimen.tab_group_list_first_element_margin_containment));
         mTabGroupFaviconCluster.setLayoutParams(clusterParams);
+        mTabGroupFaviconCluster.setContainmentEnabled(true);
     }
 
     void updateCornersForClusterData(ClusterData clusterData) {
@@ -184,23 +186,18 @@ public class TabGroupRowView extends LinearLayout {
             @Nullable Runnable leaveRunnable) {
         ModelList listItems = new ModelList();
         if (openRunnable != null) {
-            listItems.add(
-                    new ListItemBuilder().withTitleRes(R.string.open_tab_group_menu_item).build());
+            listItems.add(buildSimpleMenuItem(R.string.open_tab_group_menu_item));
         }
         if (deleteRunnable != null) {
-            listItems.add(
-                    new ListItemBuilder()
-                            .withTitleRes(R.string.delete_tab_group_menu_item)
-                            .build());
+            listItems.add(buildSimpleMenuItem(R.string.delete_tab_group_menu_item));
         }
         if (leaveRunnable != null) {
-            listItems.add(
-                    new ListItemBuilder().withTitleRes(R.string.leave_tab_group_menu_item).build());
+            listItems.add(buildSimpleMenuItem(R.string.leave_tab_group_menu_item));
         }
         return BrowserUiListMenuUtils.getBasicListMenu(
                 getContext(),
                 listItems,
-                (item) -> onItemSelected(item, openRunnable, deleteRunnable, leaveRunnable));
+                (item, view) -> onItemSelected(item, openRunnable, deleteRunnable, leaveRunnable));
     }
 
     private void onItemSelected(

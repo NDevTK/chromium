@@ -19,11 +19,7 @@ IOSContentMainRunner::~IOSContentMainRunner() {}
 void IOSContentMainRunner::Initialize(WebMainParams params) {
   static crash_reporter::CrashKeyString<4> key("blink");
   key.Set("yes");
-  argv_.resize(params.argc);
-  const char* const* argv = params.argv;
-  for (int i = 0; i < params.argc; ++i) {
-    argv_[i].assign(argv[i]);
-  }
+  argv_ = std::move(params.args);
 }
 
 int IOSContentMainRunner::Startup() {

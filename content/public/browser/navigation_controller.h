@@ -29,7 +29,6 @@
 #include "third_party/blink/public/common/navigation/navigation_policy.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/navigation/navigation_initiator_activation_and_ad_status.mojom.h"
-#include "third_party/blink/public/mojom/navigation/system_entropy.mojom.h"
 #include "third_party/blink/public/mojom/navigation/was_activated_option.mojom.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
@@ -305,11 +304,6 @@ class NavigationController {
     // Indicates the reload type of this navigation.
     ReloadType reload_type = ReloadType::NONE;
 
-    // Indicates the suggested system entropy captured when the navigation
-    // began.
-    blink::mojom::SystemEntropy suggested_system_entropy =
-        blink::mojom::SystemEntropy::kNormal;
-
     // Indicates a form submission created this navigation.
     bool is_form_submission = false;
 
@@ -487,11 +481,26 @@ class NavigationController {
   //
   // TODO(crbug.com/406729265) Restrict this function to only be usable with
   // main frame interstitial navigations. For loading an error page in any other
-  // scenario, prefer |NavigationControllerImpl::NavigateFrameToErrorPage()|.
+  // scenario, prefer |NavigationController::NavigateFrameToErrorPage()|.
   virtual base::WeakPtr<NavigationHandle> LoadPostCommitErrorPage(
       RenderFrameHost* render_frame_host,
       const GURL& url,
       const std::string& error_page_html) = 0;
+
+  // Navigates directly to an error page in response to an event on the last
+  // committed page, with |error_page_html| as the contents and |url| as the
+  // URL. Permanently replaces the current session history item for that frame
+  // with a new one reflecting the error page navigation. The error navigation
+  // is not "sticky", meaning that if the frame is reloaded, it will attempt to
+  // load |url| normally.
+  //
+  // You should almost always prefer this function to
+  // |LoadPostCommitErrorPage()|, which only temporarily replaces the
+  // NavigationEntry. See |NavigationController::LoadPostCommitErrorPage()| for
+  // more details on this temporary replacement.
+  virtual void NavigateFrameToErrorPage(RenderFrameHost* render_frame_host,
+                                        const GURL& url,
+                                        const std::string& error_page_html) = 0;
 
   // Renavigation --------------------------------------------------------------
 
@@ -499,6 +508,19 @@ class NavigationController {
   virtual bool CanGoBack() = 0;
   virtual bool CanGoForward() = 0;
   virtual bool CanGoToOffset(int offset) = 0;
+
+  // Whether the back and forward buttons should be enabled in the browser UI.
+  // These need to be decoupled from the corresponding `CanGo*` methods; if
+  // there are only skippable entries in the navigation history for a direction,
+  // we should enable that direction's button so that the user can long-press to
+  // select a skippable entry if they choose. However, in this situation
+  // `CanGo*` will be false, and a direct click on the button will do nothing,
+  // in order to prevent a poor user experience in the case of history
+  // manipulation. See
+  // https://chromium.googlesource.com/chromium/src/+/main/docs/history_manipulation_intervention.md
+  // for more details.
+  virtual bool ShouldEnableBackButton() = 0;
+  virtual bool ShouldEnableForwardButton() = 0;
 
   // Returns a vector of weak pointers to the NavigationHandles created for this
   // navigation. There may be multiple NavigationHandles if more than one frame
@@ -614,6 +636,12 @@ class NavigationController {
 
   // Gets the BackForwardCache for this NavigationController.
   virtual BackForwardCache& GetBackForwardCache() = 0;
+
+  // Determines whether to override user agent in the next navigation. This
+  // decision depends on the last committed entry if the given `option` is
+  // `NavigationController::UserAgentOverrideOption::INHERIT`.
+  virtual bool ShouldOverrideUserAgentInNextNavigation(
+      NavigationController::UserAgentOverrideOption option) = 0;
 
  private:
   // This interface should only be implemented inside content.

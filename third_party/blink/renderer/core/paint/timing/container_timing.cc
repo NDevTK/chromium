@@ -7,7 +7,7 @@
 #include <limits>
 
 #include "cc/base/region.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
@@ -26,18 +26,16 @@ uint64_t GetRegionSize(const cc::Region& region) {
 
 // static
 ContainerTiming& ContainerTiming::From(LocalDOMWindow& window) {
-  ContainerTiming* timing =
-      Supplement<LocalDOMWindow>::From<ContainerTiming>(window);
+  ContainerTiming* timing = window.GetContainerTiming();
   if (!timing) {
     timing = MakeGarbageCollected<ContainerTiming>(window);
-    ProvideTo(window, timing);
+    window.SetContainerTiming(timing);
   }
   return *timing;
 }
 
 ContainerTiming::ContainerTiming(LocalDOMWindow& window)
-    : Supplement<LocalDOMWindow>(window),
-      performance_(DOMWindowPerformance::performance(window)) {}
+    : performance_(GlobalPerformance::performance(window)) {}
 
 bool ContainerTiming::CanReportToContainerTiming() const {
   DCHECK(performance_);
@@ -75,8 +73,7 @@ void ContainerTiming::Record::MaybeUpdateLastNewPaintedArea(
     const DOMPaintTimingInfo& paint_timing_info,
     Element* container_root,
     Element* element,
-    const gfx::RectF& intersection_rect) {
-  gfx::Rect enclosing_rect = gfx::ToEnclosingRect(intersection_rect);
+    const gfx::Rect& enclosing_rect) {
   if (painted_region_.Contains(enclosing_rect)) {
     return;
   }
@@ -87,16 +84,35 @@ void ContainerTiming::Record::MaybeUpdateLastNewPaintedArea(
   last_new_painted_area_element_ = element;
 
   has_pending_changes_ = true;
+
+  // A container timing root with the ignore attribute will not report to
+  // ancestor roots.
+  if (container_root->FastGetAttribute(
+          html_names::kContainertimingIgnoreAttr)) {
+    return;
+  }
+
+  Element* parent_container_root = GetParentContainerRoot(container_root);
+  if (!parent_container_root) {
+    return;
+  }
+
+  Record* parent_record = container_timing->GetOrCreateRecord(
+      paint_timing_info, parent_container_root);
+  parent_record->MaybeUpdateLastNewPaintedArea(
+      container_timing, paint_timing_info, parent_container_root, element,
+      enclosing_rect);
 }
 
 void ContainerTiming::Record::MaybeEmitPerformanceEntry(
-    WindowPerformance* performance) {
+    WindowPerformance* performance,
+    Element* container_root) {
   if (!has_pending_changes_) {
     return;
   }
   performance->AddContainerTiming(
       last_new_painted_area_paint_timing_info_, painted_region_.bounds(),
-      GetRegionSize(painted_region_), identifier_,
+      GetRegionSize(painted_region_), container_root, identifier_,
       last_new_painted_area_element_, first_paint_timing_info_);
   has_pending_changes_ = false;
 }
@@ -121,6 +137,22 @@ ContainerTiming::Record* ContainerTiming::GetOrCreateRecord(
   return record;
 }
 
+void ContainerTiming::MaybeUpdateContainerRootIdentifier(
+    Element* element,
+    const AtomicString& new_value) {
+  auto it = container_root_records_.find(element);
+  if (it != container_root_records_.end()) {
+    Record* record = it->value;
+
+    if (new_value.IsNull() || record->identifier() != new_value) {
+      // If containertiming is unset, drop record.
+      // Also, once the identifier changes, the old values should not be used
+      // for the new events.
+      container_root_records_.erase(it);
+    }
+  }
+}
+
 void ContainerTiming::OnElementPainted(
     const DOMPaintTimingInfo& paint_timing_info,
     Element* element,
@@ -136,8 +168,9 @@ void ContainerTiming::OnElementPainted(
   }
   Record* record = GetOrCreateRecord(paint_timing_info, container_root);
 
+  gfx::Rect enclosing_rect = gfx::ToEnclosingRect(intersection_rect);
   record->MaybeUpdateLastNewPaintedArea(this, paint_timing_info, container_root,
-                                        element, intersection_rect);
+                                        element, enclosing_rect);
 
   performance_->SetHasContainerTimingChanges();
 }
@@ -148,13 +181,12 @@ void ContainerTiming::EmitPerformanceEntries() {
     Record* record = pair.value;
 
     if (can_report) {
-      record->MaybeEmitPerformanceEntry(performance_.Get());
+      record->MaybeEmitPerformanceEntry(performance_.Get(), pair.key.Get());
     }
   }
 }
 
 void ContainerTiming::Trace(Visitor* visitor) const {
-  Supplement<LocalDOMWindow>::Trace(visitor);
   visitor->Trace(performance_);
   visitor->Trace(container_root_records_);
 }

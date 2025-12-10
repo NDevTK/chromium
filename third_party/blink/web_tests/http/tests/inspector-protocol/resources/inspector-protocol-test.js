@@ -50,6 +50,7 @@ var TestRunner = class {
       'guid',
       'requestId',
       'openerFrameId',
+      'parentFrameId',
       'issueId',
       'initiatingFrameId',
       'pipelineId'
@@ -714,9 +715,11 @@ DevToolsAPI._fetch = function(url) {
   });
 };
 
-testRunner.dumpAsText();
-testRunner.waitUntilDone();
-testRunner.setPopupBlockingEnabled(false);
+if (window["testRunner"]) {
+  testRunner.dumpAsText();
+  testRunner.waitUntilDone();
+  testRunner.setPopupBlockingEnabled(false);
+}
 
 window.addEventListener('load', () => {
   var params = new URLSearchParams(window.location.search);
@@ -784,4 +787,6 @@ TestRunner.wrapPromiseWithTimeout = (promise, timeout, label) => {
   ]);
 };
 
-exports.TestRunner = TestRunner;
+if (self.exports !== undefined) {
+  exports.TestRunner = TestRunner;
+}

@@ -53,6 +53,7 @@
 #include "third_party/blink/renderer/modules/service_worker/cross_origin_resource_policy_checker.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_event_queue.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_installed_scripts_manager.h"
+#include "third_party/blink/renderer/platform/forward_declared_member.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 #include "third_party/blink/renderer/platform/heap/disallow_new_wrapper.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -84,6 +85,9 @@ class WorkerClassicScriptLoader;
 struct GlobalScopeCreationParams;
 struct WebServiceWorkerError;
 struct WebServiceWorkerObjectInfo;
+
+template <typename T>
+class GlobalCookieStoreImpl;
 
 class MODULES_EXPORT ServiceWorkerGlobalScope final
     : public WorkerGlobalScope,
@@ -118,6 +122,7 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
   // ExecutionContext overrides:
   bool IsServiceWorkerGlobalScope() const override { return true; }
   bool ShouldInstallV8Extensions() const final;
+  void MaybeRecordNetworkRequestUrlForPushEvents(const KURL& url) override;
   bool IsInFencedFrame() const override;
   void NotifyWebSocketActivity() override;
 
@@ -368,6 +373,16 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
 
   bool did_evaluate_script() { return did_evaluate_script_; }
 
+  ForwardDeclaredMember<GlobalCookieStoreImpl<ServiceWorkerGlobalScope>>
+  GetGlobalCookieStoreImpl() const {
+    return global_cookie_store_impl_;
+  }
+  void SetGlobalCookieStoreImpl(
+      ForwardDeclaredMember<GlobalCookieStoreImpl<ServiceWorkerGlobalScope>>
+          global_cookie_store_impl) {
+    global_cookie_store_impl_ = global_cookie_store_impl;
+  }
+
  protected:
   // EventTarget
   bool AddEventListenerInternal(
@@ -508,6 +523,9 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
       DispatchNotificationCloseEventCallback callback) override;
   void DispatchPushEvent(const String& payload,
                          DispatchPushEventCallback callback) override;
+  void DispatchPushEventRecordingNetworkRequests(
+      const String& payload,
+      DispatchPushEventRecordingNetworkRequestsCallback callback) override;
   void DispatchPushSubscriptionChangeEvent(
       mojom::blink::PushSubscriptionPtr old_subscription,
       mojom::blink::PushSubscriptionPtr new_subscription,
@@ -706,6 +724,8 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
   HashMap<int, DispatchNotificationCloseEventCallback>
       notification_close_event_callbacks_;
   HashMap<int, DispatchPushEventCallback> push_event_callbacks_;
+  HashMap<int, DispatchPushEventRecordingNetworkRequestsCallback>
+      push_event_recording_network_requests_callback_;
   HashMap<int, DispatchPushSubscriptionChangeEventCallback>
       push_subscription_change_event_callbacks_;
   HashMap<int, DispatchFetchEventInternalCallback> fetch_event_callbacks_;
@@ -761,6 +781,19 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
   // Whether `PrepareForEvaluation` should be deferred.
   bool defer_prepare_for_evaluation_ = false;
 
+  // Whether network requests made during a push event should be recorded for
+  // later forwarding to the browser process.
+  enum class RecordNetworkRequestsDuringPushEvent {
+    kDoNotRecord,
+    kRecord,
+  };
+  RecordNetworkRequestsDuringPushEvent should_record_network_requests_ =
+      RecordNetworkRequestsDuringPushEvent::kDoNotRecord;
+
+  // The collection of network request urls contacted during the life of a push
+  // event.
+  Vector<KURL> push_event_network_request_urls_;
+
   // Connected by the ServiceWorkerHost in the browser process and by the
   // controllees. |controller_bindings_| should be destroyed before
   // |event_queue_| since the pipe needs to be disconnected before callbacks
@@ -794,8 +827,8 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
     mojo::PendingRemote<network::mojom::blink::URLLoaderFactory>
         url_loader_factory;
   };
-  // TODO(crbug.com/918702) WTF::HashMap cannot use base::UnguessableToken as a
-  // key. As a workaround uses WTF::String as a key instead.
+  // TODO(crbug.com/918702) HashMap cannot use base::UnguessableToken as a
+  // key. As a workaround uses String as a key instead.
   HashMap<String, std::unique_ptr<RaceNetworkRequestInfo>>
       race_network_requests_;
   HashMap<int, RaceNetworkRequestInfo*> race_network_request_fetch_event_ids_;
@@ -807,6 +840,9 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final
                              ServiceWorkerGlobalScope>
       associated_interfaces_receiver_{this, this};
   AssociatedInterfaceRegistry associated_inteface_registy_;
+
+  ForwardDeclaredMember<GlobalCookieStoreImpl<ServiceWorkerGlobalScope>>
+      global_cookie_store_impl_;
 };
 
 template <>

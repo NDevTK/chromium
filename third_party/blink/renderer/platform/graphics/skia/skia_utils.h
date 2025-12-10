@@ -34,25 +34,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_SKIA_SKIA_UTILS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_SKIA_SKIA_UTILS_H_
 
-#include <utility>
-
-#include "base/check_op.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_types.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
-#include "third_party/blink/renderer/platform/wtf/math_extras.h"
-#include "third_party/skia/include/core/SkBitmap.h"
-#include "third_party/skia/include/core/SkColorType.h"
 #include "third_party/skia/include/core/SkData.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-#include "third_party/skia/include/core/SkScalar.h"
 
 namespace blink {
-
-// Multiply a color's alpha channel by an additional alpha factor where
-// alpha is in the range [0, 1].
-SkColor PLATFORM_EXPORT ScaleAlpha(SkColor, float);
 
 bool PLATFORM_EXPORT
 ApproximatelyEqualSkColorSpaces(sk_sp<SkColorSpace> src_color_space,
@@ -135,29 +123,11 @@ PLATFORM_EXPORT sk_sp<SkData> TryAllocateSkData(size_t size);
 //     sk_sp<SkShader> shader = SkShader::MakeFoo(...);
 //     paint.setShader(shader);
 
+// TODO(dcheng): This one might have some value, though it's not entirely clear
+// if there is a specific issue with thread-hostility here. We transfer other
+// mutable references across threads all the time, e.g. there is a broad
+// allowance for scoped_refptr<T> as long as T is RefCountedThreadSafe.
+
 }  // namespace blink
-
-namespace WTF {
-
-// We define CrossThreadCopier<SKBitMap> here because we cannot include skia
-// headers in platform/wtf.
-template <>
-struct CrossThreadCopier<SkBitmap> {
-  STATIC_ONLY(CrossThreadCopier);
-
-  using Type = SkBitmap;
-  static SkBitmap Copy(const SkBitmap& bitmap) {
-    CHECK(bitmap.isImmutable() || bitmap.isNull())
-        << "Only immutable bitmaps can be transferred.";
-    return bitmap;
-  }
-  static SkBitmap Copy(SkBitmap&& bitmap) {
-    CHECK(bitmap.isImmutable() || bitmap.isNull())
-        << "Only immutable bitmaps can be transferred.";
-    return std::move(bitmap);
-  }
-};
-
-}  // namespace WTF
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_SKIA_SKIA_UTILS_H_

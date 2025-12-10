@@ -15,7 +15,6 @@
 #include "chrome/browser/ui/hats/hats_service.h"
 #include "chrome/browser/ui/hats/hats_service_factory.h"
 #include "chrome/browser/ui/hats/survey_config.h"
-#include "chrome/browser/ui/safety_hub/card_data_helper.h"
 #include "chrome/browser/ui/safety_hub/menu_notification_service_factory.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_constants.h"
 #include "chrome/browser/ui/webui/settings/site_settings_helper.h"
@@ -30,7 +29,6 @@
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
-#include "components/privacy_sandbox/tracking_protection_prefs.h"
 #include "components/safe_browsing/core/browser/db/v4_protocol_manager_util.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/signin/public/base/signin_pref_names.h"
@@ -608,7 +606,7 @@ void TrustSafetySentimentService::SettingsWatcher::TimerComplete() {
   const bool stayed_on_settings =
       web_contents_ &&
       web_contents_->GetVisibility() == content::Visibility::VISIBLE &&
-      web_contents_->GetLastCommittedURL().host_piece() ==
+      web_contents_->GetLastCommittedURL().host() ==
           chrome::kChromeUISettingsHost;
   if (stayed_on_settings) {
     std::move(success_callback_).Run();

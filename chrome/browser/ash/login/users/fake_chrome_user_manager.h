@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_ASH_LOGIN_USERS_FAKE_CHROME_USER_MANAGER_H_
 #define CHROME_BROWSER_ASH_LOGIN_USERS_FAKE_CHROME_USER_MANAGER_H_
 
-#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -112,8 +111,6 @@ class FakeChromeUserManager : public user_manager::UserManagerImpl {
   bool IsLoggedInAsStub() const override;
   bool IsUserNonCryptohomeDataEphemeral(
       const AccountId& account_id) const override;
-  bool IsGuestSessionAllowed() const override;
-  bool IsGaiaUserAllowed(const user_manager::User& user) const override;
   bool IsUserAllowed(const user_manager::User& user) const override;
   bool IsDeprecatedSupervisedAccountId(
       const AccountId& account_id) const override;

@@ -13,6 +13,7 @@
 #import "base/notimplemented.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/uuid.h"
+#import "components/prefs/pref_service.h"
 #import "components/saved_tab_groups/public/saved_tab_group_tab.h"
 #import "components/saved_tab_groups/public/tab_group_sync_service.h"
 #import "components/saved_tab_groups/public/types.h"
@@ -27,8 +28,11 @@
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
+#import "ios/chrome/browser/shared/model/browser/browser_list_utils.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider.h"
 #import "ios/chrome/browser/shared/model/browser/browser_provider_interface.h"
+#import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_utils.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
@@ -36,6 +40,7 @@
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/tab_grid_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_groups_commands.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/tab_insertion/model/tab_insertion_browser_agent.h"
 #import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/web_state.h"
@@ -144,30 +149,17 @@ IOSTabGroupSyncDelegate::HandleOpenTabGroupRequest(
           [[UISceneActivationRequestOptions alloc] init];
       options.requestingScene = origin_browser->GetSceneState().scene;
 
-      if (@available(iOS 17, *)) {
-        UISceneSessionActivationRequest* request =
-            [UISceneSessionActivationRequest
-                requestWithSession:target_scene_state.scene.session];
-        request.options = options;
-        [[UIApplication sharedApplication]
-            activateSceneSessionForRequest:request
-                              errorHandler:^(NSError* error) {
-                                LOG(ERROR) << base::SysNSStringToUTF8(
-                                    error.localizedDescription);
-                                NOTREACHED();
-                              }];
-
-      } else {
-        [[UIApplication sharedApplication]
-            requestSceneSessionActivation:target_scene_state.scene.session
-                             userActivity:nil
-                                  options:options
-                             errorHandler:^(NSError* error) {
-                               LOG(ERROR) << base::SysNSStringToUTF8(
-                                   error.localizedDescription);
-                               NOTREACHED();
-                             }];
-      }
+      UISceneSessionActivationRequest* request =
+          [UISceneSessionActivationRequest
+              requestWithSession:target_scene_state.scene.session];
+      request.options = options;
+      [[UIApplication sharedApplication]
+          activateSceneSessionForRequest:request
+                            errorHandler:^(NSError* error) {
+                              LOG(ERROR) << base::SysNSStringToUTF8(
+                                  error.localizedDescription);
+                              NOTREACHED();
+                            }];
 
       if (!target_scene_state.UIEnabled) {
         return std::nullopt;
@@ -226,7 +218,22 @@ IOSTabGroupSyncDelegate::CreateScopedLocalObserverPauser() {
 
 void IOSTabGroupSyncDelegate::CreateLocalTabGroup(
     const SavedTabGroup& saved_tab_group) {
-  CreateLocalTabGroupImpl(saved_tab_group, nullptr);
+  Browser* browser =
+      browser_list_utils::GetMostActiveSceneBrowser(browser_list_);
+  if (!browser) {
+    return;
+  }
+
+  // Check if auto open remote tab groups feature is enabled and respect users'
+  // preference.
+  if (IsAutoOpenRemoteTabGroupsSettingsFeatureEnabled()) {
+    PrefService* pref_service = browser->GetProfile()->GetPrefs();
+    if (!pref_service->GetBoolean(prefs::kAutomaticallyOpenTabGroupsEnabled)) {
+      return;
+    }
+  }
+
+  CreateLocalTabGroupImpl(saved_tab_group, browser);
 }
 
 void IOSTabGroupSyncDelegate::CloseLocalTabGroup(
@@ -242,7 +249,7 @@ void IOSTabGroupSyncDelegate::CloseLocalTabGroup(
 
   CloseAllWebStatesInGroup(*tab_group_info.web_state_list,
                            tab_group_info.tab_group,
-                           WebStateList::CLOSE_NO_FLAGS);
+                           WebStateList::ClosingReason::kDefault);
 }
 
 void IOSTabGroupSyncDelegate::ConnectLocalTabGroup(
@@ -351,7 +358,7 @@ void IOSTabGroupSyncDelegate::UpdateLocalTabGroup(
   CHECK(tabs_to_delete >= 0);
   for (int count = 0; count < tabs_to_delete; count++) {
     web_state_list->CloseWebStateAt(tab_group_range.range_end() - 1,
-                                    WebStateList::CLOSE_NO_FLAGS);
+                                    WebStateList::ClosingReason::kDefault);
   }
 }
 
@@ -458,27 +465,6 @@ IOSTabGroupSyncDelegate::CreateSavedTabGroupFromLocalGroup(
       /*position=*/std::nullopt, saved_tab_group_id, tab_group->tab_group_id());
 }
 
-Browser* IOSTabGroupSyncDelegate::GetMostActiveSceneBrowser() {
-  std::set<Browser*> all_browsers =
-      browser_list_->BrowsersOfType(BrowserList::BrowserType::kRegular);
-
-  Browser* browser = nullptr;
-  for (Browser* browser_to_check : all_browsers) {
-    // The pointer to the scene state is weak, so it could be nil. In that case,
-    // the activation level will be 0 (lowest).
-    if (browser && browser->GetSceneState().activationLevel >=
-                       browser_to_check->GetSceneState().activationLevel) {
-      continue;
-    }
-    browser = browser_to_check;
-    if (browser_to_check->GetSceneState().activationLevel ==
-        SceneActivationLevelForegroundActive) {
-      break;
-    }
-  }
-  return browser;
-}
-
 web::WebState* IOSTabGroupSyncDelegate::InsertDistantTab(
     const SavedTabGroupTab& tab,
     TabInsertionBrowserAgent* tab_insertion_browser_agent,
@@ -546,7 +532,7 @@ void IOSTabGroupSyncDelegate::UpdateLocalWebState(
       InsertDistantTab(saved_tab, tab_insertion_browser_agent, web_state_index,
                        tab_group_info.tab_group);
   web_state_list->CloseWebStateAt(web_state_index + 1,
-                                  WebStateList::CLOSE_NO_FLAGS);
+                                  WebStateList::ClosingReason::kDefault);
 
   // Do the association on the server.
   UpdateLocalTabId(local_web_state, tab_group_info.tab_group, saved_tab);
@@ -588,7 +574,9 @@ std::optional<LocalTabGroupID> IOSTabGroupSyncDelegate::CreateLocalTabGroupImpl(
   }
 
   // If no browser was passed, get the most active one.
-  browser = browser ? browser : GetMostActiveSceneBrowser();
+  browser = browser
+                ? browser
+                : browser_list_utils::GetMostActiveSceneBrowser(browser_list_);
 
   if (!browser) {
     return std::nullopt;

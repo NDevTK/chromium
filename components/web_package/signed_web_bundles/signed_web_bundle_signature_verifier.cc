@@ -23,7 +23,6 @@
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
 #include "components/web_package/signed_web_bundles/constants.h"
-#include "components/web_package/signed_web_bundles/ecdsa_p256_utils.h"
 #include "components/web_package/signed_web_bundles/identity_validator.h"
 #include "components/web_package/signed_web_bundles/integrity_block_parser.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
@@ -31,7 +30,7 @@
 #include "components/web_package/signed_web_bundles/signed_web_bundle_signature_stack.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_signature_stack_entry.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_utils.h"
-#include "crypto/secure_hash.h"
+#include "crypto/hash.h"
 #include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/boringssl/src/include/openssl/sha.h"
 
@@ -41,6 +40,16 @@ namespace {
 
 std::vector<uint8_t> CreateIntegrityBlockCbor(
     const SignedWebBundleIntegrityBlock& integrity_block) {
+  // This function looks like it should use a cbor::Value::ArrayValue to build
+  // the outer array, but it can't: one of the elements is a pre-encoded CBOR
+  // value which we can't safely decode because it's untrusted input. This is
+  // obviously undesirable, because there's no guarantee at all that the
+  // pre-encoded value is actually valid CBOR.
+  //
+  // TODO(https://crbug.com/454485901): once there's a memory-safe CBOR parser,
+  // re-parse the pre-encoded value, then re-encode it here instead of
+  // constructing a CBOR array by hand so that we're guaranteed that the result
+  // of this function is valid.
   std::vector<uint8_t> ib_cbor;
 
   // 0x84 is the encoding byte for an array of length 4.
@@ -120,8 +129,7 @@ SignedWebBundleSignatureVerifier::CalculateHashOfUnsignedWebBundle(
     return base::unexpected(base::File::ErrorToString(file.GetLastFileError()));
   }
 
-  auto secure_hash =
-      crypto::SecureHash::Create(crypto::SecureHash::Algorithm::SHA512);
+  crypto::hash::Hasher hash(crypto::hash::kSha512);
 
   // Calculate the hash of the Signed Web Bundle excluding its integrity block.
   // The file might be too big to read it into memory all at once, which is why
@@ -138,16 +146,15 @@ SignedWebBundleSignatureVerifier::CalculateHashOfUnsignedWebBundle(
           base::File::ErrorToString(file.GetLastFileError()));
     }
     data.resize(*bytes_read);
-    secure_hash->Update(data.data(), data.size());
+    hash.Update(data);
 
     if (!base::CheckAdd(offset, *bytes_read).AssignIfValid(&offset)) {
       return base::unexpected("The Signed Web Bundle is too large.");
     }
   }
 
-  CHECK_EQ(kSHA512DigestLength, secure_hash->GetHashLength());
   SHA512Digest digest;
-  secure_hash->Finish(digest.data(), digest.size());
+  hash.Finish(digest);
   return digest;
 }
 

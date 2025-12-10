@@ -22,8 +22,8 @@
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
                 "apply_configs": [
-                  "mb",
-                  "clobber"
+                  "clobber",
+                  "mb"
                 ],
                 "build_config": "Debug",
                 "config": "chromium_asan",
@@ -51,7 +51,8 @@
         }
       ],
       "retry_failed_shards": true,
-      "targets_spec_directory": "src/infra/config/generated/builders/ci/ASAN Debug/targets"
+      "targets_spec_directory": "infra/config/generated/builders/ci/ASAN Debug/targets",
+      "targets_spec_directory_relative_to_source_dir": true
     }
   },
   "$build/siso": {

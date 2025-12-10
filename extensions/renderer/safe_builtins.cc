@@ -5,7 +5,7 @@
 #include "extensions/renderer/safe_builtins.h"
 
 #include "base/check.h"
-#include "base/notreached.h"
+#include "base/compiler_specific.h"
 #include "base/strings/stringprintf.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/v8_helpers.h"
@@ -85,7 +85,7 @@ const char kScript[] =
     "saveBuiltin(Array,\n"
     "            ['concat', 'forEach', 'includes', 'indexOf', 'join', 'push',\n"
     "             'slice', 'splice', 'map', 'filter', 'shift', 'unshift',\n"
-    "             'pop', 'push', 'reverse'],\n"
+    "             'pop', 'push', 'reverse', 'find'],\n"
     "            ['from', 'isArray']);\n"
     "saveBuiltin(String,\n"
     "            ['indexOf', 'slice', 'split', 'substr', 'toLowerCase',\n"
@@ -153,14 +153,14 @@ void SaveImpl(const char* name,
               v8::Local<v8::Context> context) {
   CHECK(!value.IsEmpty() && value->IsObject()) << name;
   context->Global()
-      ->SetPrivate(context, MakeKey(name, context->GetIsolate()), value)
+      ->SetPrivate(context, MakeKey(name, v8::Isolate::GetCurrent()), value)
       .FromJust();
 }
 
 v8::Local<v8::Object> Load(const char* name, v8::Local<v8::Context> context) {
   v8::Local<v8::Value> value =
       context->Global()
-          ->GetPrivate(context, MakeKey(name, context->GetIsolate()))
+          ->GetPrivate(context, MakeKey(name, v8::Isolate::GetCurrent()))
           .ToLocalChecked();
   CHECK(value->IsObject()) << name;
   return v8::Local<v8::Object>::Cast(value);
@@ -217,8 +217,9 @@ class ExtensionImpl : public v8::Extension {
       CHECK(v8_helpers::IsTrue(args->Has(context, i + first_arg_index)));
       // Getting a property value could throw an exception.
       if (!v8_helpers::GetProperty(context, args, i + first_arg_index,
-                                   &argv[i]))
+                                   UNSAFE_TODO(&argv[i]))) {
         return;
+      }
     }
 
     v8::Local<v8::Value> return_value;

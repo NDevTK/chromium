@@ -11,7 +11,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
-#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker_controller.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -33,6 +32,8 @@ namespace {
 std::vector<uint8_t> ConvertFrameToJpeg(
     std::unique_ptr<webrtc::DesktopFrame> frame) {
   CHECK(frame);
+  // TODO(crbug.com/352187279): Support other pixel formats.
+  CHECK_EQ(frame->pixel_format(), webrtc::FOURCC_ARGB);
   SkImageInfo image_info =
       SkImageInfo::Make(frame->size().width(), frame->size().height(),
                         kBGRA_8888_SkColorType, kPremul_SkAlphaType);
@@ -65,7 +66,11 @@ std::vector<uint8_t> ConvertFrameToJpeg(
 
 GlicScreenshotCapturer::GlicScreenshotCapturer() = default;
 
-GlicScreenshotCapturer::~GlicScreenshotCapturer() = default;
+GlicScreenshotCapturer::~GlicScreenshotCapturer() {
+  if (capture_callback_) {
+    SignalError(glic::mojom::CaptureScreenshotErrorReason::kUnknown);
+  }
+}
 
 void GlicScreenshotCapturer::CaptureScreenshot(
     gfx::NativeWindow parent_window,
@@ -93,13 +98,12 @@ void GlicScreenshotCapturer::CaptureScreenshot(
   picker_params.target_name = name;
   picker_params.request_audio = false;
   picker_params.restricted_by_policy = false;
-  DesktopMediaList::WebContentsFilter includable_web_contents_filter =
+  picker_params.includable_web_contents_filter =
       base::BindRepeating([](content::WebContents* wc) { return false; });
   DesktopMediaPickerController::DoneCallback source_selected_callback =
       base::BindOnce(&GlicScreenshotCapturer::OnSourceSelected,
                      weak_ptr_factory_.GetWeakPtr());
   picker_controller_->Show(picker_params, {DesktopMediaList::Type::kScreen},
-                           includable_web_contents_filter,
                            std::move(source_selected_callback));
 }
 

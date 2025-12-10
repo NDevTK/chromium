@@ -56,6 +56,10 @@
   padding-inline-start: 16px;
 }
 
+:host(:not([show-shadow])) .customize-button {
+  box-shadow: none;
+}
+
 :host([show-background-image]) #customizeButton,
 :host([show-wallpaper-search-button]) #customizeButton,
 :host([show-wallpaper-search]) #wallpaperSearchButton {
@@ -111,7 +115,7 @@
   }
 }
 
-@media (max-width: 830px) {
+@media (max-width: 920px) {
   :host([info-shown-to-user]) .customize-button {
     padding-inline-end: 0;
     padding-inline-start: 8px;

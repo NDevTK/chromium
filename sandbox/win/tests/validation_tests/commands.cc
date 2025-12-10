@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "sandbox/win/tests/validation_tests/commands.h"
 
 #include <windows.h>
@@ -16,6 +11,9 @@
 
 #include <string>
 
+#include "base/compiler_specific.h"
+#include "sandbox/win/src/sandbox_factory.h"
+#include "sandbox/win/src/target_services.h"
 #include "sandbox/win/tests/common/controller.h"
 
 namespace {
@@ -88,9 +86,9 @@ int TestValidWindow(HWND window) {
 }
 
 SBOX_TESTS_COMMAND int OpenProcessCmd(int argc, wchar_t **argv) {
-  return (argc == 2) ?
-      TestOpenProcess(_wtol(argv[0]), _wtol(argv[1])) :
-      SBOX_TEST_FAILED_TO_EXECUTE_COMMAND;
+  return (argc == 2)
+             ? TestOpenProcess(_wtol(argv[0]), _wtol(UNSAFE_TODO(argv[1])))
+             : SBOX_TEST_FAILED_TO_EXECUTE_COMMAND;
 }
 
 int TestOpenProcess(DWORD process_id, DWORD access_mask) {
@@ -159,7 +157,7 @@ SBOX_TESTS_COMMAND int OpenKey(int argc, wchar_t **argv) {
   // Get the subkey.
   std::wstring subkey;
   if (argc == 2) {
-    subkey = argv[1];
+    subkey = UNSAFE_TODO(argv[1]);
     trim_quote(&subkey);
   }
 
@@ -293,5 +291,15 @@ SBOX_TESTS_COMMAND int AllocateCmd(int argc, wchar_t **argv) {
       SBOX_TEST_SUCCEEDED : SBOX_TEST_FAILED;
 }
 
+SBOX_TESTS_COMMAND int InitCompleted(int, wchar_t**) {
+  auto* target_services = sandbox::SandboxFactory::GetTargetServices();
+  if (!target_services) {
+    return SBOX_TEST_FAILED;
+  }
+  if (!target_services->GetState()->InitCompleted()) {
+    return SBOX_TEST_FIRST_ERROR;
+  }
+  return SBOX_TEST_SUCCEEDED;
+}
 
 }  // namespace sandbox

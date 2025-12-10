@@ -31,17 +31,15 @@
 #include "base/compiler_specific.h"
 #include "base/memory/stack_allocated.h"
 #include "base/notreached.h"
-#include "third_party/blink/renderer/platform/geometry/evaluation_input.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
-namespace WTF {
-class String;
-}  // namespace WTF
-
 namespace blink {
+
+struct EvaluationInput;
 
 struct PixelsAndPercent {
   DISALLOW_NEW();
@@ -98,7 +96,6 @@ class CalculationValue;
 class Length;
 
 PLATFORM_EXPORT extern const Length& g_auto_length;
-PLATFORM_EXPORT extern const Length& g_fill_available_length;
 PLATFORM_EXPORT extern const Length& g_stretch_length;
 PLATFORM_EXPORT extern const Length& g_fit_content_length;
 PLATFORM_EXPORT extern const Length& g_max_content_length;
@@ -123,7 +120,6 @@ class PLATFORM_EXPORT Length {
     kMinContent,
     kMaxContent,
     kMinIntrinsic,
-    kFillAvailable,
     kStretch,
     kFitContent,
     kCalculated,
@@ -194,10 +190,8 @@ class PLATFORM_EXPORT Length {
       return value_ == o.value_;
     }
   }
-  bool operator!=(const Length& o) const { return !(*this == o); }
 
   static const Length& Auto() { return g_auto_length; }
-  static const Length& FillAvailable() { return g_fill_available_length; }
   static const Length& Stretch() { return g_stretch_length; }
   static const Length& FitContent() { return g_fit_content_length; }
   static const Length& MaxContent() { return g_max_content_length; }
@@ -328,7 +322,6 @@ class PLATFORM_EXPORT Length {
   bool IsMinContent() const { return GetType() == kMinContent; }
   bool IsMaxContent() const { return GetType() == kMaxContent; }
   bool IsMinIntrinsic() const { return GetType() == kMinIntrinsic; }
-  bool IsFillAvailable() const { return GetType() == kFillAvailable; }
   bool IsStretch() const { return GetType() == kStretch; }
   bool IsFitContent() const { return GetType() == kFitContent; }
   bool IsPercent() const { return GetType() == kPercent; }
@@ -392,7 +385,7 @@ class PLATFORM_EXPORT Length {
 
   static wtf_size_t GetCalcHandleMapSizeForTest();
 
-  WTF::String ToString() const;
+  String ToString() const;
 
   unsigned GetHash() const;
 
@@ -428,5 +421,7 @@ class PLATFORM_EXPORT Length {
 PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, const Length&);
 
 }  // namespace blink
+
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::Length)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_

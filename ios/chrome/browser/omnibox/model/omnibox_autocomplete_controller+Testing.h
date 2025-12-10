@@ -14,7 +14,16 @@ class AutocompleteController;
 
 /// Sets autocomplete controller for testing.
 - (void)setAutocompleteController:
-    (std::unique_ptr<AutocompleteController>)autocompleteController;
+    (AutocompleteController*)autocompleteController;
+
+#pragma mark - Exposed methods for testing
+
+- (void)openMatch:(AutocompleteMatch)match
+             popupSelection:(OmniboxPopupSelection)selection
+      windowOpenDisposition:(WindowOpenDisposition)disposition
+            alternateNavURL:(const GURL&)alternateNavURL
+                 pastedText:(const std::u16string&)pastedText
+    matchSelectionTimestamp:(base::TimeTicks)matchSelectionTimestamp;
 
 @end
 

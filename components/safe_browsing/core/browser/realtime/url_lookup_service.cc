@@ -143,6 +143,11 @@ RealTimeUrlLookupService::GetClientMetadata() const {
   return nullptr;
 }
 
+std::string RealTimeUrlLookupService::GetContentAreaAccountEmail(
+    const GURL& tab_url) const {
+  return "";
+}
+
 void RealTimeUrlLookupService::Shutdown() {
   RealTimeUrlLookupServiceBase::Shutdown();
 
@@ -204,6 +209,11 @@ std::optional<std::string> RealTimeUrlLookupService::GetDMTokenString() const {
 
 std::string RealTimeUrlLookupService::GetMetricSuffix() const {
   return ".Consumer";
+}
+
+bool RealTimeUrlLookupService::ShouldOverrideKnownSafeUrlDecision(
+    const GURL& url) const {
+  return false;
 }
 
 bool RealTimeUrlLookupService::CanCheckUrl(const GURL& url) {

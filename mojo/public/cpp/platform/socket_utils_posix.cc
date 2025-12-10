@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include "base/files/file_util.h"
@@ -19,15 +20,10 @@
 #include "base/posix/eintr_wrapper.h"
 #include "build/build_config.h"
 
-#if !BUILDFLAG(IS_NACL)
-#include <sys/uio.h>
-#endif
-
 namespace mojo {
 
 namespace {
 
-#if !BUILDFLAG(IS_NACL)
 bool IsRecoverableError() {
   return errno == ECONNABORTED || errno == EMFILE || errno == ENFILE ||
          errno == ENOMEM || errno == ENOBUFS;
@@ -68,7 +64,6 @@ bool IsPeerAuthorized(base::PlatformFile fd) {
   }
   return true;
 }
-#endif  // !BUILDFLAG(IS_NACL)
 
 }  // namespace
 
@@ -76,15 +71,6 @@ ssize_t SocketWrite(base::PlatformFile socket,
                     const void* bytes,
                     size_t num_bytes) {
   return send(socket, bytes, num_bytes, MSG_NOSIGNAL);
-}
-
-ssize_t SocketWritev(base::PlatformFile socket,
-                     struct iovec* iov,
-                     size_t num_iov) {
-  struct msghdr msg = {};
-  msg.msg_iov = iov;
-  msg.msg_iovlen = num_iov;
-  return HANDLE_EINTR(sendmsg(socket, &msg, MSG_NOSIGNAL));
 }
 
 ssize_t SendmsgWithHandles(base::PlatformFile socket,
@@ -159,9 +145,6 @@ bool AcceptSocketConnection(base::PlatformFile server_fd,
                             bool check_peer_user) {
   DCHECK_GE(server_fd, 0);
   connection_fd->reset();
-#if BUILDFLAG(IS_NACL)
-  NOTREACHED();
-#else
   base::ScopedFD accepted_handle(HANDLE_EINTR(accept(server_fd, nullptr, 0)));
   if (!accepted_handle.is_valid())
     return IsRecoverableError();
@@ -174,7 +157,6 @@ bool AcceptSocketConnection(base::PlatformFile server_fd,
 
   *connection_fd = std::move(accepted_handle);
   return true;
-#endif  // BUILDFLAG(IS_NACL)
 }
 
 }  // namespace mojo

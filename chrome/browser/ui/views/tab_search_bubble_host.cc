@@ -20,6 +20,7 @@
 #include "chrome/browser/ui/tabs/organization/tab_organization_service.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_service_factory.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_utils.h"
+#include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_prefs.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
@@ -65,8 +66,7 @@ TabSearchOpenAction GetActionForEvent(const ui::Event& event) {
 
 TabSearchBubbleHost::TabSearchBubbleHost(
     views::Button* button,
-    BrowserWindowInterface* browser_window_interface,
-    base::WeakPtr<TabStrip> tab_strip)
+    BrowserWindowInterface* browser_window_interface)
     : button_(button),
       profile_(browser_window_interface->GetProfile()),
       webui_bubble_manager_(WebUIBubbleManager::Create<TabSearchUI>(
@@ -77,19 +77,20 @@ TabSearchBubbleHost::TabSearchBubbleHost(
       widget_open_timer_(base::BindRepeating([](base::TimeDelta time_elapsed) {
         base::UmaHistogramMediumTimes("Tabs.TabSearch.WindowDisplayedDuration3",
                                       time_elapsed);
-      })),
-      tab_strip_(tab_strip) {
+      })) {
   auto* const tab_organization_service =
       TabOrganizationServiceFactory::GetForProfile(profile_.get());
   if (tab_organization_service) {
     tab_organization_observation_.Observe(tab_organization_service);
   }
+
+  // LINT.IfChange(menu_button_controller)
   auto menu_button_controller = std::make_unique<views::MenuButtonController>(
       button,
       base::BindRepeating(&TabSearchBubbleHost::ButtonPressed,
                           base::Unretained(this)),
       std::make_unique<views::Button::DefaultButtonControllerDelegate>(button));
-  menu_button_controller_ = menu_button_controller.get();
+  // LINT.ThenChange(:pressed_lock_)
   button->SetButtonController(std::move(menu_button_controller));
   webui_bubble_manager_observer_.Observe(webui_bubble_manager_.get());
 }
@@ -124,12 +125,6 @@ void TabSearchBubbleHost::OnWidgetVisibilityChanged(views::Widget* widget,
             webui_bubble_manager_->bubble_using_cached_web_contents(),
             webui_bubble_manager_->contents_warmup_level()));
 
-    // Pause tab closing mode observation.
-    if (features::IsTabSearchMoving() &&
-        !features::HasTabSearchToolbarButton()) {
-      tab_strip_->NotifyTabstripBubbleOpened();
-    }
-
     const PrefService* prefs = profile_->GetPrefs();
     const auto section = tab_search_prefs::GetTabSearchSectionFromInt(
         prefs->GetInteger(tab_search_prefs::kTabSearchTabIndex));
@@ -153,12 +148,6 @@ void TabSearchBubbleHost::OnWidgetVisibilityChanged(views::Widget* widget,
           tab_search::mojom::DeclutterCTREvent::kDeclutterShown);
     }
   } else if (!visible && bubble_created_time_.has_value()) {
-    // Re-enable tab closing mode observation.
-    if (features::IsTabSearchMoving() &&
-        !features::HasTabSearchToolbarButton()) {
-      tab_strip_->NotifyTabstripBubbleClosed();
-    }
-
     const base::TimeDelta time_to_close =
         base::TimeTicks::Now() - bubble_created_time_.value();
     base::UmaHistogramMediumTimes("Tabs.TabSearch.TimeToClose", time_to_close);
@@ -178,7 +167,7 @@ void TabSearchBubbleHost::OnWidgetDestroying(views::Widget* widget) {
   }
 }
 
-void TabSearchBubbleHost::OnOrganizationAccepted(const Browser* browser) {
+void TabSearchBubbleHost::OnOrganizationAccepted(Browser* browser) {
   if (browser != GetBrowser()) {
     return;
   }
@@ -186,7 +175,7 @@ void TabSearchBubbleHost::OnOrganizationAccepted(const Browser* browser) {
   if (browser->tab_strip_model()->group_model()->ListTabGroups().size() > 1) {
     return;
   }
-  browser->window()->MaybeShowFeaturePromo(
+  BrowserUserEducationInterface::From(browser)->MaybeShowFeaturePromo(
       feature_engagement::kIPHTabOrganizationSuccessFeature);
 }
 
@@ -259,7 +248,7 @@ bool TabSearchBubbleHost::ShowTabSearchBubble(
 
   if (auto* const browser = GetBrowser()) {
     // Close the Tab Search IPH if it is showing.
-    browser->window()->NotifyFeaturePromoFeatureUsed(
+    BrowserUserEducationInterface::From(browser)->NotifyFeaturePromoFeatureUsed(
         feature_engagement::kIPHTabSearchFeature,
         FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   }
@@ -291,7 +280,11 @@ bool TabSearchBubbleHost::ShowTabSearchBubble(
   }
 
   // Hold the pressed lock while the |bubble_| is active.
-  pressed_lock_ = menu_button_controller_->TakeLock();
+  // LINT.IfChange(pressed_lock_)
+  pressed_lock_ =
+      static_cast<views::MenuButtonController*>(button_->button_controller())
+          ->TakeLock();
+  // LINT.ThenChange(:menu_button_controller)
   return true;
 }
 

@@ -20,17 +20,10 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
-class HighlightStyleUtilsTest : public SimTest,
-                                private ScopedHighlightInheritanceForTest {
- public:
-  // TODO(crbug.com/1024156) remove CachedPseudoStyles tests, but keep
-  // SelectedTextInputShadow, when HighlightInheritance becomes stable
-  HighlightStyleUtilsTest() : ScopedHighlightInheritanceForTest(false) {}
-};
+class HighlightStyleUtilsTest : public SimTest {};
 
 TEST_F(HighlightStyleUtilsTest, SelectedTextInputShadow) {
   // Test that we apply input ::selection style to the value text.
@@ -63,8 +56,8 @@ TEST_F(HighlightStyleUtilsTest, SelectedTextInputShadow) {
                        /*descendant_painting_blocked=*/false);
   TextPaintStyle paint_style;
 
-  const ComputedStyle* pseudo_style = HighlightStyleUtils::HighlightPseudoStyle(
-      text_node, text_style, kPseudoIdSelection);
+  const ComputedStyle* pseudo_style =
+      HighlightStyleUtils::HighlightPseudoStyle(text_style, kPseudoIdSelection);
   paint_style = HighlightStyleUtils::HighlightPaintingStyle(
                     GetDocument(), text_style, pseudo_style, text_node,
                     kPseudoIdSelection, paint_style, paint_info,
@@ -122,8 +115,7 @@ TEST_F(HighlightStyleUtilsTest, SelectedTextIsRespected) {
           ->firstChild();
   const ComputedStyle& div1_style = div1_text->GetLayoutObject()->StyleRef();
   const ComputedStyle* div1_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(div1_text, div1_style,
-                                                kPseudoIdSelection);
+      HighlightStyleUtils::HighlightPseudoStyle(div1_style, kPseudoIdSelection);
   paint_style = HighlightStyleUtils::HighlightPaintingStyle(
                     GetDocument(), div1_style, div1_pseudo_style, div1_text,
                     kPseudoIdSelection, paint_style, paint_info,
@@ -138,10 +130,9 @@ TEST_F(HighlightStyleUtilsTest, SelectedTextIsRespected) {
   auto* div2_text =
       To<HTMLDivElement>(GetDocument().QuerySelector(AtomicString("#div2")))
           ->firstChild();
-  const ComputedStyle& div2_style = div1_text->GetLayoutObject()->StyleRef();
+  const ComputedStyle& div2_style = div2_text->GetLayoutObject()->StyleRef();
   const ComputedStyle* div2_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(div2_text, div2_style,
-                                                kPseudoIdSelection);
+      HighlightStyleUtils::HighlightPseudoStyle(div2_style, kPseudoIdSelection);
   paint_style = HighlightStyleUtils::HighlightPaintingStyle(
                     GetDocument(), div2_style, div2_pseudo_style, div2_text,
                     kPseudoIdSelection, paint_style, paint_info,
@@ -150,17 +141,16 @@ TEST_F(HighlightStyleUtilsTest, SelectedTextIsRespected) {
   background_color = HighlightStyleUtils::HighlightBackgroundColor(
       GetDocument(), div2_style, div2_text, std::nullopt, kPseudoIdSelection,
       SearchTextIsActiveMatch::kNo);
-  EXPECT_EQ(default_highlight_background, paint_style.current_color);
+  EXPECT_EQ(default_highlight_background, paint_style.fill_color);
   // Paired defaults means this is transparent
   EXPECT_EQ(Color(0, 0, 0, 0), background_color);
 
   auto* div3_text =
       To<HTMLDivElement>(GetDocument().QuerySelector(AtomicString("#div3")))
           ->firstChild();
-  const ComputedStyle& div3_style = div1_text->GetLayoutObject()->StyleRef();
+  const ComputedStyle& div3_style = div3_text->GetLayoutObject()->StyleRef();
   const ComputedStyle* div3_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(div3_text, div3_style,
-                                                kPseudoIdSelection);
+      HighlightStyleUtils::HighlightPseudoStyle(div3_style, kPseudoIdSelection);
   paint_style = HighlightStyleUtils::HighlightPaintingStyle(
                     GetDocument(), div3_style, div3_pseudo_style, div3_text,
                     kPseudoIdSelection, paint_style, paint_info,
@@ -171,21 +161,20 @@ TEST_F(HighlightStyleUtilsTest, SelectedTextIsRespected) {
       GetDocument(), div3_style, div3_text, current_layer_color,
       kPseudoIdSelection, SearchTextIsActiveMatch::kNo);
 #if BUILDFLAG(IS_MAC)
-  EXPECT_EQ(default_highlight_background, paint_style.current_color);
+  EXPECT_EQ(default_highlight_background, paint_style.fill_color);
   EXPECT_EQ(Color::FromColorSpace(Color::ColorSpace::kSRGB, 1, 1, 1),
             background_color);
 #else
   Color default_highlight_foreground =
       LayoutTheme::GetTheme().InactiveSelectionForegroundColor(
           mojom::blink::ColorScheme::kLight);
-  EXPECT_EQ(default_highlight_foreground, paint_style.current_color);
+  EXPECT_EQ(default_highlight_foreground, paint_style.fill_color);
   EXPECT_EQ(default_highlight_background.MakeOpaque().InvertSRGB(),
             background_color);
 #endif
 }
 
 TEST_F(HighlightStyleUtilsTest, CurrentColorReportingAll) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -229,8 +218,8 @@ TEST_F(HighlightStyleUtilsTest, CurrentColorReportingAll) {
   auto* div_text = div_node->firstChild();
   const ComputedStyle& div_style = div_text->GetLayoutObject()->StyleRef();
   const ComputedStyle* div_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(
-          div_text, div_style, kPseudoIdHighlight, AtomicString("highlight1"));
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdHighlight,
+                                                AtomicString("highlight1"));
   HighlightStyleUtils::HighlightTextPaintStyle highlight_paint_style =
       HighlightStyleUtils::HighlightPaintingStyle(
           GetDocument(), div_style, div_pseudo_style, div_text,
@@ -264,8 +253,7 @@ TEST_F(HighlightStyleUtilsTest, CurrentColorReportingAll) {
       HighlightStyleUtils::HighlightColorProperty::kSelectionDecorationColor));
 #else
   const ComputedStyle* selection_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(div_text, div_style,
-                                                kPseudoIdSelection);
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdSelection);
   HighlightStyleUtils::HighlightTextPaintStyle selection_paint_style =
       HighlightStyleUtils::HighlightPaintingStyle(
           GetDocument(), div_style, selection_pseudo_style, div_text,
@@ -277,7 +265,6 @@ TEST_F(HighlightStyleUtilsTest, CurrentColorReportingAll) {
 }
 
 TEST_F(HighlightStyleUtilsTest, CurrentColorReportingSome) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -314,8 +301,8 @@ TEST_F(HighlightStyleUtilsTest, CurrentColorReportingSome) {
           ->firstChild();
   const ComputedStyle& div_style = div_text->GetLayoutObject()->StyleRef();
   const ComputedStyle* div_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(
-          div_text, div_style, kPseudoIdHighlight, AtomicString("highlight1"));
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdHighlight,
+                                                AtomicString("highlight1"));
   HighlightStyleUtils::HighlightTextPaintStyle highlight_paint_style =
       HighlightStyleUtils::HighlightPaintingStyle(
           GetDocument(), div_style, div_pseudo_style, div_text,
@@ -333,7 +320,6 @@ TEST_F(HighlightStyleUtilsTest, CurrentColorReportingSome) {
 }
 
 TEST_F(HighlightStyleUtilsTest, CustomPropertyInheritance) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -372,8 +358,7 @@ TEST_F(HighlightStyleUtilsTest, CustomPropertyInheritance) {
   TextPaintStyle paint_style;
   const ComputedStyle& div_style = div_node->ComputedStyleRef();
   const ComputedStyle* div_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(div_node, div_style,
-                                                kPseudoIdSelection);
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdSelection);
   paint_style = HighlightStyleUtils::HighlightPaintingStyle(
                     GetDocument(), div_style, div_pseudo_style, div_node,
                     kPseudoIdSelection, paint_style, paint_info,
@@ -389,9 +374,7 @@ TEST_F(HighlightStyleUtilsTest, CustomPropertyInheritance) {
   EXPECT_EQ(Color(0, 128, 0), background_color);
 }
 
-TEST_F(HighlightStyleUtilsTest,
-       CustomPropertyOriginatingInheritanceUniversal) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
+TEST_F(HighlightStyleUtilsTest, CustomPropertyOriginatingInheritanceUniversal) {
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -428,7 +411,7 @@ TEST_F(HighlightStyleUtilsTest,
       kPseudoIdSelection, SearchTextIsActiveMatch::kNo);
   EXPECT_EQ(Color(0, 128, 0), div_background_color);
 
-  auto* div_inherited_vars = div_style.InheritedVariables();
+  auto& div_inherited_vars = div_style.InheritedVariables();
 
   auto* first_p_node = To<HTMLElement>(div_node->firstChild()->nextSibling());
   const ComputedStyle& first_p_style = first_p_node->ComputedStyleRef();
@@ -437,7 +420,7 @@ TEST_F(HighlightStyleUtilsTest,
           GetDocument(), first_p_style, first_p_node, previous_layer_color,
           kPseudoIdSelection, SearchTextIsActiveMatch::kNo);
   EXPECT_EQ(Color(0, 128, 0), first_p_background_color);
-  auto* first_p_inherited_vars = first_p_style.InheritedVariables();
+  auto& first_p_inherited_vars = first_p_style.InheritedVariables();
   EXPECT_EQ(div_inherited_vars, first_p_inherited_vars);
 
   auto* second_p_node =
@@ -448,7 +431,7 @@ TEST_F(HighlightStyleUtilsTest,
           GetDocument(), second_p_style, second_p_node, previous_layer_color,
           kPseudoIdSelection, SearchTextIsActiveMatch::kNo);
   EXPECT_EQ(Color(0, 0, 255), second_p_background_color);
-  auto* second_p_inherited_vars = second_p_style.InheritedVariables();
+  auto& second_p_inherited_vars = second_p_style.InheritedVariables();
   EXPECT_NE(second_p_inherited_vars, first_p_inherited_vars);
 
   auto* second_strong_node =
@@ -461,12 +444,11 @@ TEST_F(HighlightStyleUtilsTest,
           previous_layer_color, kPseudoIdSelection,
           SearchTextIsActiveMatch::kNo);
   EXPECT_EQ(Color(0, 0, 255), second_strong_background_color);
-  auto* second_strong_inherited_vars = second_strong_style.InheritedVariables();
+  auto& second_strong_inherited_vars = second_strong_style.InheritedVariables();
   EXPECT_EQ(second_p_inherited_vars, second_strong_inherited_vars);
 }
 
 TEST_F(HighlightStyleUtilsTest, FontMetricsFromOriginatingElement) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -504,7 +486,7 @@ TEST_F(HighlightStyleUtilsTest, FontMetricsFromOriginatingElement) {
   EXPECT_EQ(div_style.SpecifiedFontSize(), 40);
 
   const ComputedStyle* pseudo_style = HighlightStyleUtils::HighlightPseudoStyle(
-      div_node, div_style, kPseudoIdHighlight, AtomicString("highlight1"));
+      div_style, kPseudoIdHighlight, AtomicString("highlight1"));
 
   EXPECT_TRUE(pseudo_style->HasAppliedTextDecorations());
   const AppliedTextDecoration& text_decoration =
@@ -518,7 +500,6 @@ TEST_F(HighlightStyleUtilsTest, FontMetricsFromOriginatingElement) {
 TEST_F(HighlightStyleUtilsTest, CustomHighlightsNotOverlapping) {
   // Not really a style utils test, but this is the only Pseudo Highlights
   // unit test suite making use of SimTest.
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -605,7 +586,6 @@ TEST_F(HighlightStyleUtilsTest, CustomHighlightsNotOverlapping) {
 }
 
 TEST_F(HighlightStyleUtilsTest, ContainerMetricsFromOriginatingElement) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -650,8 +630,8 @@ TEST_F(HighlightStyleUtilsTest, ContainerMetricsFromOriginatingElement) {
   const ComputedStyle& div_style = div_node->ComputedStyleRef();
 
   const ComputedStyle* div_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(
-          div_node, div_style, kPseudoIdHighlight, AtomicString("highlight1"));
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdHighlight,
+                                                AtomicString("highlight1"));
 
   EXPECT_TRUE(div_pseudo_style->HasAppliedTextDecorations());
   const AppliedTextDecoration& text_decoration =
@@ -663,7 +643,6 @@ TEST_F(HighlightStyleUtilsTest, ContainerMetricsFromOriginatingElement) {
 }
 
 TEST_F(HighlightStyleUtilsTest, ContainerIsOriginatingElement) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -706,8 +685,8 @@ TEST_F(HighlightStyleUtilsTest, ContainerIsOriginatingElement) {
   const ComputedStyle& div_style = div_node->ComputedStyleRef();
 
   const ComputedStyle* div_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(
-          div_node, div_style, kPseudoIdHighlight, AtomicString("highlight1"));
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdHighlight,
+                                                AtomicString("highlight1"));
 
   EXPECT_TRUE(div_pseudo_style);
   EXPECT_TRUE(div_pseudo_style->HasAppliedTextDecorations());
@@ -720,7 +699,6 @@ TEST_F(HighlightStyleUtilsTest, ContainerIsOriginatingElement) {
 }
 
 TEST_F(HighlightStyleUtilsTest, LigthDarkColor) {
-  ScopedHighlightInheritanceForTest highlight_inheritance_enabled(true);
   SimRequest main_resource("https://example.com/test.html", "text/html");
 
   LoadURL("https://example.com/test.html");
@@ -755,8 +733,7 @@ TEST_F(HighlightStyleUtilsTest, LigthDarkColor) {
   TextPaintStyle paint_style;
   const ComputedStyle& div_style = div_node->ComputedStyleRef();
   const ComputedStyle* div_pseudo_style =
-      HighlightStyleUtils::HighlightPseudoStyle(div_node, div_style,
-                                                kPseudoIdSelection);
+      HighlightStyleUtils::HighlightPseudoStyle(div_style, kPseudoIdSelection);
   paint_style = HighlightStyleUtils::HighlightPaintingStyle(
                     GetDocument(), div_style, div_pseudo_style, div_node,
                     kPseudoIdSelection, paint_style, paint_info,

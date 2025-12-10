@@ -26,7 +26,6 @@
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/common/api/app_runtime.h"
 #include "extensions/strings/grit/extensions_strings.h"
-#include "ipc/ipc_message_macros.h"
 
 namespace app_runtime = extensions::api::app_runtime;
 
@@ -241,7 +240,7 @@ void AppViewGuest::CreateInnerPage(
       ExtensionRegistry::Get(browser_context())->enabled_extensions();
   const Extension* guest_extension = enabled_extensions.GetByID(*app_id);
   const Extension* embedder_extension =
-      enabled_extensions.GetByID(GetOwnerSiteURL().host());
+      enabled_extensions.GetByID(GetOwnerSiteURL().GetHost());
 
   if (!guest_extension || !guest_extension->is_platform_app() ||
       !embedder_extension || !embedder_extension->is_platform_app()) {

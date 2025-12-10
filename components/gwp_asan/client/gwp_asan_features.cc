@@ -17,8 +17,8 @@ constexpr base::FeatureState kDefaultEnabled =
     base::FEATURE_DISABLED_BY_DEFAULT;
 #endif
 
-BASE_FEATURE(kGwpAsanMalloc, "GwpAsanMalloc", kDefaultEnabled);
-BASE_FEATURE(kGwpAsanPartitionAlloc, "GwpAsanPartitionAlloc", kDefaultEnabled);
+BASE_FEATURE(kGwpAsanMalloc, kDefaultEnabled);
+BASE_FEATURE(kGwpAsanPartitionAlloc, kDefaultEnabled);
 
 #if BUILDFLAG(IS_ANDROID)
 
@@ -124,7 +124,7 @@ GWP_ASAN_EXPORT extern const base::FeatureParam<int>
     kGwpAsanMallocGpuAllocationSamplingRange{&kGwpAsanMalloc,
                                              "GpuAllocationSamplingRange", 10};
 
-#else
+#elif BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 
 // Browser reservation params.
 GWP_ASAN_EXPORT extern const base::FeatureParam<int>
@@ -177,10 +177,10 @@ GWP_ASAN_EXPORT extern const base::FeatureParam<int>
                                              "GpuAllocationSamplingRange", 10};
 
 #endif
+// BUILDFLAG(IS_IOS) does not need process-specific parameters as it only has
+// one chrome-controlled process (the browser process).
 
-BASE_FEATURE(kExtremeLightweightUAFDetector,
-             "ExtremeLightweightUAFDetector",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kExtremeLightweightUAFDetector, base::FEATURE_DISABLED_BY_DEFAULT);
 const base::FeatureParam<int> kExtremeLightweightUAFDetectorSamplingFrequency{
     &kExtremeLightweightUAFDetector, "sampling_frequency",
     1000};  // Quarantine once per 1000 calls to `free`.

@@ -2,6 +2,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGPU_DAWN_ENUM_CONVERSIONS_H_
 
 #include "third_party/blink/renderer/platform/graphics/gpu/webgpu_cpp.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_uchar.h"
 
 namespace blink {
 
@@ -69,6 +70,7 @@ wgpu::CullMode AsDawnEnum(const V8GPUCullMode& webgpu_enum);
 wgpu::FrontFace AsDawnEnum(const V8GPUFrontFace& webgpu_enum);
 wgpu::TextureAspect AsDawnEnum(const V8GPUTextureAspect& webgpu_enum);
 wgpu::ErrorFilter AsDawnEnum(const V8GPUErrorFilter& webgpu_enum);
+wgpu::ComponentSwizzle AsDawnEnum(const UChar c);
 
 // Convert Dawn enums to WebGPU IDL enums.
 V8GPUQueryType FromDawnEnum(wgpu::QueryType dawn_enum);

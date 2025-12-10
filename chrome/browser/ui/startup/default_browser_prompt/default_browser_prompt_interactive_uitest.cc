@@ -119,7 +119,7 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserPromptInteractiveTest,
 IN_PROC_BROWSER_TEST_F(DefaultBrowserPromptInteractiveTest,
                        DoesNotShowDefaultBrowserPromptOnIncognitoTab) {
   ui::Accelerator incognito_accelerator;
-  chrome::AcceleratorProviderForBrowser(browser())->GetAcceleratorForCommandId(
+  AcceleratorProviderForBrowser(browser())->GetAcceleratorForCommandId(
       IDC_NEW_INCOGNITO_WINDOW, &incognito_accelerator);
 
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
@@ -134,7 +134,7 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserPromptInteractiveTest,
 IN_PROC_BROWSER_TEST_F(DefaultBrowserPromptInteractiveTest,
                        DoesNotShowAppMenuItemOnIncognitoTab) {
   ui::Accelerator incognito_accelerator;
-  chrome::AcceleratorProviderForBrowser(browser())->GetAcceleratorForCommandId(
+  AcceleratorProviderForBrowser(browser())->GetAcceleratorForCommandId(
       IDC_NEW_INCOGNITO_WINDOW, &incognito_accelerator);
 
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
@@ -263,8 +263,8 @@ IN_PROC_BROWSER_TEST_F(DefaultBrowserPromptInteractiveTest,
                        RemovesAllBrowserDefaultPromptsOnSettingsChange) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFirstTabContents);
   const WebContentsInteractionTestUtil::DeepQuery kDefaultBrowserButton = {
-      "settings-ui", "settings-main", "settings-basic-page",
-      "settings-default-browser-page", "cr-button"};
+      "settings-ui", "settings-main", "settings-default-browser-page",
+      "cr-button"};
 
   DefaultBrowserPromptManager::GetInstance()->MaybeShowPrompt();
   RunTestSequence(RemovesAllBrowserDefaultPromptsWhen(

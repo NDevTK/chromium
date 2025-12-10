@@ -9,8 +9,13 @@
 
 #include "base/memory/raw_ref.h"
 #include "chrome/browser/ui/views/commerce/price_insights_icon_view.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 
 class ScopedWindowCallToAction;
+
+namespace page_actions {
+class PageActionController;
+}
 
 namespace tabs {
 class TabInterface;
@@ -24,14 +29,20 @@ namespace commerce {
 // page's commerce-related context.
 class PriceInsightsPageActionViewController {
  public:
-  explicit PriceInsightsPageActionViewController(
-      tabs::TabInterface& tab_interface);
+  DECLARE_USER_DATA(PriceInsightsPageActionViewController);
+
+  PriceInsightsPageActionViewController(
+      tabs::TabInterface& tab_interface,
+      page_actions::PageActionController& page_action_controller);
+
   PriceInsightsPageActionViewController(
       const PriceInsightsPageActionViewController&) = delete;
   PriceInsightsPageActionViewController& operator=(
       const PriceInsightsPageActionViewController&) = delete;
 
   ~PriceInsightsPageActionViewController();
+
+  static PriceInsightsPageActionViewController* From(tabs::TabInterface& tab);
 
   // Updates the Price Insights page action icon based on the current tab state.
   // If the icon should be shown, it may also display an expanded label or a
@@ -46,7 +57,14 @@ class PriceInsightsPageActionViewController {
   // features.
   const raw_ref<tabs::TabInterface> tab_interface_;
 
+  // Unowned reference to the page action controller that will coordinate
+  // requests from this object.
+  const raw_ref<page_actions::PageActionController> page_action_controller_;
+
   std::unique_ptr<ScopedWindowCallToAction> scoped_window_call_to_action_ptr_;
+
+  ui::ScopedUnownedUserData<PriceInsightsPageActionViewController>
+      scoped_unowned_user_data_;
 };
 
 }  // namespace commerce

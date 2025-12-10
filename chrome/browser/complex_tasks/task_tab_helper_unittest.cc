@@ -11,6 +11,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/sessions/content/navigation_task_id.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -49,6 +50,11 @@ class TaskTabHelperUnitTest : public ChromeRenderViewHostTestHarness {
     NavigateAndCommit(kSearchURL);
   }
 
+  void TearDown() override {
+    task_tab_helper_ = nullptr;
+    ChromeRenderViewHostTestHarness::TearDown();
+  }
+
   void GoBack() { content::NavigationSimulator::GoBack(web_contents()); }
 
   void GoBackNTimes(int times) {
@@ -72,7 +78,7 @@ class TaskTabHelperUnitTest : public ChromeRenderViewHostTestHarness {
     return web_contents()->GetController().GetLastCommittedEntry();
   }
 
-  raw_ptr<MockTaskTabHelper, DanglingUntriaged> task_tab_helper_;
+  raw_ptr<MockTaskTabHelper> task_tab_helper_;
 };
 
 TEST_F(TaskTabHelperUnitTest, TestGetCurrentTaskId) {

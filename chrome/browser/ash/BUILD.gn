@@ -34,6 +34,7 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//chrome/browser",
     "//chrome/browser/ash/attestation:test_support",
+    "//chrome/browser/ash/browser_delegate:impl",
     "//chrome/browser/ash/extended_updates",
     "//chrome/browser/ash/extended_updates/test:test_support",
     "//chrome/browser/ash/login/demo_mode",
@@ -47,6 +48,7 @@ source_set("unit_tests") {
     "//chrome/browser/extensions/api/enterprise_platform_keys",
     "//chrome/browser/extensions/api/enterprise_platform_keys_private",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/signin",
     "//chrome/browser/ui",
     "//chrome/browser/ui/ash/multi_user",
     "//chrome/test:test_support",
@@ -69,6 +71,7 @@ source_set("unit_tests") {
     "//chromeos/components/onc",
     "//chromeos/dbus/power",
     "//chromeos/dbus/tpm_manager",
+    "//components/account_id:test_support",
     "//components/download/content/public",
     "//components/download/public/common:test_support",
     "//components/onc",
@@ -95,13 +98,15 @@ source_set("unit_tests") {
     "//chrome/browser/ash/app_mode:unit_tests",
     "//chrome/browser/ash/app_restore:unit_tests",
     "//chrome/browser/ash/apps:unit_tests",
+    "//chrome/browser/ash/apps/webapk:unit_tests",
     "//chrome/browser/ash/arc:unit_tests",
-    "//chrome/browser/ash/assistant:unit_tests",
     "//chrome/browser/ash/attestation:unit_tests",
     "//chrome/browser/ash/audio:unit_tests",
     "//chrome/browser/ash/bluetooth:unit_tests",
     "//chrome/browser/ash/boca:unit_tests",
+    "//chrome/browser/ash/boca/babelorca:unit_tests",
     "//chrome/browser/ash/boca/on_task:unit_tests",
+    "//chrome/browser/ash/boca/receiver:unit_tests",
     "//chrome/browser/ash/borealis:unit_tests",
     "//chrome/browser/ash/bruschetta:unit_tests",
     "//chrome/browser/ash/calendar:unit_tests",
@@ -159,7 +164,6 @@ source_set("unit_tests") {
     "//chrome/browser/ash/notifications:unit_tests",
     "//chrome/browser/ash/os_feedback:unit_tests",
     "//chrome/browser/ash/ownership:unit_tests",
-    "//chrome/browser/ash/pcie_peripheral:unit_tests",
     "//chrome/browser/ash/phonehub:unit_tests",
     "//chrome/browser/ash/platform_keys:unit_tests",
     "//chrome/browser/ash/plugin_vm:unit_tests",
@@ -171,7 +175,6 @@ source_set("unit_tests") {
     "//chrome/browser/ash/policy/external_data:unit_tests",
     "//chrome/browser/ash/policy/external_data/handlers:unit_tests",
     "//chrome/browser/ash/policy/handlers:unit_tests",
-    "//chrome/browser/ash/policy/invalidation:unit_tests",
     "//chrome/browser/ash/policy/networking:unit_tests",
     "//chrome/browser/ash/policy/off_hours:unit_tests",
     "//chrome/browser/ash/policy/remote_commands:unit_tests",
@@ -185,7 +188,6 @@ source_set("unit_tests") {
     "//chrome/browser/ash/policy/reporting/metrics_reporting/external_display:unit_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/fatal_crash:unit_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/kiosk_heartbeat:unit_tests",
-    "//chrome/browser/ash/policy/reporting/metrics_reporting/kiosk_vision:unit_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/network:unit_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/usb:unit_tests",
     "//chrome/browser/ash/policy/reporting/os_updates:unit_tests",
@@ -244,6 +246,10 @@ source_set("unit_tests") {
   }
 
   data = [ "//chromeos/test/data/" ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 group("browser_tests") {
@@ -263,6 +269,7 @@ group("browser_tests") {
     "//chrome/browser/ash/app_mode:browser_tests",
     "//chrome/browser/ash/app_restore:browser_tests",
     "//chrome/browser/ash/apps:browser_tests",
+    "//chrome/browser/ash/apps/webapk:browser_tests",
     "//chrome/browser/ash/arc:browser_tests",
     "//chrome/browser/ash/audio:browser_tests",
     "//chrome/browser/ash/base:browser_tests",
@@ -327,7 +334,6 @@ group("browser_tests") {
     "//chrome/browser/ash/policy/reporting/metrics_reporting/external_display:browser_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/fatal_crash:browser_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/kiosk_heartbeat:browser_tests",
-    "//chrome/browser/ash/policy/reporting/metrics_reporting/kiosk_vision:browser_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/network:browser_tests",
     "//chrome/browser/ash/policy/reporting/metrics_reporting/usb:browser_tests",
     "//chrome/browser/ash/policy/reporting/os_updates:browser_tests",
@@ -338,7 +344,6 @@ group("browser_tests") {
     "//chrome/browser/ash/printing/print_management:browser_tests",
     "//chrome/browser/ash/privacy_hub:browser_tests",
     "//chrome/browser/ash/remote_apps:browser_tests",
-    "//chrome/browser/ash/scalable_iph:browser_tests",
     "//chrome/browser/ash/smb_client:browser_tests",
     "//chrome/browser/ash/system:browser_tests",
     "//chrome/browser/ash/system_web_apps:browser_tests",

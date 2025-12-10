@@ -181,12 +181,12 @@ class VideoWakeLockTest : public testing::Test {
 
     GetFrame().GetBrowserInterfaceBroker().SetBinderForTesting(
         mojom::blink::PictureInPictureService::Name_,
-        WTF::BindRepeating(&VideoWakeLockPictureInPictureService::Bind,
-                           WTF::Unretained(&pip_service_)));
+        BindRepeating(&VideoWakeLockPictureInPictureService::Bind,
+                      Unretained(&pip_service_)));
 
     fake_layer_ = cc::Layer::Create();
 
-    GetDocument().body()->setInnerHTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
         "<body><div></div><video></video></body>");
     video_ = To<HTMLVideoElement>(
         GetDocument().QuerySelector(AtomicString("video")));

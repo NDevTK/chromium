@@ -20,7 +20,8 @@ class BrowsingDataCounterBridge {
   // Creates a BrowsingDataCounterBridge for a certain browsing data type.
   // The |data_type| is a value of the enum BrowsingDataType.
   BrowsingDataCounterBridge(JNIEnv* env,
-                            const base::android::JavaParamRef<jobject>& obj,
+                            const base::android::JavaRef<jobject>& obj,
+
                             Profile* profile,
                             jint selected_time_period,
                             jint data_type);
@@ -32,12 +33,11 @@ class BrowsingDataCounterBridge {
   ~BrowsingDataCounterBridge();
 
   void SetSelectedTimePeriod(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj,
                              jint selected_time_period);
 
   // Destroys the BrowsingDataCounterBridge object. This needs to be called
   // on the java side when the object is not in use anymore.
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
 
  private:
   void onCounterFinished(

@@ -20,7 +20,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
-#include "ipc/ipc_channel.h"
+#include "ipc/constants.mojom.h"
 #include "ui/webui/examples/browser/devtools/devtools_server.h"
 #include "url/gurl.h"
 
@@ -37,7 +37,8 @@ static GURL GetFrontendURL() {
 // This constant should be in sync with
 // the constant
 // kMaxMessageChunkSize in chrome/browser/devtools/devtools_ui_bindings.cc.
-constexpr size_t kMaxMessageChunkSize = IPC::Channel::kMaximumMessageSize / 4;
+constexpr size_t kMaxMessageChunkSize =
+    IPC::mojom::kChannelMaximumMessageSize / 4;
 
 }  // namespace
 
@@ -78,6 +79,13 @@ class DevToolsFrontend::AgentHostClient
   }
 
   void AgentHostClosed(content::DevToolsAgentHost* agent_host) override {}
+
+  void FrameDeleted(content::FrameTreeNodeId frame_tree_node_id) override {
+    if (agent_host_) {
+      agent_host_->DetachClient(this);
+      agent_host_.reset();
+    }
+  }
 
   void Attach() {
     if (agent_host_)

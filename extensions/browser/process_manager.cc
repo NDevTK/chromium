@@ -100,8 +100,6 @@ class IncognitoProcessManager : public ProcessManager {
   ~IncognitoProcessManager() override {}
   bool CreateBackgroundHost(const Extension* extension,
                             const GURL& url) override;
-  scoped_refptr<content::SiteInstance> GetSiteInstanceForURL(const GURL& url)
-      override;
 };
 
 static void CreateBackgroundHostForExtensionLoad(
@@ -206,16 +204,6 @@ ProcessManager::ProcessManager(BrowserContext* context,
       browser_context_(context),
       startup_background_hosts_created_(false),
       last_background_close_sequence_id_(0) {
-  // We are in the process of removing the primordial SiteInstance for
-  // extensions. With the associated feature enabled, the SiteInstance will
-  // always be null.
-  // TODO(https://crbug.com/334991035): Remove this block after we're confident
-  // this doesn't break anything.
-  if (!base::FeatureList::IsEnabled(
-          extensions_features::kRemoveCoreSiteInstance)) {
-    site_instance_ = content::SiteInstance::Create(context);
-  }
-
   extension_registry_->AddObserver(this);
 
   // Only the original profile needs to listen for ready to create background
@@ -238,7 +226,6 @@ void ProcessManager::Shutdown() {
   CloseBackgroundHosts();
   DCHECK(background_hosts_.empty());
   content::DevToolsAgentHost::RemoveObserver(this);
-  site_instance_ = nullptr;
 
   for (auto& observer : observer_list_)
     observer.OnProcessManagerShutdown(this);
@@ -273,11 +260,6 @@ void ProcessManager::UnregisterRenderFrameHost(
     for (auto& observer : observer_list_)
       observer.OnExtensionFrameUnregistered(extension_id, render_frame_host);
   }
-}
-
-scoped_refptr<content::SiteInstance> ProcessManager::GetSiteInstanceForURL(
-    const GURL& url) {
-  return site_instance_ ? site_instance_->GetRelatedSiteInstance(url) : nullptr;
 }
 
 const ProcessManager::FrameSet ProcessManager::GetAllFrames() const {
@@ -351,9 +333,9 @@ bool ProcessManager::CreateBackgroundHost(const Extension* extension,
             browser_context());
   }
 
-  ExtensionHost* host = new ExtensionHost(
-      extension, GetSiteInstanceForURL(url).get(), browser_context_to_use, url,
-      mojom::ViewType::kExtensionBackgroundPage);
+  ExtensionHost* host =
+      new ExtensionHost(extension, browser_context_to_use, url,
+                        mojom::ViewType::kExtensionBackgroundPage);
   host->SetCloseHandler(
       base::BindOnce(&ProcessManager::HandleCloseExtensionHost,
                      weak_ptr_factory_.GetWeakPtr()));
@@ -417,13 +399,19 @@ ExtensionHost* ProcessManager::GetBackgroundHostForRenderFrameHost(
 
 bool ProcessManager::WakeEventPage(const ExtensionId& extension_id,
                                    base::OnceCallback<void(bool)> callback) {
-  if (GetBackgroundHostForExtension(extension_id)) {
+  const Extension* extension =
+      extension_registry_->enabled_extensions().GetByID(extension_id);
+  if ((extension && BackgroundInfo::IsServiceWorkerBased(extension) &&
+       !GetServiceWorkersForExtension(extension_id).empty()) ||
+      GetBackgroundHostForExtension(extension_id)) {
     // The extension is already awake.
     return false;
   }
 
   const auto context_id =
-      LazyContextId::ForBackgroundPage(browser_context_, extension_id);
+      extension
+          ? LazyContextId::ForExtension(browser_context_, extension)
+          : LazyContextId::ForBackgroundPage(browser_context_, extension_id);
   context_id.GetTaskQueue()->AddPendingTask(
       context_id,
       base::BindOnce(&PropagateExtensionWakeResult, std::move(callback)));
@@ -755,11 +743,6 @@ base::Uuid ProcessManager::IncrementServiceWorkerKeepaliveCount(
 
   service_worker_keepalives_[request_uuid] = ServiceWorkerKeepaliveData{
       worker_id, activity_type, extra_data, timeout_type, start_result};
-
-  base::UmaHistogramEnumeration(
-      "Extensions.ServiceWorkerBackground."
-      "ProcessManagerStartingExternalRequestResult",
-      start_result);
 
   return request_uuid;
 }
@@ -1192,20 +1175,6 @@ bool IncognitoProcessManager::CreateBackgroundHost(const Extension* extension,
     // background page is shared with incognito, so we don't create another.
   }
   return false;
-}
-
-scoped_refptr<content::SiteInstance>
-IncognitoProcessManager::GetSiteInstanceForURL(const GURL& url) {
-  const Extension* extension =
-      extension_registry_->enabled_extensions().GetExtensionOrAppByURL(url);
-  if (extension && !IncognitoInfo::IsSplitMode(extension)) {
-    BrowserContext* original_context =
-        ExtensionsBrowserClient::Get()->GetContextRedirectedToOriginal(
-            browser_context());
-    return ProcessManager::Get(original_context)->GetSiteInstanceForURL(url);
-  }
-
-  return ProcessManager::GetSiteInstanceForURL(url);
 }
 
 }  // namespace extensions

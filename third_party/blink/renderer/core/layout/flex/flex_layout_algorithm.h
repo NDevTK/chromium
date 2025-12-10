@@ -15,6 +15,7 @@ namespace blink {
 
 class BlockBreakToken;
 class BlockNode;
+class FlexGapAccumulator;
 struct DevtoolsFlexInfo;
 struct FlexItemData;
 
@@ -55,24 +56,6 @@ class CORE_EXPORT FlexLayoutAlgorithm
       const BlockNode& flex_item,
       ItemPosition alignment) const;
   ConstraintSpace BuildSpaceForFlexBasis(const BlockNode& flex_item) const;
-  ConstraintSpace BuildSpaceForIntrinsicBlockSizeDeprecated(
-      const BlockNode& flex_item,
-      ItemPosition alignment,
-      std::optional<LayoutUnit> override_inline_size) const;
-  // |line_cross_size_for_stretch| should only be set when running the final
-  // layout pass for stretch, when the line cross size is definite.
-  // |block_offset_for_fragmentation| should only be set when running the final
-  // layout pass for fragmentation. Both may be set at the same time.
-  ConstraintSpace BuildSpaceForLayoutDeprecated(
-      const BlockNode& flex_item_node,
-      ItemPosition alignment,
-      LayoutUnit item_main_axis_final_size,
-      bool is_initial_block_size_indefinite,
-      std::optional<LayoutUnit> override_inline_size = std::nullopt,
-      std::optional<LayoutUnit> line_cross_size_for_stretch = std::nullopt,
-      std::optional<LayoutUnit> block_offset_for_fragmentation = std::nullopt,
-      bool min_block_size_should_encompass_intrinsic_size = false) const;
-
   const ConstraintSpace BuildSpaceForLayout(
       const BlockNode& node,
       ItemPosition alignment,
@@ -89,12 +72,14 @@ class CORE_EXPORT FlexLayoutAlgorithm
   void ApplyReversals(FlexLineVector* flex_lines);
   LayoutResult::EStatus GiveItemsFinalPositionAndSize(
       FlexLineVector* flex_lines,
-      Vector<EBreakBetween>* row_break_between_outputs);
+      Vector<EBreakBetween>* row_break_between_outputs,
+      std::optional<FlexGapAccumulator>& gap_accumulator);
   LayoutResult::EStatus GiveItemsFinalPositionAndSizeForFragmentation(
       FlexLineVector* flex_lines,
       Vector<EBreakBetween>* row_break_between_outputs,
       FlexBreakTokenData::FlexBreakBeforeRow* break_before_row,
-      LayoutUnit* total_intrinsic_block_size);
+      LayoutUnit* total_intrinsic_block_size,
+      std::optional<FlexGapAccumulator>& gap_accumulator);
   LayoutResult::EStatus PropagateFlexItemInfo(
       const FlexItem&,
       const PhysicalBoxFragment&,
@@ -102,14 +87,21 @@ class CORE_EXPORT FlexLayoutAlgorithm
       wtf_size_t flex_line_idx,
       LogicalOffset offset);
 
-  // Computes and updates the row adjustment for the line at `flex_line_idx` to
-  // account for gap suppression in a row-based flex container during
-  // fragmentation. When a row does not fit in the current fragmentainer, this
-  // function calculates the gap that would otherwise appear at the top of the
-  // next fragmentainer.
+  // Computes and updates the adjustment for `flex_line` to account for gap
+  // suppression during fragmentation. In column-based flex containers, `gap`
+  // represents the item gap. In row-based flex containers, it represents the
+  // row gap. The `previous_content_block_end` indicates the end offset of the
+  // previous item (in column flex) or the previous row/line (in row flex). The
+  // previous row block end accounts for any additional space available before a
+  // gap due to alignment.
+  //
+  // When an item or row overflows the current fragmentainer, this function
+  // calculates and suppresses the gap that would otherwise appear at the top of
+  // the next fragmentainer.
   void UpdateOffsetAdjustmentForSuppressedRowGap(
-      wtf_size_t flex_line_idx,
-      FlexLineVector* flex_lines) const;
+      LayoutUnit gap,
+      LayoutUnit previous_content_block_end,
+      FlexLine* flex_line) const;
 
   StyleContentAlignmentData ResolvedJustifyContent() const;
 
@@ -118,7 +110,8 @@ class CORE_EXPORT FlexLayoutAlgorithm
 
   // This is same method as FlexItem but we need that logic before FlexItem is
   // constructed.
-  LayoutUnit MainAxisContentExtent(LayoutUnit sum_hypothetical_main_size) const;
+  LayoutUnit MainAxisContentExtent(
+      LayoutUnit sum_hypothetical_main_size = kIndefiniteSize) const;
 
   // Returns the position of the baseline, given a physical fragment.
   LayoutUnit BaselineAscent(const FlexItem&, const PhysicalBoxFragment&) const;

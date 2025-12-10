@@ -34,6 +34,7 @@
 #include "base/time/time.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_string_trustedhtml.h"
 #include "third_party/blink/renderer/core/core_probes_inl.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
@@ -68,28 +69,26 @@ base::TimeDelta GetMaxHighResolutionInterval() {
              : base::Milliseconds(32);
 }
 
+}  // namespace
+
 // Maintains a set of DOMTimers for a given ExecutionContext. Assigns IDs to
 // timers; these IDs are the ones returned to web authors from setTimeout or
 // setInterval. It also tracks recursive creation or iterative scheduling of
 // timers, which is used as a signal for throttling repetitive timers.
 class DOMTimerCoordinator : public GarbageCollected<DOMTimerCoordinator>,
-                            public Supplement<ExecutionContext> {
+                            public GarbageCollectedMixin {
  public:
-  constexpr static const char kSupplementName[] = "DOMTimerCoordinator";
-
   static DOMTimerCoordinator& From(ExecutionContext& context) {
     CHECK(!context.IsWorkletGlobalScope());
-    auto* coordinator =
-        Supplement<ExecutionContext>::From<DOMTimerCoordinator>(context);
+    DOMTimerCoordinator* coordinator = context.GetDOMTimerCoordinator();
     if (!coordinator) {
-      coordinator = MakeGarbageCollected<DOMTimerCoordinator>(context);
-      Supplement<ExecutionContext>::ProvideTo(context, coordinator);
+      coordinator = MakeGarbageCollected<DOMTimerCoordinator>();
+      context.SetDOMTimerCoordinator(coordinator);
     }
     return *coordinator;
   }
 
-  explicit DOMTimerCoordinator(ExecutionContext& context)
-      : Supplement<ExecutionContext>(context) {}
+  DOMTimerCoordinator() = default;
 
   int Install(DOMTimer* timer) {
     int timeout_id = NextID();
@@ -121,10 +120,7 @@ class DOMTimerCoordinator : public GarbageCollected<DOMTimerCoordinator>,
   // deeper timer nesting level, see DOMTimer::DOMTimer.
   void SetTimerNestingLevel(int level) { timer_nesting_level_ = level; }
 
-  void Trace(Visitor* visitor) const final {
-    visitor->Trace(timers_);
-    Supplement<ExecutionContext>::Trace(visitor);
-  }
+  void Trace(Visitor* visitor) const final { visitor->Trace(timers_); }
 
  private:
   int NextID() {
@@ -145,6 +141,8 @@ class DOMTimerCoordinator : public GarbageCollected<DOMTimerCoordinator>,
   int circular_sequential_id_ = 0;
   int timer_nesting_level_ = 0;
 };
+
+namespace {
 
 bool IsAllowed(ExecutionContext& context, bool is_eval, const String& source) {
   if (context.IsContextDestroyed()) {
@@ -183,9 +181,25 @@ int DOMTimer::setTimeout(ScriptState* script_state,
 
 int DOMTimer::setTimeout(ScriptState* script_state,
                          ExecutionContext& context,
-                         const String& handler,
+                         const V8UnionStringOrTrustedScript* untrusted_handler,
                          int timeout,
-                         const HeapVector<ScriptValue>&) {
+                         const HeapVector<ScriptValue>&,
+                         ExceptionState& exception_state) {
+  // In the current version of the HTML spec, the two setTimeout variants have
+  // been unified, and the Trusted Types check is moved much further down. This
+  // is script-obervable if one tries hard enough, e.g. by having competing
+  // error conditions. Here, we emulate Chrome's existing behaviour precisely.
+  // We leave aligning with the current spec to crbug.com/330516530.
+  //
+  // Spec: https://html.spec.whatwg.org/#timer-initialisation-steps, 9.6.1.4
+  String handler = TrustedTypesCheckForScript(
+      untrusted_handler, &context,
+      context.IsWorkerGlobalScope() ? "WorkerGlobalScope" : "Window",
+      "setTimeout", exception_state);
+  if (exception_state.HadException()) {
+    return 0;
+  }
+
   if (!IsAllowed(context, true, handler)) {
     return 0;
   }
@@ -218,9 +232,20 @@ int DOMTimer::setInterval(ScriptState* script_state,
 
 int DOMTimer::setInterval(ScriptState* script_state,
                           ExecutionContext& context,
-                          const String& handler,
+                          const V8UnionStringOrTrustedScript* untrusted_handler,
                           int timeout,
-                          const HeapVector<ScriptValue>&) {
+                          const HeapVector<ScriptValue>&,
+                          ExceptionState& exception_state) {
+  // Also see DOMTimer::setTimeout.
+  // Spec: https://html.spec.whatwg.org/#timer-initialisation-steps, 9.6.1.4
+  String handler = TrustedTypesCheckForScript(
+      untrusted_handler, &context,
+      context.IsWorkerGlobalScope() ? "WorkerGlobalScope" : "Window",
+      "setInterval", exception_state);
+  if (exception_state.HadException()) {
+    return 0;
+  }
+
   if (!IsAllowed(context, true, handler)) {
     return 0;
   }

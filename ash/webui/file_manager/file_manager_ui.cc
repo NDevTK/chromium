@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "ash/webui/file_manager/file_manager_ui.h"
 
@@ -31,7 +27,6 @@
 #include "ui/file_manager/grit/file_manager_gen_resources.h"
 #include "ui/file_manager/grit/file_manager_gen_resources_map.h"
 #include "ui/file_manager/grit/file_manager_resources_map.h"
-#include "ui/webui/color_change_listener/color_change_handler.h"
 
 namespace ash::file_manager {
 namespace {
@@ -166,12 +161,6 @@ void FileManagerUI::BindInterface(
   if (page_factory_receiver_.is_bound())
     page_factory_receiver_.reset();
   page_factory_receiver_.Bind(std::move(pending_receiver));
-}
-
-void FileManagerUI::BindInterface(
-    mojo::PendingReceiver<color_change_listener::mojom::PageHandler> receiver) {
-  color_provider_handler_ = std::make_unique<ui::ColorChangeHandler>(
-      web_ui()->GetWebContents(), std::move(receiver));
 }
 
 void FileManagerUI::CreatePageHandler(

@@ -15,7 +15,6 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.CallbackUtils;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.jank_tracker.PlaceholderJankTracker;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
@@ -74,7 +73,7 @@ public class TabUmaTest {
                 mActivityTestRule.getActivity(),
                 visibilityDelegate,
                 new ObservableSupplierImpl<>(),
-                null,
+                /* ephemeralTabCoordinatorSupplier= */ null,
                 CallbackUtils.emptyRunnable(),
                 rootUiCoordinator.getBottomSheetController(),
                 /* chromeActivityNativeDelegate= */ cta,
@@ -89,14 +88,18 @@ public class TabUmaTest {
                 cta.getActivityTabProvider(),
                 cta.getLifecycleDispatcher(),
                 cta.getWindowAndroid(),
-                new PlaceholderJankTracker(),
                 rootUiCoordinator.getToolbarManager()::getToolbar,
-                null,
-                null,
+                /* homeSurfaceTracker= */ null,
+                /* tabContentManagerSupplier= */ null,
                 rootUiCoordinator.getToolbarManager().getTabStripHeightSupplier(),
                 new OneshotSupplierImpl<>(),
                 new ObservableSupplierImpl<>(),
-                cta.getStartupMetricsTracker());
+                new ObservableSupplierImpl<>(),
+                cta.getStartupMetricsTracker(),
+                /* exclusiveAccessManager= */ null,
+                /* backPressManager= */ null,
+                /* multiInstanceManager= */ null,
+                /* recentlyClosedEntriesManager= */ null);
     }
 
     private Tab createLazilyLoadedTab(boolean show) throws ExecutionException {
@@ -196,8 +199,8 @@ public class TabUmaTest {
                                     .map(
                                             FileChannel.MapMode.READ_ONLY,
                                             fileInputStream.getChannel().position(),
-                                            file.length()));
-            state.contentsState.setVersion(2);
+                                            file.length()),
+                            WebContentsState.CONTENTS_STATE_CURRENT_VERSION);
             state.timestampMillis = 10L;
             state.parentId = 1;
             state.themeColor = 4;

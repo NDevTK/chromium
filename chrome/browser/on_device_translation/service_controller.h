@@ -14,9 +14,9 @@
 #include "base/no_destructor.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/types/expected.h"
+#include "components/on_device_translation/public/mojom/on_device_translation_service.mojom.h"
+#include "components/on_device_translation/public/mojom/translator.mojom.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "components/services/on_device_translation/public/mojom/on_device_translation_service.mojom.h"
-#include "components/services/on_device_translation/public/mojom/translator.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/on_device_translation/translation_manager.mojom-forward.h"
@@ -119,13 +119,6 @@ class OnDeviceTranslationServiceController
   // Called when the service is idle and the idle timeout is reached.
   void OnServiceIdle();
 
-  static void CalculateLanguagePackRequirements(
-      const std::string& source_lang,
-      const std::string& target_lang,
-      std::set<LanguagePackKey>& required_packs,
-      std::vector<LanguagePackKey>& required_not_installed_packs,
-      std::vector<LanguagePackKey>& to_be_registered_packs);
-
   // The manager that manages the service controller. This `manager_` is owned
   // by the BrowserContext, and `this` is owned by the `TranslationManagerImpl`
   // instances which are DocumentUserData. So `manager_` must outlive `this`.
@@ -137,8 +130,6 @@ class OnDeviceTranslationServiceController
   // The idle timeout for the translation service. When the service is idle for
   // this amount of time, the service will be terminated.
   base::TimeDelta service_idle_timeout_;
-  // TODO(crbug.com/335374928): implement the error handling for the translation
-  // service crash.
   mojo::Remote<mojom::OnDeviceTranslationService> service_remote_;
   // Used to listen for changes on the pref values of TranslateKit component and
   // language pack components.

@@ -24,7 +24,7 @@
 #include "third_party/dawn/include/dawn/dawn_proc.h"
 #include "third_party/dawn/include/dawn/native/DawnNative.h"
 #include "third_party/dawn/include/dawn/webgpu_cpp.h"
-#include "third_party/rust/chromium_crates_io/vendor/llguidance-v0_7/llguidance.h"
+#include "third_party/rust/chromium_crates_io/vendor/llguidance-v1/llguidance.h"
 
 #if !BUILDFLAG(IS_IOS)
 #include "gpu/config/gpu_info_collector.h"
@@ -50,11 +50,26 @@ void FatalGpuErrorFn(const char* msg) {
   SCOPED_CRASH_KEY_STRING1024("ChromeML(GPU)", "error_msg", msg);
   std::string msg_str(msg);
   std::string msg_continued;
-  // The error message may be long, collect another 1k if needed.
-  if (msg_str.size() > 1024) {
-    msg_continued = msg_str.substr(1024);
+  constexpr size_t kCrashStringSize = 1024;
+  // The error message may be long as it potentially includes the shader,
+  // collect another 3k if needed.
+  if (msg_str.size() > kCrashStringSize) {
+    msg_continued = msg_str.substr(kCrashStringSize);
   }
   SCOPED_CRASH_KEY_STRING1024("ChromeML(GPU)", "error_msg2", msg_continued);
+  msg_continued =
+      msg_continued.substr(std::min(kCrashStringSize, msg_continued.size()));
+  SCOPED_CRASH_KEY_STRING1024("ChromeML(GPU)", "error_msg3", msg_continued);
+  msg_continued =
+      msg_continued.substr(std::min(kCrashStringSize, msg_continued.size()));
+  SCOPED_CRASH_KEY_STRING1024("ChromeML(GPU)", "error_msg4", msg_continued);
+  msg_continued =
+      msg_continued.substr(std::min(kCrashStringSize, msg_continued.size()));
+  SCOPED_CRASH_KEY_STRING1024("ChromeML(GPU)", "error_msg5", msg_continued);
+  msg_continued =
+      msg_continued.substr(std::min(kCrashStringSize, msg_continued.size()));
+  SCOPED_CRASH_KEY_STRING1024("ChromeML(GPU)", "error_msg6", msg_continued);
+
   GpuErrorReason error_reason = GpuErrorReason::kOther;
   if (msg_str.find("DXGI_ERROR_DEVICE_HUNG") != std::string::npos) {
     error_reason = GpuErrorReason::kDxgiErrorDeviceHung;
@@ -102,14 +117,27 @@ void RecordMediumTimesHistogram(const char* name, int64_t milliseconds) {
 
 }  // namespace
 
-ChromeML::ChromeML(const ChromeMLAPI* api) : api_(api) {}
+ChromeML::ChromeML(std::unique_ptr<ChromeMLHolder> holder)
+    : holder_(std::move(holder)), api_(&holder_->api()) {}
+ChromeML::ChromeML(const ChromeMLAPI* api) : holder_(nullptr), api_(api) {}
 ChromeML::~ChromeML() = default;
 
 // static
-ChromeML* ChromeML::Get(const std::optional<std::string>& library_name) {
+ChromeML* ChromeML::Get() {
   static base::NoDestructor<std::unique_ptr<ChromeML>> chrome_ml{
-      Create(library_name)};
+      Create(std::nullopt)};
   return chrome_ml->get();
+}
+
+// static
+std::unique_ptr<ChromeML> ChromeML::CreateForTesting(
+    const std::optional<std::string>& library_name) {
+  return Create(library_name);
+}
+
+// static
+std::unique_ptr<ChromeML> ChromeML::CreateForTesting(const ChromeMLAPI* api) {
+  return base::WrapUnique(new ChromeML(api));
 }
 
 #if defined(ENABLE_ON_DEVICE_CONSTRAINTS)
@@ -160,14 +188,12 @@ std::unique_ptr<ChromeML> ChromeML::Create(
   gpu::SetKeysForCrashLogging(gpu_info);
 #endif
 
-  static base::NoDestructor<std::unique_ptr<ChromeMLHolder>> holder{
-      ChromeMLHolder::Create(library_name)};
-  ChromeMLHolder* holder_ptr = holder->get();
-  if (!holder_ptr) {
-    return {};
+  std::unique_ptr<ChromeMLHolder> holder = ChromeMLHolder::Create(library_name);
+  if (!holder) {
+    return nullptr;
   }
 
-  auto& api = holder_ptr->api();
+  auto& api = holder->api();
 
   dawnProcSetProcs(&dawn::native::GetProcs());
   api.InitDawnProcs(dawn::native::GetProcs());
@@ -188,7 +214,7 @@ std::unique_ptr<ChromeML> ChromeML::Create(
   if (api.SetFatalErrorNonGpuFn) {
     api.SetFatalErrorNonGpuFn(&FatalErrorFn);
   }
-  return base::WrapUnique(new ChromeML(&api));
+  return base::WrapUnique(new ChromeML(std::move(holder)));
 }
 
 const ChromeMLConstraintFns* GetConstraintFns() {

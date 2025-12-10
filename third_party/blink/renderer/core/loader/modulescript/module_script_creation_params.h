@@ -178,18 +178,4 @@ class CORE_EXPORT ModuleScriptCreationParams {
 
 }  // namespace blink
 
-namespace WTF {
-
-// Creates an isolated copy because `script_streamer_` and `cache_handler_`
-// are not cross-thread-transfer-safe.
-template <>
-struct CrossThreadCopier<blink::ModuleScriptCreationParams> {
-  static blink::ModuleScriptCreationParams Copy(
-      const blink::ModuleScriptCreationParams& params) {
-    return params.IsolatedCopy();
-  }
-};
-
-}  // namespace WTF
-
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LOADER_MODULESCRIPT_MODULE_SCRIPT_CREATION_PARAMS_H_

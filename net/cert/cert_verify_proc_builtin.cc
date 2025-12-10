@@ -15,6 +15,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/time/time.h"
@@ -199,8 +200,8 @@ base::Value::List PEMCertValueList(const bssl::ParsedCertificateList& certs) {
   base::Value::List value;
   for (const auto& cert : certs) {
     std::string pem;
-    X509Certificate::GetPEMEncodedFromDER(cert->der_cert().AsStringView(),
-                                          &pem);
+    X509Certificate::GetPEMEncodedFromDER(
+        base::as_string_view(cert->der_cert()), &pem);
     value.Append(std::move(pem));
   }
   return value;
@@ -303,19 +304,13 @@ bool IsSelfSignedCertOnLocalNetwork(const X509Certificate* cert,
   return X509Certificate::IsSelfSigned(cert->cert_buffer());
 }
 
-// Appends the SHA256 hashes of |spki_bytes| to |*hashes|.
-void AppendPublicKeyHashes(const bssl::der::Input& spki_bytes,
-                           HashValueVector* hashes) {
-  hashes->emplace_back(crypto::hash::Sha256(spki_bytes));
-}
-
 // Appends the SubjectPublicKeyInfo hashes for all certificates in
 // |path| to |*hashes|.
 void AppendPublicKeyHashes(const bssl::CertPathBuilderResultPath& path,
-                           HashValueVector* hashes) {
+                           std::vector<SHA256HashValue>* hashes) {
   for (const std::shared_ptr<const bssl::ParsedCertificate>& cert :
        path.certs) {
-    AppendPublicKeyHashes(cert->tbs().spki_tlv, hashes);
+    hashes->emplace_back(crypto::hash::Sha256(cert->tbs().spki_tlv));
   }
 }
 
@@ -568,7 +563,7 @@ class PathBuilderDelegateImpl : public bssl::SimplePathBuilderDelegate {
     // TODO(crbug.com/41392053): The SPKI hashes are calculated here, during
     // CRLSet checks, and in AssignVerifyResult. Calculate once and cache in
     // delegate_data so that it can be reused.
-    HashValueVector public_key_hashes;
+    std::vector<SHA256HashValue> public_key_hashes;
     AppendPublicKeyHashes(*path, &public_key_hashes);
 
     bool is_issued_by_known_root = false;
@@ -1672,13 +1667,18 @@ int CertVerifyProcBuiltin::VerifyInternal(X509Certificate* input_cert,
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
 namespace {
 void NetLog2QwacBindingError(const NetLogWithSource& net_log,
-                             std::string_view message) {
+                             std::string_view message,
+                             std::string_view details = {}) {
   net_log.EndEvent(NetLogEventType::CERT_VERIFY_PROC_2QWAC_BINDING, [&] {
     base::Value::Dict dict;
     // Including a net_error will cause the netlog-viewer to display this event
     // as an error.
     dict.Set("net_error", ERR_FAILED);
-    dict.Set("error_description", message);
+    if (details.empty()) {
+      dict.Set("error_description", message);
+    } else {
+      dict.Set("error_description", base::StrCat({message, ": ", details}));
+    }
     return dict;
   });
 }
@@ -1706,7 +1706,8 @@ scoped_refptr<X509Certificate> CertVerifyProcBuiltin::Verify2QwacBinding(
   auto parsed_binding = TwoQwacCertBinding::Parse(binding);
   if (!parsed_binding.has_value()) {
     HistogramVerify2QwacResult(Verify2QwacBindingResult::kBindingParsingError);
-    NetLog2QwacBindingError(net_log, "binding parsing error");
+    NetLog2QwacBindingError(net_log, "binding parsing error",
+                            parsed_binding.error());
     return nullptr;
   }
   if (!parsed_binding->VerifySignature()) {
@@ -1767,7 +1768,7 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
     const std::string& hostname,
     CertVerifyResult* verify_result,
     const NetLogWithSource& net_log) {
-  // TODO(crbug.com/392931070): EUTL anchor usage histograms
+  // TODO(crbug.com/436274250): EUTL anchor usage histograms
 
   LogChromeRootStoreVersion(net_log);
 
@@ -1839,9 +1840,9 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
 
   TwoQwacPathBuilderDelegateImpl path_builder_delegate(net_log);
 
-  // TODO(crbug.com/392931070): try with both system time and time_tracker_?
-  // It's less important here since the failure mode is just that it doesn't get
-  // marked as a qwac.
+  // QWAC verification is only attempted using system time. If the system time
+  // is off but time_tracker_ can provide the correct time, 2-QWAC verification
+  // may fail.
   bssl::der::GeneralizedTime der_verification_system_time;
   if (!EncodeTimeAsGeneralizedTime(base::Time::Now(),
                                    &der_verification_system_time)) {
@@ -1910,10 +1911,6 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
     HistogramVerify2QwacResult(MapErrorTo2QwacResult(rv));
     return rv;
   }
-
-  // TODO(crbug.com/392931070): is there any point in setting this? This method
-  // only ever returns OK if it is a valid 2-qwac anyway.
-  verify_result->cert_status |= CERT_STATUS_IS_QWAC;
 
   // No histogram result is recorded in the success case, as it is assumed
   // Verify2Qwac is only called by Verify2QwacBinding, which will record the

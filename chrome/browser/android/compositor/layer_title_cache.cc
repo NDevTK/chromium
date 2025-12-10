@@ -24,7 +24,6 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "chrome/android/chrome_jni_headers/LayerTitleCache_jni.h"
 
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 
 namespace android {
@@ -68,7 +67,6 @@ void LayerTitleCache::Destroy(JNIEnv* env) {
 }
 
 void LayerTitleCache::UpdateLayer(JNIEnv* env,
-                                  const JavaParamRef<jobject>& obj,
                                   jint tab_id,
                                   jint title_resource_id,
                                   jint icon_resource_id,
@@ -99,8 +97,7 @@ void LayerTitleCache::UpdateLayer(JNIEnv* env,
 
 void LayerTitleCache::UpdateGroupLayer(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const base::android::JavaParamRef<jobject>& jgroup_token,
+    const base::android::JavaRef<jobject>& jgroup_token,
     jint title_resource_id,
     jint avatar_resource_id,
     jint avatar_padding,
@@ -128,7 +125,6 @@ void LayerTitleCache::UpdateGroupLayer(
 }
 
 void LayerTitleCache::UpdateIcon(JNIEnv* env,
-                                 const JavaParamRef<jobject>& obj,
                                  jint tab_id,
                                  jint icon_resource_id,
                                  bool show_bubble) {
@@ -139,7 +135,6 @@ void LayerTitleCache::UpdateIcon(JNIEnv* env,
 }
 
 void LayerTitleCache::UpdateTabBubble(JNIEnv* env,
-                                      const JavaParamRef<jobject>& obj,
                                       jint tab_id,
                                       bool show_bubble) {
   DecorationTabTitle* title_layer = layer_cache_.Lookup(tab_id);
@@ -182,19 +177,20 @@ LayerTitleCache::~LayerTitleCache() = default;
 // Native JNI methods
 // ----------------------------------------------------------------------------
 
-jlong JNI_LayerTitleCache_Init(JNIEnv* env,
-                               const JavaParamRef<jobject>& obj,
-                               jint fade_width,
-                               jint icon_start_padding,
-                               jint icon_end_padding,
-                               jint spinner_resource_id,
-                               jint spinner_incognito_resource_id,
-                               jint bubble_inner_dimension,
-                               jint bubble_outer_dimension,
-                               jint bubble_offset,
-                               jint bubble_inner_tint,
-                               jint bubble_outer_tint,
-                               const JavaParamRef<jobject>& jresource_manager) {
+static jlong JNI_LayerTitleCache_Init(
+    JNIEnv* env,
+    const JavaRef<jobject>& obj,
+    jint fade_width,
+    jint icon_start_padding,
+    jint icon_end_padding,
+    jint spinner_resource_id,
+    jint spinner_incognito_resource_id,
+    jint bubble_inner_dimension,
+    jint bubble_outer_dimension,
+    jint bubble_offset,
+    jint bubble_inner_tint,
+    jint bubble_outer_tint,
+    const JavaRef<jobject>& jresource_manager) {
   ui::ResourceManager* resource_manager =
       ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
   LayerTitleCache* cache = new LayerTitleCache(
@@ -206,3 +202,5 @@ jlong JNI_LayerTitleCache_Init(JNIEnv* env,
 }
 
 }  // namespace android
+
+DEFINE_JNI(LayerTitleCache)

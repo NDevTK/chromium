@@ -27,7 +27,6 @@
 #include "extensions/common/mojom/frame.mojom.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/trace_util.h"
-#include "ipc/ipc_channel_proxy.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 
@@ -184,7 +183,7 @@ void ServiceWorkerHost::DidInitializeServiceWorkerContext(
   worker_id_.thread_id = worker_thread_id;
 
   ServiceWorkerTaskQueue::Get(browser_context)
-      ->DidInitializeServiceWorkerContext(
+      ->RendererDidInitializeServiceWorkerContext(
           render_process_id, extension_id, service_worker_version_id,
           worker_thread_id, service_worker_token);
   EventRouter::Get(browser_context)
@@ -212,10 +211,10 @@ void ServiceWorkerHost::DidStartServiceWorkerContext(
     return;
   }
   CHECK(service_worker_scope.SchemeIs(kExtensionScheme) &&
-        extension_id == service_worker_scope.host_piece());
+        extension_id == service_worker_scope.host());
 
   ServiceWorkerTaskQueue::Get(browser_context)
-      ->DidStartServiceWorkerContext(
+      ->RendererDidStartServiceWorkerContext(
           render_process_id, extension_id, activation_token,
           service_worker_scope, service_worker_version_id, worker_thread_id);
 }
@@ -240,11 +239,11 @@ void ServiceWorkerHost::DidStopServiceWorkerContext(
     return;
   }
   CHECK(service_worker_scope.SchemeIs(kExtensionScheme) &&
-        extension_id == service_worker_scope.host_piece());
+        extension_id == service_worker_scope.host());
   CHECK_NE(blink::mojom::kInvalidServiceWorkerVersionId,
            service_worker_version_id);
   ServiceWorkerTaskQueue::Get(browser_context)
-      ->DidStopServiceWorkerContext(
+      ->RendererDidStopServiceWorkerContext(
           render_process_id, extension_id, activation_token,
           service_worker_scope, service_worker_version_id, worker_thread_id);
 }

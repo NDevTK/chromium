@@ -4,7 +4,6 @@
 
 #include "components/sync/test/fake_data_type_sync_bridge.h"
 
-#include <set>
 #include <utility>
 
 #include "base/functional/bind.h"
@@ -25,6 +24,7 @@
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/unique_position.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
 
 using sync_pb::DataTypeState;
 using sync_pb::EntityMetadata;
@@ -58,9 +58,12 @@ class TestMetadataChangeList : public MetadataChangeList {
   }
 
   void ClearMetadata(const std::string& storage_key) override {
-    DCHECK(!storage_key.empty());
+    // Note: `storage_key` usually shouldn't be empty here, but some tests
+    // exercise invalid-data scenarios where it is empty.
     db_->RemoveMetadata(storage_key);
   }
+
+  void TransferChangesTo(MetadataChangeList* other) override { NOTREACHED(); }
 
  private:
   const raw_ptr<FakeDataTypeSyncBridge::Store> db_;
@@ -193,10 +196,10 @@ std::optional<ModelError> FakeDataTypeSyncBridge::MergeFullSyncData(
     EntityChangeList entity_data) {
   if (error_next_) {
     error_next_ = false;
-    return ModelError(FROM_HERE, "boom");
+    return ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError);
   }
 
-  std::set<std::string> remote_storage_keys;
+  absl::flat_hash_set<std::string> remote_storage_keys;
   // Store any new remote entities.
   for (const std::unique_ptr<EntityChange>& change : entity_data) {
     EXPECT_FALSE(change->data().is_deleted());
@@ -238,7 +241,7 @@ std::optional<ModelError> FakeDataTypeSyncBridge::ApplyIncrementalSyncChanges(
     EntityChangeList entity_changes) {
   if (error_next_) {
     error_next_ = false;
-    return ModelError(FROM_HERE, "boom");
+    return ModelError(FROM_HERE, syncer::ModelError::Type::kGenericTestError);
   }
 
   for (const std::unique_ptr<EntityChange>& change : entity_changes) {
@@ -277,18 +280,17 @@ std::optional<ModelError> FakeDataTypeSyncBridge::ApplyIncrementalSyncChanges(
 
 void FakeDataTypeSyncBridge::ApplyMetadataChangeList(
     std::unique_ptr<MetadataChangeList> mcl) {
-  InMemoryMetadataChangeList* in_memory_mcl =
-      static_cast<InMemoryMetadataChangeList*>(mcl.get());
   // Use TestMetadataChangeList to commit all metadata changes to the store.
   TestMetadataChangeList db_mcl(db_.get());
-  in_memory_mcl->TransferChangesTo(&db_mcl);
+  mcl->TransferChangesTo(&db_mcl);
 }
 
 std::unique_ptr<DataBatch> FakeDataTypeSyncBridge::GetDataForCommit(
     StorageKeyList keys) {
   if (error_next_) {
     error_next_ = false;
-    change_processor()->ReportError({FROM_HERE, "boom"});
+    change_processor()->ReportError(
+        {FROM_HERE, syncer::ModelError::Type::kGenericTestError});
     return nullptr;
   }
 
@@ -306,7 +308,8 @@ std::unique_ptr<DataBatch> FakeDataTypeSyncBridge::GetDataForCommit(
 std::unique_ptr<DataBatch> FakeDataTypeSyncBridge::GetAllDataForDebugging() {
   if (error_next_) {
     error_next_ = false;
-    change_processor()->ReportError({FROM_HERE, "boom"});
+    change_processor()->ReportError(
+        {FROM_HERE, syncer::ModelError::Type::kGenericTestError});
     return nullptr;
   }
 
@@ -366,6 +369,10 @@ bool FakeDataTypeSyncBridge::SupportsUniquePositions() const {
   return !extract_unique_positions_callback_.is_null();
 }
 
+bool FakeDataTypeSyncBridge::SupportsIncrementalUpdates() const {
+  return supports_incremental_updates_;
+}
+
 sync_pb::UniquePosition FakeDataTypeSyncBridge::GetUniquePosition(
     const sync_pb::EntitySpecifics& specifics) const {
   return extract_unique_positions_callback_.Run(specifics);
@@ -396,7 +403,8 @@ FakeDataTypeSyncBridge::TrimAllSupportedFieldsFromRemoteSpecifics(
 bool FakeDataTypeSyncBridge::IsEntityDataValid(
     const EntityData& entity_data) const {
   return invalid_remote_updates_.find(entity_data.client_tag_hash) ==
-         invalid_remote_updates_.end();
+             invalid_remote_updates_.end() &&
+         (!SupportsGetStorageKey() || !GetStorageKey(entity_data).empty());
 }
 
 void FakeDataTypeSyncBridge::SetConflictResolution(
@@ -454,6 +462,11 @@ void FakeDataTypeSyncBridge::TreatRemoteUpdateAsInvalid(
 void FakeDataTypeSyncBridge::EnableUniquePositionSupport(
     ExtractUniquePositionCallback callback) {
   extract_unique_positions_callback_ = std::move(callback);
+}
+
+void FakeDataTypeSyncBridge::SetSupportsIncrementalUpdates(
+    bool supports_incremental_updates) {
+  supports_incremental_updates_ = supports_incremental_updates;
 }
 
 }  // namespace syncer

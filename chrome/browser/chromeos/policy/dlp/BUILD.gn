@@ -77,9 +77,11 @@ static_library("dlp") {
     "//chrome/browser/ash/profiles",
     "//chrome/browser/chromeos/policy/dlp/dialogs",
     "//chrome/browser/favicon",
+    "//chrome/browser/notifications",
     "//chrome/browser/profiles",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/ui:browser_navigator_params_headers",
+    "//chrome/browser/ui/browser_window",
     "//chrome/browser/ui/tabs:tab_strip",
     "//chrome/common:chrome_features",
     "//chrome/common:constants",
@@ -194,6 +196,10 @@ source_set("unit_tests") {
     "//ui/views",
     "//url",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("browser_tests") {
@@ -215,6 +221,7 @@ source_set("browser_tests") {
     "//base/test:test_support",
     "//chrome/browser",
     "//chrome/browser:browser_process",
+    "//chrome/browser/apps/app_service",
     "//chrome/browser/chromeos/policy/dlp/test:test_support",
     "//chrome/browser/file_system_access",
     "//chrome/browser/profiles:profile",
@@ -245,6 +252,10 @@ source_set("browser_tests") {
     "//ui/views",
     "//ui/views:test_support",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 if (!is_chromeos_device) {
@@ -301,5 +312,9 @@ if (!is_chromeos_device) {
       "//ui/views:test_support",
       "//url",
     ]
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 }

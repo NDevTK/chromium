@@ -7,10 +7,12 @@
 #include <string>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/page_load_metrics/renderer/features.h"
 #include "components/page_load_metrics/renderer/page_timing_metrics_sender.h"
 #include "components/page_load_metrics/renderer/page_timing_sender.h"
 #include "content/public/renderer/render_frame.h"
@@ -20,6 +22,7 @@
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/public/web/web_performance_metrics_for_reporting.h"
 #include "url/gurl.h"
 
@@ -105,7 +108,37 @@ MetricsRenderFrameObserver::MetricsRenderFrameObserver(
     content::RenderFrame* render_frame)
     : content::RenderFrameObserver(render_frame),
       blink::WebLocalFrameObserver(render_frame ? render_frame->GetWebFrame()
-                                                : nullptr) {}
+                                                : nullptr) {
+  if (base::FeatureList::IsEnabled(
+          features::kMetricsRenderFrameObserverImprovement) &&
+      render_frame) {
+    // If the optimization is enabled, `DidObserveNewFeatureUsage()` will be
+    // called as a callback instead of the observer interface.
+    render_frame->SetNewFeatureUsageCallback(base::BindRepeating(
+        &MetricsRenderFrameObserver::DidObserveNewFeatureUsage,
+        weak_factory_.GetWeakPtr()));
+    // If the optimization is enabled, `DidObserveSubresourceLoad()` will be
+    // called as a callback instead of the observer interface.
+    render_frame->SetSubresourceLoadCallback(base::BindRepeating(
+        &MetricsRenderFrameObserver::DidObserveSubresourceLoad,
+        weak_factory_.GetWeakPtr()));
+    // If the optimization is enabled, `DidLoadResourceFromMemoryCache()` will
+    // be called as a callback instead of the observer interface.
+    render_frame->SetLoadFromMemoryCacheCallback(base::BindRepeating(
+        &MetricsRenderFrameObserver::DidLoadResourceFromMemoryCache,
+        weak_factory_.GetWeakPtr()));
+
+    render_frame->SetDidStartResponseCallback(
+        base::BindRepeating(&MetricsRenderFrameObserver::DidStartResponse,
+                            weak_factory_.GetWeakPtr()));
+    render_frame->SetDidCompleteResponseCallback(
+        base::BindRepeating(&MetricsRenderFrameObserver::DidCompleteResponse,
+                            weak_factory_.GetWeakPtr()));
+    render_frame->SetDidCancelResponseCallback(
+        base::BindRepeating(&MetricsRenderFrameObserver::DidCancelResponse,
+                            weak_factory_.GetWeakPtr()));
+  }
+}
 
 MetricsRenderFrameObserver::~MetricsRenderFrameObserver() {
   if (page_timing_metrics_sender_) {
@@ -171,7 +204,7 @@ void MetricsRenderFrameObserver::DidObserveNewFeatureUsage(
 }
 
 void MetricsRenderFrameObserver::DidObserveSoftNavigation(
-    blink::SoftNavigationMetrics soft_nav_metrics) {
+    blink::SoftNavigationMetricsForReporting soft_nav_metrics) {
   if (page_timing_metrics_sender_) {
     const blink::WebPerformanceMetricsForReporting& metrics =
         render_frame()->GetWebFrame()->PerformanceMetricsForReporting();
@@ -244,7 +277,7 @@ void MetricsRenderFrameObserver::DidCancelResponse(int request_id) {
 
 void MetricsRenderFrameObserver::DidReceiveTransferSizeUpdate(
     int request_id,
-    int received_data_length) {
+    base::ByteCount received_data_length) {
   if (provisional_frame_resource_data_use_ &&
       provisional_frame_resource_data_use_->resource_id() == request_id) {
     provisional_frame_resource_data_use_->DidReceiveTransferSizeUpdate(
@@ -259,7 +292,7 @@ void MetricsRenderFrameObserver::DidReceiveTransferSizeUpdate(
 void MetricsRenderFrameObserver::DidLoadResourceFromMemoryCache(
     const GURL& response_url,
     int request_id,
-    int64_t encoded_body_length,
+    base::ByteCount encoded_body_length,
     const std::string& mime_type,
     bool from_archive) {
   // Resources from archives, such as subresources from a MHTML archive, do not
@@ -301,7 +334,7 @@ void MetricsRenderFrameObserver::DidStartNavigation(
 }
 
 void MetricsRenderFrameObserver::DidSetPageLifecycleState(
-    bool restoring_from_bfcache) {
+    blink::BFCacheStateChange bfcache_change) {
   // Send current metrics, as this RenderFrame might be replaced by a new
   // RenderFrame or its process might be killed, and this might be the last
   // point we can send the metrics to the browser. See crbug.com/1150242 for
@@ -406,12 +439,12 @@ void MetricsRenderFrameObserver::OnMainFrameViewportRectangleChanged(
   }
 }
 
-void MetricsRenderFrameObserver::OnMainFrameImageAdRectangleChanged(
+void MetricsRenderFrameObserver::OnMainFrameAdRectangleChanged(
     int element_id,
-    const gfx::Rect& image_ad_rect) {
+    const gfx::Rect& ad_rect) {
   if (page_timing_metrics_sender_) {
-    page_timing_metrics_sender_->OnMainFrameImageAdRectangleChanged(
-        element_id, image_ad_rect);
+    page_timing_metrics_sender_->OnMainFrameAdRectangleChanged(element_id,
+                                                               ad_rect);
   }
 }
 
@@ -907,6 +940,24 @@ MetricsRenderFrameObserver::Timing MetricsRenderFrameObserver::GetTiming()
 
   if (perf.UserTimingMarkInteractive().has_value()) {
     timing->user_timing_mark_interactive = perf.UserTimingMarkInteractive();
+  }
+
+  blink::WebLocalFrame* web_frame = render_frame()->GetWebFrame();
+  if (web_frame->Client()->IsForInitialWebUI()) {
+    if (!perf.FirstPaintAsMonotonicTime().is_null()) {
+      if (!timing->monotonic_paint_timing) {
+        timing->monotonic_paint_timing = mojom::MonotonicPaintTiming::New();
+      }
+      timing->monotonic_paint_timing->first_paint =
+          perf.FirstPaintAsMonotonicTime();
+    }
+    if (!perf.FirstContentfulPaintAsMonotonicTime().is_null()) {
+      if (!timing->monotonic_paint_timing) {
+        timing->monotonic_paint_timing = mojom::MonotonicPaintTiming::New();
+      }
+      timing->monotonic_paint_timing->first_contentful_paint =
+          perf.FirstContentfulPaintAsMonotonicTime();
+    }
   }
 
   return Timing(std::move(timing), monotonic_timing);

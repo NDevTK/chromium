@@ -51,7 +51,7 @@ base::PlatformFile OpenFileIfNecessary(const base::FilePath& path,
 }  // namespace
 
 std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
-    int child_process_id,
+    ChildProcessId child_process_id,
     const mojo::PlatformChannelEndpoint& mojo_channel_remote_endpoint,
     const std::map<std::string, std::variant<base::FilePath, base::ScopedFD>>&
         files_to_preload,
@@ -62,14 +62,7 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
 
 // Mac shared memory doesn't use file descriptors.
 #if !BUILDFLAG(IS_APPLE)
-#if BUILDFLAG(IS_ANDROID)
-  // Android's endpoint may be a file descriptor or a binder. If it's a binder
-  // we share it by other means.
-  const bool share_channel_fd =
-      !mojo_channel_remote_endpoint.platform_handle().is_binder();
-#else
   const bool share_channel_fd = true;
-#endif
   if (share_channel_fd) {
     DCHECK(mojo_channel_remote_endpoint.is_valid());
     files_to_register->Share(
@@ -80,7 +73,7 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
   // TODO(jcivelli): remove this "if defined" by making
   // GetAdditionalMappedFilesForChildProcess a no op on Mac.
   GetContentClient()->browser()->GetAdditionalMappedFilesForChildProcess(
-      *command_line, child_process_id, files_to_register.get());
+      *command_line, child_process_id.value(), files_to_register.get());
 #endif
 
   // Also include the files specified explicitly by |files_to_preload|.

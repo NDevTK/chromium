@@ -37,7 +37,7 @@ class IntWrapper : public blink::GarbageCollected<IntWrapper> {
     return other.Value() == Value();
   }
 
-  unsigned GetHash() { return WTF::GetHash(x_); }
+  unsigned GetHash() { return blink::GetHash(x_); }
 
   explicit IntWrapper(int x) : x_(x) {}
 
@@ -47,15 +47,17 @@ class IntWrapper : public blink::GarbageCollected<IntWrapper> {
   int x_;
 };
 
-static_assert(WTF::IsTraceable<IntWrapper>::value,
+static_assert(blink::IsTraceableV<IntWrapper>,
               "IsTraceable<> template failed to recognize trace method.");
 
 }  // namespace
 
 using IntVector = blink::GCedHeapVector<blink::Member<IntWrapper>>;
-WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(IntVector)
 using IntDeque = blink::GCedHeapDeque<blink::Member<IntWrapper>>;
 using IntMap = blink::GCedHeapHashMap<blink::Member<IntWrapper>, int>;
+
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(
+    blink::HeapVector<blink::Member<IntWrapper>>)
 
 namespace blink {
 
@@ -105,7 +107,7 @@ TEST_F(HeapCompactTest, CompactHashMap) {
 TEST_F(HeapCompactTest, CompactVectorOfVector) {
   ClearOutOldGarbage();
 
-  using IntVectorVector = GCedHeapVector<IntVector>;
+  using IntVectorVector = GCedHeapVector<HeapVector<Member<IntWrapper>>>;
 
   Persistent<IntVectorVector> int_vector_vector =
       MakeGarbageCollected<IntVectorVector>();
@@ -391,16 +393,10 @@ struct NestedType final {
 
 size_t NestedType::num_dtor_checks = 0;
 
-}  // namespace blink
-
-namespace WTF {
 template <>
-struct VectorTraits<blink::NestedType> : VectorTraitsBase<blink::NestedType> {
+struct VectorTraits<NestedType> : VectorTraitsBase<NestedType> {
   static constexpr bool kCanClearUnusedSlotsWithMemset = true;
 };
-}  // namespace WTF
-
-namespace blink {
 
 TEST_F(HeapCompactTest, AvoidCompactionWhenTraitsProhibitMemcpy) {
   // Regression test: https://crbug.com/1478343
@@ -408,7 +404,7 @@ TEST_F(HeapCompactTest, AvoidCompactionWhenTraitsProhibitMemcpy) {
   // This test checks that compaction does not happen in cases where
   // `VectorTraits<T>::kCanMoveWithMemcpy` doesn't hold.
 
-  static_assert(WTF::VectorTraits<NestedType>::kCanMoveWithMemcpy == false,
+  static_assert(VectorTraits<NestedType>::kCanMoveWithMemcpy == false,
                 "should not allow move using memcpy");
   // Create a vector with a backing store that immediately gets reclaimed. The
   // backing store leaves free memory to be reused for compaction.

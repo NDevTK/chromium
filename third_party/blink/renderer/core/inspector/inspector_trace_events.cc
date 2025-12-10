@@ -11,6 +11,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_id_helper.h"
 #include "cc/layers/picture_layer.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/core/animation/animation.h"
@@ -45,7 +46,8 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
-#include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/global_performance.h"
+#include "third_party/blink/renderer/core/timing/worker_performance.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 #include "third_party/blink/renderer/core/xmlhttprequest/xml_http_request.h"
@@ -277,14 +279,13 @@ void InspectorTraceEvents::Did(const probe::CallFunction& probe) {
 void InspectorTraceEvents::PaintTiming(Document* document,
                                        const char* name,
                                        double timestamp) {
-  TRACE_EVENT_MARK_WITH_TIMESTAMP2("loading,rail,devtools.timeline", name,
-                                   trace_event::ToTraceTimestamp(timestamp),
-                                   "frame",
-                                   GetFrameIdForTracing(document->GetFrame()),
-                                   "data", [&](perfetto::TracedValue context) {
-                                     GetNavigationTracingData(
-                                         std::move(context), document);
-                                   });
+  TRACE_EVENT_MARK_WITH_TIMESTAMP2(
+      "loading,rail,devtools.timeline", name,
+      trace_event::ToTraceTimestamp(timestamp), "frame",
+      GetFrameIdForTracing(document->GetFrame()), "data",
+      [&](perfetto::TracedValue context) {
+        GetNavigationTracingData(std::move(context), document);
+      });
 }
 
 void InspectorTraceEvents::FrameStartedLoading(LocalFrame* frame) {
@@ -363,6 +364,8 @@ const char* NotStreamedReasonString(ScriptStreamer::NotStreamingReason reason) {
       return "an error occurred (background)";
     case ScriptStreamer::NotStreamingReason::kEncodingNotSupportedBackground:
       return "encoding not supported (background)";
+    case ScriptStreamer::NotStreamingReason::kNonModuleWithWasmMimeType:
+      return "non-module script with wasm MIME type";
     case ScriptStreamer::NotStreamingReason::kDidntTryToStartStreaming:
     case ScriptStreamer::NotStreamingReason::kAlreadyLoaded:
     case ScriptStreamer::NotStreamingReason::kInvalid:
@@ -560,6 +563,8 @@ void inspector_style_invalidator_invalidate_event::SelectorPart(
   } else if (reason == kInvalidationSetMatchedAttribute) {
     feature_type =
         InvalidationSetToSelectorMap::SelectorFeatureType::kAttribute;
+  } else if (reason == kInvalidationSetMatchedPart) {
+    feature_type = InvalidationSetToSelectorMap::SelectorFeatureType::kPart;
   } else if (reason == kInvalidationSetInvalidatesSubtree) {
     feature_type =
         InvalidationSetToSelectorMap::SelectorFeatureType::kWholeSubtree;
@@ -1196,6 +1201,12 @@ void inspector_target_rundown_event::Data(perfetto::TracedValue context,
   if (!frame) {
     return;
   }
+
+  ThreadDebugger* thread_debugger = ThreadDebugger::From(isolate);
+  if (!thread_debugger) {
+    return;
+  }
+
   auto dict = std::move(context).WriteDictionary();
   String frameType = "page";
   if (frame->Parent() || frame->IsFencedFrameRoot()) {
@@ -1204,11 +1215,8 @@ void inspector_target_rundown_event::Data(perfetto::TracedValue context,
   dict.Add("frame", IdentifiersFactory::FrameId(frame));
   dict.Add("frameType", frameType);
   dict.Add("url", window->Url().GetString());
-  ThreadDebugger* thread_debugger = ThreadDebugger::From(isolate);
-  DCHECK(thread_debugger);
-  v8_inspector::V8Inspector* inspector = thread_debugger->GetV8Inspector();
-  DCHECK(inspector);
-  dict.Add("isolate", inspector->isolateId());
+  dict.Add("isolate",
+           String::Number(thread_debugger->GetV8Inspector()->isolateId()));
 
   // ExecutionContext related info
   DOMWrapperWorld& world = scriptState->World();
@@ -1317,17 +1325,19 @@ void inspector_function_call_event::Data(
   if (function.IsEmpty())
     return;
 
+  ThreadDebugger* thread_debugger = ThreadDebugger::From(context->GetIsolate());
+  if (!thread_debugger) {
+    return;
+  }
+
   v8::Local<v8::Function> original_function = GetBoundFunction(function);
   v8::Local<v8::Value> function_name = original_function->GetDebugName();
   if (!function_name.IsEmpty() && function_name->IsString()) {
     dict.Add("functionName", ToCoreString(context->GetIsolate(),
                                           function_name.As<v8::String>()));
   }
-  ThreadDebugger* thread_debugger = ThreadDebugger::From(context->GetIsolate());
-  DCHECK(thread_debugger);
-  v8_inspector::V8Inspector* inspector = thread_debugger->GetV8Inspector();
-  DCHECK(inspector);
-  dict.Add("isolate", inspector->isolateId());
+  dict.Add("isolate",
+           String::Number(thread_debugger->GetV8Inspector()->isolateId()));
   SourceLocation* location =
       CaptureSourceLocation(context->GetIsolate(), original_function);
   dict.Add("scriptId", String::Number(location->ScriptId()));
@@ -1494,20 +1504,30 @@ void inspector_time_stamp_event::Data(perfetto::TracedValue trace_context,
                                       const v8::LocalVector<v8::Value>& args) {
   auto dict = std::move(trace_context).WriteDictionary();
   dict.Add("message", message);
-  LocalFrame* frame = FrameForExecutionContext(context);
-  if (!frame) {
+
+  v8::Isolate* isolate = nullptr;
+  Performance* performance = nullptr;
+  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
+    LocalFrame* frame = window->GetFrame();
+    dict.Add("frame", IdentifiersFactory::FrameId(frame));
+    isolate = frame->DomWindow()->GetIsolate();
+    performance = GlobalPerformance::performance(*window);
+  } else if (auto* worker_global_scope =
+                 DynamicTo<WorkerGlobalScope>(context)) {
+    dict.Add("worker", ToHexString(worker_global_scope));
+    isolate = worker_global_scope->GetIsolate();
+    performance = GlobalPerformance::performance(*worker_global_scope);
+  }
+
+  if (!isolate || !performance) {
     return;
   }
 
-  auto* window = frame->DomWindow();
-  v8::Isolate* isolate = frame->DomWindow()->GetIsolate();
-  Performance* performance = DOMWindowPerformance::performance(*window);
   uint64_t sample_trace_id = InspectorTraceEvents::GetNextSampleTraceId();
   v8::CpuProfiler::CpuProfiler::CollectSample(isolate, sample_trace_id);
   dict.Add("sampleTraceId", sample_trace_id);
-  dict.Add("frame", IdentifiersFactory::FrameId(frame));
-  static constexpr std::array<const char*, 6> kNames = {
-      "name", "start", "end", "track", "trackGroup", "color"};
+  static constexpr std::array<const char*, 7> kNames = {
+      "name", "start", "end", "track", "trackGroup", "color", "devtools"};
   for (size_t i = 0; i < args.size() && i < std::size(kNames); ++i) {
     auto name = kNames[i];
     auto value = args[i];
@@ -1525,8 +1545,19 @@ void inspector_time_stamp_event::Data(perfetto::TracedValue trace_context,
     } else if (value->IsString()) {
       dict.Add(perfetto::StaticString(name),
                ToCoreString(isolate, value.As<v8::String>()).Utf8());
-    } else {
-      dict.Add(perfetto::StaticString(name), "");
+    } else if (!value->IsNullOrUndefined()) {
+      if (i == 6 && base::FeatureList::IsEnabled(
+                        features::kEnableDevtoolsDeepLinkViaExtensibilityApi)) {
+        String dev_tools = "";
+        v8::Local<v8::String> v8_string;
+        if (v8::JSON::Stringify(isolate->GetCurrentContext(), value)
+                .ToLocal(&v8_string)) {
+          dev_tools = ToCoreString(isolate, v8_string);
+          dict.Add(perfetto::StaticString(name), dev_tools);
+        }
+      } else {
+        dict.Add(perfetto::StaticString(name), "");
+      }
     }
   }
 }
@@ -1571,15 +1602,14 @@ void inspector_set_layer_tree_id::Data(perfetto::TracedValue context,
            frame->GetPage()->GetChromeClient().GetLayerTreeId(*frame));
 }
 
-struct DOMStats : public GarbageCollected<DOMStats>,
-                  public GarbageCollectedMixin {
+struct DOMStats : public GarbageCollected<DOMStats> {
   unsigned int total_elements = 0;
   unsigned int max_children = 0;
   unsigned int max_depth = 0;
   Member<Node> max_children_node;
   Member<Node> max_depth_node;
 
-  void Trace(Visitor* visitor) const override {
+  void Trace(Visitor* visitor) const {
     visitor->Trace(max_children_node);
     visitor->Trace(max_depth_node);
   }

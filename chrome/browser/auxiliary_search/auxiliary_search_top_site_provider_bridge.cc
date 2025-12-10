@@ -114,10 +114,11 @@ void AuxiliarySearchTopSiteProviderBridge::OnIconMadeAvailable(
 
 static jlong JNI_AuxiliarySearchTopSiteProviderBridge_Init(
     JNIEnv* env,
-    const jni_zero::JavaParamRef<jobject>& obj,
     Profile* profile) {
   DCHECK(profile);
 
   return reinterpret_cast<intptr_t>(new AuxiliarySearchTopSiteProviderBridge(
       ChromeMostVisitedSitesFactory::NewForProfile(profile)));
 }
+
+DEFINE_JNI(AuxiliarySearchTopSiteProviderBridge)

@@ -21,6 +21,7 @@
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service_observer.h"
 #include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/base/oauth_consumer_id.h"
 #include "components/signin/public/base/signin_client.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/identity_manager/access_token_fetcher.h"
@@ -185,6 +186,10 @@ class IdentityManager : public KeyedService,
   void RemoveObserver(Observer* observer);
 
 #if BUILDFLAG(IS_IOS)
+  // Whether a batch of primary account changes is in progress. See
+  // `OnEndBatchOfPrimaryAccountChanges()`.
+  bool IsBatchOfPrimaryAccountChangesInProgress();
+
   // Starts a batch of primary account changes by setting
   // `batch_of_primary_account_changes_in_progress_` to `true`. As long as the
   // batch is running, `OnEndBatchOfPrimaryAccountChanges()` are not sent when
@@ -243,12 +248,24 @@ class IdentityManager : public KeyedService,
       AccessTokenFetcher::TokenCallback callback,
       AccessTokenFetcher::Mode mode);
 
-#if BUILDFLAG(IS_IOS)
-  void GetRefreshTokenFromDevice(
+  // Creates an AccessTokenFetcher for the |oauth_consumer_id| feature.
+  [[nodiscard]] std::unique_ptr<AccessTokenFetcher>
+  CreateAccessTokenFetcherForAccount(const CoreAccountId& account_id,
+                                     OAuthConsumerId oauth_consumer_id,
+                                     AccessTokenFetcher::TokenCallback callback,
+                                     AccessTokenFetcher::Mode mode,
+                                     AccessTokenFetcher::Source token_source =
+                                         AccessTokenFetcher::Source::kProfile);
+
+  // Creates an AccessTokenFetcher for the |oauth_conumser_id| feature, allowing
+  // to specify a custom |url_loader_factory| as well.
+  [[nodiscard]] std::unique_ptr<AccessTokenFetcher>
+  CreateAccessTokenFetcherForAccount(
       const CoreAccountId& account_id,
-      const OAuth2AccessTokenManager::ScopeSet& scopes,
-      AccessTokenFetcher::TokenCallback callback);
-#endif
+      OAuthConsumerId oauth_consumer_id,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      AccessTokenFetcher::TokenCallback callback,
+      AccessTokenFetcher::Mode mode);
 
   // If an entry exists in the cache of access tokens corresponding to the
   // given information, removes that entry; in this case, the next access token
@@ -256,6 +273,14 @@ class IdentityManager : public KeyedService,
   // network. Otherwise, is a no-op.
   void RemoveAccessTokenFromCache(const CoreAccountId& account_id,
                                   const ScopeSet& scopes,
+                                  const std::string& access_token);
+
+  // If an entry exists in the cache of access tokens corresponding to the
+  // given information, removes that entry; in this case, the next access token
+  // request for |account_id| and |oauth_consumer_id| will fetch a new token
+  // from the network. Otherwise, is a no-op.
+  void RemoveAccessTokenFromCache(const CoreAccountId& account_id,
+                                  OAuthConsumerId oauth_consumer_id,
                                   const std::string& access_token);
 
   // Provides the information of all accounts that have refresh tokens.
@@ -291,14 +316,26 @@ class IdentityManager : public KeyedService,
   bool HasAccountWithRefreshTokenInPersistentErrorState(
       const CoreAccountId& account_id) const;
 
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  // Returns the wrapped binding key of a refresh token associated with
-  // `account_id`, if any.
-  // Returns a non-empty vector iff (a) a refresh token exists for `account_id`,
-  // and (b) the refresh token is bound to a device.
-  std::vector<uint8_t> GetWrappedBindingKeyOfRefreshTokenForAccount(
-      const CoreAccountId& account_id) const;
-#endif
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  // Returns `true` if (a) a refresh token exists for `account_id`, and (b) the
+  // refresh token is bound to a device, it returns `false` otherwise.
+  bool HasAccountWithBoundRefreshToken(const CoreAccountId& account_id) const;
+
+  // Returns whether all bound refresh tokens share the same binding key.
+  //
+  // Unbound tokens are ignored in this check. Returns `true` if there are zero
+  // or one bound tokens, or if all bound tokens use the same key. Returns
+  // `false` only if there are multiple bound tokens with different keys.
+  bool AllBoundTokensShareSameBindingKey() const;
+
+  // Returns the wrapped binding key to reuse if any existing account is already
+  // bound. It returns an empty vector if no existing account is bound.
+  //
+  // NOTE: The refresh tokens must be loaded to correctly check the binding
+  // status of the accounts. If the refresh tokens are not loaded, calling this
+  // function results in a crash.
+  std::vector<uint8_t> GetWrappedBindingKey() const;
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
   // Returns the error state of the refresh token associated with |account_id|.
   // In particular: Returns GoogleServiceAuthError::AuthErrorNone() if either
@@ -510,20 +547,21 @@ class IdentityManager : public KeyedService,
   base::android::ScopedJavaLocalRef<jobject> GetPrimaryAccountId(
       JNIEnv* env) const;
 
+  base::android::ScopedJavaLocalRef<jobject> FindExtendedAccountInfoByAccountId(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& j_account_id) const;
+
   base::android::ScopedJavaLocalRef<jobject>
   FindExtendedAccountInfoByEmailAddress(
       JNIEnv* env,
-      const base::android::JavaParamRef<jstring>& j_email) const;
+      const base::android::JavaRef<jstring>& j_email) const;
 
   base::android::ScopedJavaLocalRef<jobjectArray> GetAccountsWithRefreshTokens(
       JNIEnv* env) const;
 
-  // Refreshes account associated with |j_core_account_id| if it's not null.
-  // Else refreshes all accounts with refresh tokens if they are stale. See
+  // Refreshes all accounts with refresh tokens if they are stale. See
   // RefreshAccountInfoIfStale(const CoreAccountId&).
-  // TODO(crbug.com/40284908): Remove |j_core_account_id| from parameters.
-  void RefreshAccountInfoIfStale(JNIEnv* env,
-                                 const CoreAccountId& j_core_account_id);
+  void RefreshAccountInfoIfStale(JNIEnv* env);
 
   // Returns true if the browser allows the primary account to be cleared.
   jboolean IsClearPrimaryAccountAllowed(JNIEnv* env) const;
@@ -551,12 +589,8 @@ class IdentityManager : public KeyedService,
   friend void SetRefreshTokenForAccount(
       IdentityManager* identity_manager,
       const CoreAccountId& account_id,
-      const std::string& token_value
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-      ,
-      const std::vector<uint8_t>& wrapped_binding_key
-#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  );
+      const std::string& token_value,
+      const std::vector<uint8_t>& wrapped_binding_key);
   friend void SetInvalidRefreshTokenForAccount(
       IdentityManager* identity_manager,
       const CoreAccountId& account_id,
@@ -783,11 +817,6 @@ class IdentityManager : public KeyedService,
 #if BUILDFLAG(IS_ANDROID)
   // Java-side IdentityManager object.
   base::android::ScopedJavaGlobalRef<jobject> java_identity_manager_;
-
-  // CoreAccountId and the corresponding fetch start time, this is only
-  // used to record account information fetch duration.
-  base::flat_map<CoreAccountId, base::TimeTicks>
-      account_info_fetch_start_times_;
 #endif
 #if BUILDFLAG(IS_IOS)
   // `true` if there is an account switching back in progress.

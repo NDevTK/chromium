@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/contextual_panel/model/contextual_panel_item_configuration.h"
 
 #import "ios/chrome/browser/contextual_panel/model/contextual_panel_item_type.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 
 const int ContextualPanelItemConfiguration::high_relevance = 80;
 
@@ -27,4 +28,8 @@ bool ContextualPanelItemConfiguration::CanShowEntrypointIPH() {
          !iph_entrypoint_used_event_name.empty() &&
          !iph_entrypoint_explicitly_dismissed.empty() &&
          relevance >= high_relevance;
+}
+
+void ContextualPanelItemConfiguration::DidTransitionToSmallEntrypoint() {
+  // No-op by default.
 }

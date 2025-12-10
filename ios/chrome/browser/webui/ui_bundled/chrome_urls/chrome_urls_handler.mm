@@ -21,7 +21,7 @@
 namespace chrome_urls {
 
 namespace {
-bool IsWebUIInternal(const std::string& host) {
+bool IsWebUIInternal(std::string_view host) {
   return host == commerce::kChromeUICommerceInternalsHost ||
          host == optimization_guide_internals::
                      kChromeUIOptimizationGuideInternalsHost ||
@@ -42,10 +42,8 @@ ChromeUrlsHandler::~ChromeUrlsHandler() = default;
 
 void ChromeUrlsHandler::GetUrls(GetUrlsCallback callback) {
   std::vector<chrome_urls::mojom::WebuiUrlInfoPtr> webui_urls;
-  std::vector<std::string> hosts(kChromeHostURLs,
-                                 kChromeHostURLs + kNumberOfChromeHostURLs);
-  webui_urls.reserve(kNumberOfChromeHostURLs);
-  for (std::string host : hosts) {
+  webui_urls.reserve(kChromeHostURLs.size());
+  for (const std::string_view host : kChromeHostURLs) {
     GURL url(
         base::StrCat({kChromeUIScheme, url::kStandardSchemeSeparator, host}));
     chrome_urls::mojom::WebuiUrlInfoPtr url_info(

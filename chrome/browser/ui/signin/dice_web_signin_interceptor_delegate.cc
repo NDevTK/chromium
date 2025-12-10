@@ -13,6 +13,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/task/single_thread_task_runner.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_util.h"
@@ -22,12 +23,16 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/signin/signin_view_controller.h"
+#include "chrome/browser/ui/webui/signin/login_ui_service.h"
+#include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/tribool.h"
+#include "components/tabs/public/tab_interface.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
@@ -73,7 +78,7 @@ class OidcEnterpriseSigninInterceptionHandle
             std::make_unique<signin::EnterpriseProfileCreationDialogParams>(
                 bubble_parameters.intercepted_account,
                 /*is_OIDC_account=*/true,
-                /*turn_sync_on_signed_profile=*/false,
+                /*user_already_signed_in=*/false,
                 /*profile_creation_required_by_policy=*/true,
                 /*show_link_data_option=*/false,
                 /*process_user_choice_callback=*/
@@ -158,7 +163,7 @@ class ForcedEnterpriseSigninInterceptionHandle
                 /*is_OIDC_account=*/bubble_parameters.interception_type ==
                     WebSigninInterceptor::SigninInterceptionType::
                         kEnterpriseOIDC,
-                /*turn_sync_on_signed_profile=*/false,
+                /*user_already_signed_in=*/false,
                 profile_creation_required_by_policy_, show_link_data_option_,
                 /*process_user_choice_callback=*/
                 base::BindOnce(&ForcedEnterpriseSigninInterceptionHandle::
@@ -291,6 +296,25 @@ void DiceWebSigninInterceptorDelegate::ShowFirstRunExperienceInNewProfile(
           account_id,
           interception_type ==
               WebSigninInterceptor::SigninInterceptionType::kEnterpriseForced);
+}
+
+void DiceWebSigninInterceptorDelegate::ShowSigninError(
+    content::WebContents* web_contents,
+    const SigninUIError& error) {
+  if (!web_contents) {
+    return;
+  }
+
+  Browser* browser = tabs::TabInterface::GetFromContents(web_contents)
+                         ->GetBrowserWindowInterface()
+                         ->GetBrowserForMigrationOnly();
+  if (!browser) {
+    return;
+  }
+
+  LoginUIServiceFactory::GetForProfile(
+      Profile::FromBrowserContext(web_contents->GetBrowserContext()))
+      ->DisplayLoginResult(browser, error, /*from_profile_picker=*/false);
 }
 
 // static

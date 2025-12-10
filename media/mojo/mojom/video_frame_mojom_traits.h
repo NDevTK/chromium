@@ -79,15 +79,17 @@ struct StructTraits<media::mojom::VideoFrameDataView,
     return input->ColorSpace();
   }
 
-  static const std::optional<gfx::HDRMetadata>& hdr_metadata(
+  static const gfx::HDRMetadata& hdr_metadata(
       const scoped_refptr<media::VideoFrame>& input) {
     return input->hdr_metadata();
   }
 
+#if BUILDFLAG(IS_ANDROID)
   static const std::optional<gpu::VulkanYCbCrInfo>& ycbcr_info(
       const scoped_refptr<media::VideoFrame>& input) {
     return input->ycbcr_info();
   }
+#endif
 
   static media::mojom::VideoFrameDataPtr data(
       const scoped_refptr<media::VideoFrame>& input);

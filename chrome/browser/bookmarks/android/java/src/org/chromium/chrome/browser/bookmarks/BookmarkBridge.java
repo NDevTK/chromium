@@ -189,7 +189,7 @@ class BookmarkBridge {
         if (mInitializedPartnerBookmarks) return;
 
         mInitializedPartnerBookmarks = true;
-        assert sPartnerBookmarkIteratorSupplier.hasValue();
+        assert sPartnerBookmarkIteratorSupplier.get() != null;
         sPartnerBookmarkIteratorSupplier.runSyncOrOnAvailable(
                 (provider) -> {
                     // Don't attempt to load partner bookmarks if the bridge has been deleted.
@@ -648,22 +648,6 @@ class BookmarkBridge {
     }
 
     /**
-     * Fetches the bookmarks of the given folder. This is an always-synchronous version of another
-     * getBookmarksForFolder function.
-     *
-     * @param folderId The parent folder id.
-     * @return Bookmarks of the given folder.
-     */
-    public List<BookmarkItem> getBookmarksForFolder(BookmarkId folderId) {
-        ThreadUtils.assertOnUiThread();
-        if (mNativeBookmarkBridge == 0) return new ArrayList<>();
-        assert mIsNativeBookmarkModelLoaded;
-        List<BookmarkItem> result = new ArrayList<>();
-        BookmarkBridgeJni.get().getBookmarksForFolder(mNativeBookmarkBridge, folderId, result);
-        return result;
-    }
-
-    /**
      * Check whether the given folder should be visible. This is for top permanent folders that we
      * want to hide when there is no child.
      *
@@ -939,11 +923,11 @@ class BookmarkBridge {
 
     @CalledByNative
     @VisibleForTesting
-    void bookmarkNodeAdded(BookmarkItem parent, int index) {
+    void bookmarkNodeAdded(BookmarkItem parent, int index, boolean addedByUser) {
         if (mIsDoingExtensiveChanges) return;
 
         for (BookmarkModelObserver observer : mObservers) {
-            observer.bookmarkNodeAdded(parent, index);
+            observer.bookmarkNodeAdded(parent, index, addedByUser);
         }
     }
 
@@ -1144,10 +1128,6 @@ class BookmarkBridge {
         void deletePowerBookmarkMeta(long nativeBookmarkBridge, long id, int type);
 
         boolean doesBookmarkExist(long nativeBookmarkBridge, long id, int type);
-
-        // TODO(crbug.com/41487884): Remove this method.
-        void getBookmarksForFolder(
-                long nativeBookmarkBridge, BookmarkId folderId, List<BookmarkItem> bookmarksList);
 
         boolean isFolderVisible(long nativeBookmarkBridge, long id, int type);
 

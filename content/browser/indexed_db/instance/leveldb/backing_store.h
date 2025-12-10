@@ -19,7 +19,7 @@
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -51,7 +51,6 @@ struct IndexedDBDatabaseMetadata;
 
 namespace content::indexed_db {
 
-class ActiveBlobRegistry;
 class BucketContext;
 class LevelDBWriteBatch;
 class PartitionedLockManager;
@@ -63,8 +62,8 @@ struct IndexedDBValue;
 
 namespace level_db {
 
+class ActiveBlobRegistry;
 class AutoDidCommitTransaction;
-class BackingStoreTest;
 
 class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
                                     public LevelDBCleanupScheduler::Delegate {
@@ -94,7 +93,8 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     ~Database() override;
 
     // indexed_db::BackingStore::Database:
-    const blink::IndexedDBDatabaseMetadata& GetMetadata() override;
+    const blink::IndexedDBDatabaseMetadata& GetMetadata() const override;
+    const IndexedDBDataLossInfo& GetDataLossInfo() const override;
     std::string GetObjectStoreLockIdKey(int64_t object_store_id) const override;
     std::unique_ptr<Transaction> CreateTransaction(
         blink::mojom::IDBTransactionDurability durability,
@@ -136,19 +136,10 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
 
     ~Transaction() override;
 
-    // indexed_db::BackingStore::Transaction:
-    void Begin(std::vector<PartitionedLock> locks) override;
-    // CommitPhaseOne determines what blobs (if any) need to be written to disk
-    // and updates the primary blob journal, and kicks off the async writing
-    // of the blob files. In case of crash/rollback, the journal indicates what
-    // files should be cleaned up.
-    // The callback will be called eventually on success or failure, or
-    // immediately if phase one is complete due to lack of any blobs to write.
-    Status CommitPhaseOne(BlobWriteCallback callback) override;
-    // CommitPhaseTwo is called once the blob files (if any) have been written
-    // to disk, and commits the actual transaction to the backing store,
-    // including blob journal updates, then deletes any blob files deleted
-    // by the transaction and not referenced by running scripts.
+    Status Begin(std::vector<PartitionedLock> locks) override;
+    // The `serialize_fsa_handle` callback is not used.
+    Status CommitPhaseOne(BlobWriteCallback callback,
+                          SerializeFsaCallback serialize_fsa_handle) override;
     Status CommitPhaseTwo() override;
     void Rollback() override;
     Status SetDatabaseVersion(int64_t version) override;
@@ -219,7 +210,11 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
         int64_t index_id,
         const blink::IndexedDBKeyRange& key_range,
         blink::mojom::IDBCursorDirection) override;
-    blink::mojom::IDBValuePtr BuildMojoValue(IndexedDBValue value) override;
+
+    // `deserialize_fsa_handle` is not used in this implementation.
+    blink::mojom::IDBValuePtr BuildMojoValue(
+        IndexedDBValue value,
+        DeserializeFsaCallback deserialize_fsa_handle) override;
 
     Status PutExternalObjectsIfNeeded(const std::string& object_store_data_key,
                                       std::vector<IndexedDBExternalObject>*);
@@ -365,6 +360,8 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     StatusOr<bool> Continue(const blink::IndexedDBKey& key,
                             const blink::IndexedDBKey& primary_key) override;
     StatusOr<bool> Advance(uint32_t count) override;
+    void SavePosition() override;
+    Status TryResetToLastSavedPosition() override;
 
     StatusOr<bool> Continue(const blink::IndexedDBKey& key,
                             const blink::IndexedDBKey& primary_key,
@@ -375,9 +372,6 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     Cursor(base::WeakPtr<Transaction> transaction,
            int64_t database_id,
            const CursorOptions& cursor_options);
-
-    explicit Cursor(const Cursor* other,
-                    std::unique_ptr<TransactionalLevelDBIterator> iterator);
 
     // May return nullptr.
     static std::unique_ptr<TransactionalLevelDBIterator> CloneIterator(
@@ -405,7 +399,6 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
     const CursorOptions cursor_options_;
     std::unique_ptr<TransactionalLevelDBIterator> iterator_;
     blink::IndexedDBKey current_key_;
-    RecordIdentifier record_identifier_;
 
    private:
     enum class ContinueResult { DONE, OUT_OF_BOUNDS };
@@ -424,6 +417,10 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
         IteratorState state);
 
     int tombstones_count_ = 0;
+    // `iterator_` and `current_key_` are saved when `SavePosition()` is called.
+    std::optional<std::tuple<std::unique_ptr<TransactionalLevelDBIterator>,
+                             blink::IndexedDBKey>>
+        saved_members_;
     base::WeakPtrFactory<Cursor> weak_factory_{this};
   };
 
@@ -475,27 +472,32 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
                                const std::string& message);
 
   // BackingStore:
+  bool CanOpportunisticallyClose() const override;
   void TearDown(base::WaitableEvent* signal_on_destruction) override;
   void InvalidateBlobReferences() override;
   void StartPreCloseTasks(base::OnceClosure on_done) override;
   void StopPreCloseTasks() override;
   StatusOr<std::unique_ptr<indexed_db::BackingStore::Database>>
   CreateOrOpenDatabase(const std::u16string& name) override;
-
   uintptr_t GetIdentifierForMemoryDump() override;
   void FlushForTesting() override;
-
-  StatusOr<std::vector<std::u16string>> GetDatabaseNames() override;
+  StatusOr<bool> DatabaseExists(std::u16string_view database_name) override;
   StatusOr<std::vector<blink::mojom::IDBNameAndVersionPtr>>
   GetDatabaseNamesAndVersions() override;
+  int64_t GetInMemorySize() const override;
+
+  // LevelDBCleanupScheduler::Delegate:
+  void OnCleanupStarted() override;
+  void OnCleanupDone() override;
+  Status GetCompleteMetadata(
+      std::vector<std::unique_ptr<blink::IndexedDBDatabaseMetadata>>* output)
+      override;
 
   base::FilePath GetBlobFileName(int64_t database_id, int64_t key) const;
 
   TransactionalLevelDBDatabase* db() { return db_.get(); }
 
   const std::string& origin_identifier() { return origin_identifier_; }
-
-  int64_t GetInMemorySize() const override;
 
 #if DCHECK_IS_ON()
   int NumBlobFilesDeletedForTesting() { return num_blob_files_deleted_; }
@@ -534,11 +536,25 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
                 bool is_first_attempt,
                 bool create_if_missing);
 
+  // LINT.IfChange(InSessionCleanupVerificationEvent)
+  enum class InSessionCleanupVerificationEvent {
+    kCleanupStarted = 0,
+    kErrorOpeningBefore = 1,
+    kErrorSnapshottingBefore = 2,
+    kErrorOpeningAfter = 3,
+    kErrorSnapshottingAfter = 4,
+    kMatchedSnapshot = 5,
+    kMismatchedSnapshot = 6,
+
+    kMaxValue = kMismatchedSnapshot,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/storage/enums.xml:IndexedDbLevelDbCleanupVerificationEvent)
+
  private:
-  FRIEND_TEST_ALL_PREFIXES(BackingStoreTestWithExternalObjects,
+  FRIEND_TEST_ALL_PREFIXES(LevelDbBackingStoreTestWithExternalObjects,
                            ActiveBlobJournal);
-  FRIEND_TEST_ALL_PREFIXES(BackingStoreTest, CompactionTaskTiming);
-  FRIEND_TEST_ALL_PREFIXES(BackingStoreTest, TombstoneSweeperTiming);
+  FRIEND_TEST_ALL_PREFIXES(LevelDbBackingStoreTest, CompactionTaskTiming);
+  FRIEND_TEST_ALL_PREFIXES(LevelDbBackingStoreTest, TombstoneSweeperTiming);
 
   friend class AutoDidCommitTransaction;
   friend class indexed_db::BucketContext;
@@ -559,21 +575,18 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
   // from disk. If no database is found, `metadata->id` will remain null.
   Status ReadMetadataForDatabaseName(DatabaseMetadata& metadata);
 
-  // LevelDBCleanupScheduler::Delegate:
-  // This function updates the next run timestamp for the
-  // tombstone sweeper in the database metadata.
-  // Virtual for testing.
-  // Returns if the update was successful.
-  bool UpdateEarliestSweepTime() override;
-  // This function updates the next run timestamp for the
-  // level db compaction in the database metadata.
-  // Virtual for testing.
-  // Returns if the update was successful.
-  bool UpdateEarliestCompactionTime() override;
-  // TODO(dmurph): Move this completely to IndexedDBMetadataFactory.
-  Status GetCompleteMetadata(
-      std::vector<std::unique_ptr<blink::IndexedDBDatabaseMetadata>>* output)
-      override;
+  StatusOr<std::vector<std::u16string>> GetDatabaseNames();
+
+  // Updates the next run timestamp for the tombstone sweeper in the database
+  // metadata. Returns if writing the update to the LevelDB db was successful.
+  bool UpdateEarliestSweepTime();
+  // Updates the next run timestamp for the level db compaction in the database
+  // metadata. Returns if writing the update to the LevelDB db was successful.
+  bool UpdateEarliestCompactionTime();
+
+  // Dumps and returns all the databases in this store. If an error Status is
+  // returned, this method will also log UMA to that effect.
+  StatusOr<base::ListValue> SnapshotAllDatabases(bool before_cleanup);
 
   // A helper function for V4 schema migration.
   // It iterates through all blob files.  It will add to the db entry both the
@@ -682,7 +695,14 @@ class CONTENT_EXPORT BackingStore : public indexed_db::BackingStore,
   bool initialized_ = false;
 #endif
 
+  // Snapshot of all known DBs. Used for debugging/verification of potentially
+  // destructive cleanup operations.
+  std::optional<base::ListValue> dbs_snapshot_;
+
   std::unique_ptr<BackingStorePreCloseTaskQueue> pre_close_task_queue_;
+
+  // Path to the leveldb database, or empty if in-memory.
+  base::FilePath database_path_;
 
   base::WeakPtrFactory<BackingStore> weak_factory_{this};
 };

@@ -19,12 +19,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -33,14 +33,16 @@
 #include "chrome/browser/signin/chrome_device_id_helper.h"
 #include "chrome/browser/signin/force_signin_verifier.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/signin/signin_hats_util.h"
 #include "chrome/browser/signin/signin_util.h"
+#include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/channel_info.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
-#include "components/bookmarks/browser/bookmark_model.h"
-#include "components/bookmarks/browser/url_and_title.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/metrics/metrics_service.h"
+#include "components/plus_addresses/core/common/features.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/cookie_settings_util.h"
@@ -59,6 +61,7 @@
 #include "components/version_info/channel.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
+#include "google_apis/gaia/gaia_auth_fetcher.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "ui/base/models/tree_node_iterator.h"
@@ -75,23 +78,17 @@
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/ui/browser.h"
 #endif
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
 #endif
 
 #if !BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/signin/wait_for_network_callback_helper_chrome.h"
-#endif
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "extensions/browser/extension_registry.h"
-#include "extensions/browser/extension_registry_factory.h"
-#include "extensions/common/manifest.h"
 #endif
 
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
@@ -161,74 +158,58 @@ signin_metrics::ProfileSignout kAlwaysAllowedSignoutSources[] = {
     signin_metrics::ProfileSignout::kMovePrimaryAccount,
     // Allowed as the profile is being deleted anyway.
     signin_metrics::ProfileSignout::kSignoutDuringProfileDeletion,
+    // Allowed as the user declined the enterprise management disclaimer.
+    signin_metrics::ProfileSignout::kUserDeclinedEnterpriseManagementDisclaimer,
 };
 
-// Returns the histogram suffix name per group of `signin_metrics::AccessPoint`.
-std::string_view NameOfGroupedAccessPointHistogram(
+// Returns the HaTS survey trigger corresponding to the given AccessPoint, or
+// the empty string if there is no such survey.
+std::string HatsSurveyTriggerForAccessPoint(
     signin_metrics::AccessPoint access_point) {
   switch (access_point) {
-    case signin_metrics::AccessPoint::kWebSignin:
-      return ".PreUnoWebSignin";
-    case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
-      return ".UnoSigninBubble";
-    case signin_metrics::AccessPoint::kUserManager:
-    case signin_metrics::AccessPoint::kForYouFre:
-    case signin_metrics::AccessPoint::kSigninInterceptFirstRunExperience:
-    case signin_metrics::AccessPoint::kStartPage:
-      return ".ProfileCreation";
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+    case signin_metrics::AccessPoint::kAddressBubble:
+      return kHatsSurveyTriggerIdentityAddressBubbleSignin;
     case signin_metrics::AccessPoint::kAvatarBubbleSignIn:
-      return ".ProfileMenu";
+    case signin_metrics::AccessPoint::kAvatarBubbleSignInWithSyncPromo:
+      return kHatsSurveyTriggerIdentityProfileMenuSignin;
+    case signin_metrics::AccessPoint::kForYouFre:
+      return kHatsSurveyTriggerIdentityFirstRunSignin;
+    case signin_metrics::AccessPoint::kPasswordBubble:
+      return kHatsSurveyTriggerIdentityPasswordBubbleSignin;
+    case signin_metrics::AccessPoint::kSigninInterceptFirstRunExperience:
+      return kHatsSurveyTriggerIdentitySigninInterceptProfileSeparation;
+    case signin_metrics::AccessPoint::kUserManager:
+      return kHatsSurveyTriggerIdentityProfilePickerAddProfileSignin;
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
     default:
-      return ".Other";
+      // No HaTS survey is defined for the rest of the access point.
+      return std::string();
   }
 }
 
-void RecordBookmarksCounts(signin_metrics::AccessPoint access_point,
-                           signin::ConsentLevel consent_level,
-                           size_t all_bookmarks_count,
-                           size_t bar_bookmarks_count) {
-  static constexpr std::string_view kBaseHistogramName = "Signin.Bookmarks";
+class ChromeOAuthConsumerRegistry : public signin::OAuthConsumerRegistry {
+ protected:
+  signin::OAuthConsumer GetOAuthConsumerForEnterprisePlusAddress()
+      const override {
+    CHECK(base::FeatureList::IsEnabled(
+        plus_addresses::features::kPlusAddressesEnabled));
+    return signin::OAuthConsumer(
+        signin::oauth_consumer_name::kEnterprisePlusAddressName,
+        {plus_addresses::features::kEnterprisePlusAddressOAuthScope.Get()});
+  }
 
-  std::string_view consent_level_token =
-      consent_level == signin::ConsentLevel::kSignin ? ".OnSignin" : ".OnSync";
-
-  std::string all_bookmarks_histogram_name =
-      base::StrCat({kBaseHistogramName, consent_level_token, ".AllBookmarks"});
-  base::UmaHistogramCounts1000(all_bookmarks_histogram_name,
-                               all_bookmarks_count);
-  base::UmaHistogramCounts1000(
-      base::StrCat({all_bookmarks_histogram_name,
-                    NameOfGroupedAccessPointHistogram(access_point)}),
-      all_bookmarks_count);
-
-  std::string bar_bookmarks_histogram_name =
-      base::StrCat({kBaseHistogramName, consent_level_token, ".BookmarksBar"});
-  base::UmaHistogramCounts1000(bar_bookmarks_histogram_name,
-                               bar_bookmarks_count);
-  base::UmaHistogramCounts1000(
-      base::StrCat({bar_bookmarks_histogram_name,
-                    NameOfGroupedAccessPointHistogram(access_point)}),
-      bar_bookmarks_count);
-}
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-void RecordExtensionsCounts(signin_metrics::AccessPoint access_point,
-                            signin::ConsentLevel consent_level,
-                            int extensions_count) {
-  static constexpr std::string_view kBaseHistogramName = "Signin.Extensions";
-
-  std::string_view consent_level_token =
-      consent_level == signin::ConsentLevel::kSignin ? ".OnSignin" : ".OnSync";
-
-  base::UmaHistogramCounts1000(
-      base::StrCat({kBaseHistogramName, consent_level_token}),
-      extensions_count);
-  base::UmaHistogramCounts1000(
-      base::StrCat({kBaseHistogramName, consent_level_token,
-                    NameOfGroupedAccessPointHistogram(access_point)}),
-      extensions_count);
-}
+  signin::OAuthConsumer GetOAuthConsumerForGlicUserStatus() const override {
+#if BUILDFLAG(ENABLE_GLIC)
+    CHECK(base::FeatureList::IsEnabled(features::kGlicUserStatusCheck));
+    return signin::OAuthConsumer(
+        signin::oauth_consumer_name::kGlicUserStatusName,
+        {features::kGeminiOAuth2Scope.Get()});
+#else
+    NOTREACHED();
 #endif
+  }
+};
 
 }  // namespace
 
@@ -240,7 +221,9 @@ ChromeSigninClient::ChromeSigninClient(Profile* profile)
           std::make_unique<WaitForNetworkCallbackHelperChrome>()
 #endif
               ),
-      profile_(profile) {
+      profile_(profile),
+      oauth_consumer_registry_(
+          std::make_unique<ChromeOAuthConsumerRegistry>()) {
   // Makes sure to register groups on Startup if previously set.
   RegisterSyntheticTrialsFromPrefs();
 }
@@ -332,6 +315,11 @@ network::mojom::CookieManager* ChromeSigninClient::GetCookieManager() {
       ->GetCookieManagerForBrowserProcess();
 }
 
+network::mojom::DeviceBoundSessionManager*
+ChromeSigninClient::GetDeviceBoundSessionManager() const {
+  return profile_->GetDefaultStoragePartition()->GetDeviceBoundSessionManager();
+}
+
 network::mojom::NetworkContext* ChromeSigninClient::GetNetworkContext() {
   return profile_->GetDefaultStoragePartition()->GetNetworkContext();
 }
@@ -357,23 +345,21 @@ void ChromeSigninClient::RemoveContentSettingsObserver(
       observer);
 }
 
-bool ChromeSigninClient::IsClearPrimaryAccountAllowed(
-    bool has_sync_account) const {
-  return GetSignoutDecision(has_sync_account,
-                            /*signout_source=*/std::nullopt) ==
+bool ChromeSigninClient::IsClearPrimaryAccountAllowed() const {
+  return GetSignoutDecision(
+             /*signout_source=*/std::nullopt) ==
          SigninClient::SignoutDecision::ALLOW;
 }
 
 bool ChromeSigninClient::IsRevokeSyncConsentAllowed() const {
-  return GetSignoutDecision(/*has_sync_account=*/true,
-                            /*signout_source=*/std::nullopt) !=
+  return GetSignoutDecision(
+             /*signout_source=*/std::nullopt) !=
          SigninClient::SignoutDecision::REVOKE_SYNC_DISALLOWED;
 }
 
 void ChromeSigninClient::PreSignOut(
     base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
-    signin_metrics::ProfileSignout signout_source_metric,
-    bool has_sync_account) {
+    signin_metrics::ProfileSignout signout_source_metric) {
   DCHECK(on_signout_decision_reached);
   DCHECK(!on_signout_decision_reached_) << "SignOut already in-progress!";
   on_signout_decision_reached_ = std::move(on_signout_decision_reached);
@@ -386,8 +372,6 @@ void ChromeSigninClient::PreSignOut(
   // `signin_metrics::ProfileSignout::kRevokeSyncFromSettings` when the user
   // turns off sync from the settings, we should also keep the window open at
   // this point.
-  // TODO(crbug.com/40280466): Check for managed accounts to be modified
-  // when aligning Managed vs Consumer accounts.
   bool user_declines_sync_after_consenting_to_management =
       (signout_source_metric == signin_metrics::ProfileSignout::kAbortSignin ||
        signout_source_metric ==
@@ -410,7 +394,7 @@ void ChromeSigninClient::PreSignOut(
         profile_,
         base::BindRepeating(&ChromeSigninClient::OnCloseBrowsersSuccess,
                             base::Unretained(this), signout_source_metric,
-                            /*should_sign_out=*/true, has_sync_account),
+                            /*should_sign_out=*/true),
         base::BindRepeating(&ChromeSigninClient::OnCloseBrowsersAborted,
                             base::Unretained(this)),
         signout_source_metric == signin_metrics::ProfileSignout::kAbortSignin ||
@@ -424,7 +408,7 @@ void ChromeSigninClient::PreSignOut(
   {
 #endif
     std::move(on_signout_decision_reached_)
-        .Run(GetSignoutDecision(has_sync_account, signout_source_metric));
+        .Run(GetSignoutDecision(signout_source_metric));
   }
 }
 
@@ -472,23 +456,11 @@ void ChromeSigninClient::OnPrimaryAccountChanged(
         signin_metrics::AccessPoint access_point =
             event_details.GetSetPrimaryAccountAccessPoint().value();
 
-        std::optional<size_t> all_bookmarks_count = GetAllBookmarksCount();
-        std::optional<size_t> bar_bookmarks_count =
-            GetBookmarkBarBookmarksCount();
-        if (all_bookmarks_count.has_value() &&
-            bar_bookmarks_count.has_value()) {
-          RecordBookmarksCounts(access_point, consent_level,
-                                all_bookmarks_count.value(),
-                                bar_bookmarks_count.value());
+        if (consent_level == signin::ConsentLevel::kSignin) {
+          std::string trigger = HatsSurveyTriggerForAccessPoint(access_point);
+          signin::LaunchSigninHatsSurveyForProfile(
+              trigger, profile_, /*defer_if_no_browser=*/true);
         }
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-        std::optional<size_t> extensions_count = GetExtensionsCount();
-        if (extensions_count.has_value()) {
-          RecordExtensionsCounts(access_point, consent_level,
-                                 extensions_count.value());
-        }
-#endif
 
 #if !BUILDFLAG(IS_CHROMEOS)
         RecordOpenTabCount(access_point, consent_level);
@@ -503,21 +475,26 @@ void ChromeSigninClient::OnPrimaryAccountChanged(
   }
 }
 
-#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
 std::unique_ptr<signin::BoundSessionOAuthMultiLoginDelegate>
 ChromeSigninClient::CreateBoundSessionOAuthMultiloginDelegate() const {
-  if (BoundSessionCookieRefreshService* bound_session_cookie_refresh_service =
-          BoundSessionCookieRefreshServiceFactory::GetForProfile(profile_);
-      bound_session_cookie_refresh_service) {
+#if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
+  BoundSessionCookieRefreshService* bound_session_cookie_refresh_service =
+      BoundSessionCookieRefreshServiceFactory::GetForProfile(profile_);
+  if (bound_session_cookie_refresh_service) {
     return std::make_unique<BoundSessionOAuthMultiLoginDelegateImpl>(
-        bound_session_cookie_refresh_service->GetWeakPtr());
+        bound_session_cookie_refresh_service->GetWeakPtr(),
+        IdentityManagerFactory::GetForProfile(profile_));
   }
+#endif  // BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
   return nullptr;
 }
-#endif
+
+signin::OAuthConsumer ChromeSigninClient::GetOAuthConsumerFromId(
+    signin::OAuthConsumerId oauth_consumer_id) const {
+  return oauth_consumer_registry_->GetOAuthConsumerFromId(oauth_consumer_id);
+}
 
 SigninClient::SignoutDecision ChromeSigninClient::GetSignoutDecision(
-    bool has_sync_account,
     const std::optional<signin_metrics::ProfileSignout> signout_source) const {
   // TODO(crbug.com/40239707): Revisit |kAlwaysAllowedSignoutSources|.
   for (const auto& always_allowed_source : kAlwaysAllowedSignoutSources) {
@@ -585,70 +562,9 @@ void ChromeSigninClient::OnTokenFetchComplete(bool token_is_valid) {
           signin_metrics::ProfileSignout::kAuthenticationFailedWithForceSignin,
           // Do not sign the user out to allow them to reauthenticate from the
           // profile picker.
-          /*should_sign_out=*/false,
-          // Sync value is not used since we are not signing out.
-          /*has_sync_account=*/false),
+          /*should_sign_out=*/false),
       /*on_close_aborted=*/base::DoNothing(),
       /*skip_beforeunload=*/true);
-}
-#endif
-
-std::optional<size_t> ChromeSigninClient::GetAllBookmarksCount() {
-  bookmarks::BookmarkModel* bookmarks =
-      BookmarkModelFactory::GetForBrowserContext(profile_);
-  if (!bookmarks || !bookmarks->root_node()) {
-    return std::nullopt;
-  }
-
-  // Recursive traversal of the root node, counting URLs only.
-  size_t count = 0;
-  ui::TreeNodeIterator<const bookmarks::BookmarkNode> iterator(
-      bookmarks->root_node());
-  while (iterator.has_next()) {
-    const bookmarks::BookmarkNode* const node = iterator.Next();
-    // Skip folders.
-    if (node->is_url()) {
-      ++count;
-    }
-  }
-  return count;
-}
-
-std::optional<size_t> ChromeSigninClient::GetBookmarkBarBookmarksCount() {
-  bookmarks::BookmarkModel* bookmarks =
-      BookmarkModelFactory::GetForBrowserContext(profile_);
-  if (!bookmarks || !bookmarks->bookmark_bar_node()) {
-    return std::nullopt;
-  }
-
-  // It is intended that we only count the visible bookmarks on the bar, meaning
-  // we are not interested in the bookmarks within a folder or subfolder of the
-  // bar. Counting the children only gets us the first layer that appears on the
-  // bar which is the count we need (Note: a folder on that layer counts as 1).
-  return bookmarks->bookmark_bar_node()->children().size();
-}
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-std::optional<size_t> ChromeSigninClient::GetExtensionsCount() {
-  extensions::ExtensionRegistry* registry =
-      extensions::ExtensionRegistryFactory::GetForBrowserContext(profile_);
-  if (!registry) {
-    return std::nullopt;
-  }
-
-  size_t user_installed_extension_count = 0;
-  for (auto& extension : registry->enabled_extensions()) {
-    // Mimics the count done for the Histograms `Extensions.LoadExtensionUser2`
-    // that counts the user installed extensions.
-    if (extension->is_extension() &&
-        !extensions::Manifest::IsExternalLocation(extension->location()) &&
-        !extensions::Manifest::IsUnpackedLocation(extension->location()) &&
-        !extensions::Manifest::IsComponentLocation(extension->location())) {
-      ++user_installed_extension_count;
-    }
-  }
-
-  return user_installed_extension_count;
 }
 #endif
 
@@ -669,14 +585,17 @@ void ChromeSigninClient::RecordOpenTabCount(
     tabs_count += model->GetTabCount();
   }
 #else   // !BUILDFLAG(IS_ANDROID)
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    if (browser->profile() != profile_) {
-      continue;
-    }
-    if (TabStripModel* tab_strip_model = browser->tab_strip_model()) {
-      tabs_count += tab_strip_model->count();
-    }
-  }
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [this, &tabs_count](BrowserWindowInterface* browser) {
+        if (browser->GetProfile() != profile_) {
+          return true;
+        }
+        if (TabStripModel* const tab_strip_model =
+                browser->GetTabStripModel()) {
+          tabs_count += tab_strip_model->count();
+        }
+        return true;
+      });
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   signin_metrics::RecordOpenTabCountOnSignin(consent_level, tabs_count);
@@ -699,7 +618,6 @@ void ChromeSigninClient::SetURLLoaderFactoryForTest(
 void ChromeSigninClient::OnCloseBrowsersSuccess(
     const signin_metrics::ProfileSignout signout_source_metric,
     bool should_sign_out,
-    bool has_sync_account,
     const base::FilePath& profile_path) {
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
   if (signin_util::IsForceSigninEnabled() && force_signin_verifier_.get()) {
@@ -709,7 +627,7 @@ void ChromeSigninClient::OnCloseBrowsersSuccess(
 
   if (should_sign_out) {
     std::move(on_signout_decision_reached_)
-        .Run(GetSignoutDecision(has_sync_account, signout_source_metric));
+        .Run(GetSignoutDecision(signout_source_metric));
   }
 
   LockForceSigninProfile(profile_path);

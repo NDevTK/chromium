@@ -18,6 +18,10 @@ import android.widget.SeekBar.OnSeekBarChangeListener;
 import org.chromium.base.Callback;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker.LayerType;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.readaloud.ReadAloudFeatures;
 import org.chromium.chrome.browser.readaloud.ReadAloudMetrics;
 import org.chromium.chrome.browser.readaloud.ReadAloudPrefs;
 import org.chromium.chrome.modules.readaloud.Feedback.FeedbackType;
@@ -27,6 +31,7 @@ import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackMode;
 import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackModeSelectionEnablementStatus;
 import org.chromium.chrome.modules.readaloud.PlaybackArgs.PlaybackVoice;
 import org.chromium.chrome.modules.readaloud.PlaybackListener;
+import org.chromium.chrome.modules.readaloud.Player.Delegate;
 import org.chromium.chrome.modules.readaloud.contentjs.Highlighter.Mode;
 import org.chromium.ui.modelutil.PropertyModel;
 
@@ -39,9 +44,12 @@ import java.util.concurrent.TimeUnit;
 class PlayerMediator implements InteractionHandler {
     private static final long SEEK_BACK_NANOS = -10 * 1_000_000_000L;
     private static final long SEEK_FORWARD_NANOS = 10 * 1_000_000_000L;
+    private static final int NANOS_IN_MILLS = 1_000_000;
+
     private final PlayerCoordinator mCoordinator;
-    private final PlayerCoordinator.Delegate mDelegate;
+    private final Delegate mDelegate;
     private final PropertyModel mModel;
+    private final BottomControlsStacker mBottomControlsStacker;
 
     /** Clock to use so we can mock time in tests. */
     public interface Clock {
@@ -62,27 +70,38 @@ class PlayerMediator implements InteractionHandler {
     private long mLastStartTimeMillisLockedScreen;
     private long mTotalTimeMillisLockedScreen;
 
+    private long mPlaybackCreationStartTimeMillis;
+
     private final PlaybackListener mPlaybackListener =
             new PlaybackListener() {
                 @Override
                 public void onPlaybackDataChanged(PlaybackData data) {
-                  // Due to a race, sometimes a STOPPED state is received after the playback is null (e.g. if it was received in favor of creating a new playback).
-                  // In these cases, we don't propagate the state event.
-                  if (mPlayback == null) {
-                    return;
-                  }
+                    // Due to a race, sometimes a STOPPED state is received after the playback is
+                    // null (e.g. if it was received in favor of creating a new playback).
+                    // In these cases, we don't propagate the state event.
+                    if (mPlayback == null) {
+                        return;
+                    }
 
                     if (!isHiddenAndPlaying()) {
                         mModel.set(PlayerProperties.DURATION_NANOS, data.totalDurationNanos());
                         float percent =
                                 (float) data.absolutePositionNanos()
                                         / (float) data.totalDurationNanos();
-                        // We update the progress only if the user is not currently interacting with the seekbar (i.e. scrubbing).
+                        // We update the progress only if the user is not currently interacting with
+                        // the seekbar (i.e. scrubbing).
                         if (!mIsScrubbingSeekBar) {
-                          mModel.set(PlayerProperties.PROGRESS, percent);
-                          mModel.set(PlayerProperties.ELAPSED_NANOS, data.absolutePositionNanos());
+                            mModel.set(PlayerProperties.PROGRESS, percent);
+                            mModel.set(
+                                    PlayerProperties.ELAPSED_NANOS, data.absolutePositionNanos());
                         }
                         mModel.set(PlayerProperties.DURATION_NANOS, data.totalDurationNanos());
+
+                        if (ChromeFeatureList.isEnabled(ChromeFeatureList.FEED_AUDIO_OVERVIEWS)
+                                && data.totalDurationNanos() > 0
+                                && data.absolutePositionNanos() >= data.totalDurationNanos()) {
+                            maybeMoveToNext();
+                        }
                     }
 
                     if (data.state() != mLastState) {
@@ -183,11 +202,13 @@ class PlayerMediator implements InteractionHandler {
 
     PlayerMediator(
             PlayerCoordinator coordinator,
-            PlayerCoordinator.Delegate delegate,
-            PropertyModel model) {
+            Delegate delegate,
+            PropertyModel model,
+            BottomControlsStacker bottomControlsStacker) {
         mCoordinator = coordinator;
         mDelegate = delegate;
         mModel = model;
+        mBottomControlsStacker = bottomControlsStacker;
         mModel.set(PlayerProperties.INTERACTION_HANDLER, this);
 
         mDelegate.getCurrentLanguageVoicesSupplier().addObserver(mVoiceListObserver);
@@ -237,6 +258,9 @@ class PlayerMediator implements InteractionHandler {
     }
 
     void setPlaybackState(@PlaybackListener.State int currentPlaybackState) {
+        if (currentPlaybackState == PLAYBACK_CREATION) {
+            mPlaybackCreationStartTimeMillis = mClock.currentTimeMillis();
+        }
         mModel.set(PlayerProperties.PLAYBACK_STATE, currentPlaybackState);
     }
 
@@ -291,6 +315,8 @@ class PlayerMediator implements InteractionHandler {
 
     @Override
     public void onCloseClick() {
+        reportCloseClickInfo();
+
         mCoordinator.closeClicked();
     }
 
@@ -310,6 +336,16 @@ class PlayerMediator implements InteractionHandler {
     public void onSeekForwardClick() {
         ReadAloudMetrics.recordSeekForwardTapped();
         maybeSeekRelative(SEEK_FORWARD_NANOS);
+    }
+
+    @Override
+    public void onMoveToPreviousClick() {
+        maybeMoveToPrevious();
+    }
+
+    @Override
+    public void onMoveToNextClick() {
+        maybeMoveToNext();
     }
 
     @Override
@@ -401,7 +437,7 @@ class PlayerMediator implements InteractionHandler {
         }
 
         ReadAloudPrefs.setSpeed(mDelegate.getPrefService(), newSpeed);
-        mPlayback.setRate(newSpeed);
+        mPlayback.setRate(resolveActualPlaybackSpeed(newSpeed));
         if (newSpeed >= 2.0f) {
             mDelegate.setHighlighterMode(Mode.TEXT_HIGHLIGHTING_MODE_PARAGRAPH);
         } else {
@@ -431,9 +467,23 @@ class PlayerMediator implements InteractionHandler {
     public void onShouldRestoreMiniPlayer() {
         @PlaybackListener.State int state = mModel.get(PlayerProperties.PLAYBACK_STATE);
         // TODO(b/352563278): All player UI should be made to work without a playback.
-        if (mPlayback != null || state == ERROR || state == BUFFERING || state == PLAYBACK_CREATION) {
-            mCoordinator.restoreMiniPlayer();
+        if (mPlayback != null
+                || state == ERROR
+                || state == BUFFERING
+                || state == PLAYBACK_CREATION) {
+            boolean bottomToolbarVisible =
+                    mBottomControlsStacker.isLayerVisible(LayerType.BOTTOM_TOOLBAR);
+            mCoordinator.restoreMiniPlayer(/* animate= */ !bottomToolbarVisible);
         }
+    }
+
+    private float resolveActualPlaybackSpeed(float requestedSpeed) {
+        if (assumeNonNull(assumeNonNull(mPlayback).getMetadata()).playbackMode()
+                != PlaybackMode.OVERVIEW) {
+            return requestedSpeed;
+        }
+        return requestedSpeed
+                + (float) ReadAloudFeatures.getAudioOverviewsSpeedAdditionPercentage() / 100.0f;
     }
 
     private void maybeSeekRelative(long nanos) {
@@ -447,6 +497,22 @@ class PlayerMediator implements InteractionHandler {
         } else {
             mPlayback.seekRelative(nanos);
         }
+    }
+
+    private void maybeMoveToPrevious() {
+        if (mPlayback == null) {
+            return;
+        }
+        mPlayback.pause();
+        mDelegate.moveToPrevious();
+    }
+
+    private void maybeMoveToNext() {
+        if (mPlayback == null) {
+            return;
+        }
+        mPlayback.pause();
+        mDelegate.moveToNext();
     }
 
     private void setPlaybackModeSelectionEnabled(PlaybackModeSelectionEnablementStatus status) {
@@ -514,5 +580,24 @@ class PlayerMediator implements InteractionHandler {
 
     void setClockForTesting(Clock clock) {
         mClock = clock;
+    }
+
+    private void reportCloseClickInfo() {
+        if (mModel.get(PlayerProperties.PLAYBACK_STATE) == ERROR) {
+            return;
+        }
+
+        PlaybackMode playbackMode =
+                PlaybackMode.fromValue(mModel.get(PlayerProperties.REQUESTED_PLAYBACK_MODE));
+
+        if (mModel.get(PlayerProperties.PLAYBACK_STATE) == PLAYBACK_CREATION) {
+            ReadAloudMetrics.recordPlaybackPositionInManualClose(0, playbackMode);
+            ReadAloudMetrics.recordTimeToMidLoadingManualClose(
+                    mClock.currentTimeMillis() - mPlaybackCreationStartTimeMillis, playbackMode);
+            return;
+        }
+
+        ReadAloudMetrics.recordPlaybackPositionInManualClose(
+                mModel.get(PlayerProperties.ELAPSED_NANOS) / NANOS_IN_MILLS, playbackMode);
     }
 }

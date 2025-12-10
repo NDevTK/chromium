@@ -39,6 +39,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/url_constants.h"
+#include "ipc/constants.mojom.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/isolation_info.h"
@@ -148,10 +149,6 @@ void DidCreateScriptLoader(
   } else if (completion_status->cors_error_status) {
     response_address_space =
         completion_status->cors_error_status->resource_address_space;
-    if (response_address_space == network::mojom::IPAddressSpace::kUnknown) {
-      response_address_space =
-          completion_status->cors_error_status->target_address_space;
-    }
   }
 
   if (client_security_state && ancestor_render_frame_host_id) {
@@ -590,7 +587,7 @@ WorkerScriptFetcher::CreateFactoryBundle(
       GetContentClient()
           ->browser()
           ->RegisterNonNetworkSubresourceURLLoaderFactories(
-              worker_process_id, MSG_ROUTING_NONE,
+              worker_process_id, IPC::mojom::kRoutingIdNone,
               request_initiator_storage_key.origin(), &non_network_factories);
       break;
   }

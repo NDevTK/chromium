@@ -23,8 +23,8 @@
 #include "components/policy/core/common/mock_policy_service.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/sync_preferences/pref_service_syncable.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/test/browser_task_environment.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -55,8 +55,6 @@ const char kActiveProfileName2[] = "active_profile2";
 
 }  // namespace
 
-// TODO(crbug.com/40704763): Get rid of chrome/browser dependencies and then
-// move this file to components/enterprise/browser.
 class ReportRequestQueueGeneratorTest : public ::testing::Test {
  public:
   ReportRequestQueueGeneratorTest()

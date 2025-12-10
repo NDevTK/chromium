@@ -24,6 +24,7 @@
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/sync/service/sync_service.h"
 #import "components/unified_consent/url_keyed_data_collection_consent_helper.h"
+#import "ios/chrome/browser/aim/model/ios_chrome_aim_eligibility_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/autocomplete_classifier_factory.h"
 #import "ios/chrome/browser/autocomplete/model/autocomplete_scoring_model_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/in_memory_url_index_factory.h"
@@ -200,6 +201,16 @@ AutocompleteProviderClientImpl::GetLensSuggestInputsWhenReady(
       << "GetLensSuggestInputsWhenReady is not implemented by default.";
 }
 
+tab_groups::TabGroupSyncService*
+AutocompleteProviderClientImpl::GetTabGroupSyncService() const {
+  return nullptr;
+}
+
+AimEligibilityService*
+AutocompleteProviderClientImpl::GetAimEligibilityService() const {
+  return IOSChromeAimEligibilityServiceFactory::GetForProfile(profile_);
+}
+
 std::string AutocompleteProviderClientImpl::GetAcceptLanguages() const {
   return profile_->GetPrefs()->GetString(language::prefs::kAcceptLanguages);
 }
@@ -210,21 +221,19 @@ AutocompleteProviderClientImpl::GetEmbedderRepresentationOfAboutScheme() const {
 }
 
 std::vector<std::u16string> AutocompleteProviderClientImpl::GetBuiltinURLs() {
-  std::vector<std::string> chrome_builtins(
-      kChromeHostURLs, kChromeHostURLs + kNumberOfChromeHostURLs);
-  std::sort(chrome_builtins.begin(), chrome_builtins.end());
-
   std::vector<std::u16string> builtins;
-  for (auto& url : chrome_builtins) {
-    builtins.push_back(base::ASCIIToUTF16(url));
+  builtins.reserve(kChromeHostURLs.size());
+  for (const std::string_view host : kChromeHostURLs) {
+    builtins.push_back(base::UTF8ToUTF16(host));
   }
+  std::sort(builtins.begin(), builtins.end());
   return builtins;
 }
 
 std::vector<std::u16string>
 AutocompleteProviderClientImpl::GetBuiltinsToProvideAsUserTypes() {
-  return {base::ASCIIToUTF16(kChromeUIChromeURLsURL),
-          base::ASCIIToUTF16(kChromeUIVersionURL)};
+  return {base::ASCIIToUTF16(std::string_view(kChromeUIChromeURLsURL)),
+          base::ASCIIToUTF16(std::string_view(kChromeUIVersionURL))};
 }
 
 component_updater::ComponentUpdateService*
@@ -235,11 +244,6 @@ AutocompleteProviderClientImpl::GetComponentUpdateService() {
 signin::IdentityManager* AutocompleteProviderClientImpl::GetIdentityManager()
     const {
   return IdentityManagerFactory::GetForProfile(profile_);
-}
-
-tab_groups::TabGroupSyncService*
-AutocompleteProviderClientImpl::GetTabGroupSyncService() const {
-  return nullptr;
 }
 
 bool AutocompleteProviderClientImpl::IsOffTheRecord() const {
@@ -310,4 +314,9 @@ bool AutocompleteProviderClientImpl::in_background_state() const {
 void AutocompleteProviderClientImpl::set_in_background_state(
     bool in_background_state) {
   in_background_state_ = in_background_state;
+}
+
+base::WeakPtr<AutocompleteProviderClient>
+AutocompleteProviderClientImpl::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }

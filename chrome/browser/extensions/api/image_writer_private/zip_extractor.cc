@@ -5,9 +5,9 @@
 #include "chrome/browser/extensions/api/image_writer_private/zip_extractor.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/task/thread_pool.h"

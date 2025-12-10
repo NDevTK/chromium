@@ -21,9 +21,11 @@
 #include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
 #include "components/webauthn/core/browser/passkey_model.h"
+#include "components/webauthn/core/browser/passkey_model_utils.h"
+#include "device/fido/authenticator_get_assertion_response.h"
 #include "device/fido/enclave/types.h"
-#include "device/fido/features.h"
-#include "device/fido/fido_constants.h"
+#include "device/fido/public/features.h"
+#include "device/fido/public/fido_constants.h"
 
 namespace {
 
@@ -231,7 +233,8 @@ void GPMEnclaveTransaction::StartEnclaveTransaction(
                          weak_ptr_factory_.GetWeakPtr());
       std::vector<std::vector<uint8_t>> existing_credential_ids;
       std::ranges::transform(
-          passkey_model_->GetPasskeysForRelyingPartyId(rp_id_),
+          passkey_model_->GetPasskeys(
+              rp_id_, webauthn::PasskeyModel::ShadowedCredentials::kExclude),
           std::back_inserter(existing_credential_ids),
           [](const sync_pb::WebauthnCredentialSpecifics& cred) {
             const std::string& cred_id = cred.credential_id();
@@ -245,13 +248,23 @@ void GPMEnclaveTransaction::StartEnclaveTransaction(
       CHECK(selected_credential_id_);
       std::unique_ptr<sync_pb::WebauthnCredentialSpecifics> selected_credential;
       std::vector<sync_pb::WebauthnCredentialSpecifics> credentials =
-          passkey_model_->GetPasskeysForRelyingPartyId(rp_id_);
+          passkey_model_->GetPasskeys(
+              rp_id_, webauthn::PasskeyModel::ShadowedCredentials::kExclude);
       for (auto& cred : credentials) {
         if (std::ranges::equal(base::as_byte_span(cred.credential_id()),
                                base::span(*selected_credential_id_))) {
           selected_credential =
               std::make_unique<sync_pb::WebauthnCredentialSpecifics>(
                   std::move(cred));
+          request->save_passkey_callback = base::BindOnce(
+              [](base::WeakPtr<GPMEnclaveTransaction> txn,
+                 sync_pb::WebauthnCredentialSpecifics passkey) {
+                if (txn) {
+                  txn->OnPasskeyEncryptedBlobUpdated(passkey.credential_id(),
+                                                     passkey.encrypted());
+                }
+              },
+              weak_ptr_factory_.GetWeakPtr());
           break;
         }
       }
@@ -304,6 +317,13 @@ void GPMEnclaveTransaction::HandlePINValidationResult(
 
 void GPMEnclaveTransaction::OnPasskeyCreated(
     sync_pb::WebauthnCredentialSpecifics passkey) {
+  CHECK(webauthn::passkey_model_utils::IsGpmPasskeyValid(passkey));
   passkey_model_->CreatePasskey(passkey);
   delegate_->OnPasskeyCreated(passkey);
+}
+
+void GPMEnclaveTransaction::OnPasskeyEncryptedBlobUpdated(
+    const std::string& credential_id,
+    const std::string& encrypted_data) {
+  passkey_model_->UpdatePasskeyEncryptedBlob(credential_id, encrypted_data);
 }

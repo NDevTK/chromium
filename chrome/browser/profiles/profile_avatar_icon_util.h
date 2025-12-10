@@ -17,7 +17,7 @@
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/models/image_model.h"
-#include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/geometry/point.h"
 
 namespace base {
 class FilePath;
@@ -25,6 +25,7 @@ class FilePath;
 
 namespace gfx {
 class Image;
+class ImageSkia;
 }
 
 class Profile;
@@ -122,9 +123,6 @@ gfx::Image GetAvatarIconForNSMenu(const base::FilePath& profile_path);
 
 // Gets the number of default avatar icons that exist.
 size_t GetDefaultAvatarIconCount();
-
-// Gets the number of generic avatar icons that exist.
-size_t GetGenericAvatarIconCount();
 
 // Gets the index for the (grey silhouette) avatar used as a placeholder.
 size_t GetPlaceholderAvatarIndex();
@@ -245,6 +243,13 @@ SkBitmap GetBadgedWinIconBitmapForAvatar(const SkBitmap& app_icon_bitmap,
 // transparent.
 gfx::ImageSkia AddBackgroundToImage(const gfx::ImageSkia& image,
                                     SkColor background_color);
+
+// Scales the `avatar` to `avatar_size` and crops it into a circle. Embeds the
+// circle onto an image with `resource_id` at `avatar_position`.
+ui::ImageModel EmbedAvatarOntoImage(int resource_id,
+                                    const gfx::Image& avatar,
+                                    const gfx::Point& avatar_position,
+                                    size_t avatar_size);
 
 }  // namespace profiles
 

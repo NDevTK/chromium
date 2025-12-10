@@ -19,23 +19,27 @@ class ToolRequestVisitorFunctor;
 // OOPIFs or RenderWidgetHosts).
 class DragAndReleaseToolRequest : public PageToolRequest {
  public:
+  static constexpr char kName[] = "DragAndRelease";
+
   DragAndReleaseToolRequest(tabs::TabHandle tab_handle,
-                            const Target& from_target,
-                            const Target& to_target);
+                            const PageTarget& from_target,
+                            const PageTarget& to_target);
   ~DragAndReleaseToolRequest() override;
+  DragAndReleaseToolRequest(const DragAndReleaseToolRequest& other);
 
   void Apply(ToolRequestVisitorFunctor& f) const override;
 
   // ToolRequest
-  std::string JournalEvent() const override;
+  std::string_view Name() const override;
 
   // PageToolRequest
-  mojom::ToolActionPtr ToMojoToolAction() const override;
+  mojom::ToolActionPtr ToMojoToolAction(
+      content::RenderFrameHost& frame) const override;
   std::unique_ptr<PageToolRequest> Clone() const override;
 
  private:
-  Target from_target_;
-  Target to_target_;
+  PageTarget from_target_;
+  PageTarget to_target_;
 };
 
 }  // namespace actor

@@ -26,6 +26,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -35,6 +36,7 @@
 #include "base/time/time.h"
 #include "base/trace_event/memory_allocator_dump.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/cache_type.h"
 #include "net/base/completion_once_callback.h"
@@ -42,7 +44,6 @@
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/base/test_completion_callback.h"
-#include "net/base/tracing.h"
 #include "net/disk_cache/backend_cleanup_tracker.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
 #include "net/disk_cache/blockfile/entry_impl.h"
@@ -87,20 +88,6 @@ using testing::Field;
 #else
 #define MAYBE_NonEmptyCorruptSimpleCacheDoesNotRecover \
   NonEmptyCorruptSimpleCacheDoesNotRecover
-#endif
-
-// Some tests use methods that are not implemented in SQLBackend. Therefore,
-// this macro is used to skip such tests.
-// TODO(crbug.com/422065015): Remove this macro once such methods are
-// implemented.
-#if BUILDFLAG(ENABLE_DISK_CACHE_SQL_BACKEND)
-#define SKIP_IF_SQL_BACKEND_NOT_IMPLEMENTED()                                 \
-  if (GetParam() == BackendToTest::kSql) {                                    \
-    LOG(INFO) << "Skipping test for SQL backend as it's not implemented yet"; \
-    return;                                                                   \
-  }
-#else
-#define SKIP_IF_SQL_BACKEND_NOT_IMPLEMENTED()
 #endif
 
 using base::Time;
@@ -598,7 +585,8 @@ TEST_F(DiskCacheTest, CreateBackend) {
     disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
         net::DISK_CACHE, net::CACHE_BACKEND_DEFAULT,
         /*file_operations=*/nullptr, cache_path_, 0,
-        disk_cache::ResetHandling::kNeverReset, nullptr, cb.callback());
+        disk_cache::ResetHandling::kNeverReset, nullptr, nullptr,
+        cb.callback());
     rv = cb.GetResult(std::move(rv));
     ASSERT_THAT(rv.net_error, IsOk());
     ASSERT_TRUE(rv.backend);
@@ -607,7 +595,8 @@ TEST_F(DiskCacheTest, CreateBackend) {
     rv = disk_cache::CreateCacheBackend(
         net::MEMORY_CACHE, net::CACHE_BACKEND_DEFAULT,
         /*file_operations=*/nullptr, base::FilePath(), 0,
-        disk_cache::ResetHandling::kNeverReset, nullptr, cb.callback());
+        disk_cache::ResetHandling::kNeverReset, nullptr, nullptr,
+        cb.callback());
     rv = cb.GetResult(std::move(rv));
     ASSERT_THAT(rv.net_error, IsOk());
     ASSERT_TRUE(rv.backend);
@@ -625,8 +614,8 @@ TEST_F(DiskCacheTest, MemBackendPostCleanupCallback) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::MEMORY_CACHE, net::CACHE_BACKEND_DEFAULT,
       /*file_operations=*/nullptr, base::FilePath(), 0,
-      disk_cache::ResetHandling::kNeverReset, nullptr, on_cleanup.closure(),
-      cb.callback());
+      disk_cache::ResetHandling::kNeverReset, nullptr, nullptr,
+      on_cleanup.closure(), cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_THAT(rv.net_error, IsOk());
   ASSERT_TRUE(rv.backend);
@@ -649,12 +638,14 @@ TEST_F(DiskCacheTest, CreateBackendDouble) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_DEFAULT, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb.callback());
 
   disk_cache::BackendResult rv2 = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_DEFAULT, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb2.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb2.callback());
 
   rv = cb.GetResult(std::move(rv));
   EXPECT_THAT(rv.net_error, IsOk());
@@ -689,12 +680,14 @@ TEST_F(DiskCacheBackendTest, CreateBackendDoubleOpenEntry) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb.callback());
 
   disk_cache::BackendResult rv2 = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb2.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb2.callback());
 
   rv = cb.GetResult(std::move(rv));
   EXPECT_THAT(rv.net_error, IsOk());
@@ -741,7 +734,8 @@ TEST_F(DiskCacheBackendTest, CreateBackendPostCleanup) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, run_loop.QuitClosure(), cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      run_loop.QuitClosure(), cb.callback());
   rv = cb.GetResult(std::move(rv));
   EXPECT_THAT(rv.net_error, IsOk());
   ASSERT_TRUE(rv.backend);
@@ -788,7 +782,8 @@ TEST_F(DiskCacheBackendTest, SimpleCreateBackendRecoveryAppCache) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, run_loop.QuitClosure(), cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      run_loop.QuitClosure(), cb.callback());
   rv = cb.GetResult(std::move(rv));
   EXPECT_THAT(rv.net_error, IsOk());
   ASSERT_TRUE(rv.backend);
@@ -863,14 +858,20 @@ TEST_F(DiskCacheBackendTest, MemoryListensToMemoryPressure) {
   EXPECT_GT(CalculateSizeOfAllEntries(), 0.8 * kLimit);
 
   // Signal low-memory of various sorts, and see how small it gets.
-  base::MemoryPressureListener::NotifyMemoryPressure(
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE);
-  base::RunLoop().RunUntilIdle();
+  {
+    base::RunLoop run_loop;
+    base::MemoryPressureListener::SimulatePressureNotificationAsync(
+        base::MEMORY_PRESSURE_LEVEL_MODERATE, run_loop.QuitClosure());
+    run_loop.Run();
+  }
   EXPECT_LT(CalculateSizeOfAllEntries(), 0.5 * kLimit);
 
-  base::MemoryPressureListener::NotifyMemoryPressure(
-      base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
-  base::RunLoop().RunUntilIdle();
+  {
+    base::RunLoop run_loop;
+    base::MemoryPressureListener::SimulatePressureNotificationAsync(
+        base::MEMORY_PRESSURE_LEVEL_CRITICAL, run_loop.QuitClosure());
+    run_loop.Run();
+  }
   EXPECT_LT(CalculateSizeOfAllEntries(), 0.1 * kLimit);
 }
 
@@ -961,7 +962,8 @@ TEST_F(DiskCacheBackendTest, MultipleInstancesWithPendingFileIO) {
   disk_cache::BackendResult backend_rv = disk_cache::CreateCacheBackend(
       net::DISK_CACHE, net::CACHE_BACKEND_DEFAULT, /*file_operations=*/nullptr,
       store.GetPath(), 0, disk_cache::ResetHandling::kNeverReset,
-      /* net_log = */ nullptr, create_cb.callback());
+      /* net_log = */ nullptr, /*cache_encryption_delegate=*/nullptr,
+      create_cb.callback());
   backend_rv = create_cb.GetResult(std::move(backend_rv));
   ASSERT_THAT(backend_rv.net_error, IsOk());
   ASSERT_TRUE(backend_rv.backend);
@@ -1143,7 +1145,7 @@ TEST_F(DiskCacheTest, TruncatedIndex) {
       net::DISK_CACHE, net::CACHE_BACKEND_BLOCKFILE,
       /*file_operations=*/nullptr, cache_path_, 0,
       disk_cache::ResetHandling::kNeverReset, /*net_log=*/nullptr,
-      cb.callback());
+      /*cache_encryption_delegate=*/nullptr, cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_NE(net::OK, rv.net_error);
   ASSERT_FALSE(rv.backend);
@@ -1151,9 +1153,13 @@ TEST_F(DiskCacheTest, TruncatedIndex) {
 #endif
 
 void DiskCacheBackendTest::BackendSetSize() {
-  if (backend_to_test() == BackendToTest::kSimple) {
-    // SimpleCache has a floor on max file size, so this test doesn't work
-    // there.
+  if (backend_to_test() == BackendToTest::kSimple
+#if BUILDFLAG(ENABLE_DISK_CACHE_SQL_BACKEND)
+      || backend_to_test() == BackendToTest::kSql
+#endif  // ENABLE_DISK_CACHE_SQL_BACKEND
+  ) {
+    // SimpleCache and SqlCache have a floor on max file size, so this test
+    // doesn't work there.
     return;
   }
 
@@ -1223,7 +1229,6 @@ void DiskCacheBackendTest::BackendSetSize() {
 }
 
 TEST_P(DiskCacheGenericBackendTest, SetSize) {
-  SKIP_IF_SQL_BACKEND_NOT_IMPLEMENTED();
   BackendSetSize();
 }
 
@@ -2069,7 +2074,6 @@ TEST_F(DiskCacheBackendTest, DoomEntriesSinceSparse) {
 }
 
 TEST_P(DiskCacheGenericBackendTest, DoomAllSparse) {
-  SKIP_IF_SQL_BACKEND_NOT_IMPLEMENTED();
   InitSparseCache(nullptr, nullptr);
   EXPECT_THAT(DoomAllEntries(), IsOk());
   EXPECT_EQ(0, GetEntryCount());
@@ -2254,7 +2258,6 @@ void DiskCacheBackendTest::BackendCalculateSizeOfAllEntries() {
 }
 
 TEST_P(DiskCacheGenericBackendTest, CalculateSizeOfAllEntries) {
-  SKIP_IF_SQL_BACKEND_NOT_IMPLEMENTED();
   if (backend_to_test() == BackendToTest::kSimple) {
     // Use net::APP_CACHE to make size estimations deterministic via
     // non-optimistic writes.
@@ -2521,7 +2524,7 @@ TEST_F(DiskCacheBackendTest, DeleteOld) {
         net::DISK_CACHE, net::CACHE_BACKEND_BLOCKFILE,
         /*file_operations=*/nullptr, path, 0,
         disk_cache::ResetHandling::kResetOnError, /*net_log=*/nullptr,
-        cb.callback());
+        /*cache_encryption_delegate=*/nullptr, cb.callback());
     path.clear();  // Make sure path was captured by the previous call.
     rv = cb.GetResult(std::move(rv));
     ASSERT_THAT(rv.net_error, IsOk());
@@ -3350,7 +3353,6 @@ void DiskCacheBackendTest::BackendEviction() {
 }
 
 TEST_P(DiskCacheGenericBackendTest, BackendEviction) {
-  SKIP_IF_SQL_BACKEND_NOT_IMPLEMENTED();
   BackendEviction();
 }
 
@@ -3626,7 +3628,8 @@ TEST_F(DiskCacheTest, MultipleInstances) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::DISK_CACHE, net::CACHE_BACKEND_DEFAULT, /*file_operations=*/nullptr,
       store1.GetPath(), 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_THAT(rv.net_error, IsOk());
   caches[0] = std::move(rv.backend);
@@ -3634,7 +3637,7 @@ TEST_F(DiskCacheTest, MultipleInstances) {
       net::GENERATED_BYTE_CODE_CACHE, net::CACHE_BACKEND_DEFAULT,
       /*file_operations=*/nullptr, store2.GetPath(), 0,
       disk_cache::ResetHandling::kNeverReset, /*net_log=*/nullptr,
-      cb.callback());
+      /*cache_encryption_delegate=*/nullptr, cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_THAT(rv.net_error, IsOk());
   caches[1] = std::move(rv.backend);
@@ -3857,12 +3860,12 @@ TEST_F(DiskCacheBackendTest, FileSharing) {
     base::win::ScopedHandle file2(CreateFile(name.value().c_str(), access,
                                              sharing, nullptr, OPEN_EXISTING, 0,
                                              nullptr));
-    EXPECT_FALSE(file2.IsValid());
+    EXPECT_FALSE(file2.is_valid());
 
     sharing |= FILE_SHARE_DELETE;
     file2.Set(CreateFile(name.value().c_str(), access, sharing, nullptr,
                          OPEN_EXISTING, 0, nullptr));
-    EXPECT_TRUE(file2.IsValid());
+    EXPECT_TRUE(file2.is_valid());
 #endif
 
     EXPECT_TRUE(base::DeleteFile(name));
@@ -4015,7 +4018,7 @@ TEST_F(DiskCacheBackendTest, SimpleCacheOverBlockfileCache) {
   // Check that the |SimpleBackendImpl| does not favor this structure.
   auto simple_cache = std::make_unique<disk_cache::SimpleBackendImpl>(
       /*file_operations_factory=*/nullptr, cache_path_, nullptr, nullptr, 0,
-      net::DISK_CACHE, nullptr);
+      net::DISK_CACHE, nullptr, nullptr);
   net::TestCompletionCallback cb;
   simple_cache->Init(cb.callback());
   EXPECT_NE(net::OK, cb.WaitForResult());
@@ -4308,9 +4311,12 @@ TEST_F(DiskCacheBackendTest, SimpleCacheLateDoom) {
 }
 
 TEST_F(DiskCacheBackendTest, SimpleCacheNegMaxSize) {
+  SetCacheType(net::GENERATED_BYTE_CODE_CACHE);
+
   SetMaxSize(-1);
   SetBackendToTest(BackendToTest::kSimple);
   InitCache();
+
   // We don't know what it will pick, but it's limited to what
   // disk_cache::PreferredCacheSize would return, scaled by the size experiment,
   // which only goes as much as 4x. It definitely should not be MAX_UINT64.
@@ -4325,27 +4331,30 @@ TEST_F(DiskCacheBackendTest, SimpleCacheNegMaxSize) {
             static_cast<unsigned>(max_default_size));
 
   uint64_t max_size_without_scaling = simple_cache_impl_->index()->max_size();
+  uint64_t max_file_size_without_scaling = simple_cache_impl_->MaxFileSize();
 
-  // Scale to 200%. Depending on whether the default is scaled to 400%, this
-  // should increase or reduce the size.
+  // Scale to 200%. Default is 100%. This should increase.
   {
     base::test::ScopedFeatureList scoped_feature_list;
     std::map<std::string, std::string> field_trial_params;
     field_trial_params["percent_relative_size"] = "200";
     scoped_feature_list.InitAndEnableFeatureWithParameters(
-        disk_cache::kChangeDiskCacheSizeExperiment, field_trial_params);
+        disk_cache::kChangeGeneratedCodeCacheSizeExperiment,
+        field_trial_params);
 
     InitCache();
 
-    uint64_t max_size_scaled = simple_cache_impl_->index()->max_size();
+    // Wait for tasks on which the init depend to have executed.
+    base::ThreadPoolInstance::Get()->FlushForTesting();
 
-    if (kHTTPCacheSizeIsIncreased) {
-      EXPECT_GE(max_size_without_scaling, max_size_scaled);
-      EXPECT_LE(max_size_without_scaling, 2 * max_size_scaled);
-    } else {
-      EXPECT_GE(max_size_scaled, max_size_without_scaling);
-      EXPECT_LE(max_size_scaled, 2 * max_size_without_scaling);
-    }
+    uint64_t max_size_scaled = simple_cache_impl_->index()->max_size();
+    uint64_t max_file_size_scaled = simple_cache_impl_->MaxFileSize();
+
+    EXPECT_GE(max_size_scaled, max_size_without_scaling);
+    EXPECT_LE(max_size_scaled, 2 * max_size_without_scaling);
+
+    EXPECT_GE(max_file_size_scaled, max_file_size_without_scaling);
+    EXPECT_LE(max_file_size_scaled, 2 * max_file_size_without_scaling);
   }
 }
 
@@ -4521,7 +4530,7 @@ void DiskCacheBackendTest::Test2GiBLimit(net::CacheType type,
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       type, backend_type,
       /*file_operations=*/nullptr, cache_path_, size,
-      disk_cache::ResetHandling::kNeverReset, nullptr, cb.callback());
+      disk_cache::ResetHandling::kNeverReset, nullptr, nullptr, cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_THAT(rv.net_error, IsOk());
   EXPECT_TRUE(rv.backend);
@@ -4531,7 +4540,7 @@ void DiskCacheBackendTest::Test2GiBLimit(net::CacheType type,
   rv = disk_cache::CreateCacheBackend(
       type, backend_type,
       /*file_operations=*/nullptr, cache_path_, size,
-      disk_cache::ResetHandling::kNeverReset, nullptr, cb.callback());
+      disk_cache::ResetHandling::kNeverReset, nullptr, nullptr, cb.callback());
   rv = cb.GetResult(std::move(rv));
   if (expect_limit) {
     EXPECT_NE(rv.net_error, net::OK);
@@ -4723,7 +4732,8 @@ TEST_F(DiskCacheBackendTest, EmptyCorruptSimpleCacheRecovery) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb.callback());
   rv = cb.GetResult(std::move(rv));
   EXPECT_THAT(rv.net_error, IsOk());
 }
@@ -4745,7 +4755,8 @@ TEST_F(DiskCacheBackendTest, MAYBE_NonEmptyCorruptSimpleCacheDoesNotRecover) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
       cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-      /*net_log=*/nullptr, cb.callback());
+      /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+      cb.callback());
   rv = cb.GetResult(std::move(rv));
   EXPECT_THAT(rv.net_error, IsError(net::ERR_FAILED));
 }
@@ -4820,7 +4831,8 @@ TEST_F(DiskCacheBackendTest, SimpleCacheSoftResetKeepsValues) {
     disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
         net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
         cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-        /*net_log=*/nullptr, cb.callback());
+        /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+        cb.callback());
     rv = cb.GetResult(std::move(rv));
     EXPECT_THAT(rv.net_error, IsOk());
     std::unique_ptr<disk_cache::Backend> cache = std::move(rv.backend);
@@ -4839,7 +4851,8 @@ TEST_F(DiskCacheBackendTest, SimpleCacheSoftResetKeepsValues) {
     disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
         net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
         cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-        /*net_log=*/nullptr, cb.callback());
+        /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+        cb.callback());
     rv = cb.GetResult(std::move(rv));
     EXPECT_THAT(rv.net_error, IsOk());
     std::unique_ptr<disk_cache::Backend> cache = std::move(rv.backend);
@@ -4866,7 +4879,8 @@ TEST_F(DiskCacheBackendTest, SimpleCacheHardResetDropsValues) {
     disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
         net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
         cache_path_, 0, disk_cache::ResetHandling::kNeverReset,
-        /*net_log=*/nullptr, cb.callback());
+        /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
+        cb.callback());
     rv = cb.GetResult(std::move(rv));
     EXPECT_THAT(rv.net_error, IsOk());
     std::unique_ptr<disk_cache::Backend> cache = std::move(rv.backend);
@@ -4884,7 +4898,8 @@ TEST_F(DiskCacheBackendTest, SimpleCacheHardResetDropsValues) {
 
     disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
         net::APP_CACHE, net::CACHE_BACKEND_SIMPLE, /*file_operations=*/nullptr,
-        cache_path_, 0, disk_cache::ResetHandling::kReset, /*net_log=*/nullptr,
+        cache_path_, 0, disk_cache::ResetHandling::kReset,
+        /*net_log=*/nullptr, /*cache_encryption_delegate=*/nullptr,
         cb.callback());
     rv = cb.GetResult(std::move(rv));
     EXPECT_THAT(rv.net_error, IsOk());
@@ -5280,7 +5295,7 @@ TEST_F(DiskCacheBackendTest, BlockfileEmptyIndex) {
   disk_cache::BackendResult rv = disk_cache::CreateCacheBackend(
       net::DISK_CACHE, net::CACHE_BACKEND_BLOCKFILE,
       /*file_operations=*/nullptr, cache_path_, 0,
-      disk_cache::ResetHandling::kNeverReset, nullptr, cb.callback());
+      disk_cache::ResetHandling::kNeverReset, nullptr, nullptr, cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_THAT(rv.net_error, IsOk());
   ASSERT_TRUE(rv.backend);
@@ -5300,7 +5315,7 @@ TEST_F(DiskCacheBackendTest, BlockfileEmptyIndex) {
   rv = disk_cache::CreateCacheBackend(
       net::DISK_CACHE, net::CACHE_BACKEND_BLOCKFILE,
       /*file_operations=*/nullptr, cache_path_, 0,
-      disk_cache::ResetHandling::kNeverReset, nullptr, cb.callback());
+      disk_cache::ResetHandling::kNeverReset, nullptr, nullptr, cb.callback());
   rv = cb.GetResult(std::move(rv));
   EXPECT_EQ(rv.net_error, net::ERR_FAILED);
   EXPECT_FALSE(rv.backend);
@@ -5310,7 +5325,8 @@ TEST_F(DiskCacheBackendTest, BlockfileEmptyIndex) {
   rv = disk_cache::CreateCacheBackend(
       net::DISK_CACHE, net::CACHE_BACKEND_BLOCKFILE,
       /*file_operations=*/nullptr, cache_path_, 0,
-      disk_cache::ResetHandling::kResetOnError, nullptr, cb.callback());
+      disk_cache::ResetHandling::kResetOnError, nullptr, nullptr,
+      cb.callback());
   rv = cb.GetResult(std::move(rv));
   ASSERT_THAT(rv.net_error, IsOk());
   ASSERT_TRUE(rv.backend);
@@ -5318,7 +5334,13 @@ TEST_F(DiskCacheBackendTest, BlockfileEmptyIndex) {
 #endif
 
 // See https://crbug.com/1486958
-TEST_F(DiskCacheBackendTest, SimpleDoomIter) {
+// Disabled on Mac due to flakiness: crbug.com/438569911.
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_SimpleDoomIter DISABLED_SimpleDoomIter
+#else
+#define MAYBE_SimpleDoomIter SimpleDoomIter
+#endif
+TEST_F(DiskCacheBackendTest, MAYBE_SimpleDoomIter) {
   const int kEntries = 1000;
 
   SetBackendToTest(BackendToTest::kSimple);

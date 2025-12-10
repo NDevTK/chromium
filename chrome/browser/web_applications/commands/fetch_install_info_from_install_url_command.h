@@ -22,19 +22,37 @@ namespace web_app {
 
 class WebAppDataRetriever;
 
+// The result of fetching the `WebAppInstallInfo` from an `install_url`.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// LINT.IfChange(FetchInstallInfoResult)
 enum class FetchInstallInfoResult {
-  kAppInfoObtained,
-  kWebContentsDestroyed,
-  kUrlLoadingFailure,
-  kNoValidManifest,
-  kWrongManifestId,
-  kFailure
+  // Successfully fetched the `WebAppInstallInfo`.
+  kAppInfoObtained = 0,
+  // The web contents was destroyed before the command could complete.
+  kWebContentsDestroyed = 1,
+  // The given `install_url` failed to load.
+  kUrlLoadingFailure = 2,
+  // The site did not have a valid web app manifest.
+  kNoValidManifest = 3,
+  // The manifest ID of the fetched manifest did not match the expected ID.
+  kWrongManifestId = 4,
+  // A generic failure occurred.
+  kFailure = 5,
+  // The system was shut down.
+  kShutdown = 6,
+  kMaxValue = kShutdown
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/webapps/enums.xml:FetchInstallInfoResult)
 
 std::ostream& operator<<(std::ostream& os, FetchInstallInfoResult result);
 
+// Fetches the WebAppInstallInfo for a given install URL. This is used for
+// installing sub-apps, where the manifest ID and parent manifest ID are known,
+// and a full install process is not necessary.
 class FetchInstallInfoFromInstallUrlCommand
     : public WebAppCommand<SharedWebContentsLock,
+                           FetchInstallInfoResult,
                            std::unique_ptr<WebAppInstallInfo>> {
  public:
   FetchInstallInfoFromInstallUrlCommand(
@@ -74,8 +92,7 @@ class FetchInstallInfoFromInstallUrlCommand
       IconsDownloadedResult result,
       IconsMap icons_map,
       DownloadedIconsHttpResults icons_http_results);
-  void OnInstallInfoFetchedFromManifestApplyMerge(
-      std::unique_ptr<WebAppInstallInfo> info_from_page,
+  void OnInstallInfoFetched(
       std::unique_ptr<WebAppInstallInfo> info_from_manifest);
   void CompleteCommandAndSelfDestruct(
       FetchInstallInfoResult result,
@@ -90,8 +107,6 @@ class FetchInstallInfoFromInstallUrlCommand
   std::unique_ptr<webapps::WebAppUrlLoader> url_loader_;
   std::unique_ptr<WebAppDataRetriever> data_retriever_;
   std::unique_ptr<ManifestToWebAppInstallInfoJob> manifest_to_install_info_job_;
-
-  InstallErrorLogEntry install_error_log_entry_;
 
   base::WeakPtrFactory<FetchInstallInfoFromInstallUrlCommand> weak_ptr_factory_{
       this};

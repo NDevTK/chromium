@@ -73,6 +73,11 @@
 #include "remoting/host/chromeos/features.h"
 #endif
 
+#if BUILDFLAG(IS_LINUX)
+#include "remoting/host/linux/gnome_remote_desktop_session.h"
+#include "remoting/host/linux/portal_remote_desktop_session.h"
+#endif
+
 namespace remoting {
 
 using protocol::ErrorCode;
@@ -149,6 +154,7 @@ void It2MeHost::set_chrome_os_enterprise_params(
     ChromeOsEnterpriseParams params) {
 #if BUILDFLAG(IS_CHROMEOS) || !defined(NDEBUG)
   CHECK_NE(params.request_origin, ChromeOsEnterpriseRequestOrigin::kUnknown);
+  CHECK_NE(params.audio_playback, ChromeOsEnterpriseAudioPlayback::kUnknown);
   chrome_os_enterprise_params_ = std::move(params);
 #else
   NOTREACHED() << "It2MeHost::set_chrome_os_enterprise_params is only "
@@ -211,7 +217,8 @@ void It2MeHost::SendReconnectSessionMessage() const {
       reconnect_params_->support_id);
   SignalingAddress signaling_address(reconnect_params_->client_ftl_address);
 
-  signal_strategy_->SendMessage(signaling_address, crd_message);
+  signal_strategy_->SendMessage(signaling_address,
+                                SignalingMessage{crd_message});
 }
 
 void It2MeHost::Connect(
@@ -278,6 +285,12 @@ void It2MeHost::ConnectOnNetworkThread(
 
   SetState(It2MeHostState::kStarting, ErrorCode::OK);
 
+#if BUILDFLAG(IS_LINUX)
+  if (!GnomeRemoteDesktopSession::IsRunningUnderGnome()) {
+    PortalRemoteDesktopSession::GetInstance()->SetCreateVirtualMonitor(false);
+  }
+#endif
+
   auto connection_context = std::move(create_context).Run(host_context_.get());
   signal_strategy_ = std::move(connection_context->signal_strategy);
   api_token_getter_ = std::move(connection_context->api_token_getter);
@@ -313,8 +326,7 @@ void It2MeHost::ConnectOnNetworkThread(
     }
   }
 
-  if (connection_context->is_corp_user ||
-      connection_context->use_corp_session_authz) {
+  if (connection_context->is_corp_user) {
     use_corp_session_authz_ = true;
   }
 
@@ -398,6 +410,21 @@ void It2MeHost::ConnectOnNetworkThread(
         chrome_os_enterprise_params_->terminate_upon_input);
     options.set_maximum_session_duration(
         chrome_os_enterprise_params_->maximum_session_duration);
+    switch (chrome_os_enterprise_params_->audio_playback) {
+      case ChromeOsEnterpriseAudioPlayback::kLocalOnly:
+        options.set_audio_playback_mode(AudioPlaybackMode::kLocalOnly);
+        break;
+      case ChromeOsEnterpriseAudioPlayback::kRemoteOnly:
+        options.set_audio_playback_mode(AudioPlaybackMode::kRemoteOnly);
+        break;
+      case ChromeOsEnterpriseAudioPlayback::kRemoteAndLocal:
+        options.set_audio_playback_mode(AudioPlaybackMode::kRemoteAndLocal);
+        break;
+      default:
+        NOTREACHED() << "audio_playback_mode not supported: "
+                     << ConvertChromeOsEnterpriseAudioPlaybackToString(
+                            chrome_os_enterprise_params_->audio_playback);
+    }
   }
 #endif
 
@@ -866,7 +893,10 @@ void It2MeHost::ValidateConnectionDetails(
   }
 
   // Check the client domain policy.
-  if (!required_client_domain_list_.empty()) {
+  // Skip this check for class management sessions, as they use the device
+  // specific robot account as client, and we should not expect the customers to
+  // add this internal account to their client domain list.
+  if (!required_client_domain_list_.empty() && !is_class_management_session()) {
     bool matched = false;
     for (const auto& domain : required_client_domain_list_) {
       if (base::EndsWith(client_username, std::string("@") + domain,
@@ -882,6 +912,15 @@ void It2MeHost::ValidateConnectionDetails(
       DisconnectOnNetworkThread();
       return;
     }
+  }
+
+  if (is_class_management_session() && authorized_helper_.empty()) {
+    LOG(ERROR) << "Rejecting class management connection request from ("
+               << client_username << "as an authorized_helper was not provided";
+    std::move(result_callback)
+        .Run(ValidationResult::ERROR_UNAUTHORIZED_ACCOUNT);
+    DisconnectOnNetworkThread();
+    return;
   }
 
   if (!authorized_helper_.empty() &&

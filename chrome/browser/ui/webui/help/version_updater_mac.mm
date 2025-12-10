@@ -62,6 +62,10 @@ void UpdateStatus(VersionUpdater::StatusCallback status_callback,
       progress = GetDownloadProgress(update_state.downloaded_bytes,
                                      update_state.total_bytes);
       [[fallthrough]];
+    case updater::UpdateService::UpdateState::State::kDecompressing:
+      [[fallthrough]];
+    case updater::UpdateService::UpdateState::State::kPatching:
+      [[fallthrough]];
     case updater::UpdateService::UpdateState::State::kInstalling:
       status = VersionUpdater::Status::UPDATING;
       break;
@@ -119,6 +123,7 @@ class VersionUpdaterMac : public VersionUpdater {
   void CheckForUpdate(StatusCallback status_callback,
                       PromoteCallback promote_callback) override {
     EnsureUpdater(
+        base::TaskPriority::USER_VISIBLE,
         base::BindOnce(
             [](PromoteCallback prompt) {
               prompt.Run(PromotionState::PROMOTE_ENABLED);

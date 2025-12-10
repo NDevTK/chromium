@@ -53,14 +53,15 @@
 #include "chrome/browser/media/chromeos_login_and_lock_media_access_handler.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+#include "chrome/browser/media/webrtc/tab_capture_access_handler.h"
+#endif
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/controlled_frame/controlled_frame_media_access_handler.h"
 #include "chrome/browser/media/extension_media_access_handler.h"
 #include "chrome/browser/media/webrtc/desktop_capture_access_handler.h"
-#include "chrome/browser/media/webrtc/tab_capture_access_handler.h"
-#include "extensions/browser/extension_registry.h"  // nogncheck
 #include "extensions/common/extension.h"
-#include "extensions/common/permissions/permissions_data.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 using blink::MediaStreamDevices;
@@ -76,7 +77,7 @@ MediaCaptureDevicesDispatcher::MediaCaptureDevicesDispatcher()
       media_stream_capture_indicator_(new MediaStreamCaptureIndicator()) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-#if BUILDFLAG(IS_DESKTOP_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   if (base::FeatureList::IsEnabled(kAndroidMediaPicker)) {
     media_access_handlers_.push_back(
         std::make_unique<DisplayMediaAccessHandler>());
@@ -84,6 +85,10 @@ MediaCaptureDevicesDispatcher::MediaCaptureDevicesDispatcher()
 #elif !BUILDFLAG(IS_ANDROID)
   media_access_handlers_.push_back(
       std::make_unique<DisplayMediaAccessHandler>());
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  media_access_handlers_.push_back(std::make_unique<TabCaptureAccessHandler>());
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -95,7 +100,6 @@ MediaCaptureDevicesDispatcher::MediaCaptureDevicesDispatcher()
       std::make_unique<ExtensionMediaAccessHandler>());
   media_access_handlers_.push_back(
       std::make_unique<DesktopCaptureAccessHandler>());
-  media_access_handlers_.push_back(std::make_unique<TabCaptureAccessHandler>());
   media_access_handlers_.push_back(
       std::make_unique<controlled_frame::ControlledFrameMediaAccessHandler>());
 #endif
@@ -163,7 +167,7 @@ void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(
                           nullptr);
 }
 
-#if defined(TOOLKIT_VIEWS) && !BUILDFLAG(IS_FUCHSIA)
+#if defined(TOOLKIT_VIEWS)
 void MediaCaptureDevicesDispatcher::ProcessSelectAudioOutputRequest(
     Browser* browser,
     const content::SelectAudioOutputRequest& request,
@@ -299,11 +303,6 @@ void MediaCaptureDevicesDispatcher::OnMediaRequestStateChanged(
 
 void MediaCaptureDevicesDispatcher::OnCreatingAudioStream(int render_process_id,
                                                           int render_frame_id) {
-  // TODO(crbug.com/41385872): Figure out how to simplify threading here.
-  // Currently, this will either always be called on the UI thread, or always
-  // on the IO thread, depending on how far along the work to migrate to the
-  // audio service has progressed. The rest of the methods of the
-  // content::MediaObserver are always called on the IO thread.
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     OnCreatingAudioStreamOnUIThread(render_process_id, render_frame_id);
     return;

@@ -29,30 +29,14 @@ extern bool IsAboutThisSiteFeatureEnabled(const std::string& locale) {
   return base::FeatureList::IsEnabled(kPageInfoAboutThisSiteMoreLangs);
 }
 
-BASE_FEATURE(kPageInfoAboutThisSite,
-             "PageInfoAboutThisSite",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kPageInfoAboutThisSite, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kPageInfoAboutThisSiteMoreLangs,
-             "PageInfoAboutThisSiteMoreLangs",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 const base::FeatureParam<bool> kShowSampleContent{&kPageInfoAboutThisSite,
                                                   "ShowSampleContent", false};
 
-#if !BUILDFLAG(IS_ANDROID)
-BASE_FEATURE(kPageInfoHistoryDesktop,
-             "PageInfoHistoryDesktop",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kPageInfoHideSiteSettings,
-             "PageInfoHideSiteSettings",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-#endif  // !BUILDFLAG(IS_ANDROID)
-
-BASE_FEATURE(kMerchantTrust,
-             "MerchantTrust",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kMerchantTrust, base::FEATURE_ENABLED_BY_DEFAULT);
 
 const char kMerchantTrustEnabledWithSampleDataName[] =
     "enabled-with-sample-data";
@@ -92,7 +76,6 @@ extern bool IsMerchantTrustFeatureEnabled(const std::string& country_code,
 }
 
 BASE_FEATURE(kMerchantTrustEvaluationControlSurvey,
-             "MerchantTrustEvaluationControlSurvey",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 const base::FeatureParam<base::TimeDelta>
@@ -106,8 +89,7 @@ const base::FeatureParam<base::TimeDelta>
         base::Minutes(60)};
 
 BASE_FEATURE(kMerchantTrustEvaluationExperimentSurvey,
-             "MerchantTrustEvaluationExperimentSurvey",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 const base::FeatureParam<base::TimeDelta>
     kMerchantTrustEvaluationExperimentMinTimeToShowSurvey{
@@ -124,9 +106,7 @@ const base::FeatureParam<base::TimeDelta>
         &kMerchantTrustEvaluationExperimentSurvey,
         "RequiredInteractionDuration", base::Seconds(5)};
 
-BASE_FEATURE(kMerchantTrustLearnSurvey,
-             "MerchantTrustLearnSurvey",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kMerchantTrustLearnSurvey, base::FEATURE_ENABLED_BY_DEFAULT);
 
 const base::FeatureParam<std::string> kMerchantTrustLearnSurveyTriggerId{
     &kMerchantTrustLearnSurvey, "trigger_id", "EA14LFXPG0ugnJ3q1cK0Y6Gtj3De"};

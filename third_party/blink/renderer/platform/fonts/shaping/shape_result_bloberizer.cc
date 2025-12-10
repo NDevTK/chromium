@@ -13,22 +13,15 @@
 #include "cc/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/plain_text_node.h"
-#include "third_party/blink/renderer/platform/fonts/shaping/caching_word_shaper.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
-#include "third_party/blink/renderer/platform/fonts/text_run_paint_info.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
 #include "third_party/blink/renderer/platform/text/text_run.h"
 
 namespace blink {
 
 namespace {
-
-// A helper for FillGlyphsSlow().
-inline const ShapeResult* GetShapeResult(
-    const Member<const ShapeResult>& item) {
-  return item.Get();
-}
 
 // A helper for FillGlyphsSlow().
 inline const ShapeResult* GetShapeResult(const PlainTextItem& item) {
@@ -117,7 +110,7 @@ void ShapeResultBloberizer::CommitText() {
   unsigned size = to - from;
   Vector<uint32_t, 256> pending_utf8_character_index_from_character_index(size);
   if (current_text_.Is8Bit()) {
-    const LChar* latin1 = UNSAFE_TODO(current_text_.Characters8());
+    const LChar* latin1 = current_text_.Span8().data();
     wtf_size_t utf8_size = pending_utf8_.size();
     for (unsigned i = from; i < to;) {
       pending_utf8_character_index_from_character_index[i - from] = utf8_size;
@@ -127,7 +120,7 @@ void ShapeResultBloberizer::CommitText() {
       UNSAFE_TODO(U8_APPEND_UNSAFE(pending_utf8_.begin(), utf8_size, cp));
     }
   } else {
-    const UChar* utf16 = UNSAFE_TODO(current_text_.Characters16());
+    const UChar* utf16 = current_text_.Span16().data();
     wtf_size_t utf8_size = pending_utf8_.size();
     for (unsigned i = from; i < to;) {
       pending_utf8_character_index_from_character_index[i - from] = utf8_size;
@@ -245,7 +238,8 @@ inline void ShapeResultBloberizer::AddEmphasisMark(
     const GlyphData& emphasis_data,
     CanvasRotationInVertical canvas_rotation,
     gfx::PointF glyph_center,
-    float mid_glyph_offset) {
+    float mid_glyph_offset,
+    float letter_spacing) {
   const SimpleFontData* emphasis_font_data = emphasis_data.font_data;
   DCHECK(emphasis_font_data);
 
@@ -254,9 +248,15 @@ inline void ShapeResultBloberizer::AddEmphasisMark(
       IsCanvasRotationInVerticalUpright(emphasis_data.canvas_rotation);
 
   if (!is_vertical) {
-    Add(emphasis_data.glyph, emphasis_font_data,
-        CanvasRotationInVertical::kRegular, mid_glyph_offset - glyph_center.x(),
-        0);
+    if (RuntimeEnabledFeatures::TextEmphasisLetterSpacingEnabled()) {
+      Add(emphasis_data.glyph, emphasis_font_data,
+          CanvasRotationInVertical::kRegular,
+          mid_glyph_offset - glyph_center.x() - letter_spacing / 2, 0);
+    } else {
+      Add(emphasis_data.glyph, emphasis_font_data,
+          CanvasRotationInVertical::kRegular,
+          mid_glyph_offset - glyph_center.x(), 0);
+    }
   } else {
     Add(emphasis_data.glyph, emphasis_font_data, emphasis_data.canvas_rotation,
         gfx::Vector2dF(-glyph_center.x(), mid_glyph_offset - glyph_center.y()),
@@ -339,11 +339,13 @@ class ClusterCallbackContext {
   ClusterCallbackContext(ShapeResultBloberizer* bloberizer,
                          const StringView& text,
                          const GlyphData& emphasis_data,
-                         gfx::PointF glyph_center)
+                         gfx::PointF glyph_center,
+                         float letter_spacing)
       : bloberizer(bloberizer),
         text(text),
         emphasis_data(emphasis_data),
-        glyph_center(std::move(glyph_center)) {}
+        glyph_center(std::move(glyph_center)),
+        letter_spacing(letter_spacing) {}
   ClusterCallbackContext(const ClusterCallbackContext&) = delete;
   ClusterCallbackContext& operator=(const ClusterCallbackContext&) = delete;
 
@@ -351,6 +353,7 @@ class ClusterCallbackContext {
   const StringView& text;
   const GlyphData& emphasis_data;
   gfx::PointF glyph_center;
+  float letter_spacing;
 };
 }  // namespace
 
@@ -371,7 +374,8 @@ class ClusterCallbackContext {
   if (text.Is8Bit()) {
     if (Character::CanReceiveTextEmphasis(text[character_index])) {
       bloberizer->AddEmphasisMark(emphasis_data, canvas_rotation, glyph_center,
-                                  advance_so_far + cluster_advance / 2);
+                                  advance_so_far + cluster_advance / 2,
+                                  parsed_context->letter_spacing);
     }
   } else {
     float glyph_advance_x = cluster_advance / graphemes_in_cluster;
@@ -382,7 +386,8 @@ class ClusterCallbackContext {
               text.CodepointAt(character_index))) {
         bloberizer->AddEmphasisMark(emphasis_data, canvas_rotation,
                                     glyph_center,
-                                    advance_so_far + glyph_advance_x / 2);
+                                    advance_so_far + glyph_advance_x / 2,
+                                    parsed_context->letter_spacing);
       }
       advance_so_far += glyph_advance_x;
     }
@@ -436,30 +441,6 @@ class ClusterStarts {
   unsigned last_seen_character_index_ = 0;
 };
 }  // namespace
-
-ShapeResultBloberizer::FillGlyphs::FillGlyphs(
-    const FontDescription& font_description,
-    const TextRunPaintInfo& run_info,
-    const ShapeResultBuffer& result_buffer,
-    const Type type)
-    : ShapeResultBloberizer(font_description, type) {
-  if (CanUseFastPath(run_info.from, run_info.to, run_info.run.length(),
-                     result_buffer.HasVerticalOffsets())) {
-    DVLOG(4) << "FillGlyphs fast path";
-    DCHECK(!result_buffer.HasVerticalOffsets());
-    DCHECK_NE(type_, ShapeResultBloberizer::Type::kTextIntercepts);
-    DCHECK_NE(type_, ShapeResultBloberizer::Type::kEmitText);
-    advance_ =
-        FillFastHorizontalGlyphs(result_buffer, run_info.run.Direction());
-    return;
-  }
-
-  DVLOG(4) << "FillGlyphs slow path";
-
-  auto results = result_buffer.results_;
-  FillGlyphsSlow(run_info.run.ToStringView(), run_info.run.Direction(), results,
-                 run_info.from, run_info.to);
-}
 
 ShapeResultBloberizer::FillGlyphs::FillGlyphs(
     const FontDescription& font_description,
@@ -589,7 +570,8 @@ ShapeResultBloberizer::FillTextEmphasisGlyphsNG::FillTextEmphasisGlyphsNG(
     : ShapeResultBloberizer(font_description, Type::kNormal) {
   gfx::PointF glyph_center =
       emphasis.font_data->BoundsForGlyph(emphasis.glyph).CenterPoint();
-  ClusterCallbackContext context = {this, text, emphasis, glyph_center};
+  ClusterCallbackContext context = {this, text, emphasis, glyph_center,
+                                    font_description.LetterSpacing()};
   float initial_advance = 0;
   unsigned index_offset = 0;
   advance_ = result->ForEachGraphemeClusters(
@@ -614,24 +596,6 @@ bool ShapeResultBloberizer::CanUseFastPath(
          !shape_result->HasVerticalOffsets() &&
          type_ != ShapeResultBloberizer::Type::kTextIntercepts &&
          type_ != ShapeResultBloberizer::Type::kEmitText;
-}
-
-float ShapeResultBloberizer::FillFastHorizontalGlyphs(
-    const ShapeResultBuffer& result_buffer,
-    TextDirection text_direction) {
-  DCHECK(!result_buffer.HasVerticalOffsets());
-  DCHECK_NE(type_, ShapeResultBloberizer::Type::kTextIntercepts);
-
-  float advance = 0;
-  auto results = result_buffer.results_;
-
-  for (unsigned i = 0; i < results.size(); ++i) {
-    const auto& word_result =
-        IsLtr(text_direction) ? results[i] : results[results.size() - 1 - i];
-    advance = FillFastHorizontalGlyphs(word_result.Get(), advance);
-  }
-
-  return advance;
 }
 
 float ShapeResultBloberizer::FillFastHorizontalGlyphs(const ShapeResult* result,

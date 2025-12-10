@@ -180,7 +180,7 @@ const AtomicString& SVGScriptElement::GetNonceForElement() const {
 
 bool SVGScriptElement::AllowInlineScriptForCSP(
     const AtomicString& nonce,
-    const WTF::OrdinalNumber& context_line,
+    const OrdinalNumber& context_line,
     const String& script_content) {
   return GetExecutionContext()
       ->GetContentSecurityPolicyForCurrentWorld()
@@ -197,11 +197,12 @@ ExecutionContext* SVGScriptElement::GetExecutionContext() const {
 }
 
 Element& SVGScriptElement::CloneWithoutAttributesAndChildren(
-    Document& factory) const {
+    Document& factory,
+    CustomElementRegistry* registry) const {
   CreateElementFlags flags =
       CreateElementFlags::ByCloneNode().SetAlreadyStarted(
           loader_->AlreadyStarted());
-  return *factory.CreateElement(TagQName(), flags, IsValue());
+  return *factory.CreateElement(TagQName(), flags, IsValue(), registry);
 }
 
 void SVGScriptElement::DispatchLoadEvent() {
@@ -228,11 +229,9 @@ bool SVGScriptElement::IsAnimatableAttribute(const QualifiedName& name) const {
 
 const AttrNameToTrustedType& SVGScriptElement::GetCheckedAttributeTypes()
     const {
-  DEFINE_STATIC_LOCAL(
-      AttrNameToTrustedType, attribute_map,
-      ({
-          {svg_names::kHrefAttr.LocalName(), SpecificTrustedType::kScriptURL},
-      }));
+  DEFINE_STATIC_LOCAL(AttrNameToTrustedType, attribute_map,
+                      ({{"href", std::pair{SpecificTrustedType::kScriptURL,
+                                           "SVGScriptElement"}}}));
   return attribute_map;
 }
 

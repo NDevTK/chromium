@@ -10,9 +10,10 @@
 #include "base/task/cancelable_task_tracker.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/favicon_base/favicon_callback.h"
+#include "components/permissions/permission_util.h"
 #include "content/public/browser/web_contents_observer.h"
 
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 
 namespace content {
 class WebContents;
@@ -81,22 +82,20 @@ class PermissionDialogDelegate : public content::WebContentsObserver {
   PermissionDialogDelegate& operator=(const PermissionDialogDelegate&) = delete;
 
   // JNI methods.
-  void Accept(JNIEnv* env, const JavaParamRef<jobject>& obj);
-  void AcceptThisTime(JNIEnv* env, const JavaParamRef<jobject>& obj);
-  void Acknowledge(JNIEnv* env, const JavaParamRef<jobject>& obj);
-  void Deny(JNIEnv* env, const JavaParamRef<jobject>& obj);
+  void Accept(JNIEnv* env);
+  void AcceptThisTime(JNIEnv* env);
+  void Acknowledge(JNIEnv* env);
+  void Deny(JNIEnv* env);
   void Dismissed(JNIEnv* env,
-                 const JavaParamRef<jobject>& obj,
                  int dismissalType);
-  void Resumed(JNIEnv* env, const JavaParamRef<jobject>& obj);
-  void SystemSettingsShown(JNIEnv* env, const JavaParamRef<jobject>& obj);
+  void Resumed(JNIEnv* env);
+  void SystemSettingsShown(JNIEnv* env);
   void SystemPermissionResolved(JNIEnv* env,
-                                const JavaParamRef<jobject>& obj,
                                 bool accepted);
 
   // Reset the java JNI object object. Called from Java once the permission
   // dialog has been responded to.
-  void Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
   bool IsJavaDelegateDestroyed() const { return !java_delegate_; }
 
   // Notify Java side to update content view of the dialog associated with this
@@ -107,6 +106,10 @@ class PermissionDialogDelegate : public content::WebContentsObserver {
   // end if a permission flow and Java side can perform next task, such as
   // update permission icon or showing next dialog.
   void NotifyPermissionAllowed();
+
+  void OnGeolocationAccuracySelected(JNIEnv* env, jint accuracy);
+
+  jint GetInitialGeolocationAccuracySelection(JNIEnv* env) const;
 
  private:
   // On navigation or page destruction, hide the dialog.

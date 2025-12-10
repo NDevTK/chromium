@@ -35,7 +35,6 @@
 
 using base::android::ConvertUTF16ToJavaString;
 using base::android::ConvertUTF8ToJavaString;
-using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -128,9 +127,9 @@ void AutofillKeyboardAccessoryViewImpl::Show() {
         std::get_if<Suggestion::CustomIconUrl>(&suggestion.custom_icon);
     java_suggestions.push_back(
         Java_AutofillKeyboardAccessoryViewBridge_createAutofillSuggestion(
-            env, label, sublabel, android_icon_id,
-            base::to_underlying(suggestion.type),
-            controller_->GetRemovalConfirmationText(i, nullptr, nullptr),
+            env, label, sublabel, suggestion.voice_over.value_or(u""),
+            android_icon_id, base::to_underlying(suggestion.type),
+            controller_->GetRemovalConfirmationText(i, nullptr),
             suggestion.iph_metadata.feature
                 ? suggestion.iph_metadata.feature->name
                 : "",
@@ -140,37 +139,36 @@ void AutofillKeyboardAccessoryViewImpl::Show() {
                 : url::GURLAndroid::EmptyGURL(env),
             suggestion.HasDeactivatedStyle(), payload));
   }
-  Java_AutofillKeyboardAccessoryViewBridge_show(env, java_object_,
-                                                std::move(java_suggestions));
-}
-
-void AutofillKeyboardAccessoryViewImpl::AxAnnounce(const std::u16string& text) {
-  AnnounceTextForA11y(text);
+  gfx::RectF bounds = controller_->element_bounds();
+  Java_AutofillKeyboardAccessoryViewBridge_show(
+      env, java_object_, std::move(java_suggestions),
+      Java_AutofillKeyboardAccessoryViewBridge_createFieldBounds(
+          env, bounds.x(), bounds.y(), bounds.right(), bounds.bottom()));
 }
 
 void AutofillKeyboardAccessoryViewImpl::ConfirmDeletion(
     const std::u16string& confirmation_title,
     const std::u16string& confirmation_body,
+    const std::u16string& confirmation_body_link,
+    const std::u16string& confirmation_button_text,
     base::OnceCallback<void(bool)> deletion_callback) {
   JNIEnv* env = base::android::AttachCurrentThread();
   deletion_callback_ = std::move(deletion_callback);
   Java_AutofillKeyboardAccessoryViewBridge_confirmDeletion(
-      env, java_object_, confirmation_title, confirmation_body);
+      env, java_object_, confirmation_title, confirmation_body,
+      confirmation_body_link, confirmation_button_text);
 }
 
-void AutofillKeyboardAccessoryViewImpl::SuggestionSelected(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jint list_index) {
+void AutofillKeyboardAccessoryViewImpl::SuggestionSelected(JNIEnv* env,
+                                                           jint list_index) {
   if (controller_) {
-    controller_->AcceptSuggestion(list_index);
+    controller_->AcceptSuggestion(
+        list_index, autofill::AutofillMetrics::SuggestionAcceptedMethod::kTap);
   }
 }
 
-void AutofillKeyboardAccessoryViewImpl::DeletionRequested(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jint list_index) {
+void AutofillKeyboardAccessoryViewImpl::DeletionRequested(JNIEnv* env,
+                                                          jint list_index) {
   if (controller_) {
     controller_->RemoveSuggestion(
         list_index,
@@ -180,7 +178,6 @@ void AutofillKeyboardAccessoryViewImpl::DeletionRequested(
 
 void AutofillKeyboardAccessoryViewImpl::OnDeletionDialogClosed(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jboolean confirmed) {
   if (deletion_callback_.is_null()) {
     LOG(DFATAL) << "OnDeletionDialogClosed called but no deletion is pending!";
@@ -189,9 +186,7 @@ void AutofillKeyboardAccessoryViewImpl::OnDeletionDialogClosed(
   std::move(deletion_callback_).Run(confirmed);
 }
 
-void AutofillKeyboardAccessoryViewImpl::ViewDismissed(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+void AutofillKeyboardAccessoryViewImpl::ViewDismissed(JNIEnv* env) {
   if (controller_) {
     controller_->ViewDestroyed();
   }
@@ -206,3 +201,5 @@ AutofillKeyboardAccessoryView::Create(
 }
 
 }  // namespace autofill
+
+DEFINE_JNI(AutofillKeyboardAccessoryViewBridge)

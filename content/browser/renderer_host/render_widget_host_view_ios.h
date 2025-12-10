@@ -27,6 +27,7 @@ namespace content {
 
 class RenderWidgetHost;
 class UIViewHolder;
+struct CopyOutputBitmapWithMetadata;
 
 ///////////////////////////////////////////////////////////////////////////////
 // RenderWidgetHostViewIOS
@@ -124,7 +125,9 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& dst_size,
-      base::OnceCallback<void(const SkBitmap&)> callback) override;
+      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+          callback) override;
+  ui::FilteredGestureProvider* GetFilteredGestureProviderForTesting() override;
   ui::Compositor* GetCompositor() override;
   void GestureEventAck(const blink::WebGestureEvent& event,
                        blink::mojom::InputEventResultSource ack_source,
@@ -132,6 +135,7 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   void ChildDidAckGestureEvent(
       const blink::WebGestureEvent& event,
       blink::mojom::InputEventResultState ack_result) override;
+  void OnUnconfirmedTapConvertedToTap() override;
   void OnSynchronizedDisplayPropertiesChanged(bool rotation) override;
   gfx::Size GetCompositorViewportPixelSize() override;
 
@@ -178,6 +182,8 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   // RenderFrameMetadataProvider::Observer implementation.
   void OnRenderFrameMetadataChangedBeforeActivation(
       const cc::RenderFrameMetadata& metadata) override;
+  void OnRootScrollOffsetChanged(
+      const gfx::PointF& root_scroll_offset) override;
   void OnRenderFrameMetadataChangedAfterActivation(
       base::TimeTicks activation_time) override {}
   void OnRenderFrameSubmission() override {}
@@ -211,7 +217,11 @@ class CONTENT_EXPORT RenderWidgetHostViewIOS
   bool CanBecomeFirstResponderForTesting() const;
   bool CanResignFirstResponderForTesting() const;
   void ContentInsetChanged();
-  void DeleteSurroundingText(int before, int after);
+  void ExtendSelectionAndDelete(int32_t before, int32_t after);
+  void ExtendSelectionAndReplace(uint32_t before,
+                                 uint32_t after,
+                                 const std::u16string& replacement_text);
+  void ExecuteEditCommand(const std::string& command);
   void SendKeyEvent(const input::NativeWebKeyboardEvent& event);
 
   void StartAutoscrollForSelectionToPoint(const gfx::PointF& point);

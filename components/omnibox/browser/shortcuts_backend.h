@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
@@ -34,8 +35,7 @@ struct TestShortcutData;
 
 void PopulateShortcutsBackendWithTestData(
     scoped_refptr<ShortcutsBackend> backend,
-    TestShortcutData* db,
-    size_t db_size);
+    base::span<TestShortcutData> db);
 
 class ShortcutsDatabase;
 
@@ -117,8 +117,7 @@ class ShortcutsBackend : public RefcountedKeyedService,
   friend class FakeShortcutsBackend;
   friend void PopulateShortcutsBackendWithTestData(
       scoped_refptr<ShortcutsBackend> backend,
-      TestShortcutData* db,
-      size_t db_size);
+      base::span<TestShortcutData> db);
 
   enum CurrentState {
     NOT_INITIALIZED,  // Backend created but not initialized.

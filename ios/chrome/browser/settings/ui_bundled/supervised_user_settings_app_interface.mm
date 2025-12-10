@@ -29,6 +29,7 @@
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/components/security_interstitials/ios_blocking_page_tab_helper.h"
 #import "ios/components/security_interstitials/ios_security_interstitial_page.h"
+#import "ios/web/common/features.h"
 #import "ios/web/public/web_state.h"
 #import "net/base/apple/url_conversions.h"
 
@@ -49,17 +50,29 @@ class StaticUrlCheckerClient : public safe_search_api::URLCheckerClient {
 
 void setUrlFilteringForUrl(const GURL& url, bool isAllowed) {
   supervised_user::SupervisedUserTestEnvironment::SetManualFilterForHost(
-      url.host(), isAllowed,
+      url.GetHost(), isAllowed,
       *SupervisedUserSettingsServiceFactory::GetForProfile(
           chrome_test_util::GetOriginalProfile()));
 }
 
 bool isShowingInterstitialForState(web::WebState* web_state) {
   CHECK(web_state);
+  if (web::features::CreateTabHelperOnlyForRealizedWebStates()) {
+    // If kCreateTabHelperOnlyForRealizedWebStates feature is enabled, then
+    // the tab helpers are not created for unrealized WebStates. If the tab
+    // helpers are not created, they cannot be presenting an interstitial,
+    // so return early in that case.
+    if (!web_state->IsRealized()) {
+      return false;
+    }
+  }
+
   auto* blocking_tab_helper =
       security_interstitials::IOSBlockingPageTabHelper::FromWebState(web_state);
 
+  // The tab helper must have been created for the WebState at this point.
   CHECK(blocking_tab_helper);
+
   security_interstitials::IOSSecurityInterstitialPage* blocking_page =
       blocking_tab_helper->GetCurrentBlockingPage();
   return blocking_page && blocking_page->GetInterstitialType() ==
@@ -126,7 +139,8 @@ bool isShowingInterstitialForState(web::WebState* web_state) {
   supervised_user::SupervisedUserSettingsService* settings_service =
       SupervisedUserSettingsServiceFactory::GetForProfile(
           chrome_test_util::GetOriginalProfile());
-  settings_service->RecordLocalWebsiteApproval(net::GURLWithNSURL(url).host());
+  settings_service->RecordLocalWebsiteApproval(
+      net::GURLWithNSURL(url).GetHost());
 }
 
 + (void)setFilteringToAllowAllSites {

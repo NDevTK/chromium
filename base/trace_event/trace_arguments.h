@@ -19,6 +19,7 @@
 #include <utility>
 
 #include "base/base_export.h"
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/tracing_buildflags.h"
@@ -30,7 +31,7 @@
 // identified by a name (a C string literal) and a value, which can be an
 // integer, enum, floating point, boolean, string pointer or reference, or
 // std::unique_ptr<ConvertableToTraceFormat> compatible values. Additionally,
-// custom data types need to be supported, like time values or WTF::CString.
+// custom data types need to be supported, like time values.
 //
 // TraceArguments is a helper class used to store 0 to 2 named arguments
 // corresponding to an individual trace macro call. As efficiently as possible,
@@ -129,7 +130,7 @@
 // Finally, it is possible to support initialization from custom values by
 // specializing the TraceValue::Helper<> template struct as described below.
 //
-// This is how values of custom types like WTF::CString can be passed directly
+// This is how values of custom types like base::Time can be passed directly
 // to trace macros.
 
 namespace base {
@@ -610,31 +611,6 @@ class BASE_EXPORT TraceArguments {
                  const unsigned char* arg_types,
                  const unsigned long long* arg_values);
 
-  // Constructor used to convert legacy set of arguments, where the
-  // convertable values are also provided by an array of CONVERTABLE_TYPE.
-  template <typename CONVERTABLE_TYPE>
-  TraceArguments(int num_args,
-                 const char* const* arg_names,
-                 const unsigned char* arg_types,
-                 const unsigned long long* arg_values,
-                 CONVERTABLE_TYPE* arg_convertables) {
-    static int max_args = static_cast<int>(kMaxSize);
-    if (num_args > max_args) {
-      num_args = max_args;
-    }
-    size_ = static_cast<unsigned char>(num_args);
-    for (size_t n = 0; n < size_; ++n) {
-      types_[n] = arg_types[n];
-      names_[n] = arg_names[n];
-      if (arg_types[n] == TRACE_VALUE_TYPE_CONVERTABLE) {
-        values_[n].Init(
-            std::forward<CONVERTABLE_TYPE>(std::move(arg_convertables[n])));
-      } else {
-        values_[n].as_uint = arg_values[n];
-      }
-    }
-  }
-
   // Destructor. NOTE: Intentionally inlined (see note above).
   ~TraceArguments() {
     for (size_t n = 0; n < size_; ++n) {
@@ -673,13 +649,12 @@ class BASE_EXPORT TraceArguments {
   // Use |storage| to copy all copyable strings.
   // If |copy_all_strings| is false, then only the TRACE_VALUE_TYPE_COPY_STRING
   // values will be copied into storage. If it is true, then argument names are
-  // also copied to storage, as well as the strings pointed to by
-  // |*extra_string1| and |*extra_string2|.
+  // also copied to storage, as well as the string pointed to by
+  // |*extra_string|.
   // NOTE: If there are no strings to copy, |*storage| is left untouched.
   void CopyStringsTo(StringStorage* storage,
                      bool copy_all_strings,
-                     const char** extra_string1,
-                     const char** extra_string2);
+                     const char** extra_string);
 
   // Append debug string representation to |*out|.
   void AppendDebugString(std::string* out);

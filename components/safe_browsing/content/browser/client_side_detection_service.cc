@@ -8,11 +8,11 @@
 #include <memory>
 
 #include "base/callback_list.h"
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/queue.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
@@ -26,12 +26,10 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
-#include "components/optimization_guide/core/optimization_guide_util.h"
-#include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/browser/client_side_phishing_model.h"
-#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/content/browser/web_ui/web_ui_content_info_singleton.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
 #include "components/safe_browsing/core/common/fbs/client_model_generated.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -60,6 +58,11 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+#include "tensorflow_lite_support/cc/port/statusor.h"
+#include "third_party/tflite_support/src/tensorflow_lite_support/cc/task/vision/image_embedder.h"
+#endif
+
 using content::BrowserThread;
 
 namespace safe_browsing {
@@ -77,37 +80,6 @@ struct ClientSideDetectionService::ClientPhishingReportInfo {
   ClientReportPhishingRequestCallback callback;
   GURL phishing_url;
 };
-
-void LogOnDeviceModelSessionCreationSuccess(bool success) {
-  base::UmaHistogramBoolean(
-      "SBClientPhishing.OnDeviceModelSessionCreationSuccess", success);
-}
-
-void LogOnDeviceModelExecutionSuccessAndTime(
-    bool success,
-    base::TimeTicks session_execution_start_time) {
-  base::UmaHistogramBoolean("SBClientPhishing.OnDeviceModelExecutionSuccess",
-                            success);
-  base::UmaHistogramMediumTimes(
-      "SBClientPhishing.OnDeviceModelExecutionDuration",
-      base::TimeTicks::Now() - session_execution_start_time);
-}
-
-void LogOnDeviceModelExecutionParse(bool success) {
-  base::UmaHistogramBoolean(
-      "SBClientPhishing.OnDeviceModelResponseParseSuccess", success);
-}
-
-void LogOnDeviceModelSessionAliveOnNewRequest(bool is_alive) {
-  base::UmaHistogramBoolean(
-      "SBClientPhishing.OnDeviceModelSessionAliveOnNewRequest", is_alive);
-}
-
-void LogOnDeviceModelCallbackStateOnSuccessfulResponse(bool is_alive) {
-  base::UmaHistogramBoolean(
-      "SBClientPhishing.OnDeviceModelSuccessfulResponseCallbackAlive",
-      is_alive);
-}
 
 ClientSideDetectionService::CacheState::CacheState(bool phish, base::Time time)
     : is_phishing(phish), timestamp(time) {}
@@ -156,15 +128,9 @@ ClientSideDetectionService::~ClientSideDetectionService() {
 
 void ClientSideDetectionService::Shutdown() {
   url_loader_factory_.reset();
-  // TODO(crbug.com/424104358): Call intelligent scan delegate instead.
-  delegate_->StopListeningToOnDeviceModelUpdate();
   delegate_.reset();
   enabled_ = false;
   client_side_phishing_model_.reset();
-  on_device_model_available_ = false;
-  if (session_) {
-    session_.reset();
-  }
 }
 
 void ClientSideDetectionService::OnPrefsUpdated() {
@@ -185,13 +151,6 @@ void ClientSideDetectionService::OnPrefsUpdated() {
                             weak_factory_.GetWeakPtr()));
     if (IsEnhancedProtectionEnabled(*delegate_->GetPrefs())) {
       client_side_phishing_model_->SubscribeToImageEmbedderOptimizationGuide();
-      if (base::FeatureList::IsEnabled(
-              kClientSideDetectionBrandAndIntentForScamDetection) ||
-          base::FeatureList::IsEnabled(
-              kClientSideDetectionLlamaForcedTriggerInfoForScamDetection)) {
-        // TODO(crbug.com/424104358): Call intelligent scan delegate instead.
-        delegate_->StartListeningToOnDeviceModelUpdate();
-      }
     } else {
       UnsubscribeToModelSubscription();
     }
@@ -218,27 +177,11 @@ void ClientSideDetectionService::OnPrefsUpdated() {
 }
 
 void ClientSideDetectionService::UnsubscribeToModelSubscription() {
-  // TODO(crbug.com/424104358): Call intelligent scan delegate instead.
-  delegate_->StopListeningToOnDeviceModelUpdate();
-  on_device_model_available_ = false;
   // We will check for the model object below because we also call this function
   // when the model object is not available.
   if (client_side_phishing_model_) {
     client_side_phishing_model_->UnsubscribeToImageEmbedderOptimizationGuide();
   }
-}
-
-void ClientSideDetectionService::NotifyOnDeviceModelAvailable() {
-  on_device_model_available_ = true;
-}
-
-bool ClientSideDetectionService::IsOnDeviceModelAvailable(
-    bool log_failed_eligibility_reason) {
-  if (log_failed_eligibility_reason && !on_device_model_available_ &&
-      delegate_) {
-    delegate_->LogOnDeviceModelEligibilityReason();
-  }
-  return on_device_model_available_;
 }
 
 void ClientSideDetectionService::SendClientReportPhishingRequest(
@@ -267,14 +210,10 @@ bool ClientSideDetectionService::IsLocalResource(
 void ClientSideDetectionService::OnURLLoaderComplete(
     network::SimpleURLLoader* url_loader,
     base::Time start_time,
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   base::UmaHistogramTimes("SBClientPhishing.NetworkRequestDuration",
                           base::Time::Now() - start_time);
 
-  std::string data;
-  if (response_body) {
-    data = std::move(*response_body.get());
-  }
   std::optional<net::HttpStatusCode> response_code = std::nullopt;
   if (url_loader->ResponseInfo() && url_loader->ResponseInfo()->headers) {
     response_code = static_cast<net::HttpStatusCode>(
@@ -286,7 +225,8 @@ void ClientSideDetectionService::OnURLLoaderComplete(
 
   DCHECK(base::Contains(client_phishing_reports_, url_loader));
   HandlePhishingVerdict(url_loader, url_loader->GetFinalURL(),
-                        url_loader->NetError(), response_code, data);
+                        url_loader->NetError(), response_code,
+                        std::move(response_body).value_or(""));
 }
 
 void ClientSideDetectionService::SendModelToRenderers() {
@@ -421,9 +361,10 @@ void ClientSideDetectionService::StartClientReportPhishingRequest(
   // dropped and the |request| object deleted.
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE,
-      base::BindOnce(&WebUIInfoSingleton::AddToClientPhishingRequestsSent,
-                     base::Unretained(WebUIInfoSingleton::GetInstance()),
-                     std::move(request), access_token));
+      base::BindOnce(
+          &WebUIContentInfoSingleton::AddToClientPhishingRequestsSent,
+          base::Unretained(WebUIContentInfoSingleton::GetInstance()),
+          std::move(request), access_token));
 }
 
 void ClientSideDetectionService::HandlePhishingVerdict(
@@ -452,9 +393,10 @@ void ClientSideDetectionService::HandlePhishingVerdict(
 
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE,
-      base::BindOnce(&WebUIInfoSingleton::AddToClientPhishingResponsesReceived,
-                     base::Unretained(WebUIInfoSingleton::GetInstance()),
-                     std::make_unique<ClientPhishingResponse>(response)));
+      base::BindOnce(
+          &WebUIContentInfoSingleton::AddToClientPhishingResponsesReceived,
+          base::Unretained(WebUIContentInfoSingleton::GetInstance()),
+          std::make_unique<ClientPhishingResponse>(response)));
 
   if (!info->callback.is_null()) {
     if (response_code.has_value() && response_code.value() == 0) {
@@ -728,10 +670,25 @@ void ClientSideDetectionService::SetPhishingModel(
   }
 }
 
-const base::flat_map<std::string, TfLiteModelMetadata::Threshold>&
+const std::vector<TfLiteModelMetadata::Threshold>&
 ClientSideDetectionService::GetVisualTfLiteModelThresholds() {
   return client_side_phishing_model_->GetVisualTfLiteModelThresholds();
 }
+
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+const std::vector<TargetEmbedding>&
+ClientSideDetectionService::GetTargetImageEmbeddings() {
+  return client_side_phishing_model_->GetTargetImageEmbeddings();
+}
+
+void ClientSideDetectionService::SetTargetImageEmbeddingsForTesting(
+    std::vector<TargetEmbedding> target_embeddings) {
+  if (client_side_phishing_model_) {
+    client_side_phishing_model_->SetTargetImageEmbeddingsForTesting(  // IN-TEST
+        std::move(target_embeddings));
+  }
+}
+#endif
 
 void ClientSideDetectionService::ClassifyPhishingThroughThresholds(
     ClientPhishingRequest* verdict) {
@@ -742,11 +699,11 @@ void ClientSideDetectionService::ClassifyPhishingThroughThresholds(
     return;
   }
 
-  const base::flat_map<std::string, TfLiteModelMetadata::Threshold>&
-      label_to_thresholds_map = GetVisualTfLiteModelThresholds();
+  const std::vector<TfLiteModelMetadata::Threshold>& thresholds =
+      GetVisualTfLiteModelThresholds();
 
-  if (static_cast<int>(verdict->tflite_model_scores().size()) >
-      static_cast<int>(label_to_thresholds_map.size())) {
+  if (static_cast<int>(verdict->tflite_model_scores().size()) !=
+      static_cast<int>(thresholds.size())) {
     // Model is misconfigured, so bail out.
     base::UmaHistogramEnumeration(
         "SBClientPhishing.ClassifyThresholdsResult",
@@ -755,47 +712,64 @@ void ClientSideDetectionService::ClassifyPhishingThroughThresholds(
                "size is "
             << static_cast<int>(verdict->tflite_model_scores().size())
             << " and model thresholds size is "
-            << static_cast<int>(label_to_thresholds_map.size());
+            << static_cast<int>(thresholds.size());
     verdict->set_is_phishing(false);
     verdict->set_is_tflite_match(false);
     return;
   }
 
   for (int i = 0; i < verdict->tflite_model_scores().size(); i++) {
-    // Users can have older models that do not have the esb thresholds in their
-    // fields, so ESB subscribed users will use the standard thresholds instead
-    auto result = label_to_thresholds_map.find(
-        verdict->tflite_model_scores().at(i).label());
-
-    if (result == label_to_thresholds_map.end()) {
-      // Model is misconfigured, so bail out.
-      base::UmaHistogramEnumeration(
-          "SBClientPhishing.ClassifyThresholdsResult",
-          SBClientDetectionClassifyThresholdsResult::kModelLabelNotFound);
-      VLOG(0) << "Model is misconfigured. Unable to match label string to "
-                 "threshold map";
-      verdict->set_is_phishing(false);
-      verdict->set_is_tflite_match(false);
-      return;
-    }
-
-    const TfLiteModelMetadata::Threshold& thresholds = result->second;
+    const TfLiteModelMetadata::Threshold& threshold = thresholds.at(i);
 
     if (delegate_ && delegate_->GetPrefs() &&
         IsEnhancedProtectionEnabled(*delegate_->GetPrefs())) {
       if (verdict->tflite_model_scores().at(i).value() >=
-          thresholds.esb_threshold()) {
+          threshold.esb_threshold()) {
         verdict->set_is_phishing(true);
         verdict->set_is_tflite_match(true);
       }
     } else {
       if (verdict->tflite_model_scores().at(i).value() >=
-          thresholds.threshold()) {
+          threshold.threshold()) {
         verdict->set_is_phishing(true);
         verdict->set_is_tflite_match(true);
       }
     }
   }
+
+#if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+  auto target_image_embeddings =
+      client_side_phishing_model_->GetTargetImageEmbeddings();
+  if (!target_image_embeddings.empty() && !verdict->is_phishing() &&
+      verdict->has_image_feature_embedding()) {
+    // Create a FeatureVector from the ImageFeatureEmbedding.
+    tflite::task::vision::FeatureVector feature_vector;
+    for (float image_embedding_value :
+         verdict->image_feature_embedding().embedding_value()) {
+      feature_vector.add_value_float(image_embedding_value);
+    }
+    // Compare newly made FeatureVector to target image embeddings.
+    for (const TargetEmbedding& target_image_embedding :
+         target_image_embeddings) {
+      tflite::support::StatusOr<double> similarity =
+          tflite::task::vision::ImageEmbedder::CosineSimilarity(
+              target_image_embedding.embedding, feature_vector);
+      if (similarity.ok() &&
+          similarity.value() >= target_image_embedding.threshold) {
+        verdict->set_is_phishing(true);
+        ClientPhishingRequest::EmbeddingMatchMetadata embedding_match_metadata;
+        const auto& value_floats = feature_vector.value_float();
+        embedding_match_metadata.set_id(
+            ClientSidePhishingModel::GetHashFromEmbedding(
+                std::vector<float>(value_floats.begin(), value_floats.end())));
+        embedding_match_metadata.set_score(similarity.value());
+        *verdict->mutable_target_image_embedding_score() =
+            embedding_match_metadata;
+        break;
+      }
+    }
+  }
+#endif
 
   base::UmaHistogramEnumeration(
       "SBClientPhishing.ClassifyThresholdsResult",
@@ -837,124 +811,12 @@ ClientSideDetectionService::RegisterCallbackForModelUpdates(
   return client_side_phishing_model_->RegisterCallback(callback);
 }
 
-void ClientSideDetectionService::ResetOnDeviceSession(bool inquiry_complete) {
-  // Because of the use of DeleteSoon below, we can't guarantee that session_
-  // is still available when the callback is invoked.
-  if (session_) {
-    // Reset session immediately so that future inference is not affected by the
-    // old context.
-    // TODO(crbug.com/380928557): Call session_.reset() directly once
-    // crbug.com/384774788 is fixed.
-    content::GetUIThreadTaskRunner({})->DeleteSoon(FROM_HERE,
-                                                   std::move(session_));
-    if (!inquiry_complete) {
-      LogOnDeviceModelSessionAliveOnNewRequest(true);
-    }
-  }
-}
-
-void ClientSideDetectionService::InquireOnDeviceModel(
-    std::string rendered_texts,
-    base::OnceCallback<
-        void(std::optional<optimization_guide::proto::ScamDetectionResponse>)>
-        callback) {
-  // We have checked the model availability prior to calling this function, but
-  // we want to check one last time before creating a session.
-  if (!IsOnDeviceModelAvailable(/*log_failed_eligibility_reason=*/false)) {
-    std::move(callback).Run(std::nullopt);
-    return;
-  }
-
-  // Close off the previous session if session's model execution from a previous
-  // call into InquireOnDeviceModel is still happening.
-  if (session_) {
-    LogOnDeviceModelSessionAliveOnNewRequest(true);
-    session_.reset();
-  } else {
-    LogOnDeviceModelSessionAliveOnNewRequest(false);
-  }
-
-  base::TimeTicks session_creation_start_time = base::TimeTicks::Now();
-
-  session_ = delegate_->GetModelExecutorSession();
-
-  if (!session_) {
-    LogOnDeviceModelSessionCreationSuccess(false);
-    std::move(callback).Run(std::nullopt);
-    return;
-  }
-
-  base::UmaHistogramMediumTimes(
-      "SBClientPhishing.OnDeviceModelSessionCreationTime",
-      base::TimeTicks::Now() - session_creation_start_time);
-  LogOnDeviceModelSessionCreationSuccess(true);
-
-  ScamDetectionRequest request;
-  request.set_rendered_text(rendered_texts);
-
-  inquire_on_device_model_callback_ = std::move(callback);
-  session_execution_start_time_ = base::TimeTicks::Now();
-  session_->ExecuteModel(
-      *std::make_unique<ScamDetectionRequest>(request),
-      base::BindRepeating(&ClientSideDetectionService::ModelExecutionCallback,
-                          weak_factory_.GetWeakPtr()));
-}
-
-void ClientSideDetectionService::ModelExecutionCallback(
-    optimization_guide::OptimizationGuideModelStreamingExecutionResult result) {
-  if (!result.response.has_value()) {
-    LogOnDeviceModelExecutionSuccessAndTime(/*success=*/false,
-                                            session_execution_start_time_);
-    if (inquire_on_device_model_callback_) {
-      std::move(inquire_on_device_model_callback_).Run(std::nullopt);
-    }
-    return;
-  }
-
-  // This is a non-error response, but it's not completed, yet so we wait till
-  // it's complete. We will not respond to the callback yet because of this.
-  if (!result.response->is_complete) {
-    return;
-  }
-
-  LogOnDeviceModelExecutionSuccessAndTime(/*success=*/true,
-                                          session_execution_start_time_);
-
-  auto scam_detection_response = optimization_guide::ParsedAnyMetadata<
-      optimization_guide::proto::ScamDetectionResponse>(
-      result.response->response);
-
-  if (!scam_detection_response) {
-    LogOnDeviceModelExecutionParse(false);
-    if (inquire_on_device_model_callback_) {
-      std::move(inquire_on_device_model_callback_).Run(std::nullopt);
-    }
-    return;
-  }
-
-  LogOnDeviceModelExecutionParse(true);
-
-  ResetOnDeviceSession(/*inquiry_complete=*/true);
-
-  LogOnDeviceModelCallbackStateOnSuccessfulResponse(
-      !!inquire_on_device_model_callback_);
-  if (inquire_on_device_model_callback_) {
-    std::move(inquire_on_device_model_callback_).Run(scam_detection_response);
-  }
-}
-
 // IN-TEST
 void ClientSideDetectionService::SetModelAndVisualTfLiteForTesting(
     const base::FilePath& model,
     const base::FilePath& visual_tf_lite) {
   client_side_phishing_model_->SetModelAndVisualTfLiteForTesting(  // IN-TEST
       model, visual_tf_lite);
-}
-
-// IN-TEST
-void ClientSideDetectionService::SetOnDeviceAvailabilityForTesting(
-    bool available) {
-  on_device_model_available_ = available;
 }
 
 }  // namespace safe_browsing

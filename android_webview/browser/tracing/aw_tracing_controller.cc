@@ -17,7 +17,7 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "android_webview/browser_jni_headers/AwTracingController_jni.h"
 
-using base::android::JavaParamRef;
+using base::android::JavaRef;
 
 namespace {
 
@@ -64,7 +64,7 @@ class AwTraceDataEndpoint
 namespace android_webview {
 
 static jlong JNI_AwTracingController_Init(JNIEnv* env,
-                                          const JavaParamRef<jobject>& obj) {
+                                          const JavaRef<jobject>& obj) {
   AwTracingController* controller = new AwTracingController(env, obj);
   return reinterpret_cast<intptr_t>(controller);
 }
@@ -76,7 +76,6 @@ AwTracingController::AwTracingController(JNIEnv* env,
 AwTracingController::~AwTracingController() {}
 
 bool AwTracingController::Start(JNIEnv* env,
-                                const JavaParamRef<jobject>& obj,
                                 std::string& categories,
                                 jint jmode) {
   base::trace_event::TraceConfig trace_config(
@@ -85,8 +84,7 @@ bool AwTracingController::Start(JNIEnv* env,
       trace_config, content::TracingController::StartTracingDoneCallback());
 }
 
-bool AwTracingController::StopAndFlush(JNIEnv* env,
-                                       const JavaParamRef<jobject>& obj) {
+bool AwTracingController::StopAndFlush(JNIEnv* env) {
   // privacy_filtering_enabled=true is required for filtering out potential PII.
   return content::TracingController::GetInstance()->StopTracing(
       AwTraceDataEndpoint::Create(
@@ -118,9 +116,10 @@ void AwTracingController::OnTraceDataReceived(
   }
 }
 
-bool AwTracingController::IsTracing(JNIEnv* env,
-                                    const JavaParamRef<jobject>& obj) {
+bool AwTracingController::IsTracing(JNIEnv* env) {
   return content::TracingController::GetInstance()->IsTracing();
 }
 
 }  // namespace android_webview
+
+DEFINE_JNI(AwTracingController)
